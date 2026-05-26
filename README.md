@@ -104,6 +104,23 @@ python run_scan.py --network-report-output outputs/network_report.json
 python run_scan.py --report-output outputs/run_report.md
 ```
 
+推荐运行节奏：
+- `weekly_full`（每周 1 次，全市场）
+
+```bash
+.venv/bin/python run_scan.py --config config.filters.json
+```
+
+- `daily_watch_refresh`（每个交易日 1 次，快速复核）
+
+```bash
+.venv/bin/python run_scan.py --config config.filters.json --max-symbols 1200 --top-n 30
+```
+
+建议时点：
+- `weekly_full`：周末或周一美股盘前
+- `daily_watch_refresh`：每个交易日收盘后
+
 ## 5. 运行状态与进度说明
 
 程序运行时会持续打印结构化日志：
