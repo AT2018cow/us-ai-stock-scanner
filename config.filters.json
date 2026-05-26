@@ -105,8 +105,8 @@
     },
     "ai_enabler": {
       "signal_logic": "ai_or_enabler",
-      "min_ai_score": 0.0,
-      "min_enabler_score": 0.05,
+      "min_ai_score": 0.01,
+      "min_enabler_score": 0.08,
       "min_ps_discount": 0.0,
       "min_pe_discount": -0.1,
       "min_drawdown_from_52w_high": 0.15,
@@ -155,7 +155,7 @@
       },
       "ai_enabler": {
         "min_composite_score": 0.45,
-        "min_enabler_score": 0.05,
+        "min_enabler_score": 0.08,
         "min_ps_discount": 0.0,
         "min_pe_discount": -0.1
       }
