@@ -79,6 +79,17 @@
   "channel_profiles": {
     "core_ai": {
       "signal_logic": "ai_only",
+      "momentum_signal_logic": "ai_only",
+      "momentum_min_ai_score": 0.03,
+      "momentum_min_return_20d": 0.05,
+      "momentum_min_price_to_sma200": 1.03,
+      "momentum_max_drawdown_from_52w_high": 0.3,
+      "momentum_score_weights": {
+        "ai_score": 0.45,
+        "enabler_score": 0.1,
+        "liquidity": 0.1,
+        "return_20d": 0.35
+      },
       "min_ai_score": 0.02,
       "min_enabler_score": 0.0,
       "min_ps_discount": 0.15,
@@ -108,6 +119,18 @@
       "trend_signal_logic": "ai_or_enabler",
       "trend_min_ai_score": 0.03,
       "trend_min_enabler_score": 0.08,
+      "momentum_signal_logic": "ai_or_enabler",
+      "momentum_min_ai_score": 0.01,
+      "momentum_min_enabler_score": 0.08,
+      "momentum_min_return_20d": 0.05,
+      "momentum_min_price_to_sma200": 1.05,
+      "momentum_max_drawdown_from_52w_high": 0.25,
+      "momentum_score_weights": {
+        "ai_score": 0.2,
+        "enabler_score": 0.4,
+        "liquidity": 0.1,
+        "return_20d": 0.3
+      },
       "min_ai_score": 0.01,
       "min_enabler_score": 0.08,
       "min_ps_discount": 0.0,

@@ -48,6 +48,9 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 - 信号逻辑：`signal_logic` 支持 `ai_only`、`ai_or_enabler`、`ai_and_enabler`
 - 趋势清单信号逻辑：`trend_signal_logic`（默认继承 `signal_logic`）
 - 趋势信号阈值：`trend_min_ai_score`、`trend_min_enabler_score`（默认继承对应通道阈值）
+- 追涨清单信号逻辑：`momentum_signal_logic`（默认继承 `trend_signal_logic`）
+- 追涨信号阈值：`momentum_min_ai_score`、`momentum_min_enabler_score`
+- 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`ai_keywords`、`enabler_keywords`、`news_lookback_days`
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
@@ -165,16 +168,19 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
   - 含义：必须同时满足 `ai_score >= min_ai_score` 且 `enabler_score >= min_enabler_score`
   - 实测结论：直接作为全局默认通常过严，容易导致候选过少；更适合用于“高置信度复核”。
 
-- 优化 3：输出拆分为双清单
+- 优化 3：输出拆分为三清单（并行）
   - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
   - `*_ranked_industry_trend.csv`（Industry-Trend）：主题相关性优先，偏“产业跟踪”。
-  - 这样可以同时回答两个问题：哪些票“便宜且在低位”，哪些票“更像 AI 产业链受益”。
+  - `*_ranked_momentum.csv`（Momentum）：强势追涨优先，偏“强者恒强”。
+  - 三者是并行、正交逻辑，不是父子子集关系。
 
 当前默认建议（`ai_enabler`）：
 - `signal_logic = ai_or_enabler`（用于 Low-Value，不让候选过快归零）
 - `min_ai_score = 0.01`，`min_enabler_score = 0.08`
 - `trend_signal_logic = ai_or_enabler`（用于 Industry-Trend）
 - `trend_min_ai_score = 0.03`，`trend_min_enabler_score = 0.08`
+- `momentum_signal_logic = ai_or_enabler`（用于 Momentum）
+- `momentum_min_return_20d = 0.05`，`momentum_min_price_to_sma200 = 1.05`
 
 如果你要进一步提纯：
 - 第一优先：提高 `trend_min_ai_score` / `trend_min_enabler_score`
@@ -187,7 +193,8 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 - 先做价格/流动性预筛，再请求 SEC 基本面
 - 基于低位价值逻辑构建 low-value pre-news 候选池
 - 基于趋势逻辑构建 industry-trend pre-news 候选池
-- 对两个池子的并集请求 Alpaca News（避免趋势清单漏数）
+- 基于追涨逻辑构建 momentum pre-news 候选池
+- 对三个池子的并集请求 Alpaca News（避免趋势/追涨清单漏数）
 
 
 先小样本验证（例如 300 只）：
@@ -267,7 +274,9 @@ python run_scan.py --report-output outputs/run_report.md
 程序结束时会打印简短清单：
 - `=== Low-Value Shortlist (Top 3 Per Channel) ===`
 - `=== Industry Trend Shortlist (Top 3 Per Channel) ===`
-- 每个通道展示 `keep/watch` 的 Top3（不展示 `drop`）
+- `=== Momentum Shortlist (Top 3 Per Channel) ===`
+- `Low-Value` 展示 `keep/watch` Top3（不展示 `drop`）
+- `Industry-Trend` 与 `Momentum` 展示各自打分 Top3
 
 ## 6. 输出文件命名与含义
 
@@ -280,6 +289,8 @@ python run_scan.py --report-output outputs/run_report.md
 - 分通道结果：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`
 - 产业趋势清单：`..._ranked_industry_trend.csv`
 - 产业趋势分通道：`..._ranked_industry_trend_core_ai.csv`、`..._ranked_industry_trend_ai_enabler.csv`
+- 追涨清单：`..._ranked_momentum.csv`
+- 追涨分通道：`..._ranked_momentum_core_ai.csv`、`..._ranked_momentum_ai_enabler.csv`
 - 详细报告：`..._ranked_report.md`
 - 过滤诊断：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断：`..._ranked_diagnostics_<channel>_first_fail.csv`

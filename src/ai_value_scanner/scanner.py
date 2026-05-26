@@ -1257,6 +1257,94 @@ def build_industry_trend_steps(
     return steps, trend_weights
 
 
+def build_momentum_steps(
+    config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
+) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
+    cp = resolve_channel_profile(config, channel_name, channel_profile)
+    momentum_signal_logic = str(
+        channel_profile.get("momentum_signal_logic", channel_profile.get("trend_signal_logic", cp["signal_logic"]))
+    )
+    momentum_min_ai = float(
+        channel_profile.get("momentum_min_ai_score", channel_profile.get("trend_min_ai_score", cp["min_ai_score"]))
+    )
+    momentum_min_enabler = float(
+        channel_profile.get(
+            "momentum_min_enabler_score",
+            channel_profile.get("trend_min_enabler_score", cp["min_enabler_score"]),
+        )
+    )
+    momentum_min_return_20d = channel_profile.get("momentum_min_return_20d", 0.05)
+    momentum_min_price_to_sma200 = channel_profile.get("momentum_min_price_to_sma200", 1.05)
+    momentum_max_drawdown_from_52w_high = channel_profile.get(
+        "momentum_max_drawdown_from_52w_high", 0.25
+    )
+    momentum_weights = channel_profile.get("momentum_score_weights")
+    if not isinstance(momentum_weights, dict):
+        momentum_weights = {
+            "ai_score": 0.30,
+            "enabler_score": 0.40,
+            "liquidity": 0.10,
+            "return_20d": 0.20,
+        }
+
+    steps: list[tuple[str, Any]] = [
+        ("price_notna", lambda frame: frame["price"].notna()),
+        ("min_price", lambda frame: frame["price"] >= config.min_price),
+        ("min_dollar_volume", lambda frame: frame["dollar_volume"].fillna(0) >= config.min_dollar_volume),
+        ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
+        ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
+        ("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0),
+        (
+            "momentum_min_return_20d",
+            lambda frame: frame["return_20d"].fillna(-np.inf) >= float(momentum_min_return_20d),
+        ),
+        (
+            "momentum_min_price_to_sma200",
+            lambda frame: frame["price_to_sma200"].fillna(-np.inf) >= float(momentum_min_price_to_sma200),
+        ),
+        (
+            "momentum_max_drawdown_from_52w_high",
+            lambda frame: frame["drawdown_from_52w_high"].fillna(np.inf)
+            <= float(momentum_max_drawdown_from_52w_high),
+        ),
+    ]
+
+    if momentum_signal_logic == "ai_and_enabler":
+        steps.append(
+            (
+                "momentum_signal_ai_and_enabler",
+                lambda frame: (frame["ai_score"] >= momentum_min_ai)
+                & (frame["enabler_score"] >= momentum_min_enabler),
+            )
+        )
+    elif momentum_signal_logic == "ai_or_enabler":
+        steps.append(
+            (
+                "momentum_signal_ai_or_enabler",
+                lambda frame: (frame["ai_score"] >= momentum_min_ai)
+                | (frame["enabler_score"] >= momentum_min_enabler),
+            )
+        )
+    else:
+        steps.append(("momentum_min_ai_score", lambda frame: frame["ai_score"] >= momentum_min_ai))
+
+    steps.append(
+        (
+            "sic_filter",
+            lambda frame: frame["sic"].apply(
+                lambda x: passes_sic_filters(
+                    x,
+                    cp["include_sic_prefixes"],
+                    cp["exclude_sic_prefixes"],
+                    cp["include_sic_codes"],
+                    cp["exclude_sic_codes"],
+                )
+            ),
+        )
+    )
+    return steps, momentum_weights
+
+
 def apply_filters_with_diagnostics(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> tuple[pd.DataFrame, list[dict[str, int | str]]]:
@@ -1335,6 +1423,39 @@ def collect_pre_news_symbols_for_trend(
     return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
 
 
+def collect_pre_news_symbols_for_momentum(
+    df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
+) -> tuple[list[str], dict[str, int]]:
+    symbol_set: set[str] = set()
+    channel_counts: dict[str, int] = {}
+    for channel_name, channel_profile in channel_profiles.items():
+        momentum_steps, _ = build_momentum_steps(config, channel_name, channel_profile)
+        # Remove momentum signal + SIC filter for pre-news pool construction.
+        pre_steps = [
+            step
+            for step in momentum_steps
+            if not step[0].startswith("momentum_signal_")
+            and step[0] != "momentum_min_ai_score"
+            and step[0] != "sic_filter"
+        ]
+        pre_filtered, _ = apply_filters_with_diagnostics(df, pre_steps)
+        channel_counts[channel_name] = len(pre_filtered)
+        if "symbol" in pre_filtered.columns and not pre_filtered.empty:
+            symbol_set.update(pre_filtered["symbol"].dropna().astype(str).tolist())
+
+    if not symbol_set:
+        return [], channel_counts
+
+    candidates = df[df["symbol"].isin(symbol_set)].copy()
+    candidates["dollar_volume"] = pd.to_numeric(candidates["dollar_volume"], errors="coerce").fillna(0)
+    candidates = candidates.sort_values("dollar_volume", ascending=False)
+
+    if config.pre_news_top_liquid_symbols is not None:
+        candidates = candidates.head(config.pre_news_top_liquid_symbols)
+
+    return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
+
+
 def summarize_first_fail_reasons(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> pd.DataFrame:
@@ -1355,7 +1476,7 @@ def summarize_first_fail_reasons(
 
 def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     out = df.copy()
-    required_cols = ["ps_discount", "pe_discount", "ai_score", "enabler_score", "dollar_volume"]
+    required_cols = ["ps_discount", "pe_discount", "ai_score", "enabler_score", "dollar_volume", "return_20d"]
     for col in required_cols:
         if col not in out.columns:
             out[col] = np.nan
@@ -1365,12 +1486,14 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     out["ai_score_norm"] = normalize_score(out["ai_score"])
     out["enabler_score_norm"] = normalize_score(out["enabler_score"])
     out["liquidity_norm"] = normalize_score(np.log1p(out["dollar_volume"].fillna(0)))
+    out["return_20d_norm"] = normalize_score(out["return_20d"])
 
     w_ps = float(weights.get("ps_discount", 0.40))
     w_pe = float(weights.get("pe_discount", 0.30))
     w_ai = float(weights.get("ai_score", 0.25))
     w_enabler = float(weights.get("enabler_score", 0.00))
     w_liq = float(weights.get("liquidity", 0.05))
+    w_ret = float(weights.get("return_20d", 0.00))
 
     out["composite_score"] = (
         w_ps * out["ps_discount_norm"]
@@ -1378,6 +1501,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         + w_ai * out["ai_score_norm"]
         + w_enabler * out["enabler_score_norm"]
         + w_liq * out["liquidity_norm"]
+        + w_ret * out["return_20d_norm"]
     )
     return out.sort_values("composite_score", ascending=False)
 
@@ -1495,6 +1619,8 @@ def build_run_report_markdown(
     sec_cache_summary: str | None,
     industry_trend_count: int | None = None,
     industry_trend_path: Path | None = None,
+    momentum_count: int | None = None,
+    momentum_path: Path | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
@@ -1560,6 +1686,10 @@ def build_run_report_markdown(
         lines.append(f"- industry trend csv: {industry_trend_path}")
     if industry_trend_count is not None:
         lines.append(f"- industry trend rows: {industry_trend_count}")
+    if momentum_path is not None:
+        lines.append(f"- momentum csv: {momentum_path}")
+    if momentum_count is not None:
+        lines.append(f"- momentum rows: {momentum_count}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
@@ -1694,12 +1824,20 @@ def run_scan(
     trend_pre_news_symbols, trend_pre_news_counts = collect_pre_news_symbols_for_trend(
         df, config, channel_profiles
     )
-    all_pre_news_symbols = sorted(set(pre_news_symbols).union(set(trend_pre_news_symbols)))
+    momentum_pre_news_symbols, momentum_pre_news_counts = collect_pre_news_symbols_for_momentum(
+        df, config, channel_profiles
+    )
+    all_pre_news_symbols = sorted(
+        set(pre_news_symbols).union(set(trend_pre_news_symbols)).union(set(momentum_pre_news_symbols))
+    )
     log_status(started_at, "INFO", "Pre-news candidates by channel:")
     for channel_name, count in pre_news_counts.items():
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
     log_status(started_at, "INFO", "Trend pre-news candidates by channel:")
     for channel_name, count in trend_pre_news_counts.items():
+        log_status(started_at, "INFO", f"  {channel_name}: {count}")
+    log_status(started_at, "INFO", "Momentum pre-news candidates by channel:")
+    for channel_name, count in momentum_pre_news_counts.items():
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
     log_status(started_at, "INFO", f"News fetch symbol count: {len(all_pre_news_symbols)}")
 
@@ -1838,6 +1976,40 @@ def run_scan(
         log_status(started_at, "INFO", f"Industry trend output ({channel_name}): {ch_trend_out}")
     log_status(started_at, "INFO", f"Industry trend output: {trend_out_path}")
 
+    # Build a third list focused on momentum/chasing strength.
+    momentum_frames: list[pd.DataFrame] = []
+    for channel_name, channel_profile in channel_profiles.items():
+        momentum_steps, momentum_weights = build_momentum_steps(config, channel_name, channel_profile)
+        momentum_filtered, _ = apply_filters_with_diagnostics(df, momentum_steps)
+        momentum_ranked = score_and_rank(momentum_filtered, momentum_weights).head(top_n_per_channel)
+        momentum_ranked["channel"] = channel_name
+        momentum_frames.append(momentum_ranked)
+
+    non_empty_momentum_frames = [frame for frame in momentum_frames if not frame.empty]
+    momentum = (
+        pd.concat(non_empty_momentum_frames, ignore_index=True)
+        if non_empty_momentum_frames
+        else pd.DataFrame(columns=df.columns.tolist() + ["channel", "composite_score"])
+    )
+    momentum["triage_label"] = "momentum"
+    if not momentum.empty:
+        momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
+    momentum_out_path = out_path.with_name(f"{out_path.stem}_momentum{out_path.suffix or '.csv'}")
+    momentum.to_csv(momentum_out_path, index=False, columns=cols + ["triage_label"])
+    for channel_name in channel_profiles.keys():
+        ch_momentum_out = momentum_out_path.with_name(
+            f"{momentum_out_path.stem}_{channel_name}{momentum_out_path.suffix or '.csv'}"
+        )
+        if "channel" in momentum.columns:
+            ch_momentum_df = momentum[momentum["channel"] == channel_name]
+        else:
+            ch_momentum_df = momentum.copy()
+        if ch_momentum_df.empty:
+            ch_momentum_df = pd.DataFrame(columns=cols + ["triage_label"])
+        ch_momentum_df.to_csv(ch_momentum_out, index=False, columns=cols + ["triage_label"])
+        log_status(started_at, "INFO", f"Momentum output ({channel_name}): {ch_momentum_out}")
+    log_status(started_at, "INFO", f"Momentum output: {momentum_out_path}")
+
     log_status(started_at, "INFO", "[6/6] Finalizing outputs.")
     log_status(started_at, "INFO", f"Total ranked rows: {len(ranked)}")
     for channel_name, count in filtered_counts.items():
@@ -1892,6 +2064,8 @@ def run_scan(
         sec_cache_summary=sec_cache_summary,
         industry_trend_count=len(industry_trend),
         industry_trend_path=trend_out_path,
+        momentum_count=len(momentum),
+        momentum_path=momentum_out_path,
     )
     paths["report_md"].write_text(md_report)
     log_status(started_at, "INFO", f"Detailed report: {paths['report_md']}")
@@ -1943,6 +2117,28 @@ def run_scan(
                     f"enabler={float(row['enabler_score']):.3f}"
                 )
     print("=== End Industry Trend Shortlist ===")
+    print("")
+    print("=== Momentum Shortlist (Top 3 Per Channel) ===")
+    if momentum.empty:
+        print("No momentum candidates.")
+    else:
+        for channel_name in channel_profiles.keys():
+            print(f"[{channel_name}]")
+            top = momentum[momentum["channel"] == channel_name].sort_values(
+                "composite_score", ascending=False
+            ).head(3)
+            if top.empty:
+                print("  - none")
+                continue
+            for _, row in top.iterrows():
+                print(
+                    "  - "
+                    f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"r20={float(row['return_20d']):.3f} | "
+                    f"ai={float(row['ai_score']):.3f} | "
+                    f"enabler={float(row['enabler_score']):.3f}"
+                )
+    print("=== End Momentum Shortlist ===")
     log_status(started_at, "INFO", "Scan completed successfully.")
     return out_path
 
