@@ -152,6 +152,35 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 
 建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑全市场。
 
+### 3.3 当前版本筛选逻辑（v2）
+
+本版本对 AI 相关性与输出结构做了三项关键优化：
+
+- 优化 1：关键词匹配从“子串命中”升级为“词边界/短语命中”
+  - 目的：降低 `llm` 命中 `hellmann's` 之类的假阳性。
+  - 影响：减少消费/食品等行业因文本噪声被误归类为 AI。
+
+- 优化 2：支持 `ai_and_enabler` 高纯度模式
+  - 使用位置：`signal_logic` 或 `trend_signal_logic`
+  - 含义：必须同时满足 `ai_score >= min_ai_score` 且 `enabler_score >= min_enabler_score`
+  - 实测结论：直接作为全局默认通常过严，容易导致候选过少；更适合用于“高置信度复核”。
+
+- 优化 3：输出拆分为双清单
+  - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
+  - `*_ranked_industry_trend.csv`（Industry-Trend）：主题相关性优先，偏“产业跟踪”。
+  - 这样可以同时回答两个问题：哪些票“便宜且在低位”，哪些票“更像 AI 产业链受益”。
+
+当前默认建议（`ai_enabler`）：
+- `signal_logic = ai_or_enabler`（用于 Low-Value，不让候选过快归零）
+- `min_ai_score = 0.01`，`min_enabler_score = 0.08`
+- `trend_signal_logic = ai_or_enabler`（用于 Industry-Trend）
+- `trend_min_ai_score = 0.03`，`trend_min_enabler_score = 0.08`
+
+如果你要进一步提纯：
+- 第一优先：提高 `trend_min_ai_score` / `trend_min_enabler_score`
+- 第二优先：将 `trend_signal_logic` 提升到 `ai_and_enabler`
+- 不建议第一步就加严低位参数，否则会把强趋势基础设施股整体排掉
+
 ## 4. 运行方式
 
 策略执行顺序（用于降限速风险）：
