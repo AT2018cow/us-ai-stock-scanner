@@ -45,6 +45,9 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 
 默认参数在 `config.filters.json`，可按策略自由修改，核心维度包括：
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
+- 信号逻辑：`signal_logic` 支持 `ai_only`、`ai_or_enabler`、`ai_and_enabler`
+- 趋势清单信号逻辑：`trend_signal_logic`（默认继承 `signal_logic`）
+- 趋势信号阈值：`trend_min_ai_score`、`trend_min_enabler_score`（默认继承对应通道阈值）
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`ai_keywords`、`enabler_keywords`、`news_lookback_days`
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
@@ -102,6 +105,7 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 说明：
 - `PE/PS` 等属于估值参数（衡量“便宜”），不是价格位置参数（衡量“低位”）。
 - 两类建议同时使用：先做低位识别，再做估值约束。
+- `ai_and_enabler` 适合做高纯度模式（同时要求 AI 与 enabler 信号达标）。
 
 配置示例（全局默认 + 通道覆盖）：
 
@@ -231,7 +235,8 @@ python run_scan.py --report-output outputs/run_report.md
   - 完整 traceback
 
 程序结束时会打印简短清单：
-- `=== Shortlist (Top 3 Per Channel) ===`
+- `=== Low-Value Shortlist (Top 3 Per Channel) ===`
+- `=== Industry Trend Shortlist (Top 3 Per Channel) ===`
 - 每个通道展示 `keep/watch` 的 Top3（不展示 `drop`）
 
 ## 6. 输出文件命名与含义
@@ -243,6 +248,8 @@ python run_scan.py --report-output outputs/run_report.md
 输出结果文件：
 - 默认命名：`outputs/ai_value_scan_YYYYMMDDTHHMMSSZ_<scope>_ranked.csv`
 - 分通道结果：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`
+- 产业趋势清单：`..._ranked_industry_trend.csv`
+- 产业趋势分通道：`..._ranked_industry_trend_core_ai.csv`、`..._ranked_industry_trend_ai_enabler.csv`
 - 详细报告：`..._ranked_report.md`
 - 过滤诊断：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断：`..._ranked_diagnostics_<channel>_first_fail.csv`

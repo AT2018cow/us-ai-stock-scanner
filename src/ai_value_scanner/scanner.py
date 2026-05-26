@@ -4,10 +4,12 @@ import argparse
 import json
 import math
 import os
+import re
 import time
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -751,7 +753,7 @@ def price_dimension_from_bars(
 def theme_score_from_news(news: list[dict[str, Any]], keywords: list[str]) -> float:
     if not news:
         return 0.0
-    lowered = [k.lower() for k in keywords]
+    patterns = compile_keyword_patterns(tuple(k.lower() for k in keywords))
     hit_articles = 0
     weighted_hits = 0.0
     for row in news:
@@ -759,13 +761,30 @@ def theme_score_from_news(news: list[dict[str, Any]], keywords: list[str]) -> fl
             f"{row.get('headline', '')} {row.get('summary', '')} "
             f"{row.get('content', '')}"
         ).lower()
-        local_hits = sum(1 for kw in lowered if kw in text)
+        local_hits = sum(1 for pattern in patterns if pattern.search(text))
         if local_hits > 0:
             hit_articles += 1
             weighted_hits += min(local_hits, 5)
     coverage = hit_articles / len(news)
     density = weighted_hits / (len(news) * 5.0)
     return round(min(1.0, 0.6 * coverage + 0.4 * density), 4)
+
+
+@lru_cache(maxsize=32)
+def compile_keyword_patterns(keywords: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    patterns: list[re.Pattern[str]] = []
+    for kw in keywords:
+        token = kw.strip().lower()
+        if not token:
+            continue
+        # Match whole words/phrases to avoid substring false positives
+        # like "llm" inside "hellmann's".
+        pattern = re.compile(
+            r"(?<![a-z0-9])" + re.escape(token) + r"(?![a-z0-9])",
+            flags=re.IGNORECASE,
+        )
+        patterns.append(pattern)
+    return tuple(patterns)
 
 
 def normalize_score(series: pd.Series) -> pd.Series:
@@ -1142,6 +1161,14 @@ def build_filter_steps(
                 | (frame["enabler_score"] >= cp["min_enabler_score"]),
             )
         )
+    elif cp["signal_logic"] == "ai_and_enabler":
+        steps.append(
+            (
+                "signal_ai_and_enabler",
+                lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
+                & (frame["enabler_score"] >= cp["min_enabler_score"]),
+            )
+        )
     else:
         steps.append(("min_ai_score", lambda frame: frame["ai_score"] >= cp["min_ai_score"]))
 
@@ -1164,6 +1191,70 @@ def build_filter_steps(
         ]
     )
     return steps
+
+
+def build_industry_trend_steps(
+    config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
+) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
+    cp = resolve_channel_profile(config, channel_name, channel_profile)
+    trend_signal_logic = str(channel_profile.get("trend_signal_logic", cp["signal_logic"]))
+    trend_min_ai = float(channel_profile.get("trend_min_ai_score", cp["min_ai_score"]))
+    trend_min_enabler = float(
+        channel_profile.get("trend_min_enabler_score", cp["min_enabler_score"])
+    )
+    trend_weights = channel_profile.get("trend_score_weights")
+    if not isinstance(trend_weights, dict):
+        if channel_name == "ai_enabler":
+            trend_weights = {"ai_score": 0.30, "enabler_score": 0.60, "liquidity": 0.10}
+        else:
+            trend_weights = {"ai_score": 0.80, "enabler_score": 0.10, "liquidity": 0.10}
+
+    steps: list[tuple[str, Any]] = [
+        ("price_notna", lambda frame: frame["price"].notna()),
+        ("min_price", lambda frame: frame["price"] >= config.min_price),
+        ("min_dollar_volume", lambda frame: frame["dollar_volume"].fillna(0) >= config.min_dollar_volume),
+        ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
+        ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
+    ]
+    if config.max_market_cap is not None:
+        steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
+    if config.require_positive_revenue:
+        steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
+
+    if trend_signal_logic == "ai_and_enabler":
+        steps.append(
+            (
+                "trend_signal_ai_and_enabler",
+                lambda frame: (frame["ai_score"] >= trend_min_ai)
+                & (frame["enabler_score"] >= trend_min_enabler),
+            )
+        )
+    elif trend_signal_logic == "ai_or_enabler":
+        steps.append(
+            (
+                "trend_signal_ai_or_enabler",
+                lambda frame: (frame["ai_score"] >= trend_min_ai)
+                | (frame["enabler_score"] >= trend_min_enabler),
+            )
+        )
+    else:
+        steps.append(("trend_min_ai_score", lambda frame: frame["ai_score"] >= trend_min_ai))
+
+    steps.append(
+        (
+            "sic_filter",
+            lambda frame: frame["sic"].apply(
+                lambda x: passes_sic_filters(
+                    x,
+                    cp["include_sic_prefixes"],
+                    cp["exclude_sic_prefixes"],
+                    cp["include_sic_codes"],
+                    cp["exclude_sic_codes"],
+                )
+            ),
+        )
+    )
+    return steps, trend_weights
 
 
 def apply_filters_with_diagnostics(
@@ -1192,7 +1283,7 @@ def apply_filters_with_diagnostics(
 def collect_pre_news_symbols(
     df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
 ) -> tuple[list[str], dict[str, int]]:
-    signal_steps = {"min_ai_score", "signal_ai_or_enabler"}
+    signal_steps = {"min_ai_score", "signal_ai_or_enabler", "signal_ai_and_enabler"}
     symbol_set: set[str] = set()
     channel_counts: dict[str, int] = {}
 
@@ -1375,6 +1466,8 @@ def build_run_report_markdown(
     paths: dict[str, Path],
     network_issue_flag: bool,
     sec_cache_summary: str | None,
+    industry_trend_count: int | None = None,
+    industry_trend_path: Path | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
@@ -1436,6 +1529,10 @@ def build_run_report_markdown(
     lines.append(f"- diagnostics base: {paths['diagnostics_base']}")
     lines.append(f"- network report: {paths['network_json']}")
     lines.append(f"- markdown report: {paths['report_md']}")
+    if industry_trend_path is not None:
+        lines.append(f"- industry trend csv: {industry_trend_path}")
+    if industry_trend_count is not None:
+        lines.append(f"- industry trend rows: {industry_trend_count}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
@@ -1672,6 +1769,41 @@ def run_scan(
         channel_df.to_csv(ch_out, index=False, columns=cols + ["triage_label"])
         log_status(started_at, "INFO", f"Channel output ({channel_name}): {ch_out}")
 
+    # Build a second list focused on AI industry trend relevance, without
+    # enforcing low-position/value constraints.
+    trend_frames: list[pd.DataFrame] = []
+    for channel_name, channel_profile in channel_profiles.items():
+        trend_steps, trend_weights = build_industry_trend_steps(config, channel_name, channel_profile)
+        trend_filtered, _ = apply_filters_with_diagnostics(df, trend_steps)
+        trend_ranked = score_and_rank(trend_filtered, trend_weights).head(top_n_per_channel)
+        trend_ranked["channel"] = channel_name
+        trend_frames.append(trend_ranked)
+
+    non_empty_trend_frames = [frame for frame in trend_frames if not frame.empty]
+    industry_trend = (
+        pd.concat(non_empty_trend_frames, ignore_index=True)
+        if non_empty_trend_frames
+        else pd.DataFrame(columns=df.columns.tolist() + ["channel", "composite_score"])
+    )
+    industry_trend["triage_label"] = "trend"
+    if not industry_trend.empty:
+        industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
+    trend_out_path = out_path.with_name(f"{out_path.stem}_industry_trend{out_path.suffix or '.csv'}")
+    industry_trend.to_csv(trend_out_path, index=False, columns=cols + ["triage_label"])
+    for channel_name in channel_profiles.keys():
+        ch_trend_out = trend_out_path.with_name(
+            f"{trend_out_path.stem}_{channel_name}{trend_out_path.suffix or '.csv'}"
+        )
+        if "channel" in industry_trend.columns:
+            ch_trend_df = industry_trend[industry_trend["channel"] == channel_name]
+        else:
+            ch_trend_df = industry_trend.copy()
+        if ch_trend_df.empty:
+            ch_trend_df = pd.DataFrame(columns=cols + ["triage_label"])
+        ch_trend_df.to_csv(ch_trend_out, index=False, columns=cols + ["triage_label"])
+        log_status(started_at, "INFO", f"Industry trend output ({channel_name}): {ch_trend_out}")
+    log_status(started_at, "INFO", f"Industry trend output: {trend_out_path}")
+
     log_status(started_at, "INFO", "[6/6] Finalizing outputs.")
     log_status(started_at, "INFO", f"Total ranked rows: {len(ranked)}")
     for channel_name, count in filtered_counts.items():
@@ -1724,12 +1856,14 @@ def run_scan(
         paths=paths,
         network_issue_flag=bool(report.get("had_rate_limit_or_network_issue")),
         sec_cache_summary=sec_cache_summary,
+        industry_trend_count=len(industry_trend),
+        industry_trend_path=trend_out_path,
     )
     paths["report_md"].write_text(md_report)
     log_status(started_at, "INFO", f"Detailed report: {paths['report_md']}")
 
     print("")
-    print("=== Shortlist (Top 3 Per Channel) ===")
+    print("=== Low-Value Shortlist (Top 3 Per Channel) ===")
     if ranked.empty:
         print("No candidates.")
     else:
@@ -1753,7 +1887,28 @@ def run_scan(
                     f"ai={float(row['ai_score']):.3f} | "
                     f"enabler={float(row['enabler_score']):.3f}"
                 )
-    print("=== End Shortlist ===")
+    print("=== End Low-Value Shortlist ===")
+    print("")
+    print("=== Industry Trend Shortlist (Top 3 Per Channel) ===")
+    if industry_trend.empty:
+        print("No industry trend candidates.")
+    else:
+        for channel_name in channel_profiles.keys():
+            print(f"[{channel_name}]")
+            top = industry_trend[industry_trend["channel"] == channel_name].sort_values(
+                "composite_score", ascending=False
+            ).head(3)
+            if top.empty:
+                print("  - none")
+                continue
+            for _, row in top.iterrows():
+                print(
+                    "  - "
+                    f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"ai={float(row['ai_score']):.3f} | "
+                    f"enabler={float(row['enabler_score']):.3f}"
+                )
+    print("=== End Industry Trend Shortlist ===")
     log_status(started_at, "INFO", "Scan completed successfully.")
     return out_path
 

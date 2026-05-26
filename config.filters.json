@@ -105,6 +105,9 @@
     },
     "ai_enabler": {
       "signal_logic": "ai_or_enabler",
+      "trend_signal_logic": "ai_or_enabler",
+      "trend_min_ai_score": 0.03,
+      "trend_min_enabler_score": 0.08,
       "min_ai_score": 0.01,
       "min_enabler_score": 0.08,
       "min_ps_discount": 0.0,
