@@ -47,6 +47,9 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "min_drawdown_from_52w_high": None,
             "max_range_position_52w": None,
             "max_price_to_sma200": None,
+            "min_days_below_sma200": 7,
+            "max_20d_return": 0.12,
+            "max_60d_volatility": 0.70,
             "include_sic_prefixes": [],
             "exclude_sic_prefixes": [],
             "include_sic_codes": [],
@@ -68,6 +71,9 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "min_drawdown_from_52w_high": None,
             "max_range_position_52w": None,
             "max_price_to_sma200": None,
+            "min_days_below_sma200": 5,
+            "max_20d_return": 0.18,
+            "max_60d_volatility": 0.85,
             "include_sic_prefixes": ["13", "16", "17", "35", "36", "37", "38", "48", "49", "73", "87"],
             "exclude_sic_prefixes": [],
             "include_sic_codes": [],
@@ -179,6 +185,9 @@ class ScanConfig:
     min_drawdown_from_52w_high: float | None = None
     max_range_position_52w: float | None = None
     max_price_to_sma200: float | None = None
+    min_days_below_sma200: int | None = 5
+    max_20d_return: float | None = 0.18
+    max_60d_volatility: float | None = 0.85
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
@@ -645,12 +654,15 @@ def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float |
 
 def price_dimension_from_bars(
     price: float | None, bars: list[dict[str, Any]]
-) -> dict[str, float | None]:
+) -> dict[str, float | int | None]:
     if price is None or not bars:
         return {
             "drawdown_from_52w_high": None,
             "range_position_52w": None,
             "price_to_sma200": None,
+            "days_below_sma200": None,
+            "return_20d": None,
+            "volatility_60d": None,
         }
 
     highs: list[float] = []
@@ -677,6 +689,9 @@ def price_dimension_from_bars(
             "drawdown_from_52w_high": None,
             "range_position_52w": None,
             "price_to_sma200": None,
+            "days_below_sma200": None,
+            "return_20d": None,
+            "volatility_60d": None,
         }
 
     high_52w = max(highs)
@@ -692,16 +707,44 @@ def price_dimension_from_bars(
         range_pos = (price - low_52w) / (high_52w - low_52w)
 
     price_to_sma200 = None
+    days_below_sma200 = None
     if closes:
         window = closes[-200:] if len(closes) >= 200 else closes
         sma200 = float(np.mean(window)) if window else None
         if sma200 and sma200 > 0:
             price_to_sma200 = price / sma200
 
+        if len(closes) >= 200:
+            s = pd.Series(closes, dtype="float64")
+            sma_roll = s.rolling(window=200, min_periods=200).mean()
+            below = s < sma_roll
+            trailing = 0
+            for flag in reversed(below.tolist()):
+                if pd.isna(flag) or not bool(flag):
+                    break
+                trailing += 1
+            days_below_sma200 = trailing
+
+    return_20d = None
+    if len(closes) >= 21 and closes[-21] > 0:
+        return_20d = (price / closes[-21]) - 1.0
+
+    volatility_60d = None
+    if len(closes) >= 61:
+        window_61 = np.asarray(closes[-61:], dtype="float64")
+        daily_ret = (window_61[1:] / window_61[:-1]) - 1.0
+        if daily_ret.size > 0:
+            vol = float(np.nanstd(daily_ret, ddof=0) * math.sqrt(252.0))
+            if np.isfinite(vol):
+                volatility_60d = vol
+
     return {
         "drawdown_from_52w_high": round(drawdown, 6) if drawdown is not None else None,
         "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
         "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
+        "days_below_sma200": int(days_below_sma200) if days_below_sma200 is not None else None,
+        "return_20d": round(return_20d, 6) if return_20d is not None else None,
+        "volatility_60d": round(volatility_60d, 6) if volatility_60d is not None else None,
     }
 
 
@@ -804,6 +847,21 @@ def resolve_channel_profile(
             None
             if profile.get("max_price_to_sma200", config.max_price_to_sma200) is None
             else float(profile.get("max_price_to_sma200", config.max_price_to_sma200))
+        ),
+        "min_days_below_sma200": (
+            None
+            if profile.get("min_days_below_sma200", config.min_days_below_sma200) is None
+            else int(profile.get("min_days_below_sma200", config.min_days_below_sma200))
+        ),
+        "max_20d_return": (
+            None
+            if profile.get("max_20d_return", config.max_20d_return) is None
+            else float(profile.get("max_20d_return", config.max_20d_return))
+        ),
+        "max_60d_volatility": (
+            None
+            if profile.get("max_60d_volatility", config.max_60d_volatility) is None
+            else float(profile.get("max_60d_volatility", config.max_60d_volatility))
         ),
         "include_sic_prefixes": include_prefixes,
         "exclude_sic_prefixes": exclude_prefixes,
@@ -1052,6 +1110,27 @@ def build_filter_steps(
             (
                 "max_price_to_sma200",
                 lambda frame: frame["price_to_sma200"].fillna(np.inf) <= cp["max_price_to_sma200"],
+            )
+        )
+    if cp["min_days_below_sma200"] is not None:
+        steps.append(
+            (
+                "min_days_below_sma200",
+                lambda frame: frame["days_below_sma200"].fillna(-1) >= cp["min_days_below_sma200"],
+            )
+        )
+    if cp["max_20d_return"] is not None:
+        steps.append(
+            (
+                "max_20d_return",
+                lambda frame: frame["return_20d"].fillna(np.inf) <= cp["max_20d_return"],
+            )
+        )
+    if cp["max_60d_volatility"] is not None:
+        steps.append(
+            (
+                "max_60d_volatility",
+                lambda frame: frame["volatility_60d"].fillna(np.inf) <= cp["max_60d_volatility"],
             )
         )
 
@@ -1558,6 +1637,9 @@ def run_scan(
         "drawdown_from_52w_high",
         "range_position_52w",
         "price_to_sma200",
+        "days_below_sma200",
+        "return_20d",
+        "volatility_60d",
         "market_cap",
         "revenue",
         "net_income",

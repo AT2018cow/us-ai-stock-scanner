@@ -47,8 +47,8 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`ai_keywords`、`enabler_keywords`、`news_lookback_days`
-- 估值：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
-- 价格维度（低谷判断）：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`
+- 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
+- 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
@@ -56,6 +56,97 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`、`pre_news_top_liquid_symbols`
 
 说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
+
+### 3.1 价格位置/低位识别参数
+
+价格位置参数分两层：
+- 全局层（`config.filters.json` 顶层）：给所有通道提供默认值
+- 通道层（`channel_profiles.<channel>`）：可覆盖全局默认值
+
+参数说明：
+- `price_lookback_days`
+  - 含义：回看日K线窗口（自然日），用于计算 52 周高低区间与 SMA 基准
+  - 默认：`420`
+  - 调大：更平滑，响应更慢
+  - 调小：更敏感，波动更大
+- `min_drawdown_from_52w_high`
+  - 含义：距区间高点最小回撤比例，`1 - price/high_52w`
+  - 取值：`0~1`，越大越“离高点远”
+  - 示例：`0.20` 表示至少较高点回撤 20%
+- `max_range_position_52w`
+  - 含义：当前价格在区间 `[low_52w, high_52w]` 的相对位置
+  - 公式：`(price-low_52w)/(high_52w-low_52w)`
+  - 取值：`0~1`，越小越靠近区间底部
+  - 示例：`0.70` 表示仅保留位于区间下 70% 的标的
+- `max_price_to_sma200`
+  - 含义：当前价格相对 200 日均价的倍数
+  - 公式：`price / SMA200`
+  - 取值：通常大于 0
+  - 示例：`1.10` 表示价格不超过 200 日均价的 110%
+- `min_days_below_sma200`
+  - 含义：最近连续低于各自 200 日均线的交易日数量下限
+  - 取值：`>=0` 的整数
+  - 默认：`core_ai=7`，`ai_enabler=5`
+  - 示例：`10` 表示要求至少连续 10 个交易日位于 200 日均线下方
+- `max_20d_return`
+  - 含义：最近 20 个交易日价格涨幅上限，避免追短期急拉
+  - 公式：`price / close_20d_ago - 1`
+  - 默认：`core_ai=0.12`，`ai_enabler=0.18`
+  - 示例：`0.15` 表示 20 日涨幅不超过 15%
+- `max_60d_volatility`
+  - 含义：最近 60 日年化波动率上限，过滤高波动“低位陷阱”
+  - 公式：`std(daily_return_60d) * sqrt(252)`
+  - 默认：`core_ai=0.70`，`ai_enabler=0.85`
+  - 示例：`0.60` 表示年化波动率不超过 60%
+
+说明：
+- `PE/PS` 等属于估值参数（衡量“便宜”），不是价格位置参数（衡量“低位”）。
+- 两类建议同时使用：先做低位识别，再做估值约束。
+
+配置示例（全局默认 + 通道覆盖）：
+
+```json
+{
+  "price_lookback_days": 420,
+  "min_drawdown_from_52w_high": null,
+  "max_range_position_52w": null,
+  "max_price_to_sma200": null,
+  "min_days_below_sma200": 5,
+  "max_20d_return": 0.18,
+  "max_60d_volatility": 0.85,
+  "channel_profiles": {
+    "core_ai": {
+      "min_drawdown_from_52w_high": 0.2,
+      "max_range_position_52w": 0.7,
+      "max_price_to_sma200": 1.1,
+      "min_days_below_sma200": 7,
+      "max_20d_return": 0.12,
+      "max_60d_volatility": 0.7
+    },
+    "ai_enabler": {
+      "min_drawdown_from_52w_high": 0.15,
+      "max_range_position_52w": 0.8,
+      "max_price_to_sma200": 1.15,
+      "min_days_below_sma200": 5,
+      "max_20d_return": 0.18,
+      "max_60d_volatility": 0.85
+    }
+  }
+}
+```
+
+### 3.2 如何扩展新的筛选参数
+
+如果你要新增一个参数（例如 `min_gross_margin`），按下面路径扩展：
+- 第 1 步：在 `ScanConfig` 增加字段和默认值（`src/ai_value_scanner/scanner.py`）
+- 第 2 步：在 `resolve_channel_profile` 增加“全局默认 + 通道覆盖”的解析逻辑
+- 第 3 步：如果依赖新数据源/新指标，在数据准备阶段计算新列（如 `run_scan` 或相应 helper）
+- 第 4 步：在 `build_filter_steps` 增加筛选条件（`lambda frame: ...`）
+- 第 5 步：如需参与排序，在 `score_and_rank` 的标准化与权重中接入
+- 第 6 步：在 `config.filters.json` 增加参数键，并给出初始策略值
+- 第 7 步：在 README 的“参数说明”和“输出字段说明”同步更新
+
+建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑全市场。
 
 ## 4. 运行方式
 
@@ -130,7 +221,7 @@ python run_scan.py --report-output outputs/run_report.md
 
 程序运行时会持续打印结构化日志：
 - 格式：`[HH:MM:SS][LEVEL][+elapsed_seconds] message`
-- 阶段：`[1/5]` 到 `[5/5]`
+- 阶段：`[1/6]` 到 `[6/6]`
 - 长耗时进度：
   - `SEC fundamentals: x/y (z%)`
   - `Alpaca news: x/y (z%)`
@@ -173,6 +264,9 @@ python run_scan.py --report-output outputs/run_report.md
 - `drawdown_from_52w_high`：距 52 周高点回撤比例（越大越接近低位）
 - `range_position_52w`：当前价格在 52 周高低区间中的相对位置（越小越接近低位）
 - `price_to_sma200`：当前价格 / 200 日均价（越小越偏低）
+- `days_below_sma200`：最近连续低于 200 日均线的天数（越大越“压在均线下方”）
+- `return_20d`：最近 20 日涨跌幅（用于限制过快反弹）
+- `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
 - `market_cap` / `revenue` / `net_income`：市值与基本面
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
