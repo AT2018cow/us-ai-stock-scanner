@@ -55,6 +55,10 @@
   "min_net_income": 1000000.0,
   "max_ps": null,
   "max_pe": null,
+  "price_lookback_days": 420,
+  "min_drawdown_from_52w_high": null,
+  "max_range_position_52w": null,
+  "max_price_to_sma200": null,
   "enabled_exchanges": [
     "NYSE",
     "NASDAQ",
@@ -62,6 +66,7 @@
     "ARCA",
     "BATS"
   ],
+  "enable_sic_prefix_filters": false,
   "include_sic_prefixes": [],
   "exclude_sic_prefixes": [],
   "include_sic_codes": [],
@@ -75,6 +80,9 @@
       "min_enabler_score": 0.0,
       "min_ps_discount": 0.15,
       "min_pe_discount": 0.1,
+      "min_drawdown_from_52w_high": 0.2,
+      "max_range_position_52w": 0.7,
+      "max_price_to_sma200": 1.1,
       "include_sic_prefixes": [],
       "exclude_sic_prefixes": [],
       "include_sic_codes": [],
@@ -95,6 +103,9 @@
       "min_enabler_score": 0.05,
       "min_ps_discount": 0.0,
       "min_pe_discount": -0.1,
+      "min_drawdown_from_52w_high": 0.15,
+      "max_range_position_52w": 0.8,
+      "max_price_to_sma200": 1.15,
       "include_sic_prefixes": [
         "13",
         "16",

@@ -48,11 +48,14 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`ai_keywords`、`enabler_keywords`、`news_lookback_days`
 - 估值：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
+- 价格维度（低谷判断）：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
-- 行业过滤：`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
+- 行业过滤：`enable_sic_prefix_filters`、`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`、`pre_news_top_liquid_symbols`
+
+说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
 
 ## 4. 运行方式
 
@@ -68,8 +71,10 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 python run_scan.py --max-symbols 300 --top-n 30
 ```
 
+说明：`--max-symbols` 会在全市场候选里按 `dollar_volume`（快照成交额）降序取样，避免按原始顺序截断带来的样本偏差。
+
 运行时终端会持续打印：
-- 当前阶段（`[1/5]...[5/5]`）
+- 当前阶段（`[1/6]...[6/6]`）
 - 耗时与状态时间戳
 - SEC/News 长阶段的进度百分比
 - 失败时的错误类型与 traceback
@@ -165,6 +170,9 @@ python run_scan.py --report-output outputs/run_report.md
 - `channel`：候选通道（`core_ai` 或 `ai_enabler`）
 - `symbol` / `company_name`：股票代码与公司名
 - `price` / `dollar_volume`：价格与日美元成交额
+- `drawdown_from_52w_high`：距 52 周高点回撤比例（越大越接近低位）
+- `range_position_52w`：当前价格在 52 周高低区间中的相对位置（越小越接近低位）
+- `price_to_sma200`：当前价格 / 200 日均价（越小越偏低）
 - `market_cap` / `revenue` / `net_income`：市值与基本面
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值

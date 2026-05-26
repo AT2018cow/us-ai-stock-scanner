@@ -44,6 +44,9 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "signal_logic": "ai_only",
             "min_ps_discount": 0.15,
             "min_pe_discount": 0.10,
+            "min_drawdown_from_52w_high": None,
+            "max_range_position_52w": None,
+            "max_price_to_sma200": None,
             "include_sic_prefixes": [],
             "exclude_sic_prefixes": [],
             "include_sic_codes": [],
@@ -62,6 +65,9 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "signal_logic": "ai_or_enabler",
             "min_ps_discount": 0.05,
             "min_pe_discount": 0.00,
+            "min_drawdown_from_52w_high": None,
+            "max_range_position_52w": None,
+            "max_price_to_sma200": None,
             "include_sic_prefixes": ["13", "16", "17", "35", "36", "37", "38", "48", "49", "73", "87"],
             "exclude_sic_prefixes": [],
             "include_sic_codes": [],
@@ -169,9 +175,14 @@ class ScanConfig:
     max_pe: float | None = None
     min_ps_discount: float = 0.15
     min_pe_discount: float = 0.10
+    price_lookback_days: int = 420
+    min_drawdown_from_52w_high: float | None = None
+    max_range_position_52w: float | None = None
+    max_price_to_sma200: float | None = None
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
+    enable_sic_prefix_filters: bool = False
     include_sic_prefixes: list[str] = field(default_factory=list)
     exclude_sic_prefixes: list[str] = field(default_factory=list)
     include_sic_codes: list[str] = field(default_factory=list)
@@ -467,6 +478,39 @@ class AlpacaClient:
         data = resp.json()
         return data.get("news", data if isinstance(data, list) else [])
 
+    def get_daily_bars(
+        self, symbols: list[str], start_iso: str, chunk_size: int
+    ) -> dict[str, list[dict[str, Any]]]:
+        bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for i in range(0, len(symbols), chunk_size):
+            batch = symbols[i : i + chunk_size]
+            page_token: str | None = None
+            while True:
+                params: dict[str, Any] = {
+                    "symbols": ",".join(batch),
+                    "timeframe": "1Day",
+                    "start": start_iso,
+                    "limit": 10000,
+                    "feed": self.feed,
+                    "adjustment": "raw",
+                }
+                if page_token:
+                    params["page_token"] = page_token
+                url = f"{self.data_endpoint}/v2/stocks/bars"
+                resp = self._get(url, params=params)
+                payload = resp.json()
+                bars = payload.get("bars", {}) if isinstance(payload, dict) else {}
+                if isinstance(bars, dict):
+                    for symbol, rows in bars.items():
+                        if not isinstance(rows, list):
+                            continue
+                        bars_by_symbol.setdefault(symbol, []).extend(rows)
+                page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+                if not page_token:
+                    break
+            time.sleep(0.05)
+        return bars_by_symbol
+
 
 class SecClient:
     def __init__(
@@ -599,6 +643,68 @@ def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float |
     return (float(price) if price is not None else None, dollar_volume)
 
 
+def price_dimension_from_bars(
+    price: float | None, bars: list[dict[str, Any]]
+) -> dict[str, float | None]:
+    if price is None or not bars:
+        return {
+            "drawdown_from_52w_high": None,
+            "range_position_52w": None,
+            "price_to_sma200": None,
+        }
+
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    # Ensure a stable chronological order before computing trailing statistics.
+    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
+    for row in sorted_bars:
+        try:
+            high = float(row.get("h")) if row.get("h") is not None else None
+            low = float(row.get("l")) if row.get("l") is not None else None
+            close = float(row.get("c")) if row.get("c") is not None else None
+        except (TypeError, ValueError):
+            continue
+        if high is not None:
+            highs.append(high)
+        if low is not None:
+            lows.append(low)
+        if close is not None:
+            closes.append(close)
+
+    if not highs or not lows:
+        return {
+            "drawdown_from_52w_high": None,
+            "range_position_52w": None,
+            "price_to_sma200": None,
+        }
+
+    high_52w = max(highs)
+    low_52w = min(lows)
+
+    drawdown = None
+    if high_52w > 0:
+        drawdown = (price / high_52w)
+        drawdown = 1.0 - drawdown
+
+    range_pos = None
+    if high_52w > low_52w:
+        range_pos = (price - low_52w) / (high_52w - low_52w)
+
+    price_to_sma200 = None
+    if closes:
+        window = closes[-200:] if len(closes) >= 200 else closes
+        sma200 = float(np.mean(window)) if window else None
+        if sma200 and sma200 > 0:
+            price_to_sma200 = price / sma200
+
+    return {
+        "drawdown_from_52w_high": round(drawdown, 6) if drawdown is not None else None,
+        "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
+        "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
+    }
+
+
 def theme_score_from_news(news: list[dict[str, Any]], keywords: list[str]) -> float:
     if not news:
         return 0.0
@@ -668,8 +774,12 @@ def passes_sic_filters(
 def resolve_channel_profile(
     config: ScanConfig, channel_name: str, profile: dict[str, Any]
 ) -> dict[str, Any]:
-    include_prefixes = merge_unique(config.include_sic_prefixes, profile.get("include_sic_prefixes", []))
-    exclude_prefixes = merge_unique(config.exclude_sic_prefixes, profile.get("exclude_sic_prefixes", []))
+    if config.enable_sic_prefix_filters:
+        include_prefixes = merge_unique(config.include_sic_prefixes, profile.get("include_sic_prefixes", []))
+        exclude_prefixes = merge_unique(config.exclude_sic_prefixes, profile.get("exclude_sic_prefixes", []))
+    else:
+        include_prefixes = []
+        exclude_prefixes = []
     include_codes = merge_unique(config.include_sic_codes, profile.get("include_sic_codes", []))
     exclude_codes = merge_unique(config.exclude_sic_codes, profile.get("exclude_sic_codes", []))
 
@@ -680,6 +790,21 @@ def resolve_channel_profile(
         "min_enabler_score": float(profile.get("min_enabler_score", 0.0)),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
+        "min_drawdown_from_52w_high": (
+            None
+            if profile.get("min_drawdown_from_52w_high", config.min_drawdown_from_52w_high) is None
+            else float(profile.get("min_drawdown_from_52w_high", config.min_drawdown_from_52w_high))
+        ),
+        "max_range_position_52w": (
+            None
+            if profile.get("max_range_position_52w", config.max_range_position_52w) is None
+            else float(profile.get("max_range_position_52w", config.max_range_position_52w))
+        ),
+        "max_price_to_sma200": (
+            None
+            if profile.get("max_price_to_sma200", config.max_price_to_sma200) is None
+            else float(profile.get("max_price_to_sma200", config.max_price_to_sma200))
+        ),
         "include_sic_prefixes": include_prefixes,
         "exclude_sic_prefixes": exclude_prefixes,
         "include_sic_codes": include_codes,
@@ -756,8 +881,6 @@ def collect_candidates(
     merged = merged[["symbol", "name", "exchange", "cik", "company_name"]].drop_duplicates(
         subset=["symbol"]
     )
-    if config.max_symbols:
-        merged = merged.head(config.max_symbols)
 
     symbols = merged["symbol"].tolist()
     snapshots = alpaca.get_snapshots(symbols, config.chunk_size)
@@ -768,7 +891,15 @@ def collect_candidates(
             {"symbol": symbol, "price": price, "dollar_volume": dollar_volume}
         )
     df_px = pd.DataFrame(px_rows)
-    return merged.merge(df_px, on="symbol", how="left")
+    out = merged.merge(df_px, on="symbol", how="left")
+    if config.max_symbols:
+        # Use liquidity-aware sampling instead of dataframe order to avoid biased subsets.
+        out = out.sort_values(
+            by=["dollar_volume", "symbol"],
+            ascending=[False, True],
+            na_position="last",
+        ).head(config.max_symbols)
+    return out
 
 
 def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any]:
@@ -902,6 +1033,27 @@ def build_filter_steps(
         steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= config.max_ps))
     if config.max_pe is not None:
         steps.append(("max_pe", lambda frame: frame["pe"].fillna(np.inf) <= config.max_pe))
+    if cp["min_drawdown_from_52w_high"] is not None:
+        steps.append(
+            (
+                "min_drawdown_from_52w_high",
+                lambda frame: frame["drawdown_from_52w_high"].fillna(-1) >= cp["min_drawdown_from_52w_high"],
+            )
+        )
+    if cp["max_range_position_52w"] is not None:
+        steps.append(
+            (
+                "max_range_position_52w",
+                lambda frame: frame["range_position_52w"].fillna(np.inf) <= cp["max_range_position_52w"],
+            )
+        )
+    if cp["max_price_to_sma200"] is not None:
+        steps.append(
+            (
+                "max_price_to_sma200",
+                lambda frame: frame["price_to_sma200"].fillna(np.inf) <= cp["max_price_to_sma200"],
+            )
+        )
 
     if cp["signal_logic"] == "ai_or_enabler":
         steps.append(
@@ -1278,7 +1430,7 @@ def run_scan(
     log_status(started_at, "INFO", f"Ranked output target: {paths['ranked_csv']}")
     alpaca, sec, network_monitor = load_runtime_settings(config)
 
-    log_status(started_at, "INFO", "[1/5] Loading tradable US equities from Alpaca.")
+    log_status(started_at, "INFO", "[1/6] Loading tradable US equities from Alpaca.")
     df = collect_candidates(alpaca, sec, config)
     merged_count = len(df)
     log_status(started_at, "INFO", f"Merged symbols: {merged_count}")
@@ -1291,12 +1443,24 @@ def run_scan(
     prefilter_count = len(df)
     log_status(started_at, "INFO", f"After price/liquidity prefilter: {prefilter_count}")
 
-    log_status(started_at, "INFO", "[2/5] Fetching SEC fundamentals (cached locally).")
+    log_status(started_at, "INFO", "[2/6] Computing price-dimension features.")
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    bars_start_iso = (datetime.now(timezone.utc) - timedelta(days=config.price_lookback_days)).isoformat()
+    symbols_for_bars = df["symbol"].dropna().astype(str).tolist()
+    bars_map = alpaca.get_daily_bars(symbols_for_bars, bars_start_iso, config.chunk_size)
+    price_feature_rows: list[dict[str, Any]] = []
+    for row in df.itertuples(index=False):
+        features = price_dimension_from_bars(row.price, bars_map.get(row.symbol, []))
+        price_feature_rows.append({"symbol": row.symbol, **features})
+    df_price_features = pd.DataFrame(price_feature_rows)
+    df = df.merge(df_price_features, on="symbol", how="left")
+
+    log_status(started_at, "INFO", "[3/6] Fetching SEC fundamentals (cached locally).")
     fundamentals = collect_fundamentals(df, sec, config)
     df = df.merge(fundamentals, on="symbol", how="left")
     log_status(started_at, "INFO", "SEC fundamentals merge complete.")
 
-    log_status(started_at, "INFO", "[3/5] Computing valuation and pre-news funnel.")
+    log_status(started_at, "INFO", "[4/6] Computing valuation and pre-news funnel.")
     for col in ["price", "dollar_volume", "shares_outstanding", "revenue", "net_income"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
@@ -1329,7 +1493,7 @@ def run_scan(
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
     log_status(started_at, "INFO", f"News fetch symbol count: {len(pre_news_symbols)}")
 
-    log_status(started_at, "INFO", "[4/5] Fetching Alpaca news for prefiltered symbols.")
+    log_status(started_at, "INFO", "[5/6] Fetching Alpaca news for prefiltered symbols.")
     news_scores = collect_news_scores(pre_news_symbols, alpaca, config)
     df = df.merge(news_scores, on="symbol", how="left")
     df["ai_score"] = pd.to_numeric(df["ai_score"], errors="coerce").fillna(0.0)
@@ -1391,6 +1555,9 @@ def run_scan(
         "sic_description",
         "price",
         "dollar_volume",
+        "drawdown_from_52w_high",
+        "range_position_52w",
+        "price_to_sma200",
         "market_cap",
         "revenue",
         "net_income",
@@ -1423,7 +1590,7 @@ def run_scan(
         channel_df.to_csv(ch_out, index=False, columns=cols + ["triage_label"])
         log_status(started_at, "INFO", f"Channel output ({channel_name}): {ch_out}")
 
-    log_status(started_at, "INFO", "[5/5] Finalizing outputs.")
+    log_status(started_at, "INFO", "[6/6] Finalizing outputs.")
     log_status(started_at, "INFO", f"Total ranked rows: {len(ranked)}")
     for channel_name, count in filtered_counts.items():
         log_status(started_at, "INFO", f"{channel_name} filtered candidates: {count}")
