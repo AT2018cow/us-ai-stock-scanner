@@ -1,0 +1,150 @@
+{
+  "top_n": 50,
+  "top_n_per_channel": 30,
+  "max_symbols": null,
+  "max_workers": 8,
+  "chunk_size": 200,
+  "request_timeout_sec": 20,
+  "news_lookback_days": 180,
+  "news_limit_per_symbol": 50,
+  "ai_keywords": [
+    "artificial intelligence",
+    "machine learning",
+    "generative ai",
+    "large language model",
+    "llm",
+    "ai inference",
+    "ai training",
+    "neural network",
+    "computer vision",
+    "natural language processing",
+    "datacenter gpu",
+    "ai accelerator",
+    "automation software"
+  ],
+  "enabler_keywords": [
+    "data center",
+    "datacenter",
+    "hyperscale",
+    "power generation",
+    "backup power",
+    "prime power",
+    "grid",
+    "transmission",
+    "substation",
+    "interconnection",
+    "nuclear",
+    "small modular reactor",
+    "smr",
+    "gas turbine",
+    "cooling",
+    "generator set",
+    "genset",
+    "backlog",
+    "book-to-bill",
+    "capital expenditure",
+    "capex"
+  ],
+  "min_price": 1.0,
+  "min_market_cap": 100000000.0,
+  "max_market_cap": null,
+  "min_dollar_volume": 1000000.0,
+  "require_positive_revenue": true,
+  "require_positive_net_income": true,
+  "min_revenue": 10000000.0,
+  "min_net_income": 1000000.0,
+  "max_ps": null,
+  "max_pe": null,
+  "enabled_exchanges": [
+    "NYSE",
+    "NASDAQ",
+    "AMEX",
+    "ARCA",
+    "BATS"
+  ],
+  "include_sic_prefixes": [],
+  "exclude_sic_prefixes": [],
+  "include_sic_codes": [],
+  "exclude_sic_codes": [
+    "6770"
+  ],
+  "channel_profiles": {
+    "core_ai": {
+      "signal_logic": "ai_only",
+      "min_ai_score": 0.02,
+      "min_enabler_score": 0.0,
+      "min_ps_discount": 0.15,
+      "min_pe_discount": 0.1,
+      "include_sic_prefixes": [],
+      "exclude_sic_prefixes": [],
+      "include_sic_codes": [],
+      "exclude_sic_codes": [
+        "6770"
+      ],
+      "score_weights": {
+        "ps_discount": 0.4,
+        "pe_discount": 0.3,
+        "ai_score": 0.25,
+        "enabler_score": 0.0,
+        "liquidity": 0.05
+      }
+    },
+    "ai_enabler": {
+      "signal_logic": "ai_or_enabler",
+      "min_ai_score": 0.0,
+      "min_enabler_score": 0.05,
+      "min_ps_discount": 0.0,
+      "min_pe_discount": -0.1,
+      "include_sic_prefixes": [
+        "13",
+        "16",
+        "17",
+        "35",
+        "36",
+        "37",
+        "38",
+        "48",
+        "49",
+        "73",
+        "87"
+      ],
+      "exclude_sic_prefixes": [],
+      "include_sic_codes": [],
+      "exclude_sic_codes": [
+        "6770"
+      ],
+      "score_weights": {
+        "ps_discount": 0.3,
+        "pe_discount": 0.2,
+        "ai_score": 0.15,
+        "enabler_score": 0.3,
+        "liquidity": 0.05
+      }
+    }
+  },
+  "alpaca_max_requests_per_sec": 2.5,
+  "sec_max_requests_per_sec": 5.0,
+  "pre_news_top_liquid_symbols": 1200,
+  "triage_rules": {
+    "keep": {
+      "core_ai": {
+        "min_composite_score": 0.5,
+        "min_ai_score": 0.1,
+        "min_ps_discount": 0.0,
+        "min_pe_discount": 0.0
+      },
+      "ai_enabler": {
+        "min_composite_score": 0.45,
+        "min_enabler_score": 0.05,
+        "min_ps_discount": 0.0,
+        "min_pe_discount": -0.1
+      }
+    },
+    "drop": {
+      "max_composite_score": 0.3,
+      "max_ai_score": 0.02,
+      "max_enabler_score": 0.02,
+      "require_both_value_premium": true
+    }
+  }
+}
