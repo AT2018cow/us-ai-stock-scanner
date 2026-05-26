@@ -185,8 +185,9 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 
 策略执行顺序（用于降限速风险）：
 - 先做价格/流动性预筛，再请求 SEC 基本面
-- 基于估值和行业做 pre-news 候选池
-- 仅对 pre-news 候选池请求 Alpaca News
+- 基于低位价值逻辑构建 low-value pre-news 候选池
+- 基于趋势逻辑构建 industry-trend pre-news 候选池
+- 对两个池子的并集请求 Alpaca News（避免趋势清单漏数）
 
 
 先小样本验证（例如 300 只）：

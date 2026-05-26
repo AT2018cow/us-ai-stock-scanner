@@ -1308,6 +1308,33 @@ def collect_pre_news_symbols(
     return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
 
 
+def collect_pre_news_symbols_for_trend(
+    df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
+) -> tuple[list[str], dict[str, int]]:
+    symbol_set: set[str] = set()
+    channel_counts: dict[str, int] = {}
+    for channel_name, channel_profile in channel_profiles.items():
+        trend_steps, _ = build_industry_trend_steps(config, channel_name, channel_profile)
+        # Remove trend signal + SIC filter for pre-news pool construction.
+        pre_steps = [step for step in trend_steps if not step[0].startswith("trend_signal_") and step[0] != "trend_min_ai_score" and step[0] != "sic_filter"]
+        pre_filtered, _ = apply_filters_with_diagnostics(df, pre_steps)
+        channel_counts[channel_name] = len(pre_filtered)
+        if "symbol" in pre_filtered.columns and not pre_filtered.empty:
+            symbol_set.update(pre_filtered["symbol"].dropna().astype(str).tolist())
+
+    if not symbol_set:
+        return [], channel_counts
+
+    candidates = df[df["symbol"].isin(symbol_set)].copy()
+    candidates["dollar_volume"] = pd.to_numeric(candidates["dollar_volume"], errors="coerce").fillna(0)
+    candidates = candidates.sort_values("dollar_volume", ascending=False)
+
+    if config.pre_news_top_liquid_symbols is not None:
+        candidates = candidates.head(config.pre_news_top_liquid_symbols)
+
+    return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
+
+
 def summarize_first_fail_reasons(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> pd.DataFrame:
@@ -1664,13 +1691,20 @@ def run_scan(
     channel_profiles = config.channel_profiles or {"core_ai": {}}
 
     pre_news_symbols, pre_news_counts = collect_pre_news_symbols(df, config, channel_profiles)
+    trend_pre_news_symbols, trend_pre_news_counts = collect_pre_news_symbols_for_trend(
+        df, config, channel_profiles
+    )
+    all_pre_news_symbols = sorted(set(pre_news_symbols).union(set(trend_pre_news_symbols)))
     log_status(started_at, "INFO", "Pre-news candidates by channel:")
     for channel_name, count in pre_news_counts.items():
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
-    log_status(started_at, "INFO", f"News fetch symbol count: {len(pre_news_symbols)}")
+    log_status(started_at, "INFO", "Trend pre-news candidates by channel:")
+    for channel_name, count in trend_pre_news_counts.items():
+        log_status(started_at, "INFO", f"  {channel_name}: {count}")
+    log_status(started_at, "INFO", f"News fetch symbol count: {len(all_pre_news_symbols)}")
 
     log_status(started_at, "INFO", "[5/6] Fetching Alpaca news for prefiltered symbols.")
-    news_scores = collect_news_scores(pre_news_symbols, alpaca, config)
+    news_scores = collect_news_scores(all_pre_news_symbols, alpaca, config)
     df = df.merge(news_scores, on="symbol", how="left")
     df["ai_score"] = pd.to_numeric(df["ai_score"], errors="coerce").fillna(0.0)
     df["enabler_score"] = pd.to_numeric(df["enabler_score"], errors="coerce").fillna(0.0)
@@ -1850,7 +1884,7 @@ def run_scan(
         channel_profiles=channel_profiles,
         filtered_counts=filtered_counts,
         pre_news_counts=pre_news_counts,
-        pre_news_symbol_count=len(pre_news_symbols),
+        pre_news_symbol_count=len(all_pre_news_symbols),
         merged_count=merged_count,
         prefilter_count=prefilter_count,
         paths=paths,
