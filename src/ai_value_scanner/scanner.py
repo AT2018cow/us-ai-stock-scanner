@@ -451,9 +451,9 @@ class AlpacaClient:
                 self.monitor.record_exception("alpaca", exc)
             raise
 
-    def get_assets(self) -> list[dict[str, Any]]:
+    def get_assets(self, status: str = "active") -> list[dict[str, Any]]:
         url = f"{self.api_endpoint}/v2/assets"
-        params = {"status": "active", "asset_class": "us_equity"}
+        params = {"status": status, "asset_class": "us_equity"}
         resp = self._get(url, params=params)
         return resp.json()
 
@@ -477,7 +477,13 @@ class AlpacaClient:
             time.sleep(0.05)
         return result
 
-    def get_news(self, symbol: str, start_iso: str, limit: int) -> list[dict[str, Any]]:
+    def get_news(
+        self,
+        symbol: str,
+        start_iso: str,
+        limit: int,
+        end_iso: str | None = None,
+    ) -> list[dict[str, Any]]:
         url = f"{self.data_endpoint}/v1beta1/news"
         params = {
             "symbols": symbol,
@@ -485,6 +491,8 @@ class AlpacaClient:
             "limit": limit,
             "sort": "desc",
         }
+        if end_iso:
+            params["end"] = end_iso
         resp = self._get(url, params=params)
         data = resp.json()
         return data.get("news", data if isinstance(data, list) else [])
@@ -944,9 +952,9 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
 
 
 def collect_candidates(
-    alpaca: AlpacaClient, sec: SecClient, config: ScanConfig
+    alpaca: AlpacaClient, sec: SecClient, config: ScanConfig, asset_status: str = "active"
 ) -> pd.DataFrame:
-    assets = alpaca.get_assets()
+    assets = alpaca.get_assets(status=asset_status)
     df_assets = pd.DataFrame(assets)
     df_assets = df_assets[df_assets["tradable"] == True].copy()
     if config.enabled_exchanges:
