@@ -447,3 +447,70 @@ python run_backtest.py --mode historical_replay --scan-config config.production.
 - SEC EDGAR API（免费，无需密钥）
 
 若你需要更高质量基本面，可额外接入第三方财务数据 API（例如更标准化的 TTM、前瞻一致预期、分行业估值基准）。
+
+## 12. 快速上手与每周执行清单
+
+最简使用流程：
+
+1. 初始化环境
+
+```bash
+cd /home/ss/codex_ws/stock
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+```
+
+2. 配置 `.env`（必填）
+
+```dotenv
+ALPACA_API_ENDPOINT=
+ALPACA_API_KEY=
+ALPACA_API_SECRET=
+SEC_USER_AGENT=ai-value-scanner your_email@example.com
+```
+
+3. 小样本冒烟（先确认流程）
+
+```bash
+python run_scan.py --config config.production.json --max-symbols 300 --top-n 30
+```
+
+4. 全市场扫描（生产）
+
+```bash
+python run_scan.py --config config.production.json
+```
+
+5. 历史回测（默认稳定口径）
+
+```bash
+python run_backtest.py --mode historical_replay --scan-config config.production.json
+```
+
+建议的固定节奏：
+
+- 每周一次全市场扫描（建议周末或周一盘前）
+
+```bash
+python run_scan.py --config config.production.json
+```
+
+- 每个交易日一次快刷（观察 watch/momentum 变化）
+
+```bash
+python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
+```
+
+- 每周一次策略体检回测（建议关闭扰动以缩短时长）
+
+```bash
+python run_backtest.py \
+  --mode historical_replay \
+  --scan-config config.production.json \
+  --theme-source rules_proxy \
+  --no-perturbation \
+  --replay-asset-status active \
+  --replay-max-symbols 800
+```
