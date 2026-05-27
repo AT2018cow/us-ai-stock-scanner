@@ -63,6 +63,19 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 
 说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
 
+### 3.4 生产参数固化（v1）
+
+生产参数基线放在 `config.production.json`，用途是稳定运行，不随实验来回波动。  
+当前冻结原则：
+- 保留三清单并行（`Low-Value` / `Industry-Trend` / `Momentum`）
+- 保持 `enable_sic_prefix_filters=false`（默认不叠加 SIC 前缀）
+- 采用已通过全市场回归验证的平衡阈值（可稳定产出且不过度放宽）
+- 将高纯度/高收紧参数留在实验配置中，不直接进入生产默认
+
+建议：
+- 生产运行默认使用 `config.production.json`
+- `config.filters.json` 继续作为策略实验配置
+
 ### 3.1 价格位置/低位识别参数
 
 价格位置参数分两层：
@@ -245,13 +258,13 @@ python run_scan.py --report-output outputs/run_report.md
 - `weekly_full`（每周 1 次，全市场）
 
 ```bash
-.venv/bin/python run_scan.py --config config.filters.json
+.venv/bin/python run_scan.py --config config.production.json
 ```
 
 - `daily_watch_refresh`（每个交易日 1 次，快速复核）
 
 ```bash
-.venv/bin/python run_scan.py --config config.filters.json --max-symbols 1200 --top-n 30
+.venv/bin/python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
 ```
 
 建议时点：
@@ -349,7 +362,82 @@ python run_scan.py --report-output outputs/run_report.md
 - `enabler_score`：数据中心/电力/基建/核能等受益关键词命中得分
 - `core_ai` 和 `ai_enabler` 使用各自权重（`channel_profiles.<channel>.score_weights`）
 
-## 10. 你可能还想开通的服务（可选）
+## 10. 回测模块（MVP+）
+
+回测入口：
+
+```bash
+python run_backtest.py --mode historical_replay --scan-config config.production.json
+```
+
+常用参数：
+- `--mode historical_replay`（历史重放）或 `--mode existing_runs`（仅重放已有扫描文件）
+- `--outputs-dir outputs`
+- `--list-types low_value,industry_trend,momentum`
+- `--top-n 10`
+- `--per-channel-top-n` / `--no-per-channel-top-n`
+- `--horizons 20,60,120`
+- `--start-date 2024-01-01 --end-date 2026-05-26`
+- `--rebalance-frequency weekly|monthly`
+- `--replay-max-symbols 800`
+- `--replay-asset-status all|active|inactive`
+- `--enable-perturbation` / `--no-perturbation`
+- `--theme-source rules_proxy|historical_news|latest_scan|zero`
+- `--historical-news-lookback-days 180`
+- `--historical-news-limit-per-symbol 80`
+- `--delist-return-assumption -0.55`
+- `--delist-detection-buffer-days 7`
+- `--max-runs 60`（仅 `existing_runs` 模式）
+- `--benchmark-symbols QQQ,SOXX,XLI,XLU`
+- `--trading-cost-bps 15`
+- `--dry-run`（仅构建信号，不拉取价格）
+
+输出文件（默认 `outputs/backtest_<UTC>_*`）：
+- `*_events.csv`：每次信号事件在各持有期的组合收益
+- `*_summary.csv`：按清单类型与持有期聚合的统计指标（含 `n_events_total` 与 `n_events_valid`）
+- `*_benchmarks.csv`：对应基准收益（默认含 `QQQ`）
+- `*_segments.csv`：分段统计（如 `2023/2024/2025/2026YTD`）
+- `*_report.md`：简版回测报告
+- `*_report_network.json`：回测阶段网络统计
+
+`historical_replay` 定义：
+- 在历史调仓日（周/月）重建当日横截面并生成三清单信号
+- 从信号日后的下一个交易日开仓，持有 `20/60/120` 个交易日
+- 组合收益默认等权，支持交易成本（双边）
+- 可输出 `base/loose/strict` 参数扰动结果用于稳健性比较
+- 默认 `theme_source=rules_proxy`：基于公司元数据（名称/SIC描述）关键词静态打分，稳定可复现
+- 支持 `theme_source=historical_news`：按每个调仓日回看历史新闻窗口打分（可选实验模式）
+- 支持退市收益假设：当标的在回测窗口结束前明显提前消失，可按 `delist_return_assumption` 计入
+
+`existing_runs` 定义：
+- 回测对象是已有扫描结果文件（`ai_value_scan_*_ranked*.csv`）
+- 每个扫描时点都视为一次“决策点”
+
+重要局限：
+- `historical_replay` 仍是近似 PIT，不等价于 CRSP/Compustat 级无偏研究库
+- 即使使用 `replay-asset-status=all`，历史可交易池与真实当时成分仍可能存在偏差
+- `theme_source=latest_scan` 仍有前视风险；不建议作为主评估口径
+- `theme_source=historical_news` 受新闻可得性和文本噪声影响，稳定性弱于 `rules_proxy`
+- 退市收益假设是模型参数，不是逐笔真实退市结算
+
+后续优化清单（已确认，暂不在本次实现）：
+1. 组合净值回放：
+   - 从“事件平均收益”升级为“可执行组合回测”（固定资金、按调仓持仓、空仓处理、持仓延续）。
+   - 增加组合级指标：`CAGR`、`MDD`、`Sharpe`、`Calmar`、回撤区间统计。
+2. 生存者偏差控制：
+   - 现有 `replay-asset-status=active` 可能高估效果。
+   - 优先切到 `all` + 更严格退市收益处理；后续可接入历史成分库（如 CRSP/Norgate/Polygon）。
+3. 交易可实现性建模：
+   - 将交易成本从固定 bps 扩展为分层滑点模型（按市值/流动性分档）。
+   - 引入容量约束（如单票成交不超过 ADV 某比例）。
+4. 样本覆盖与统计稳健性：
+   - 为回测单独配置“覆盖优先”参数，保证每期最小持仓数量。
+   - 增加滚动分段统计与 block bootstrap 置信区间，检验稳健性。
+5. 反前视审计增强：
+   - 对公司名称/SIC 等元数据建立 as-of 快照，减少静态元数据引入的潜在前视偏差。
+   - 将该审计过程纳入回测报告输出。
+
+## 11. 你可能还想开通的服务（可选）
 
 当前代码已使用：
 - Alpaca Trading/Data API
