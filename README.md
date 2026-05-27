@@ -27,6 +27,7 @@ PYTHONPATH=src python run_scan.py --help
 ALPACA_API_ENDPOINT=
 ALPACA_API_KEY=
 ALPACA_API_SECRET=
+SEC_USER_AGENT=ai-value-scanner your_email@example.com
 ```
 
 可选项：
@@ -34,7 +35,6 @@ ALPACA_API_SECRET=
 ```dotenv
 ALPACA_DATA_ENDPOINT=https://data.alpaca.markets
 ALPACA_FEED=iex
-SEC_USER_AGENT=ai-value-scanner your_email@example.com
 ```
 
 说明：
@@ -391,6 +391,9 @@ python run_backtest.py --mode historical_replay --scan-config config.production.
 - `--benchmark-symbols QQQ,SOXX,XLI,XLU`
 - `--trading-cost-bps 15`
 - `--dry-run`（仅构建信号，不拉取价格）
+
+说明：
+- `--outputs-dir` 同时用于回测产物输出目录；在 `existing_runs` 模式下，也用于读取历史 `ai_value_scan_*` 文件。
 
 输出文件（默认 `outputs/backtest_<UTC>_*`）：
 - `*_events.csv`：每次信号事件在各持有期的组合收益

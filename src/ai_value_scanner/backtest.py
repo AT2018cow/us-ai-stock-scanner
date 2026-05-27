@@ -1550,7 +1550,7 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     scan_cfg = load_config(cfg.scan_config_path)
     events_path, summary_path, benchmarks_path, segments_path, report_path = resolve_output_paths(
         cfg.output_prefix,
-        Path(scan_cfg.output_dir),
+        Path(cfg.outputs_dir),
         cfg.mode,
     )
 
