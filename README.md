@@ -43,7 +43,7 @@ ALPACA_FEED=iex
 
 ## 3. 参数化筛选配置
 
-默认参数在 `config.filters.json`，可按策略自由修改，核心维度包括：
+默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
@@ -108,6 +108,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 当前 watchlist 机制已定稿，后续按此作为基线：
 - 扫描端只使用本地 `data/ai_watchlist.csv`，不自动刷新。
 - 扫描前先加载 watchlist，并将股票 universe 收缩到 watchlist 符号（不再先扫描全市场再过滤）。
+- 已移除 `use_ai_watchlist_only` 开关；扫描逻辑固定为 watchlist-only。
 - watchlist schema 严格校验：`symbol,bucket,etf_count,etfs,enabled,updated_utc`。
 - 已移除 `source` 字段与旧 schema 兼容路径（项目未上线前主动去除遗留逻辑）。
 - `watchlist_etf_count` 与 `watchlist_etfs` 使用统一口径：`etf_count = 去重后 etfs 数量`。
@@ -123,12 +124,12 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 建议：
 - 生产运行默认使用 `config.production.json`
-- `config.filters.json` 继续作为策略实验配置
+- 如需实验参数，建议从 `config.production.json` 复制出临时配置文件再运行。
 
 ### 3.1 价格位置/低位识别参数
 
 价格位置参数分两层：
-- 全局层（`config.filters.json` 顶层）：给所有通道提供默认值
+- 全局层（`config.production.json` 顶层）：给所有通道提供默认值
 - 通道层（`channel_profiles.<channel>`）：可覆盖全局默认值
 
 参数说明：
@@ -212,7 +213,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - 第 3 步：如果依赖新数据源/新指标，在数据准备阶段计算新列（如 `run_scan` 或相应 helper）
 - 第 4 步：在 `build_filter_steps` 增加筛选条件（`lambda frame: ...`）
 - 第 5 步：如需参与排序，在 `score_and_rank` 的标准化与权重中接入
-- 第 6 步：在 `config.filters.json` 增加参数键，并给出初始策略值
+- 第 6 步：在配置文件中增加参数键，并给出初始策略值
 - 第 7 步：在 README 的“参数说明”和“输出字段说明”同步更新
 
 建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑 watchlist 全量。
@@ -262,7 +263,7 @@ python run_scan.py
 自定义配置文件：
 
 ```bash
-python run_scan.py --config config.filters.json --top-n 100
+python run_scan.py --config config.production.json --top-n 100
 ```
 
 导出过滤诊断（每一步剔除数量 + 唯一首因统计）：

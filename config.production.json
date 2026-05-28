@@ -5,51 +5,10 @@
   "max_workers": 8,
   "chunk_size": 200,
   "request_timeout_sec": 20,
-  "use_ai_watchlist_only": true,
   "watchlist_csv_path": "data/ai_watchlist.csv",
   "watchlist_fetch_timeout_sec": 20,
   "watchlist_core_etfs": ["AIQ", "BOTZ", "ROBT", "WTAI", "SOXX", "SMH", "IRBO", "ARKQ", "IGV", "IGM", "FDN", "PNQI", "SOXQ", "XSD", "KOMP"],
   "watchlist_enabler_etfs": ["DTCR", "IFRA", "XLI", "XLU", "NLR", "URA", "SKYY", "CLOU", "SRVR", "GRID", "CIBR", "IHAK", "BUG", "PAVE", "IGF", "IXP"],
-  "news_lookback_days": 180,
-  "news_limit_per_symbol": 50,
-  "ai_keywords": [
-    "artificial intelligence",
-    "machine learning",
-    "generative ai",
-    "large language model",
-    "llm",
-    "ai inference",
-    "ai training",
-    "neural network",
-    "computer vision",
-    "natural language processing",
-    "datacenter gpu",
-    "ai accelerator",
-    "automation software"
-  ],
-  "enabler_keywords": [
-    "data center",
-    "datacenter",
-    "hyperscale",
-    "power generation",
-    "backup power",
-    "prime power",
-    "grid",
-    "transmission",
-    "substation",
-    "interconnection",
-    "nuclear",
-    "small modular reactor",
-    "smr",
-    "gas turbine",
-    "cooling",
-    "generator set",
-    "genset",
-    "backlog",
-    "book-to-bill",
-    "capital expenditure",
-    "capex"
-  ],
   "min_price": 1.0,
   "min_market_cap": 100000000.0,
   "max_market_cap": null,
@@ -83,9 +42,6 @@
   ],
   "channel_profiles": {
     "core_ai": {
-      "signal_logic": "ai_only",
-      "momentum_signal_logic": "ai_only",
-      "momentum_min_ai_score": 0.03,
       "momentum_min_return_20d": 0.05,
       "momentum_min_price_to_sma200": 1.03,
       "momentum_max_drawdown_from_52w_high": 0.3,
@@ -95,8 +51,6 @@
         "watchlist_etf_count": 0.25,
         "drawdown_from_52w_high": -0.1
       },
-      "min_ai_score": 0.02,
-      "min_enabler_score": 0.0,
       "min_ps_discount": 0.15,
       "min_pe_discount": 0.1,
       "min_drawdown_from_52w_high": 0.2,
@@ -121,13 +75,6 @@
       }
     },
     "ai_enabler": {
-      "signal_logic": "ai_or_enabler",
-      "trend_signal_logic": "ai_or_enabler",
-      "trend_min_ai_score": 0.03,
-      "trend_min_enabler_score": 0.08,
-      "momentum_signal_logic": "ai_or_enabler",
-      "momentum_min_ai_score": 0.01,
-      "momentum_min_enabler_score": 0.08,
       "momentum_min_return_20d": 0.05,
       "momentum_min_price_to_sma200": 1.05,
       "momentum_max_drawdown_from_52w_high": 0.25,
@@ -137,8 +84,6 @@
         "watchlist_etf_count": 0.25,
         "drawdown_from_52w_high": -0.1
       },
-      "min_ai_score": 0.01,
-      "min_enabler_score": 0.08,
       "min_ps_discount": 0.0,
       "min_pe_discount": -0.1,
       "min_drawdown_from_52w_high": 0.15,
@@ -177,26 +122,21 @@
   },
   "alpaca_max_requests_per_sec": 2.5,
   "sec_max_requests_per_sec": 5.0,
-  "pre_news_top_liquid_symbols": 1200,
   "triage_rules": {
     "keep": {
       "core_ai": {
         "min_composite_score": 0.5,
-        "min_ai_score": 0.1,
         "min_ps_discount": 0.0,
         "min_pe_discount": 0.0
       },
       "ai_enabler": {
         "min_composite_score": 0.45,
-        "min_enabler_score": 0.08,
         "min_ps_discount": 0.0,
         "min_pe_discount": -0.1
       }
     },
     "drop": {
       "max_composite_score": 0.3,
-      "max_ai_score": 0.02,
-      "max_enabler_score": 0.02,
       "require_both_value_premium": true
     }
   }

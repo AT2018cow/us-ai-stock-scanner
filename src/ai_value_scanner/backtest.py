@@ -785,14 +785,8 @@ def perturb_scan_config(base: ScanConfig, scenario: str) -> ScanConfig:
 
     for ch_name, profile in (cfg.channel_profiles or {}).items():
         for key in [
-            "min_ai_score",
-            "min_enabler_score",
             "min_ps_discount",
             "min_pe_discount",
-            "trend_min_ai_score",
-            "trend_min_enabler_score",
-            "momentum_min_ai_score",
-            "momentum_min_enabler_score",
             "momentum_min_return_20d",
             "min_drawdown_from_52w_high",
         ]:

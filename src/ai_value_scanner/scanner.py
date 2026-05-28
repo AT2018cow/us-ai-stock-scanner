@@ -83,9 +83,6 @@ def default_watchlist_enabler_etfs() -> list[str]:
 def default_channel_profiles() -> dict[str, dict[str, Any]]:
     return {
         "core_ai": {
-            "min_ai_score": 0.20,
-            "min_enabler_score": 0.00,
-            "signal_logic": "ai_only",
             "min_ps_discount": 0.15,
             "min_pe_discount": 0.10,
             "min_drawdown_from_52w_high": None,
@@ -108,9 +105,6 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             },
         },
         "ai_enabler": {
-            "min_ai_score": 0.02,
-            "min_enabler_score": 0.08,
-            "signal_logic": "ai_or_enabler",
             "min_ps_discount": 0.05,
             "min_pe_discount": 0.00,
             "min_drawdown_from_52w_high": None,
@@ -163,17 +157,12 @@ class ScanConfig:
     max_workers: int = 8
     alpaca_max_requests_per_sec: float = 2.5
     sec_max_requests_per_sec: float = 5.0
-    pre_news_top_liquid_symbols: int | None = 1200
-    use_ai_watchlist_only: bool = True
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     watchlist_fetch_timeout_sec: int = 20
     watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
     watchlist_enabler_etfs: list[str] = field(default_factory=default_watchlist_enabler_etfs)
     chunk_size: int = 200
     request_timeout_sec: int = 20
-    news_lookback_days: int = 90
-    news_limit_per_symbol: int = 50
-    min_ai_score: float = 0.2
     ai_keywords: list[str] = field(
         default_factory=lambda: [
             "artificial intelligence",
@@ -1080,9 +1069,6 @@ def resolve_channel_profile(
 
     return {
         "name": channel_name,
-        "signal_logic": profile.get("signal_logic", "ai_only"),
-        "min_ai_score": float(profile.get("min_ai_score", config.min_ai_score)),
-        "min_enabler_score": float(profile.get("min_enabler_score", 0.0)),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
         "min_drawdown_from_52w_high": (
@@ -1507,94 +1493,6 @@ def apply_filters_with_diagnostics(
     return out, diagnostics
 
 
-def collect_pre_news_symbols(
-    df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
-) -> tuple[list[str], dict[str, int]]:
-    signal_steps = {"min_ai_score", "signal_ai_or_enabler", "signal_ai_and_enabler"}
-    symbol_set: set[str] = set()
-    channel_counts: dict[str, int] = {}
-
-    for channel_name, channel_profile in channel_profiles.items():
-        full_steps = build_filter_steps(config, channel_name, channel_profile)
-        pre_steps = [step for step in full_steps if step[0] not in signal_steps]
-        pre_filtered, _ = apply_filters_with_diagnostics(df, pre_steps)
-        channel_counts[channel_name] = len(pre_filtered)
-        if "symbol" in pre_filtered.columns and not pre_filtered.empty:
-            symbol_set.update(pre_filtered["symbol"].dropna().astype(str).tolist())
-
-    if not symbol_set:
-        return [], channel_counts
-
-    candidates = df[df["symbol"].isin(symbol_set)].copy()
-    candidates["dollar_volume"] = pd.to_numeric(candidates["dollar_volume"], errors="coerce").fillna(0)
-    candidates = candidates.sort_values("dollar_volume", ascending=False)
-
-    if config.pre_news_top_liquid_symbols is not None:
-        candidates = candidates.head(config.pre_news_top_liquid_symbols)
-
-    return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
-
-
-def collect_pre_news_symbols_for_trend(
-    df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
-) -> tuple[list[str], dict[str, int]]:
-    symbol_set: set[str] = set()
-    channel_counts: dict[str, int] = {}
-    for channel_name, channel_profile in channel_profiles.items():
-        trend_steps, _ = build_industry_trend_steps(config, channel_name, channel_profile)
-        # Remove trend signal + SIC filter for pre-news pool construction.
-        pre_steps = [step for step in trend_steps if not step[0].startswith("trend_signal_") and step[0] != "trend_min_ai_score" and step[0] != "sic_filter"]
-        pre_filtered, _ = apply_filters_with_diagnostics(df, pre_steps)
-        channel_counts[channel_name] = len(pre_filtered)
-        if "symbol" in pre_filtered.columns and not pre_filtered.empty:
-            symbol_set.update(pre_filtered["symbol"].dropna().astype(str).tolist())
-
-    if not symbol_set:
-        return [], channel_counts
-
-    candidates = df[df["symbol"].isin(symbol_set)].copy()
-    candidates["dollar_volume"] = pd.to_numeric(candidates["dollar_volume"], errors="coerce").fillna(0)
-    candidates = candidates.sort_values("dollar_volume", ascending=False)
-
-    if config.pre_news_top_liquid_symbols is not None:
-        candidates = candidates.head(config.pre_news_top_liquid_symbols)
-
-    return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
-
-
-def collect_pre_news_symbols_for_momentum(
-    df: pd.DataFrame, config: ScanConfig, channel_profiles: dict[str, dict[str, Any]]
-) -> tuple[list[str], dict[str, int]]:
-    symbol_set: set[str] = set()
-    channel_counts: dict[str, int] = {}
-    for channel_name, channel_profile in channel_profiles.items():
-        momentum_steps, _ = build_momentum_steps(config, channel_name, channel_profile)
-        # Remove momentum signal + SIC filter for pre-news pool construction.
-        pre_steps = [
-            step
-            for step in momentum_steps
-            if not step[0].startswith("momentum_signal_")
-            and step[0] != "momentum_min_ai_score"
-            and step[0] != "sic_filter"
-        ]
-        pre_filtered, _ = apply_filters_with_diagnostics(df, pre_steps)
-        channel_counts[channel_name] = len(pre_filtered)
-        if "symbol" in pre_filtered.columns and not pre_filtered.empty:
-            symbol_set.update(pre_filtered["symbol"].dropna().astype(str).tolist())
-
-    if not symbol_set:
-        return [], channel_counts
-
-    candidates = df[df["symbol"].isin(symbol_set)].copy()
-    candidates["dollar_volume"] = pd.to_numeric(candidates["dollar_volume"], errors="coerce").fillna(0)
-    candidates = candidates.sort_values("dollar_volume", ascending=False)
-
-    if config.pre_news_top_liquid_symbols is not None:
-        candidates = candidates.head(config.pre_news_top_liquid_symbols)
-
-    return candidates["symbol"].dropna().astype(str).drop_duplicates().tolist(), channel_counts
-
-
 def summarize_first_fail_reasons(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> pd.DataFrame:
@@ -1845,7 +1743,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.filters.json",
+        default="config.production.json",
         help="JSON file path for filter configuration.",
     )
     parser.add_argument(
@@ -1921,7 +1819,7 @@ def run_scan(
         alpaca,
         sec,
         config,
-        symbol_allowlist=watchlist_allowlist if config.use_ai_watchlist_only else None,
+        symbol_allowlist=watchlist_allowlist,
     )
     merged_count = len(df)
     log_status(started_at, "INFO", f"Universe symbols after tradable/mapping merge: {merged_count}")
@@ -1977,12 +1875,6 @@ def run_scan(
 
     top_n_per_channel = config.top_n_per_channel or config.top_n
     channel_profiles = config.channel_profiles or {"core_ai": {}}
-    if not config.use_ai_watchlist_only:
-        log_status(
-            started_at,
-            "INFO",
-            "use_ai_watchlist_only=false is ignored: news-based theme scoring has been removed.",
-        )
     log_status(started_at, "INFO", "[5/6] Applying watchlist attributes.")
     df = df.merge(watchlist_scores, on="symbol", how="left")
     for missing_col, default_val in [
@@ -2190,7 +2082,6 @@ def run_scan(
         "max_symbols": config.max_symbols,
         "top_n": config.top_n,
         "top_n_per_channel": config.top_n_per_channel or config.top_n,
-        "use_ai_watchlist_only": config.use_ai_watchlist_only,
         "watchlist_csv_path": config.watchlist_csv_path,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
