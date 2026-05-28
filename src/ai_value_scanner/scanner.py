@@ -238,6 +238,7 @@ class ScanConfig:
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
     enable_sic_prefix_filters: bool = False
+    require_channel_bucket_match: bool = True
     include_sic_prefixes: list[str] = field(default_factory=list)
     exclude_sic_prefixes: list[str] = field(default_factory=list)
     include_sic_codes: list[str] = field(default_factory=list)
@@ -1144,6 +1145,14 @@ def watchlist_member_mask(frame: pd.DataFrame) -> pd.Series:
     return (bucket != "") | (etf_count > 0)
 
 
+def channel_bucket_mask(frame: pd.DataFrame, channel_name: str) -> pd.Series:
+    if "watchlist_bucket" not in frame.columns:
+        return pd.Series(False, index=frame.index, dtype="bool")
+    bucket = frame["watchlist_bucket"].fillna("").astype(str)
+    pattern = rf"(?:^|,){re.escape(str(channel_name))}(?:,|$)"
+    return bucket.str.contains(pattern, regex=True)
+
+
 def merge_unique(values: list[str], extras: list[str]) -> list[str]:
     out: list[str] = []
     for item in [*values, *extras]:
@@ -1188,6 +1197,9 @@ def resolve_channel_profile(
 
     return {
         "name": channel_name,
+        "require_channel_bucket_match": bool(
+            profile.get("require_channel_bucket_match", config.require_channel_bucket_match)
+        ),
         "min_watchlist_etf_count": int(profile.get("min_watchlist_etf_count", 1)),
         "min_avg_dollar_volume_20d": (
             None
@@ -1507,6 +1519,13 @@ def build_filter_steps(
         )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
+    if cp["require_channel_bucket_match"]:
+        steps.append(
+            (
+                "channel_bucket_match",
+                lambda frame: channel_bucket_mask(frame, channel_name),
+            )
+        )
 
     steps.extend(
         [
@@ -1601,6 +1620,13 @@ def build_industry_trend_steps(
         )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
+    if cp["require_channel_bucket_match"]:
+        steps.append(
+            (
+                "channel_bucket_match",
+                lambda frame: channel_bucket_mask(frame, channel_name),
+            )
+        )
 
     steps.append(
         (
@@ -1700,6 +1726,13 @@ def build_momentum_steps(
         )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
+    if cp["require_channel_bucket_match"]:
+        steps.append(
+            (
+                "channel_bucket_match",
+                lambda frame: channel_bucket_mask(frame, channel_name),
+            )
+        )
 
     steps.append(
         (

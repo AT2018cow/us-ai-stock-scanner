@@ -2,8 +2,8 @@
   "top_n": 50,
   "top_n_per_channel": 12,
   "top_n_per_channel_low_value": 10,
-  "top_n_per_channel_trend": 6,
-  "top_n_per_channel_momentum": 6,
+  "top_n_per_channel_trend": 10,
+  "top_n_per_channel_momentum": 10,
   "max_symbols": null,
   "max_workers": 8,
   "chunk_size": 200,
@@ -44,6 +44,7 @@
     "BATS"
   ],
   "enable_sic_prefix_filters": false,
+  "require_channel_bucket_match": true,
   "include_sic_prefixes": [],
   "exclude_sic_prefixes": [],
   "include_sic_codes": [],
@@ -52,7 +53,7 @@
   ],
   "channel_profiles": {
     "core_ai": {
-      "min_watchlist_etf_count": 2,
+      "min_watchlist_etf_count": 1,
       "min_avg_dollar_volume_20d": 15000000.0,
       "min_return_20d": -0.12,
       "min_return_60d": -0.2,
@@ -65,7 +66,7 @@
       "momentum_max_drawdown_from_52w_high": 0.3,
       "momentum_max_60d_volatility": 0.75,
       "momentum_min_avg_dollar_volume_20d": 30000000.0,
-      "momentum_min_watchlist_etf_count": 2,
+      "momentum_min_watchlist_etf_count": 1,
       "momentum_score_weights": {
         "liquidity": 0.1,
         "return_20d": 0.55,
@@ -74,7 +75,7 @@
       },
       "min_ps_discount": 0.2,
       "min_pe_discount": 0.15,
-      "min_drawdown_from_52w_high": 0.25,
+      "min_drawdown_from_52w_high": 0.2,
       "max_range_position_52w": 0.7,
       "max_price_to_sma200": 1.1,
       "min_days_below_sma200": 10,
@@ -96,7 +97,7 @@
       }
     },
     "ai_enabler": {
-      "min_watchlist_etf_count": 2,
+      "min_watchlist_etf_count": 1,
       "min_avg_dollar_volume_20d": 10000000.0,
       "min_return_20d": -0.15,
       "min_return_60d": -0.25,
@@ -109,7 +110,7 @@
       "momentum_max_drawdown_from_52w_high": 0.25,
       "momentum_max_60d_volatility": 0.85,
       "momentum_min_avg_dollar_volume_20d": 20000000.0,
-      "momentum_min_watchlist_etf_count": 2,
+      "momentum_min_watchlist_etf_count": 1,
       "momentum_score_weights": {
         "liquidity": 0.1,
         "return_20d": 0.55,
@@ -118,7 +119,7 @@
       },
       "min_ps_discount": 0.1,
       "min_pe_discount": 0.0,
-      "min_drawdown_from_52w_high": 0.2,
+      "min_drawdown_from_52w_high": 0.15,
       "max_range_position_52w": 0.8,
       "max_price_to_sma200": 1.15,
       "min_days_below_sma200": 7,

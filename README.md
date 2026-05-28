@@ -61,6 +61,8 @@ ALPACA_FEED=iex
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
 - 行业过滤：`enable_sic_prefix_filters`、`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
+- 通道分流：`require_channel_bucket_match`（按 `watchlist_bucket` 强制 core/enabler 分流，降低清单重叠）
+  - 说明：若某股票同时属于 `core_ai,ai_enabler`，仍可能在两个通道同时出现。
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
 - 缓存：`cache_dir`、`alpaca_cache_enabled`、`alpaca_cache_ttl_assets_sec`、`alpaca_cache_ttl_snapshots_sec`、`alpaca_cache_ttl_bars_sec`
 
