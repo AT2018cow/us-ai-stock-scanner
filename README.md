@@ -62,6 +62,7 @@ ALPACA_FEED=iex
 - 市值区间：`min_market_cap`、`max_market_cap`
 - 行业过滤：`enable_sic_prefix_filters`、`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
+- 缓存：`cache_dir`、`alpaca_cache_enabled`、`alpaca_cache_ttl_assets_sec`、`alpaca_cache_ttl_snapshots_sec`、`alpaca_cache_ttl_bars_sec`
 
 说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
 

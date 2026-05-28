@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -159,6 +160,10 @@ class ScanConfig:
     max_workers: int = 8
     alpaca_max_requests_per_sec: float = 2.5
     sec_max_requests_per_sec: float = 5.0
+    alpaca_cache_enabled: bool = True
+    alpaca_cache_ttl_assets_sec: int = 21600
+    alpaca_cache_ttl_snapshots_sec: int = 120
+    alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     watchlist_fetch_timeout_sec: int = 20
     watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
@@ -460,6 +465,11 @@ class AlpacaClient:
         feed: str,
         timeout_sec: int,
         request_limiter: RequestRateLimiter,
+        cache_dir: Path,
+        cache_enabled: bool,
+        cache_ttl_assets_sec: int,
+        cache_ttl_snapshots_sec: int,
+        cache_ttl_bars_sec: int,
         monitor: NetworkMonitor | None = None,
     ) -> None:
         self.session = session
@@ -468,11 +478,54 @@ class AlpacaClient:
         self.timeout_sec = timeout_sec
         self.feed = feed
         self.request_limiter = request_limiter
+        self.cache_dir = cache_dir / "alpaca"
+        self.cache_enabled = bool(cache_enabled)
+        self.cache_ttl_assets_sec = max(0, int(cache_ttl_assets_sec))
+        self.cache_ttl_snapshots_sec = max(0, int(cache_ttl_snapshots_sec))
+        self.cache_ttl_bars_sec = max(0, int(cache_ttl_bars_sec))
         self.monitor = monitor
         self.headers = {
             "APCA-API-KEY-ID": api_key,
             "APCA-API-SECRET-KEY": api_secret,
         }
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _cache_file(self, namespace: str, key_payload: dict[str, Any]) -> Path:
+        digest = hashlib.sha1(
+            json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return self.cache_dir / f"{namespace}_{digest}.json"
+
+    def _load_cache(
+        self, namespace: str, key_payload: dict[str, Any], ttl_sec: int
+    ) -> Any | None:
+        if not self.cache_enabled or ttl_sec <= 0:
+            return None
+        cache_path = self._cache_file(namespace, key_payload)
+        if not cache_path.exists():
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=False)
+            return None
+        age = time.time() - cache_path.stat().st_mtime
+        if age > float(ttl_sec):
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=False)
+            return None
+        try:
+            payload = json.loads(cache_path.read_text())
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=True)
+            return payload
+        except Exception:
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=False)
+            return None
+
+    def _save_cache(self, namespace: str, key_payload: dict[str, Any], payload: Any) -> None:
+        if not self.cache_enabled:
+            return
+        cache_path = self._cache_file(namespace, key_payload)
+        cache_path.write_text(json.dumps(payload))
 
     def _get(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
         self.request_limiter.wait()
@@ -496,25 +549,43 @@ class AlpacaClient:
     def get_assets(self, status: str = "active") -> list[dict[str, Any]]:
         url = f"{self.api_endpoint}/v2/assets"
         params = {"status": status, "asset_class": "us_equity"}
+        cache_key = {
+            "api_endpoint": self.api_endpoint,
+            "status": status,
+            "asset_class": "us_equity",
+        }
+        cached = self._load_cache("assets", cache_key, self.cache_ttl_assets_sec)
+        if isinstance(cached, list):
+            return cached
         resp = self._get(url, params=params)
-        return resp.json()
+        payload = resp.json()
+        self._save_cache("assets", cache_key, payload)
+        return payload
 
     def get_snapshots(self, symbols: list[str], chunk_size: int) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for i in range(0, len(symbols), chunk_size):
             batch = symbols[i : i + chunk_size]
-            url = f"{self.data_endpoint}/v2/stocks/snapshots"
-            params = {"symbols": ",".join(batch), "feed": self.feed}
-            resp = self._get(url, params=params)
-            raw = resp.json()
-            # Alpaca may return either {"snapshots": {...}} or a top-level
-            # {SYMBOL: snapshot} mapping depending on endpoint version.
-            if isinstance(raw, dict) and "snapshots" in raw:
-                payload = raw.get("snapshots", {})
-            elif isinstance(raw, dict):
-                payload = raw
-            else:
-                payload = {}
+            cache_key = {
+                "data_endpoint": self.data_endpoint,
+                "feed": self.feed,
+                "symbols": sorted(str(sym).upper() for sym in batch),
+            }
+            payload = self._load_cache("snapshots", cache_key, self.cache_ttl_snapshots_sec)
+            if not isinstance(payload, dict):
+                url = f"{self.data_endpoint}/v2/stocks/snapshots"
+                params = {"symbols": ",".join(batch), "feed": self.feed}
+                resp = self._get(url, params=params)
+                raw = resp.json()
+                # Alpaca may return either {"snapshots": {...}} or a top-level
+                # {SYMBOL: snapshot} mapping depending on endpoint version.
+                if isinstance(raw, dict) and "snapshots" in raw:
+                    payload = raw.get("snapshots", {})
+                elif isinstance(raw, dict):
+                    payload = raw
+                else:
+                    payload = {}
+                self._save_cache("snapshots", cache_key, payload)
             result.update(payload)
             time.sleep(0.05)
         return result
@@ -545,6 +616,21 @@ class AlpacaClient:
         bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for i in range(0, len(symbols), chunk_size):
             batch = symbols[i : i + chunk_size]
+            cache_key = {
+                "data_endpoint": self.data_endpoint,
+                "feed": self.feed,
+                "start": start_iso,
+                "symbols": sorted(str(sym).upper() for sym in batch),
+            }
+            cached = self._load_cache("bars", cache_key, self.cache_ttl_bars_sec)
+            if isinstance(cached, dict):
+                for symbol, rows in cached.items():
+                    if isinstance(rows, list):
+                        bars_by_symbol.setdefault(symbol, []).extend(rows)
+                time.sleep(0.05)
+                continue
+
+            batch_bars: dict[str, list[dict[str, Any]]] = {}
             page_token: str | None = None
             while True:
                 params: dict[str, Any] = {
@@ -565,10 +651,13 @@ class AlpacaClient:
                     for symbol, rows in bars.items():
                         if not isinstance(rows, list):
                             continue
-                        bars_by_symbol.setdefault(symbol, []).extend(rows)
+                        batch_bars.setdefault(symbol, []).extend(rows)
                 page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
                 if not page_token:
                     break
+            self._save_cache("bars", cache_key, batch_bars)
+            for symbol, rows in batch_bars.items():
+                bars_by_symbol.setdefault(symbol, []).extend(rows)
             time.sleep(0.05)
         return bars_by_symbol
 
@@ -1195,6 +1284,11 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
         feed=feed,
         timeout_sec=config.request_timeout_sec,
         request_limiter=alpaca_limiter,
+        cache_dir=Path(config.cache_dir),
+        cache_enabled=config.alpaca_cache_enabled,
+        cache_ttl_assets_sec=config.alpaca_cache_ttl_assets_sec,
+        cache_ttl_snapshots_sec=config.alpaca_cache_ttl_snapshots_sec,
+        cache_ttl_bars_sec=config.alpaca_cache_ttl_bars_sec,
         monitor=monitor,
     )
     sec = SecClient(
@@ -1998,7 +2092,10 @@ def run_scan(
 
     log_status(started_at, "INFO", "[2/6] Computing price-dimension features.")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    bars_start_iso = (datetime.now(timezone.utc) - timedelta(days=config.price_lookback_days)).isoformat()
+    bars_start_dt = (datetime.now(timezone.utc) - timedelta(days=config.price_lookback_days)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    bars_start_iso = bars_start_dt.isoformat().replace("+00:00", "Z")
     symbols_for_bars = df["symbol"].dropna().astype(str).tolist()
     bars_map = alpaca.get_daily_bars(symbols_for_bars, bars_start_iso, config.chunk_size)
     price_feature_rows: list[dict[str, Any]] = []
