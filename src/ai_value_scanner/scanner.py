@@ -1038,6 +1038,12 @@ def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return out
 
 
+def watchlist_member_mask(frame: pd.DataFrame) -> pd.Series:
+    return (pd.to_numeric(frame["ai_score"], errors="coerce").fillna(0.0) > 0) | (
+        pd.to_numeric(frame["enabler_score"], errors="coerce").fillna(0.0) > 0
+    )
+
+
 def merge_unique(values: list[str], extras: list[str]) -> list[str]:
     out: list[str] = []
     for item in [*values, *extras]:
@@ -1388,24 +1394,27 @@ def build_filter_steps(
             )
         )
 
-    if cp["signal_logic"] == "ai_or_enabler":
-        steps.append(
-            (
-                "signal_ai_or_enabler",
-                lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
-                | (frame["enabler_score"] >= cp["min_enabler_score"]),
-            )
-        )
-    elif cp["signal_logic"] == "ai_and_enabler":
-        steps.append(
-            (
-                "signal_ai_and_enabler",
-                lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
-                & (frame["enabler_score"] >= cp["min_enabler_score"]),
-            )
-        )
+    if config.use_ai_watchlist_only:
+        steps.append(("watchlist_membership", watchlist_member_mask))
     else:
-        steps.append(("min_ai_score", lambda frame: frame["ai_score"] >= cp["min_ai_score"]))
+        if cp["signal_logic"] == "ai_or_enabler":
+            steps.append(
+                (
+                    "signal_ai_or_enabler",
+                    lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
+                    | (frame["enabler_score"] >= cp["min_enabler_score"]),
+                )
+            )
+        elif cp["signal_logic"] == "ai_and_enabler":
+            steps.append(
+                (
+                    "signal_ai_and_enabler",
+                    lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
+                    & (frame["enabler_score"] >= cp["min_enabler_score"]),
+                )
+            )
+        else:
+            steps.append(("min_ai_score", lambda frame: frame["ai_score"] >= cp["min_ai_score"]))
 
     steps.extend(
         [
@@ -1456,24 +1465,27 @@ def build_industry_trend_steps(
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
 
-    if trend_signal_logic == "ai_and_enabler":
-        steps.append(
-            (
-                "trend_signal_ai_and_enabler",
-                lambda frame: (frame["ai_score"] >= trend_min_ai)
-                & (frame["enabler_score"] >= trend_min_enabler),
-            )
-        )
-    elif trend_signal_logic == "ai_or_enabler":
-        steps.append(
-            (
-                "trend_signal_ai_or_enabler",
-                lambda frame: (frame["ai_score"] >= trend_min_ai)
-                | (frame["enabler_score"] >= trend_min_enabler),
-            )
-        )
+    if config.use_ai_watchlist_only:
+        steps.append(("watchlist_membership", watchlist_member_mask))
     else:
-        steps.append(("trend_min_ai_score", lambda frame: frame["ai_score"] >= trend_min_ai))
+        if trend_signal_logic == "ai_and_enabler":
+            steps.append(
+                (
+                    "trend_signal_ai_and_enabler",
+                    lambda frame: (frame["ai_score"] >= trend_min_ai)
+                    & (frame["enabler_score"] >= trend_min_enabler),
+                )
+            )
+        elif trend_signal_logic == "ai_or_enabler":
+            steps.append(
+                (
+                    "trend_signal_ai_or_enabler",
+                    lambda frame: (frame["ai_score"] >= trend_min_ai)
+                    | (frame["enabler_score"] >= trend_min_enabler),
+                )
+            )
+        else:
+            steps.append(("trend_min_ai_score", lambda frame: frame["ai_score"] >= trend_min_ai))
 
     steps.append(
         (
@@ -1544,24 +1556,27 @@ def build_momentum_steps(
         ),
     ]
 
-    if momentum_signal_logic == "ai_and_enabler":
-        steps.append(
-            (
-                "momentum_signal_ai_and_enabler",
-                lambda frame: (frame["ai_score"] >= momentum_min_ai)
-                & (frame["enabler_score"] >= momentum_min_enabler),
-            )
-        )
-    elif momentum_signal_logic == "ai_or_enabler":
-        steps.append(
-            (
-                "momentum_signal_ai_or_enabler",
-                lambda frame: (frame["ai_score"] >= momentum_min_ai)
-                | (frame["enabler_score"] >= momentum_min_enabler),
-            )
-        )
+    if config.use_ai_watchlist_only:
+        steps.append(("watchlist_membership", watchlist_member_mask))
     else:
-        steps.append(("momentum_min_ai_score", lambda frame: frame["ai_score"] >= momentum_min_ai))
+        if momentum_signal_logic == "ai_and_enabler":
+            steps.append(
+                (
+                    "momentum_signal_ai_and_enabler",
+                    lambda frame: (frame["ai_score"] >= momentum_min_ai)
+                    & (frame["enabler_score"] >= momentum_min_enabler),
+                )
+            )
+        elif momentum_signal_logic == "ai_or_enabler":
+            steps.append(
+                (
+                    "momentum_signal_ai_or_enabler",
+                    lambda frame: (frame["ai_score"] >= momentum_min_ai)
+                    | (frame["enabler_score"] >= momentum_min_enabler),
+                )
+            )
+        else:
+            steps.append(("momentum_min_ai_score", lambda frame: frame["ai_score"] >= momentum_min_ai))
 
     steps.append(
         (
@@ -2083,6 +2098,11 @@ def run_scan(
     df["watchlist_source"] = df["watchlist_source"].fillna("").astype(str)
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
     df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
+    if config.use_ai_watchlist_only:
+        # In watchlist-only mode, AI relevance is a binary membership gate.
+        member_mask = watchlist_member_mask(df)
+        df.loc[member_mask, "ai_score"] = 1.0
+        df.loc[member_mask, "enabler_score"] = 1.0
     df["news_count"] = 0
 
     watchlist_counts = {

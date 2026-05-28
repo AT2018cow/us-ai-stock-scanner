@@ -69,6 +69,7 @@ ALPACA_FEED=iex
 - 默认清单文件：`data/ai_watchlist.csv`
 - 扫描阶段只读取本地 watchlist，不会自动刷新
 - watchlist 维护由独立脚本执行（需要时手工运行）
+- 当 `use_ai_watchlist_only=true` 时，不使用 `min_ai_score/min_enabler_score` 等 AI 相关阈值做过滤；三清单只做“watchlist成员 + 财务/价格/流动性”筛选。
 
 默认 ETF 集合：
 - `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
