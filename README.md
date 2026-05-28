@@ -45,11 +45,7 @@ ALPACA_FEED=iex
 
 默认参数在 `config.filters.json`，可按策略自由修改，核心维度包括：
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
-- 信号逻辑：`signal_logic` 支持 `ai_only`、`ai_or_enabler`、`ai_and_enabler`
-- 趋势清单信号逻辑：`trend_signal_logic`（默认继承 `signal_logic`）
-- 趋势信号阈值：`trend_min_ai_score`、`trend_min_enabler_score`（默认继承对应通道阈值）
-- 追涨清单信号逻辑：`momentum_signal_logic`（默认继承 `trend_signal_logic`）
-- 追涨信号阈值：`momentum_min_ai_score`、`momentum_min_enabler_score`
+- 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
@@ -70,8 +66,7 @@ ALPACA_FEED=iex
 - 默认清单文件：`data/ai_watchlist.csv`
 - 扫描阶段只读取本地 watchlist，不会自动刷新
 - watchlist 维护由独立脚本执行（需要时手工运行）
-- 当 `use_ai_watchlist_only=true` 时，不使用 `min_ai_score/min_enabler_score` 等 AI 相关阈值做过滤；三清单只做“watchlist成员 + 财务/价格/流动性”筛选。
-- 在该模式下，`ai_score/enabler_score` 仅用于成员映射与兼容旧字段，默认不再作为排序主权重。
+- 三清单统一执行“watchlist 成员 + 财务/价格/流动性”筛选，不再依赖新闻主题分数。
 
 默认 ETF 集合：
 - `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
@@ -80,11 +75,11 @@ ALPACA_FEED=iex
 `data/ai_watchlist.csv` 字段：
 - `symbol`：股票代码
 - `bucket`：`core_ai` 或 `ai_enabler`
-- `source`：来源（当前为 `etf`）
 - `etf_count`：命中的 ETF 数量
 - `etfs`：命中的 ETF 列表
 - `enabled`：是否生效（`1/0`）
 - `updated_utc`：更新时间
+- 注意：扫描端按上述字段做严格校验，不再兼容旧 schema。
 
 生成与维护方式（定稿）：
 1. 手工刷新（按需执行，不随扫描自动触发）
@@ -215,35 +210,14 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 ### 3.3 当前版本筛选逻辑（v2）
 
-本版本对 AI 相关性与输出结构做了三项关键优化：
-
-- 优化 1：关键词匹配从“子串命中”升级为“词边界/短语命中”
-  - 目的：降低 `llm` 命中 `hellmann's` 之类的假阳性。
-  - 影响：减少消费/食品等行业因文本噪声被误归类为 AI。
-
-- 优化 2：支持 `ai_and_enabler` 高纯度模式
-  - 使用位置：`signal_logic` 或 `trend_signal_logic`
-  - 含义：必须同时满足 `ai_score >= min_ai_score` 且 `enabler_score >= min_enabler_score`
-  - 实测结论：直接作为全局默认通常过严，容易导致候选过少；更适合用于“高置信度复核”。
-
-- 优化 3：输出拆分为三清单（并行）
+当前版本核心原则：
+- AI 相关性由 watchlist 维护脚本负责（ETF 持仓映射），扫描阶段不再计算 `ai_score/enabler_score`。
+- 排序主因子为估值折价、流动性、价格位置和 watchlist 覆盖广度（`watchlist_etf_count`）。
+- 输出拆分为三清单（并行）
   - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
   - `*_ranked_industry_trend.csv`（Industry-Trend）：主题相关性优先，偏“产业跟踪”。
   - `*_ranked_momentum.csv`（Momentum）：强势追涨优先，偏“强者恒强”。
   - 三者是并行、正交逻辑，不是父子子集关系。
-
-当前默认建议（`ai_enabler`）：
-- `signal_logic = ai_or_enabler`（用于 Low-Value，不让候选过快归零）
-- `min_ai_score = 0.01`，`min_enabler_score = 0.08`
-- `trend_signal_logic = ai_or_enabler`（用于 Industry-Trend）
-- `trend_min_ai_score = 0.03`，`trend_min_enabler_score = 0.08`
-- `momentum_signal_logic = ai_or_enabler`（用于 Momentum）
-- `momentum_min_return_20d = 0.05`，`momentum_min_price_to_sma200 = 1.05`
-
-如果你要进一步提纯：
-- 第一优先：提高 `trend_min_ai_score` / `trend_min_enabler_score`
-- 第二优先：将 `trend_signal_logic` 提升到 `ai_and_enabler`
-- 不建议第一步就加严低位参数，否则会把强趋势基础设施股整体排掉
 
 ## 4. 运行方式
 
@@ -251,7 +225,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - 先按需手工刷新 watchlist（非每次必做）
 - 先做价格/流动性预筛，再请求 SEC 基本面
 - 计算估值与价格位置指标
-- 根据 ETF 观察清单（watchlist）生成 `ai_score/enabler_score`
+- 合并 ETF 观察清单字段（`watchlist_bucket/watchlist_etf_count/watchlist_etfs`）
 - 生成三清单：`low-value`、`industry-trend`、`momentum`
 
 
@@ -383,9 +357,8 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
-- `ai_score` / `enabler_score`：观察清单成员映射字段（在 watchlist-only 模式下通常为二值化）
 - `watchlist_etf_count`：观察清单 ETF 命中数量
-- `watchlist_bucket` / `watchlist_source` / `watchlist_etfs`：观察清单来源信息
+- `watchlist_bucket` / `watchlist_etfs`：观察清单分类与命中 ETF 信息
 - `news_count`：固定为 `0`（已移除新闻打分依赖）
 - `composite_score`：通道内综合评分
 - `triage_label`：`keep/watch/drop` 三档分组

@@ -10,16 +10,11 @@ import pandas as pd
 
 def risk_tags(row: pd.Series) -> list[str]:
     tags: list[str] = []
-    ai_score = float(row.get("ai_score", 0.0) or 0.0)
-    enabler_score = float(row.get("enabler_score", 0.0) or 0.0)
     ps_discount = float(row.get("ps_discount", 0.0) or 0.0)
     pe_discount = float(row.get("pe_discount", 0.0) or 0.0)
     comp = float(row.get("composite_score", 0.0) or 0.0)
-
-    if ai_score <= 0 and enabler_score <= 0:
-        tags.append("Weak theme signal")
-    elif ai_score <= 0 and enabler_score < 0.05:
-        tags.append("Weak AI signal")
+    if int(row.get("watchlist_etf_count", 0) or 0) <= 0:
+        tags.append("Missing watchlist signal")
     if ps_discount <= 0 and pe_discount <= 0:
         tags.append("No valuation discount")
     if comp < 0.35:
@@ -33,16 +28,18 @@ def row_line(row: pd.Series) -> str:
     channel = str(row.get("channel", ""))
     triage = str(row.get("triage_label", ""))
     comp = float(row.get("composite_score", 0.0) or 0.0)
-    ai = float(row.get("ai_score", 0.0) or 0.0)
-    enabler = float(row.get("enabler_score", 0.0) or 0.0)
     psd = float(row.get("ps_discount", 0.0) or 0.0)
     ped = float(row.get("pe_discount", 0.0) or 0.0)
+    bucket = str(row.get("watchlist_bucket", "") or "")
+    etf_count = int(row.get("watchlist_etf_count", 0) or 0)
+    etfs = str(row.get("watchlist_etfs", "") or "")
     news_count = int(row.get("news_count", 0) or 0)
     tags = risk_tags(row)
     risk = "none" if not tags else ", ".join(tags)
     return (
         f"- {symbol} | {company} | {channel}/{triage} | score={comp:.3f} | "
-        f"ai={ai:.3f} enabler={enabler:.3f} | psd={psd:.3f} ped={ped:.3f} | "
+        f"bucket={bucket} etf_count={etf_count} etfs={etfs} | "
+        f"psd={psd:.3f} ped={ped:.3f} | "
         f"news={news_count} | risk={risk}"
     )
 

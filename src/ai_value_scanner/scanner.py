@@ -101,8 +101,6 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "score_weights": {
                 "ps_discount": 0.40,
                 "pe_discount": 0.25,
-                "ai_score": 0.00,
-                "enabler_score": 0.00,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.15,
                 "range_position_52w_low": 0.10,
@@ -128,8 +126,6 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "score_weights": {
                 "ps_discount": 0.30,
                 "pe_discount": 0.20,
-                "ai_score": 0.00,
-                "enabler_score": 0.00,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.25,
                 "range_position_52w_low": 0.15,
@@ -144,21 +140,17 @@ def default_triage_rules() -> dict[str, dict[str, Any]]:
         "keep": {
             "core_ai": {
                 "min_composite_score": 0.50,
-                "min_ai_score": 0.10,
                 "min_ps_discount": 0.00,
                 "min_pe_discount": 0.00,
             },
             "ai_enabler": {
                 "min_composite_score": 0.45,
-                "min_enabler_score": 0.05,
                 "min_ps_discount": 0.00,
                 "min_pe_discount": -0.10,
             },
         },
         "drop": {
             "max_composite_score": 0.35,
-            "max_ai_score": 0.02,
-            "max_enabler_score": 0.02,
             "require_both_value_premium": True,
         },
     }
@@ -926,7 +918,6 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
             {
                 "symbol": symbol,
                 "bucket": "core_ai",
-                "source": "etf",
                 "etf_count": int(n),
                 "etfs": ",".join(sorted(set(core_etf_hits.get(symbol, [])))),
                 "enabled": 1,
@@ -938,7 +929,6 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
             {
                 "symbol": symbol,
                 "bucket": "ai_enabler",
-                "source": "etf",
                 "etf_count": int(n),
                 "etfs": ",".join(sorted(set(enabler_etf_hits.get(symbol, [])))),
                 "enabled": 1,
@@ -950,9 +940,6 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
 
 WATCHLIST_SCORE_COLUMNS = [
     "symbol",
-    "ai_score",
-    "enabler_score",
-    "watchlist_source",
     "watchlist_bucket",
     "watchlist_etf_count",
     "watchlist_etfs",
@@ -962,19 +949,21 @@ WATCHLIST_SCORE_COLUMNS = [
 def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
     if raw.empty:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
+    required_cols = {"symbol", "bucket", "etf_count", "etfs", "enabled"}
+    missing = sorted(required_cols.difference(set(raw.columns)))
+    if missing:
+        raise ValueError(
+            f"watchlist csv missing required columns: {', '.join(missing)}; "
+            "expected: symbol,bucket,etf_count,etfs,enabled,updated_utc"
+        )
     work = raw.copy()
-    work["symbol"] = work.get("symbol", "").apply(normalize_equity_symbol)
-    work["bucket"] = work.get("bucket", "").astype(str).str.strip().str.lower()
+    work["symbol"] = work["symbol"].apply(normalize_equity_symbol)
+    work["bucket"] = work["bucket"].astype(str).str.strip().str.lower()
     work["enabled"] = (
-        work.get("enabled", 1)
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .isin({"1", "true", "yes", "y"})
+        work["enabled"].astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y"})
     )
-    work["etf_count"] = pd.to_numeric(work.get("etf_count", 0), errors="coerce").fillna(0).astype(int)
-    work["source"] = work.get("source", "").astype(str)
-    work["etfs"] = work.get("etfs", "").astype(str)
+    work["etf_count"] = pd.to_numeric(work["etf_count"], errors="coerce").fillna(0).astype(int)
+    work["etfs"] = work["etfs"].astype(str)
     work = work[(work["symbol"] != "") & work["enabled"]]
     if work.empty:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
@@ -983,34 +972,19 @@ def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
     for row in work.itertuples(index=False):
         symbol = str(row.symbol)
         bucket = str(row.bucket)
-        source = str(row.source)
         etf_count = int(row.etf_count)
         etfs = str(row.etfs)
         if symbol not in rows:
             rows[symbol] = {
                 "symbol": symbol,
-                "ai_score": 0.0,
-                "enabler_score": 0.0,
-                "watchlist_source": source,
                 "watchlist_bucket": bucket,
                 "watchlist_etf_count": etf_count,
                 "watchlist_etfs": etfs,
             }
-        if bucket == "core_ai":
-            rows[symbol]["ai_score"] = 1.0
-        elif bucket == "ai_enabler":
-            rows[symbol]["enabler_score"] = 1.0
-        elif bucket == "both":
-            rows[symbol]["ai_score"] = 1.0
-            rows[symbol]["enabler_score"] = 1.0
         rows[symbol]["watchlist_etf_count"] = max(int(rows[symbol]["watchlist_etf_count"]), etf_count)
         prev_bucket = str(rows[symbol]["watchlist_bucket"])
         if prev_bucket != bucket and bucket not in prev_bucket.split(","):
             rows[symbol]["watchlist_bucket"] = f"{prev_bucket},{bucket}" if prev_bucket else bucket
-        if source and source not in str(rows[symbol]["watchlist_source"]).split(","):
-            rows[symbol]["watchlist_source"] = (
-                f"{rows[symbol]['watchlist_source']},{source}" if rows[symbol]["watchlist_source"] else source
-            )
         if etfs:
             prev = set(x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x)
             now = set(x for x in etfs.split(",") if x)
@@ -1045,9 +1019,15 @@ def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
 
 
 def watchlist_member_mask(frame: pd.DataFrame) -> pd.Series:
-    return (pd.to_numeric(frame["ai_score"], errors="coerce").fillna(0.0) > 0) | (
-        pd.to_numeric(frame["enabler_score"], errors="coerce").fillna(0.0) > 0
-    )
+    if "watchlist_bucket" in frame.columns:
+        bucket = frame["watchlist_bucket"].astype(str).str.strip()
+    else:
+        bucket = pd.Series("", index=frame.index, dtype="object")
+    if "watchlist_etf_count" in frame.columns:
+        etf_count = pd.to_numeric(frame["watchlist_etf_count"], errors="coerce").fillna(0)
+    else:
+        etf_count = pd.Series(0, index=frame.index, dtype="float64")
+    return (bucket != "") | (etf_count > 0)
 
 
 def merge_unique(values: list[str], extras: list[str]) -> list[str]:
@@ -1285,48 +1265,6 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
     return pd.DataFrame(rows)
 
 
-def collect_news_scores(
-    symbols: list[str], alpaca: AlpacaClient, config: ScanConfig
-) -> pd.DataFrame:
-    if not symbols:
-        return pd.DataFrame(columns=["symbol", "ai_score", "enabler_score", "news_count"])
-    since = (
-        datetime.now(timezone.utc) - timedelta(days=config.news_lookback_days)
-    ).isoformat()
-    rows = []
-    total = len(symbols)
-    done = 0
-    last_reported_pct = -1
-    with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
-        future_map = {
-            pool.submit(alpaca.get_news, symbol, since, config.news_limit_per_symbol): symbol
-            for symbol in symbols
-        }
-        for future in as_completed(future_map):
-            symbol = future_map[future]
-            try:
-                news = future.result()
-                rows.append(
-                    {
-                        "symbol": symbol,
-                        "ai_score": theme_score_from_news(news, config.ai_keywords),
-                        "enabler_score": theme_score_from_news(news, config.enabler_keywords),
-                        "news_count": len(news),
-                    }
-                )
-            except Exception:
-                rows.append(
-                    {"symbol": symbol, "ai_score": 0.0, "enabler_score": 0.0, "news_count": 0}
-                )
-            done += 1
-            if total > 0:
-                pct = int((done * 100) / total)
-                if pct >= last_reported_pct + 20 or done == total:
-                    print(f"  [progress] Alpaca news: {done}/{total} ({pct}%)")
-                    last_reported_pct = pct
-    return pd.DataFrame(rows)
-
-
 def build_filter_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> list[tuple[str, Any]]:
@@ -1400,27 +1338,7 @@ def build_filter_steps(
             )
         )
 
-    if config.use_ai_watchlist_only:
-        steps.append(("watchlist_membership", watchlist_member_mask))
-    else:
-        if cp["signal_logic"] == "ai_or_enabler":
-            steps.append(
-                (
-                    "signal_ai_or_enabler",
-                    lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
-                    | (frame["enabler_score"] >= cp["min_enabler_score"]),
-                )
-            )
-        elif cp["signal_logic"] == "ai_and_enabler":
-            steps.append(
-                (
-                    "signal_ai_and_enabler",
-                    lambda frame: (frame["ai_score"] >= cp["min_ai_score"])
-                    & (frame["enabler_score"] >= cp["min_enabler_score"]),
-                )
-            )
-        else:
-            steps.append(("min_ai_score", lambda frame: frame["ai_score"] >= cp["min_ai_score"]))
+    steps.append(("watchlist_membership", watchlist_member_mask))
 
     steps.extend(
         [
@@ -1447,11 +1365,6 @@ def build_industry_trend_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
-    trend_signal_logic = str(channel_profile.get("trend_signal_logic", cp["signal_logic"]))
-    trend_min_ai = float(channel_profile.get("trend_min_ai_score", cp["min_ai_score"]))
-    trend_min_enabler = float(
-        channel_profile.get("trend_min_enabler_score", cp["min_enabler_score"])
-    )
     trend_weights = channel_profile.get("trend_score_weights")
     if not isinstance(trend_weights, dict):
         if channel_name == "ai_enabler":
@@ -1481,27 +1394,7 @@ def build_industry_trend_steps(
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
 
-    if config.use_ai_watchlist_only:
-        steps.append(("watchlist_membership", watchlist_member_mask))
-    else:
-        if trend_signal_logic == "ai_and_enabler":
-            steps.append(
-                (
-                    "trend_signal_ai_and_enabler",
-                    lambda frame: (frame["ai_score"] >= trend_min_ai)
-                    & (frame["enabler_score"] >= trend_min_enabler),
-                )
-            )
-        elif trend_signal_logic == "ai_or_enabler":
-            steps.append(
-                (
-                    "trend_signal_ai_or_enabler",
-                    lambda frame: (frame["ai_score"] >= trend_min_ai)
-                    | (frame["enabler_score"] >= trend_min_enabler),
-                )
-            )
-        else:
-            steps.append(("trend_min_ai_score", lambda frame: frame["ai_score"] >= trend_min_ai))
+    steps.append(("watchlist_membership", watchlist_member_mask))
 
     steps.append(
         (
@@ -1524,18 +1417,6 @@ def build_momentum_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
-    momentum_signal_logic = str(
-        channel_profile.get("momentum_signal_logic", channel_profile.get("trend_signal_logic", cp["signal_logic"]))
-    )
-    momentum_min_ai = float(
-        channel_profile.get("momentum_min_ai_score", channel_profile.get("trend_min_ai_score", cp["min_ai_score"]))
-    )
-    momentum_min_enabler = float(
-        channel_profile.get(
-            "momentum_min_enabler_score",
-            channel_profile.get("trend_min_enabler_score", cp["min_enabler_score"]),
-        )
-    )
     momentum_min_return_20d = channel_profile.get("momentum_min_return_20d", 0.05)
     momentum_min_price_to_sma200 = channel_profile.get("momentum_min_price_to_sma200", 1.05)
     momentum_max_drawdown_from_52w_high = channel_profile.get(
@@ -1544,8 +1425,6 @@ def build_momentum_steps(
     momentum_weights = channel_profile.get("momentum_score_weights")
     if not isinstance(momentum_weights, dict):
         momentum_weights = {
-            "ai_score": 0.00,
-            "enabler_score": 0.00,
             "liquidity": 0.10,
             "return_20d": 0.55,
             "watchlist_etf_count": 0.25,
@@ -1574,27 +1453,7 @@ def build_momentum_steps(
         ),
     ]
 
-    if config.use_ai_watchlist_only:
-        steps.append(("watchlist_membership", watchlist_member_mask))
-    else:
-        if momentum_signal_logic == "ai_and_enabler":
-            steps.append(
-                (
-                    "momentum_signal_ai_and_enabler",
-                    lambda frame: (frame["ai_score"] >= momentum_min_ai)
-                    & (frame["enabler_score"] >= momentum_min_enabler),
-                )
-            )
-        elif momentum_signal_logic == "ai_or_enabler":
-            steps.append(
-                (
-                    "momentum_signal_ai_or_enabler",
-                    lambda frame: (frame["ai_score"] >= momentum_min_ai)
-                    | (frame["enabler_score"] >= momentum_min_enabler),
-                )
-            )
-        else:
-            steps.append(("momentum_min_ai_score", lambda frame: frame["ai_score"] >= momentum_min_ai))
+    steps.append(("watchlist_membership", watchlist_member_mask))
 
     steps.append(
         (
@@ -1747,8 +1606,6 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     required_cols = [
         "ps_discount",
         "pe_discount",
-        "ai_score",
-        "enabler_score",
         "dollar_volume",
         "return_20d",
         "watchlist_etf_count",
@@ -1763,8 +1620,6 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     component_series: dict[str, pd.Series] = {
         "ps_discount": out["ps_discount"],
         "pe_discount": out["pe_discount"],
-        "ai_score": out["ai_score"],
-        "enabler_score": out["enabler_score"],
         "liquidity": np.log1p(pd.to_numeric(out["dollar_volume"], errors="coerce").fillna(0)),
         "return_20d": out["return_20d"],
         "watchlist_etf_count": pd.to_numeric(out["watchlist_etf_count"], errors="coerce"),
@@ -1775,8 +1630,6 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     default_weights = {
         "ps_discount": 0.40,
         "pe_discount": 0.30,
-        "ai_score": 0.25,
-        "enabler_score": 0.00,
         "liquidity": 0.05,
         "return_20d": 0.00,
         "watchlist_etf_count": 0.00,
@@ -1804,34 +1657,18 @@ def assign_triage_label(row: pd.Series, triage_rules: dict[str, dict[str, Any]])
     drop_cfg = triage_rules.get("drop", {})
 
     comp = float(row.get("composite_score", 0.0) or 0.0)
-    ai = float(row.get("ai_score", 0.0) or 0.0)
-    enabler = float(row.get("enabler_score", 0.0) or 0.0)
     psd = float(row.get("ps_discount", 0.0) or 0.0)
     ped = float(row.get("pe_discount", 0.0) or 0.0)
 
     if keep_cfg:
         keep_ok = comp >= float(keep_cfg.get("min_composite_score", 0.5))
-        if channel == "core_ai":
-            keep_ok = keep_ok and ai >= float(keep_cfg.get("min_ai_score", 0.1))
-        elif channel == "ai_enabler":
-            keep_ok = keep_ok and enabler >= float(keep_cfg.get("min_enabler_score", 0.05))
         keep_ok = keep_ok and psd >= float(keep_cfg.get("min_ps_discount", -1.0))
         keep_ok = keep_ok and ped >= float(keep_cfg.get("min_pe_discount", -1.0))
         if keep_ok:
             return "keep"
 
     drop_by_score = comp <= float(drop_cfg.get("max_composite_score", 0.35))
-    drop_by_signal = (
-        ai <= float(drop_cfg.get("max_ai_score", 0.02))
-        and enabler <= float(drop_cfg.get("max_enabler_score", 0.02))
-    )
-    require_premium = bool(drop_cfg.get("require_both_value_premium", True))
-    if require_premium:
-        drop_by_value = psd < 0 and ped < 0
-    else:
-        drop_by_value = psd < 0 or ped < 0
-
-    if drop_by_score or (drop_by_signal and drop_by_value):
+    if drop_by_score:
         return "drop"
     return "watch"
 
@@ -1964,6 +1801,7 @@ def build_run_report_markdown(
                         f"score={float(row['composite_score']):.3f} | "
                         f"bucket={str(row.get('watchlist_bucket', ''))} | "
                         f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
+                        f"etfs={str(row.get('watchlist_etfs', ''))} | "
                         f"psd={float(row['ps_discount']):.3f} | "
                         f"ped={float(row['pe_discount']):.3f}"
                     )
@@ -2128,30 +1966,23 @@ def run_scan(
     df = df.merge(watchlist_scores, on="symbol", how="left")
     for missing_col, default_val in [
         ("watchlist_etf_count", 0),
-        ("watchlist_source", ""),
         ("watchlist_bucket", ""),
         ("watchlist_etfs", ""),
     ]:
         if missing_col not in df.columns:
             df[missing_col] = default_val
-    df["ai_score"] = pd.to_numeric(df["ai_score"], errors="coerce").fillna(0.0)
-    df["enabler_score"] = pd.to_numeric(df["enabler_score"], errors="coerce").fillna(0.0)
     df["watchlist_etf_count"] = pd.to_numeric(df["watchlist_etf_count"], errors="coerce").fillna(0).astype(int)
-    df["watchlist_source"] = df["watchlist_source"].fillna("").astype(str)
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
     df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
-    if config.use_ai_watchlist_only:
-        # In watchlist-only mode, AI relevance is a binary membership gate.
-        member_mask = watchlist_member_mask(df)
-        df.loc[member_mask, "ai_score"] = 1.0
-        df.loc[member_mask, "enabler_score"] = 1.0
     df["news_count"] = 0
 
+    core_bucket_mask = df["watchlist_bucket"].str.contains(r"(?:^|,)core_ai(?:,|$)", regex=True)
+    enabler_bucket_mask = df["watchlist_bucket"].str.contains(r"(?:^|,)ai_enabler(?:,|$)", regex=True)
     watchlist_counts = {
-        "core_ai": int((df["ai_score"] > 0).sum()),
-        "ai_enabler": int((df["enabler_score"] > 0).sum()),
+        "core_ai": int(core_bucket_mask.sum()),
+        "ai_enabler": int(enabler_bucket_mask.sum()),
     }
-    watchlist_symbol_count = int(((df["ai_score"] > 0) | (df["enabler_score"] > 0)).sum())
+    watchlist_symbol_count = int(watchlist_member_mask(df).sum())
     log_status(started_at, "INFO", "Watchlist candidates by channel:")
     for channel_name, count in watchlist_counts.items():
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
@@ -2227,10 +2058,7 @@ def run_scan(
         "peer_median_pe",
         "ps_discount",
         "pe_discount",
-        "ai_score",
-        "enabler_score",
         "watchlist_bucket",
-        "watchlist_source",
         "watchlist_etf_count",
         "watchlist_etfs",
         "news_count",
@@ -2408,7 +2236,8 @@ def run_scan(
                     f"psd={float(row['ps_discount']):.3f} | "
                     f"ped={float(row['pe_discount']):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
-                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
+                    f"etfs={str(row.get('watchlist_etfs', ''))}"
                 )
     print("=== End Low-Value Shortlist ===")
     print("")
@@ -2429,7 +2258,8 @@ def run_scan(
                     "  - "
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
-                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
+                    f"etfs={str(row.get('watchlist_etfs', ''))}"
                 )
     print("=== End Industry Trend Shortlist ===")
     print("")
@@ -2451,7 +2281,8 @@ def run_scan(
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
                     f"r20={float(row['return_20d']):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
-                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
+                    f"etfs={str(row.get('watchlist_etfs', ''))}"
                 )
     print("=== End Momentum Shortlist ===")
     log_status(started_at, "INFO", "Scan completed successfully.")

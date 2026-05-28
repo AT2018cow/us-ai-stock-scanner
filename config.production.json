@@ -90,8 +90,6 @@
       "momentum_min_price_to_sma200": 1.03,
       "momentum_max_drawdown_from_52w_high": 0.3,
       "momentum_score_weights": {
-        "ai_score": 0.0,
-        "enabler_score": 0.0,
         "liquidity": 0.1,
         "return_20d": 0.55,
         "watchlist_etf_count": 0.25,
@@ -116,8 +114,6 @@
       "score_weights": {
         "ps_discount": 0.4,
         "pe_discount": 0.25,
-        "ai_score": 0.0,
-        "enabler_score": 0.0,
         "liquidity": 0.05,
         "watchlist_etf_count": 0.15,
         "range_position_52w_low": 0.1,
@@ -136,8 +132,6 @@
       "momentum_min_price_to_sma200": 1.05,
       "momentum_max_drawdown_from_52w_high": 0.25,
       "momentum_score_weights": {
-        "ai_score": 0.0,
-        "enabler_score": 0.0,
         "liquidity": 0.1,
         "return_20d": 0.55,
         "watchlist_etf_count": 0.25,
@@ -174,8 +168,6 @@
       "score_weights": {
         "ps_discount": 0.3,
         "pe_discount": 0.2,
-        "ai_score": 0.0,
-        "enabler_score": 0.0,
         "liquidity": 0.05,
         "watchlist_etf_count": 0.25,
         "range_position_52w_low": 0.15,

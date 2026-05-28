@@ -13,10 +13,8 @@ from dotenv import load_dotenv
 
 def risk_tags(row: pd.Series) -> list[str]:
     tags: list[str] = []
-    if float(row.get("ai_score", 0.0)) <= 0:
-        tags.append("No core AI signal in news")
-    if float(row.get("enabler_score", 0.0)) < 0.05:
-        tags.append("Weak infra-enabler signal")
+    if int(row.get("watchlist_etf_count", 0) or 0) <= 0:
+        tags.append("Missing watchlist ETF signal")
     if float(row.get("ps_discount", 0.0)) < 0:
         tags.append("PS premium vs peers")
     if float(row.get("pe_discount", 0.0)) < 0:
@@ -68,15 +66,18 @@ def main() -> None:
     for idx, row in df.reset_index(drop=True).iterrows():
         symbol = str(row["symbol"])
         channel = str(row.get("channel", ""))
-        ai_score = float(row.get("ai_score", 0.0))
-        enabler_score = float(row.get("enabler_score", 0.0))
+        bucket = str(row.get("watchlist_bucket", "") or "")
+        etf_count = int(row.get("watchlist_etf_count", 0) or 0)
+        etfs = str(row.get("watchlist_etfs", "") or "")
         ps_discount = float(row.get("ps_discount", 0.0))
         pe_discount = float(row.get("pe_discount", 0.0))
         comp = float(row.get("composite_score", 0.0))
 
         lines.append(f"## {idx+1}. {symbol} ({channel})")
         lines.append("")
-        lines.append(f"- Scores: ai={ai_score:.4f}, enabler={enabler_score:.4f}, composite={comp:.4f}")
+        lines.append(
+            f"- Watchlist: bucket={bucket}, etf_count={etf_count}, etfs={etfs}, composite={comp:.4f}"
+        )
         lines.append(f"- Relative valuation: ps_discount={ps_discount:.4f}, pe_discount={pe_discount:.4f}")
 
         tags = risk_tags(row)

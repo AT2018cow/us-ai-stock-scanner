@@ -21,8 +21,8 @@ REQUIRED_COLS = {
     "pe",
     "ps_discount",
     "pe_discount",
-    "ai_score",
-    "enabler_score",
+    "watchlist_bucket",
+    "watchlist_etf_count",
     "composite_score",
 }
 
@@ -61,18 +61,14 @@ def make_variants(base_cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
     loose = json.loads(json.dumps(base_cfg))
     loose["min_dollar_volume"] = 100_000.0
-    loose.setdefault("channel_profiles", {}).setdefault("core_ai", {})["min_ai_score"] = 0.05
     loose.setdefault("channel_profiles", {}).setdefault("core_ai", {})["min_ps_discount"] = -1.0
     loose.setdefault("channel_profiles", {}).setdefault("core_ai", {})["min_pe_discount"] = -1.0
-    loose.setdefault("channel_profiles", {}).setdefault("ai_enabler", {})["min_enabler_score"] = 0.02
     loose.setdefault("channel_profiles", {}).setdefault("ai_enabler", {})["min_ps_discount"] = -1.0
     loose.setdefault("channel_profiles", {}).setdefault("ai_enabler", {})["min_pe_discount"] = -1.0
     variants["loose"] = loose
 
     strict = json.loads(json.dumps(base_cfg))
     strict["min_dollar_volume"] = float(strict.get("min_dollar_volume", 1_000_000.0)) * 1.5
-    strict.setdefault("channel_profiles", {}).setdefault("core_ai", {})["min_ai_score"] = 0.30
-    strict.setdefault("channel_profiles", {}).setdefault("ai_enabler", {})["min_enabler_score"] = 0.12
     variants["strict"] = strict
 
     return variants
@@ -215,8 +211,8 @@ def main() -> None:
                     {
                         "channel": ch,
                         "symbol": row.get("symbol", ""),
-                        "ai_score": row.get("ai_score", ""),
-                        "enabler_score": row.get("enabler_score", ""),
+                        "watchlist_bucket": row.get("watchlist_bucket", ""),
+                        "watchlist_etf_count": row.get("watchlist_etf_count", ""),
                         "review_label": "",
                         "notes": "",
                     }
