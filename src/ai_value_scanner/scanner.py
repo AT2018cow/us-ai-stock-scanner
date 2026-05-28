@@ -169,7 +169,6 @@ class ScanConfig:
     use_ai_watchlist_only: bool = True
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     watchlist_fetch_timeout_sec: int = 20
-    watchlist_min_confidence: float = 0.0
     watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
     watchlist_enabler_etfs: list[str] = field(default_factory=default_watchlist_enabler_etfs)
     chunk_size: int = 200
@@ -917,12 +916,10 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
     now_iso = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, Any]] = []
     for symbol, n in core_counts.items():
-        conf = 1.0
         rows.append(
             {
                 "symbol": symbol,
                 "bucket": "core_ai",
-                "confidence": round(conf, 4),
                 "source": "etf",
                 "etf_count": int(n),
                 "etfs": ",".join(sorted(set(core_etf_hits.get(symbol, [])))),
@@ -931,12 +928,10 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
             }
         )
     for symbol, n in enabler_counts.items():
-        conf = 1.0
         rows.append(
             {
                 "symbol": symbol,
                 "bucket": "ai_enabler",
-                "confidence": round(conf, 4),
                 "source": "etf",
                 "etf_count": int(n),
                 "etfs": ",".join(sorted(set(enabler_etf_hits.get(symbol, [])))),
@@ -953,19 +948,17 @@ WATCHLIST_SCORE_COLUMNS = [
     "enabler_score",
     "watchlist_source",
     "watchlist_bucket",
-    "watchlist_confidence",
     "watchlist_etf_count",
     "watchlist_etfs",
 ]
 
 
-def watchlist_rows_to_scores(raw: pd.DataFrame, min_confidence: float) -> pd.DataFrame:
+def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
     if raw.empty:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
     work = raw.copy()
     work["symbol"] = work.get("symbol", "").apply(normalize_equity_symbol)
     work["bucket"] = work.get("bucket", "").astype(str).str.strip().str.lower()
-    work["confidence"] = pd.to_numeric(work.get("confidence", 1.0), errors="coerce").fillna(1.0).clip(lower=0.0, upper=1.0)
     work["enabled"] = (
         work.get("enabled", 1)
         .astype(str)
@@ -976,7 +969,7 @@ def watchlist_rows_to_scores(raw: pd.DataFrame, min_confidence: float) -> pd.Dat
     work["etf_count"] = pd.to_numeric(work.get("etf_count", 0), errors="coerce").fillna(0).astype(int)
     work["source"] = work.get("source", "").astype(str)
     work["etfs"] = work.get("etfs", "").astype(str)
-    work = work[(work["symbol"] != "") & work["enabled"] & (work["confidence"] >= min_confidence)]
+    work = work[(work["symbol"] != "") & work["enabled"]]
     if work.empty:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
 
@@ -984,7 +977,6 @@ def watchlist_rows_to_scores(raw: pd.DataFrame, min_confidence: float) -> pd.Dat
     for row in work.itertuples(index=False):
         symbol = str(row.symbol)
         bucket = str(row.bucket)
-        conf = float(row.confidence)
         source = str(row.source)
         etf_count = int(row.etf_count)
         etfs = str(row.etfs)
@@ -995,18 +987,16 @@ def watchlist_rows_to_scores(raw: pd.DataFrame, min_confidence: float) -> pd.Dat
                 "enabler_score": 0.0,
                 "watchlist_source": source,
                 "watchlist_bucket": bucket,
-                "watchlist_confidence": conf,
                 "watchlist_etf_count": etf_count,
                 "watchlist_etfs": etfs,
             }
         if bucket == "core_ai":
-            rows[symbol]["ai_score"] = max(float(rows[symbol]["ai_score"]), conf)
+            rows[symbol]["ai_score"] = 1.0
         elif bucket == "ai_enabler":
-            rows[symbol]["enabler_score"] = max(float(rows[symbol]["enabler_score"]), conf)
+            rows[symbol]["enabler_score"] = 1.0
         elif bucket == "both":
-            rows[symbol]["ai_score"] = max(float(rows[symbol]["ai_score"]), conf)
-            rows[symbol]["enabler_score"] = max(float(rows[symbol]["enabler_score"]), conf)
-        rows[symbol]["watchlist_confidence"] = max(float(rows[symbol]["watchlist_confidence"]), conf)
+            rows[symbol]["ai_score"] = 1.0
+            rows[symbol]["enabler_score"] = 1.0
         rows[symbol]["watchlist_etf_count"] = max(int(rows[symbol]["watchlist_etf_count"]), etf_count)
         prev_bucket = str(rows[symbol]["watchlist_bucket"])
         if prev_bucket != bucket and bucket not in prev_bucket.split(","):
@@ -1029,7 +1019,7 @@ def load_watchlist_scores(config: ScanConfig) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
     raw = pd.read_csv(path)
-    return watchlist_rows_to_scores(raw, config.watchlist_min_confidence)
+    return watchlist_rows_to_scores(raw)
 
 
 def normalize_score(series: pd.Series) -> pd.Series:
@@ -2080,7 +2070,6 @@ def run_scan(
         )
     df = df.merge(watchlist_scores, on="symbol", how="left")
     for missing_col, default_val in [
-        ("watchlist_confidence", 0.0),
         ("watchlist_etf_count", 0),
         ("watchlist_source", ""),
         ("watchlist_bucket", ""),
@@ -2090,7 +2079,6 @@ def run_scan(
             df[missing_col] = default_val
     df["ai_score"] = pd.to_numeric(df["ai_score"], errors="coerce").fillna(0.0)
     df["enabler_score"] = pd.to_numeric(df["enabler_score"], errors="coerce").fillna(0.0)
-    df["watchlist_confidence"] = pd.to_numeric(df["watchlist_confidence"], errors="coerce").fillna(0.0)
     df["watchlist_etf_count"] = pd.to_numeric(df["watchlist_etf_count"], errors="coerce").fillna(0).astype(int)
     df["watchlist_source"] = df["watchlist_source"].fillna("").astype(str)
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
@@ -2179,7 +2167,6 @@ def run_scan(
         "pe_discount",
         "ai_score",
         "enabler_score",
-        "watchlist_confidence",
         "watchlist_bucket",
         "watchlist_source",
         "watchlist_etf_count",

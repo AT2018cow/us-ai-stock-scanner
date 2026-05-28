@@ -77,12 +77,26 @@ ALPACA_FEED=iex
 `data/ai_watchlist.csv` 字段：
 - `symbol`：股票代码
 - `bucket`：`core_ai` 或 `ai_enabler`
-- `confidence`：成员标记（固定 `1.0`，不做强弱打分）
 - `source`：来源（当前为 `etf`）
 - `etf_count`：命中的 ETF 数量
 - `etfs`：命中的 ETF 列表
 - `enabled`：是否生效（`1/0`）
 - `updated_utc`：更新时间
+
+生成与维护方式（定稿）：
+1. 手工刷新（按需执行，不随扫描自动触发）
+
+```bash
+python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
+```
+
+2. 人工维护（可选）
+- 直接编辑 `data/ai_watchlist.csv`
+- 常见动作：新增符号、调整 `bucket`、设置 `enabled=0` 排除符号
+
+3. 扫描执行
+- `run_scan.py` 只读取本地 `data/ai_watchlist.csv`
+- 若文件缺失或为空，扫描会直接报错并提示先刷新
 
 当前可接受风险（后续有时间再优化）：
 1. ETF 持仓抓取目前基于网页解析，若页面结构变化可能需要调整解析逻辑。
@@ -367,7 +381,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
 - `ai_score` / `enabler_score`：观察清单相关性得分（来自 ETF 持仓映射）
-- `watchlist_confidence` / `watchlist_etf_count`：观察清单置信度与 ETF 命中数量
+- `watchlist_etf_count`：观察清单 ETF 命中数量
 - `watchlist_bucket` / `watchlist_source` / `watchlist_etfs`：观察清单来源信息
 - `news_count`：固定为 `0`（已移除新闻打分依赖）
 - `composite_score`：通道内综合评分

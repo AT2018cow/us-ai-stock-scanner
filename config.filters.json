@@ -8,7 +8,6 @@
   "use_ai_watchlist_only": true,
   "watchlist_csv_path": "data/ai_watchlist.csv",
   "watchlist_fetch_timeout_sec": 20,
-  "watchlist_min_confidence": 0.0,
   "watchlist_core_etfs": ["AIQ", "BOTZ", "ROBT", "WTAI", "SOXX", "SMH", "IRBO", "ARKQ", "IGV", "IGM", "FDN", "PNQI", "SOXQ", "XSD", "KOMP"],
   "watchlist_enabler_etfs": ["DTCR", "IFRA", "XLI", "XLU", "NLR", "URA", "SKYY", "CLOU", "SRVR", "GRID", "CIBR", "IHAK", "BUG", "PAVE", "IGF", "IXP"],
   "news_lookback_days": 180,
