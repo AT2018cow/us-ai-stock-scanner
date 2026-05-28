@@ -36,6 +36,15 @@ SHARES_TAGS = [
     "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
 ]
+STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
+
+def default_watchlist_core_etfs() -> list[str]:
+    return ["AIQ", "BOTZ", "ROBT", "WTAI", "SOXX", "SMH"]
+
+
+def default_watchlist_enabler_etfs() -> list[str]:
+    return ["DTCR", "IFRA", "XLI", "XLU", "NLR", "URA", "SKYY", "CLOU", "SRVR", "GRID", "CIBR"]
 
 
 def default_channel_profiles() -> dict[str, dict[str, Any]]:
@@ -124,6 +133,14 @@ class ScanConfig:
     alpaca_max_requests_per_sec: float = 2.5
     sec_max_requests_per_sec: float = 5.0
     pre_news_top_liquid_symbols: int | None = 1200
+    use_ai_watchlist_only: bool = True
+    watchlist_csv_path: str = "data/ai_watchlist.csv"
+    watchlist_auto_refresh: bool = True
+    watchlist_persist_refresh: bool = False
+    watchlist_fetch_timeout_sec: int = 20
+    watchlist_min_confidence: float = 0.0
+    watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
+    watchlist_enabler_etfs: list[str] = field(default_factory=default_watchlist_enabler_etfs)
     chunk_size: int = 200
     request_timeout_sec: int = 20
     news_lookback_days: int = 90
@@ -793,6 +810,195 @@ def compile_keyword_patterns(keywords: tuple[str, ...]) -> tuple[re.Pattern[str]
         )
         patterns.append(pattern)
     return tuple(patterns)
+
+
+def normalize_equity_symbol(raw: Any) -> str:
+    token = str(raw or "").strip().upper()
+    if token.startswith("$"):
+        token = token[1:]
+    token = token.replace("-", ".")
+    if not token:
+        return ""
+    if not STANDARD_EQUITY_SYMBOL_PATTERN.match(token):
+        return ""
+    return token
+
+
+def fetch_stockanalysis_etf_symbols(
+    etf_symbol: str,
+    timeout_sec: int,
+) -> tuple[list[str], str | None]:
+    etf = str(etf_symbol).strip().upper()
+    if not etf:
+        return [], "empty_etf_symbol"
+    url = f"https://stockanalysis.com/etf/{etf.lower()}/holdings/"
+    try:
+        resp = requests.get(url, timeout=timeout_sec)
+        if resp.status_code >= 400:
+            return [], f"http_{resp.status_code}"
+        html = resp.text
+    except Exception as exc:
+        return [], f"request_error:{exc.__class__.__name__}"
+
+    block = None
+    m = re.search(r"data:\{holdings:\[(.*?)\]\},uses:", html, flags=re.S)
+    if m:
+        block = m.group(1)
+    else:
+        m2 = re.search(r"holdings:\[(.*?)\]\s*[,}]", html, flags=re.S)
+        if m2:
+            block = m2.group(1)
+    if not block:
+        return [], "holdings_block_not_found"
+
+    raw_symbols = re.findall(r's:"\$?([A-Z0-9\.\-]{1,10})"', block)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_symbols:
+        sym = normalize_equity_symbol(raw)
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        out.append(sym)
+    if not out:
+        return [], "no_symbols_parsed"
+    return out, None
+
+
+def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
+    core_counts: dict[str, int] = {}
+    enabler_counts: dict[str, int] = {}
+    core_etf_hits: dict[str, list[str]] = {}
+    enabler_etf_hits: dict[str, list[str]] = {}
+
+    for etf in config.watchlist_core_etfs:
+        symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
+        for symbol in symbols:
+            core_counts[symbol] = core_counts.get(symbol, 0) + 1
+            core_etf_hits.setdefault(symbol, []).append(str(etf).upper())
+
+    for etf in config.watchlist_enabler_etfs:
+        symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
+        for symbol in symbols:
+            enabler_counts[symbol] = enabler_counts.get(symbol, 0) + 1
+            enabler_etf_hits.setdefault(symbol, []).append(str(etf).upper())
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows: list[dict[str, Any]] = []
+    for symbol, n in core_counts.items():
+        conf = min(1.0, 0.50 + 0.10 * n)
+        rows.append(
+            {
+                "symbol": symbol,
+                "bucket": "core_ai",
+                "confidence": round(conf, 4),
+                "source": "etf",
+                "etf_count": int(n),
+                "etfs": ",".join(sorted(set(core_etf_hits.get(symbol, [])))),
+                "enabled": 1,
+                "updated_utc": now_iso,
+            }
+        )
+    for symbol, n in enabler_counts.items():
+        conf = min(1.0, 0.50 + 0.10 * n)
+        rows.append(
+            {
+                "symbol": symbol,
+                "bucket": "ai_enabler",
+                "confidence": round(conf, 4),
+                "source": "etf",
+                "etf_count": int(n),
+                "etfs": ",".join(sorted(set(enabler_etf_hits.get(symbol, [])))),
+                "enabled": 1,
+                "updated_utc": now_iso,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+WATCHLIST_SCORE_COLUMNS = [
+    "symbol",
+    "ai_score",
+    "enabler_score",
+    "watchlist_source",
+    "watchlist_bucket",
+    "watchlist_confidence",
+    "watchlist_etf_count",
+    "watchlist_etfs",
+]
+
+
+def watchlist_rows_to_scores(raw: pd.DataFrame, min_confidence: float) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
+    work = raw.copy()
+    work["symbol"] = work.get("symbol", "").apply(normalize_equity_symbol)
+    work["bucket"] = work.get("bucket", "").astype(str).str.strip().str.lower()
+    work["confidence"] = pd.to_numeric(work.get("confidence", 1.0), errors="coerce").fillna(1.0).clip(lower=0.0, upper=1.0)
+    work["enabled"] = (
+        work.get("enabled", 1)
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"1", "true", "yes", "y"})
+    )
+    work["etf_count"] = pd.to_numeric(work.get("etf_count", 0), errors="coerce").fillna(0).astype(int)
+    work["source"] = work.get("source", "").astype(str)
+    work["etfs"] = work.get("etfs", "").astype(str)
+    work = work[(work["symbol"] != "") & work["enabled"] & (work["confidence"] >= min_confidence)]
+    if work.empty:
+        return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
+
+    rows: dict[str, dict[str, Any]] = {}
+    for row in work.itertuples(index=False):
+        symbol = str(row.symbol)
+        bucket = str(row.bucket)
+        conf = float(row.confidence)
+        source = str(row.source)
+        etf_count = int(row.etf_count)
+        etfs = str(row.etfs)
+        if symbol not in rows:
+            rows[symbol] = {
+                "symbol": symbol,
+                "ai_score": 0.0,
+                "enabler_score": 0.0,
+                "watchlist_source": source,
+                "watchlist_bucket": bucket,
+                "watchlist_confidence": conf,
+                "watchlist_etf_count": etf_count,
+                "watchlist_etfs": etfs,
+            }
+        if bucket == "core_ai":
+            rows[symbol]["ai_score"] = max(float(rows[symbol]["ai_score"]), conf)
+        elif bucket == "ai_enabler":
+            rows[symbol]["enabler_score"] = max(float(rows[symbol]["enabler_score"]), conf)
+        elif bucket == "both":
+            rows[symbol]["ai_score"] = max(float(rows[symbol]["ai_score"]), conf)
+            rows[symbol]["enabler_score"] = max(float(rows[symbol]["enabler_score"]), conf)
+        rows[symbol]["watchlist_confidence"] = max(float(rows[symbol]["watchlist_confidence"]), conf)
+        rows[symbol]["watchlist_etf_count"] = max(int(rows[symbol]["watchlist_etf_count"]), etf_count)
+        prev_bucket = str(rows[symbol]["watchlist_bucket"])
+        if prev_bucket != bucket and bucket not in prev_bucket.split(","):
+            rows[symbol]["watchlist_bucket"] = f"{prev_bucket},{bucket}" if prev_bucket else bucket
+        if source and source not in str(rows[symbol]["watchlist_source"]).split(","):
+            rows[symbol]["watchlist_source"] = (
+                f"{rows[symbol]['watchlist_source']},{source}" if rows[symbol]["watchlist_source"] else source
+            )
+        if etfs:
+            prev = set(x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x)
+            now = set(x for x in etfs.split(",") if x)
+            rows[symbol]["watchlist_etfs"] = ",".join(sorted(prev.union(now)))
+
+    out = pd.DataFrame(rows.values())
+    return out[WATCHLIST_SCORE_COLUMNS]
+
+
+def load_watchlist_scores(config: ScanConfig) -> pd.DataFrame:
+    path = Path(config.watchlist_csv_path)
+    if not path.exists():
+        return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
+    raw = pd.read_csv(path)
+    return watchlist_rows_to_scores(raw, config.watchlist_min_confidence)
 
 
 def normalize_score(series: pd.Series) -> pd.Series:
@@ -1618,8 +1824,8 @@ def build_run_report_markdown(
     ranked: pd.DataFrame,
     channel_profiles: dict[str, dict[str, Any]],
     filtered_counts: dict[str, int],
-    pre_news_counts: dict[str, int],
-    pre_news_symbol_count: int,
+    watchlist_counts: dict[str, int],
+    watchlist_symbol_count: int,
     merged_count: int,
     prefilter_count: int,
     paths: dict[str, Path],
@@ -1642,8 +1848,8 @@ def build_run_report_markdown(
     lines.append(f"- merged symbols: {merged_count}")
     lines.append(f"- after price/liquidity prefilter: {prefilter_count}")
     for channel_name in channel_profiles.keys():
-        lines.append(f"- pre-news {channel_name}: {pre_news_counts.get(channel_name, 0)}")
-    lines.append(f"- news fetch symbols: {pre_news_symbol_count}")
+        lines.append(f"- watchlist {channel_name}: {watchlist_counts.get(channel_name, 0)}")
+    lines.append(f"- watchlist matched symbols: {watchlist_symbol_count}")
     for channel_name in channel_profiles.keys():
         lines.append(f"- post-filter {channel_name}: {filtered_counts.get(channel_name, 0)}")
     lines.append(f"- final ranked rows: {len(ranked)}")
@@ -1801,7 +2007,7 @@ def run_scan(
     df = df.merge(fundamentals, on="symbol", how="left")
     log_status(started_at, "INFO", "SEC fundamentals merge complete.")
 
-    log_status(started_at, "INFO", "[4/6] Computing valuation and pre-news funnel.")
+    log_status(started_at, "INFO", "[4/6] Computing valuation and watchlist funnel.")
     for col in ["price", "dollar_volume", "shares_outstanding", "revenue", "net_income"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
@@ -1827,34 +2033,74 @@ def run_scan(
 
     top_n_per_channel = config.top_n_per_channel or config.top_n
     channel_profiles = config.channel_profiles or {"core_ai": {}}
+    if not config.use_ai_watchlist_only:
+        log_status(
+            started_at,
+            "INFO",
+            "use_ai_watchlist_only=false is ignored: news-based theme scoring has been removed.",
+        )
+    log_status(started_at, "INFO", "[5/6] Loading AI watchlist scores.")
+    refreshed_watchlist: pd.DataFrame | None = None
+    if config.watchlist_auto_refresh:
+        log_status(started_at, "INFO", "Refreshing watchlist from ETF holdings.")
+        refreshed = refresh_watchlist_from_etfs(config)
+        if not refreshed.empty:
+            refreshed = (
+                refreshed.sort_values(["bucket", "symbol"])
+                .drop_duplicates(subset=["symbol", "bucket"], keep="first")
+                .reset_index(drop=True)
+            )
+            refreshed_watchlist = refreshed
+            if config.watchlist_persist_refresh:
+                watchlist_path = Path(config.watchlist_csv_path)
+                watchlist_path.parent.mkdir(parents=True, exist_ok=True)
+                refreshed.to_csv(watchlist_path, index=False)
+                log_status(
+                    started_at,
+                    "INFO",
+                    f"Watchlist refreshed: rows={len(refreshed)}, path={watchlist_path}",
+                )
+            else:
+                log_status(started_at, "INFO", f"Watchlist refreshed: rows={len(refreshed)} (in-memory)")
+        else:
+            log_status(
+                started_at,
+                "INFO",
+                "Watchlist refresh returned no rows; falling back to existing watchlist file if present.",
+            )
 
-    pre_news_symbols, pre_news_counts = collect_pre_news_symbols(df, config, channel_profiles)
-    trend_pre_news_symbols, trend_pre_news_counts = collect_pre_news_symbols_for_trend(
-        df, config, channel_profiles
-    )
-    momentum_pre_news_symbols, momentum_pre_news_counts = collect_pre_news_symbols_for_momentum(
-        df, config, channel_profiles
-    )
-    all_pre_news_symbols = sorted(
-        set(pre_news_symbols).union(set(trend_pre_news_symbols)).union(set(momentum_pre_news_symbols))
-    )
-    log_status(started_at, "INFO", "Pre-news candidates by channel:")
-    for channel_name, count in pre_news_counts.items():
-        log_status(started_at, "INFO", f"  {channel_name}: {count}")
-    log_status(started_at, "INFO", "Trend pre-news candidates by channel:")
-    for channel_name, count in trend_pre_news_counts.items():
-        log_status(started_at, "INFO", f"  {channel_name}: {count}")
-    log_status(started_at, "INFO", "Momentum pre-news candidates by channel:")
-    for channel_name, count in momentum_pre_news_counts.items():
-        log_status(started_at, "INFO", f"  {channel_name}: {count}")
-    log_status(started_at, "INFO", f"News fetch symbol count: {len(all_pre_news_symbols)}")
-
-    log_status(started_at, "INFO", "[5/6] Fetching Alpaca news for prefiltered symbols.")
-    news_scores = collect_news_scores(all_pre_news_symbols, alpaca, config)
-    df = df.merge(news_scores, on="symbol", how="left")
+    if refreshed_watchlist is not None:
+        watchlist_scores = watchlist_rows_to_scores(refreshed_watchlist, config.watchlist_min_confidence)
+    else:
+        watchlist_scores = load_watchlist_scores(config)
+    df = df.merge(watchlist_scores, on="symbol", how="left")
+    for missing_col, default_val in [
+        ("watchlist_confidence", 0.0),
+        ("watchlist_etf_count", 0),
+        ("watchlist_source", ""),
+        ("watchlist_bucket", ""),
+        ("watchlist_etfs", ""),
+    ]:
+        if missing_col not in df.columns:
+            df[missing_col] = default_val
     df["ai_score"] = pd.to_numeric(df["ai_score"], errors="coerce").fillna(0.0)
     df["enabler_score"] = pd.to_numeric(df["enabler_score"], errors="coerce").fillna(0.0)
-    df["news_count"] = pd.to_numeric(df["news_count"], errors="coerce").fillna(0).astype(int)
+    df["watchlist_confidence"] = pd.to_numeric(df["watchlist_confidence"], errors="coerce").fillna(0.0)
+    df["watchlist_etf_count"] = pd.to_numeric(df["watchlist_etf_count"], errors="coerce").fillna(0).astype(int)
+    df["watchlist_source"] = df["watchlist_source"].fillna("").astype(str)
+    df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
+    df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
+    df["news_count"] = 0
+
+    watchlist_counts = {
+        "core_ai": int((df["ai_score"] > 0).sum()),
+        "ai_enabler": int((df["enabler_score"] > 0).sum()),
+    }
+    watchlist_symbol_count = int(((df["ai_score"] > 0) | (df["enabler_score"] > 0)).sum())
+    log_status(started_at, "INFO", "Watchlist candidates by channel:")
+    for channel_name, count in watchlist_counts.items():
+        log_status(started_at, "INFO", f"  {channel_name}: {count}")
+    log_status(started_at, "INFO", f"Watchlist matched symbols: {watchlist_symbol_count}")
 
     ranked_frames: list[pd.DataFrame] = []
     filtered_counts: dict[str, int] = {}
@@ -1928,6 +2174,11 @@ def run_scan(
         "pe_discount",
         "ai_score",
         "enabler_score",
+        "watchlist_confidence",
+        "watchlist_bucket",
+        "watchlist_source",
+        "watchlist_etf_count",
+        "watchlist_etfs",
         "news_count",
         "composite_score",
     ]
@@ -2036,8 +2287,11 @@ def run_scan(
         "max_symbols": config.max_symbols,
         "top_n": config.top_n,
         "top_n_per_channel": config.top_n_per_channel or config.top_n,
-        "news_lookback_days": config.news_lookback_days,
-        "pre_news_top_liquid_symbols": config.pre_news_top_liquid_symbols,
+        "use_ai_watchlist_only": config.use_ai_watchlist_only,
+        "watchlist_csv_path": config.watchlist_csv_path,
+        "watchlist_auto_refresh": config.watchlist_auto_refresh,
+        "watchlist_core_etfs": config.watchlist_core_etfs,
+        "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
     }
     network_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     log_status(started_at, "INFO", f"Network report: {network_report_path}")
@@ -2063,8 +2317,8 @@ def run_scan(
         ranked=ranked,
         channel_profiles=channel_profiles,
         filtered_counts=filtered_counts,
-        pre_news_counts=pre_news_counts,
-        pre_news_symbol_count=len(all_pre_news_symbols),
+        watchlist_counts=watchlist_counts,
+        watchlist_symbol_count=watchlist_symbol_count,
         merged_count=merged_count,
         prefilter_count=prefilter_count,
         paths=paths,

@@ -1,6 +1,6 @@
 # AI Undervalued US Stocks Scanner (Alpaca)
 
-本项目会扫描 Alpaca 可交易的美国股票，结合 SEC 基本面与 Alpaca 新闻，输出两套候选：`core_ai`（AI核心）和 `ai_enabler`（AI基础设施受益）。
+本项目会扫描 Alpaca 可交易的美国股票，结合 SEC 基本面与 ETF 观察清单（watchlist），输出两套候选：`core_ai`（AI核心）和 `ai_enabler`（AI基础设施受益）。
 
 ## 1. 本地初始化
 
@@ -52,16 +52,37 @@ ALPACA_FEED=iex
 - 追涨信号阈值：`momentum_min_ai_score`、`momentum_min_enabler_score`
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
-- 主题相关性：`ai_keywords`、`enabler_keywords`、`news_lookback_days`
+- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`、`watchlist_auto_refresh`
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
 - 行业过滤：`enable_sic_prefix_filters`、`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
-- 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`、`pre_news_top_liquid_symbols`
+- 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
 
 说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
+
+### 3.5 ETF 观察清单（替代新闻打分）
+
+当前版本已移除“新闻主题打分”作为主流程依赖，改为 ETF 观察清单打分：
+- 默认清单文件：`data/ai_watchlist.csv`
+- 默认会在每次扫描时自动刷新（`watchlist_auto_refresh=true`）
+- 默认仅在内存使用刷新结果，不回写文件（`watchlist_persist_refresh=false`）
+
+默认 ETF 集合：
+- `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH`
+- `ai_enabler`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR`
+
+`data/ai_watchlist.csv` 字段：
+- `symbol`：股票代码
+- `bucket`：`core_ai` 或 `ai_enabler`
+- `confidence`：该桶置信度（`0~1`）
+- `source`：来源（当前为 `etf`）
+- `etf_count`：命中的 ETF 数量
+- `etfs`：命中的 ETF 列表
+- `enabled`：是否生效（`1/0`）
+- `updated_utc`：更新时间
 
 ### 3.4 生产参数固化（v1）
 
@@ -202,12 +223,11 @@ ALPACA_FEED=iex
 
 ## 4. 运行方式
 
-策略执行顺序（用于降限速风险）：
+策略执行顺序：
 - 先做价格/流动性预筛，再请求 SEC 基本面
-- 基于低位价值逻辑构建 low-value pre-news 候选池
-- 基于趋势逻辑构建 industry-trend pre-news 候选池
-- 基于追涨逻辑构建 momentum pre-news 候选池
-- 对三个池子的并集请求 Alpaca News（避免趋势/追涨清单漏数）
+- 计算估值与价格位置指标
+- 根据 ETF 观察清单（watchlist）生成 `ai_score/enabler_score`
+- 生成三清单：`low-value`、`industry-trend`、`momentum`
 
 
 先小样本验证（例如 300 只）：
@@ -254,6 +274,12 @@ python run_scan.py --network-report-output outputs/network_report.json
 python run_scan.py --report-output outputs/run_report.md
 ```
 
+单独刷新 ETF 观察清单（可选）：
+
+```bash
+python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
+```
+
 推荐运行节奏：
 - `weekly_full`（每周 1 次，全市场）
 
@@ -278,7 +304,7 @@ python run_scan.py --report-output outputs/run_report.md
 - 阶段：`[1/6]` 到 `[6/6]`
 - 长耗时进度：
   - `SEC fundamentals: x/y (z%)`
-  - `Alpaca news: x/y (z%)`
+  - `Watchlist refresh: rows=...`
 - 失败时会打印：
   - 异常类型
   - 异常信息
@@ -332,8 +358,10 @@ python run_scan.py --report-output outputs/run_report.md
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
-- `ai_score` / `enabler_score`：主题相关性得分
-- `news_count`：参与打分的新闻数量
+- `ai_score` / `enabler_score`：观察清单相关性得分（来自 ETF 持仓映射）
+- `watchlist_confidence` / `watchlist_etf_count`：观察清单置信度与 ETF 命中数量
+- `watchlist_bucket` / `watchlist_source` / `watchlist_etfs`：观察清单来源信息
+- `news_count`：固定为 `0`（已移除新闻打分依赖）
 - `composite_score`：通道内综合评分
 - `triage_label`：`keep/watch/drop` 三档分组
 
@@ -358,8 +386,8 @@ python run_scan.py --report-output outputs/run_report.md
 
 - `ps_discount = 1 - (ps / 同SIC行业中位数ps)`
 - `pe_discount = 1 - (pe / 同SIC行业中位数pe)`
-- `ai_score`：AI关键词命中得分
-- `enabler_score`：数据中心/电力/基建/核能等受益关键词命中得分
+- `ai_score`：观察清单中 `core_ai` 桶映射得分
+- `enabler_score`：观察清单中 `ai_enabler` 桶映射得分
 - `core_ai` 和 `ai_enabler` 使用各自权重（`channel_profiles.<channel>.score_weights`）
 
 ## 10. 回测模块（MVP+）
