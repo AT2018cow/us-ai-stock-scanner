@@ -135,8 +135,6 @@ class ScanConfig:
     pre_news_top_liquid_symbols: int | None = 1200
     use_ai_watchlist_only: bool = True
     watchlist_csv_path: str = "data/ai_watchlist.csv"
-    watchlist_auto_refresh: bool = True
-    watchlist_persist_refresh: bool = False
     watchlist_fetch_timeout_sec: int = 20
     watchlist_min_confidence: float = 0.0
     watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
@@ -2040,39 +2038,13 @@ def run_scan(
             "use_ai_watchlist_only=false is ignored: news-based theme scoring has been removed.",
         )
     log_status(started_at, "INFO", "[5/6] Loading AI watchlist scores.")
-    refreshed_watchlist: pd.DataFrame | None = None
-    if config.watchlist_auto_refresh:
-        log_status(started_at, "INFO", "Refreshing watchlist from ETF holdings.")
-        refreshed = refresh_watchlist_from_etfs(config)
-        if not refreshed.empty:
-            refreshed = (
-                refreshed.sort_values(["bucket", "symbol"])
-                .drop_duplicates(subset=["symbol", "bucket"], keep="first")
-                .reset_index(drop=True)
-            )
-            refreshed_watchlist = refreshed
-            if config.watchlist_persist_refresh:
-                watchlist_path = Path(config.watchlist_csv_path)
-                watchlist_path.parent.mkdir(parents=True, exist_ok=True)
-                refreshed.to_csv(watchlist_path, index=False)
-                log_status(
-                    started_at,
-                    "INFO",
-                    f"Watchlist refreshed: rows={len(refreshed)}, path={watchlist_path}",
-                )
-            else:
-                log_status(started_at, "INFO", f"Watchlist refreshed: rows={len(refreshed)} (in-memory)")
-        else:
-            log_status(
-                started_at,
-                "INFO",
-                "Watchlist refresh returned no rows; falling back to existing watchlist file if present.",
-            )
-
-    if refreshed_watchlist is not None:
-        watchlist_scores = watchlist_rows_to_scores(refreshed_watchlist, config.watchlist_min_confidence)
-    else:
-        watchlist_scores = load_watchlist_scores(config)
+    watchlist_scores = load_watchlist_scores(config)
+    if watchlist_scores.empty:
+        raise ValueError(
+            "Watchlist is empty or missing. Run "
+            "`python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv` "
+            "or populate watchlist_csv_path manually."
+        )
     df = df.merge(watchlist_scores, on="symbol", how="left")
     for missing_col, default_val in [
         ("watchlist_confidence", 0.0),
@@ -2289,7 +2261,6 @@ def run_scan(
         "top_n_per_channel": config.top_n_per_channel or config.top_n,
         "use_ai_watchlist_only": config.use_ai_watchlist_only,
         "watchlist_csv_path": config.watchlist_csv_path,
-        "watchlist_auto_refresh": config.watchlist_auto_refresh,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
     }

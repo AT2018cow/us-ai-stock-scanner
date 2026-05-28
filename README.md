@@ -52,7 +52,7 @@ ALPACA_FEED=iex
 - 追涨信号阈值：`momentum_min_ai_score`、`momentum_min_enabler_score`
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
-- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`、`watchlist_auto_refresh`
+- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
@@ -67,8 +67,8 @@ ALPACA_FEED=iex
 
 当前版本已移除“新闻主题打分”作为主流程依赖，改为 ETF 观察清单打分：
 - 默认清单文件：`data/ai_watchlist.csv`
-- 默认会在每次扫描时自动刷新（`watchlist_auto_refresh=true`）
-- 默认仅在内存使用刷新结果，不回写文件（`watchlist_persist_refresh=false`）
+- 扫描阶段只读取本地 watchlist，不会自动刷新
+- watchlist 维护由独立脚本执行（需要时手工运行）
 
 默认 ETF 集合：
 - `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH`
@@ -88,7 +88,7 @@ ALPACA_FEED=iex
 1. ETF 持仓抓取目前基于网页解析，若页面结构变化可能需要调整解析逻辑。
 2. 暂无自动差异报告（新增/移除/桶变更），当前通过结果文件人工复核。
 3. 暂无独立 `manual_overrides` 层（强制纳入/排除）；当前通过直接编辑 `ai_watchlist.csv` 实现。
-4. 暂无刷新失败后的自动回退策略；若自动刷新无结果，程序回退读取本地已有 `ai_watchlist.csv`。
+4. 观察清单刷新采用手工触发，不在扫描阶段自动更新；建议在定期刷新后做一次人工抽检。
 5. 暂无按日期归档的 watchlist 快照；当前可通过版本控制（git）追踪变更历史。
 
 ### 3.4 生产参数固化（v1）
@@ -231,6 +231,7 @@ ALPACA_FEED=iex
 ## 4. 运行方式
 
 策略执行顺序：
+- 先按需手工刷新 watchlist（非每次必做）
 - 先做价格/流动性预筛，再请求 SEC 基本面
 - 计算估值与价格位置指标
 - 根据 ETF 观察清单（watchlist）生成 `ai_score/enabler_score`
