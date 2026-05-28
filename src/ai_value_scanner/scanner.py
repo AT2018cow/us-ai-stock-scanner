@@ -239,6 +239,7 @@ class ScanConfig:
     )
     enable_sic_prefix_filters: bool = False
     require_channel_bucket_match: bool = True
+    enforce_unique_symbol_per_list: bool = False
     include_sic_prefixes: list[str] = field(default_factory=list)
     exclude_sic_prefixes: list[str] = field(default_factory=list)
     include_sic_codes: list[str] = field(default_factory=list)
@@ -1774,6 +1775,33 @@ def apply_filters_with_diagnostics(
     return out, diagnostics
 
 
+def dedupe_symbol_by_best_channel(frame: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if frame.empty or "symbol" not in frame.columns or "composite_score" not in frame.columns:
+        return frame, 0
+    work = frame.copy()
+    work["_symbol"] = work["symbol"].astype(str)
+    work["_score"] = pd.to_numeric(work["composite_score"], errors="coerce").fillna(-np.inf)
+    if "watchlist_etf_count" in work.columns:
+        work["_etf_count"] = pd.to_numeric(work["watchlist_etf_count"], errors="coerce").fillna(0)
+    else:
+        work["_etf_count"] = 0
+    if "channel" in work.columns:
+        work["_channel"] = work["channel"].astype(str)
+    else:
+        work["_channel"] = ""
+    # Keep one row per symbol: highest score first, then broader ETF coverage.
+    work = work.sort_values(
+        by=["_symbol", "_score", "_etf_count", "_channel"],
+        ascending=[True, False, False, True],
+    )
+    deduped = work.drop_duplicates(subset=["_symbol"], keep="first").drop(
+        columns=["_symbol", "_score", "_etf_count", "_channel"],
+        errors="ignore",
+    )
+    removed = len(frame) - len(deduped)
+    return deduped, int(removed)
+
+
 def summarize_first_fail_reasons(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> pd.DataFrame:
@@ -2244,6 +2272,9 @@ def run_scan(
         if non_empty_ranked_frames
         else pd.DataFrame(columns=df.columns.tolist() + ["channel", "composite_score"])
     )
+    if config.enforce_unique_symbol_per_list:
+        ranked, removed = dedupe_symbol_by_best_channel(ranked)
+        log_status(started_at, "INFO", f"Low-Value channel-overlap dedupe removed: {removed}")
 
     out_path = paths["ranked_csv"]
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2315,6 +2346,9 @@ def run_scan(
         if non_empty_trend_frames
         else pd.DataFrame(columns=df.columns.tolist() + ["channel", "composite_score"])
     )
+    if config.enforce_unique_symbol_per_list:
+        industry_trend, removed = dedupe_symbol_by_best_channel(industry_trend)
+        log_status(started_at, "INFO", f"Industry-Trend channel-overlap dedupe removed: {removed}")
     industry_trend["triage_label"] = "trend"
     if not industry_trend.empty:
         industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -2349,6 +2383,9 @@ def run_scan(
         if non_empty_momentum_frames
         else pd.DataFrame(columns=df.columns.tolist() + ["channel", "composite_score"])
     )
+    if config.enforce_unique_symbol_per_list:
+        momentum, removed = dedupe_symbol_by_best_channel(momentum)
+        log_status(started_at, "INFO", f"Momentum channel-overlap dedupe removed: {removed}")
     momentum["triage_label"] = "momentum"
     if not momentum.empty:
         momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -2389,6 +2426,7 @@ def run_scan(
         "top_n_per_channel_low_value": top_n_low_value,
         "top_n_per_channel_trend": top_n_trend,
         "top_n_per_channel_momentum": top_n_momentum,
+        "enforce_unique_symbol_per_list": bool(config.enforce_unique_symbol_per_list),
         "watchlist_csv_path": config.watchlist_csv_path,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
