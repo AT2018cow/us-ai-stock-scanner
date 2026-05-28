@@ -100,10 +100,13 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "exclude_sic_codes": ["6770"],
             "score_weights": {
                 "ps_discount": 0.40,
-                "pe_discount": 0.30,
-                "ai_score": 0.25,
+                "pe_discount": 0.25,
+                "ai_score": 0.00,
                 "enabler_score": 0.00,
                 "liquidity": 0.05,
+                "watchlist_etf_count": 0.15,
+                "range_position_52w_low": 0.10,
+                "days_below_sma200": 0.05,
             },
         },
         "ai_enabler": {
@@ -125,9 +128,12 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "score_weights": {
                 "ps_discount": 0.30,
                 "pe_discount": 0.20,
-                "ai_score": 0.15,
-                "enabler_score": 0.30,
+                "ai_score": 0.00,
+                "enabler_score": 0.00,
                 "liquidity": 0.05,
+                "watchlist_etf_count": 0.25,
+                "range_position_52w_low": 0.15,
+                "days_below_sma200": 0.05,
             },
         },
     }
@@ -1449,9 +1455,19 @@ def build_industry_trend_steps(
     trend_weights = channel_profile.get("trend_score_weights")
     if not isinstance(trend_weights, dict):
         if channel_name == "ai_enabler":
-            trend_weights = {"ai_score": 0.30, "enabler_score": 0.60, "liquidity": 0.10}
+            trend_weights = {
+                "liquidity": 0.20,
+                "watchlist_etf_count": 0.40,
+                "return_20d": 0.30,
+                "drawdown_from_52w_high": -0.10,
+            }
         else:
-            trend_weights = {"ai_score": 0.80, "enabler_score": 0.10, "liquidity": 0.10}
+            trend_weights = {
+                "liquidity": 0.20,
+                "watchlist_etf_count": 0.35,
+                "return_20d": 0.35,
+                "drawdown_from_52w_high": -0.10,
+            }
 
     steps: list[tuple[str, Any]] = [
         ("price_notna", lambda frame: frame["price"].notna()),
@@ -1528,10 +1544,12 @@ def build_momentum_steps(
     momentum_weights = channel_profile.get("momentum_score_weights")
     if not isinstance(momentum_weights, dict):
         momentum_weights = {
-            "ai_score": 0.30,
-            "enabler_score": 0.40,
+            "ai_score": 0.00,
+            "enabler_score": 0.00,
             "liquidity": 0.10,
-            "return_20d": 0.20,
+            "return_20d": 0.55,
+            "watchlist_etf_count": 0.25,
+            "drawdown_from_52w_high": -0.10,
         }
 
     steps: list[tuple[str, Any]] = [
@@ -1726,33 +1744,57 @@ def summarize_first_fail_reasons(
 
 def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     out = df.copy()
-    required_cols = ["ps_discount", "pe_discount", "ai_score", "enabler_score", "dollar_volume", "return_20d"]
+    required_cols = [
+        "ps_discount",
+        "pe_discount",
+        "ai_score",
+        "enabler_score",
+        "dollar_volume",
+        "return_20d",
+        "watchlist_etf_count",
+        "range_position_52w",
+        "drawdown_from_52w_high",
+        "days_below_sma200",
+    ]
     for col in required_cols:
         if col not in out.columns:
             out[col] = np.nan
 
-    out["ps_discount_norm"] = normalize_score(out["ps_discount"])
-    out["pe_discount_norm"] = normalize_score(out["pe_discount"])
-    out["ai_score_norm"] = normalize_score(out["ai_score"])
-    out["enabler_score_norm"] = normalize_score(out["enabler_score"])
-    out["liquidity_norm"] = normalize_score(np.log1p(out["dollar_volume"].fillna(0)))
-    out["return_20d_norm"] = normalize_score(out["return_20d"])
+    component_series: dict[str, pd.Series] = {
+        "ps_discount": out["ps_discount"],
+        "pe_discount": out["pe_discount"],
+        "ai_score": out["ai_score"],
+        "enabler_score": out["enabler_score"],
+        "liquidity": np.log1p(pd.to_numeric(out["dollar_volume"], errors="coerce").fillna(0)),
+        "return_20d": out["return_20d"],
+        "watchlist_etf_count": pd.to_numeric(out["watchlist_etf_count"], errors="coerce"),
+        "range_position_52w_low": 1 - pd.to_numeric(out["range_position_52w"], errors="coerce"),
+        "drawdown_from_52w_high": pd.to_numeric(out["drawdown_from_52w_high"], errors="coerce"),
+        "days_below_sma200": pd.to_numeric(out["days_below_sma200"], errors="coerce"),
+    }
+    default_weights = {
+        "ps_discount": 0.40,
+        "pe_discount": 0.30,
+        "ai_score": 0.25,
+        "enabler_score": 0.00,
+        "liquidity": 0.05,
+        "return_20d": 0.00,
+        "watchlist_etf_count": 0.00,
+        "range_position_52w_low": 0.00,
+        "drawdown_from_52w_high": 0.00,
+        "days_below_sma200": 0.00,
+    }
+    out["composite_score"] = 0.0
+    use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
+    for key, raw in component_series.items():
+        norm_col = f"{key}_norm"
+        out[norm_col] = normalize_score(raw)
+        if use_fallback_defaults:
+            weight = float(default_weights.get(key, 0.0))
+        else:
+            weight = float(weights.get(key, 0.0))
+        out["composite_score"] += weight * out[norm_col]
 
-    w_ps = float(weights.get("ps_discount", 0.40))
-    w_pe = float(weights.get("pe_discount", 0.30))
-    w_ai = float(weights.get("ai_score", 0.25))
-    w_enabler = float(weights.get("enabler_score", 0.00))
-    w_liq = float(weights.get("liquidity", 0.05))
-    w_ret = float(weights.get("return_20d", 0.00))
-
-    out["composite_score"] = (
-        w_ps * out["ps_discount_norm"]
-        + w_pe * out["pe_discount_norm"]
-        + w_ai * out["ai_score_norm"]
-        + w_enabler * out["enabler_score_norm"]
-        + w_liq * out["liquidity_norm"]
-        + w_ret * out["return_20d_norm"]
-    )
     return out.sort_values("composite_score", ascending=False)
 
 
@@ -1920,8 +1962,8 @@ def build_run_report_markdown(
                         "- "
                         f"{row['symbol']} | triage={row['triage_label']} | "
                         f"score={float(row['composite_score']):.3f} | "
-                        f"ai={float(row['ai_score']):.3f} | "
-                        f"enabler={float(row['enabler_score']):.3f} | "
+                        f"bucket={str(row.get('watchlist_bucket', ''))} | "
+                        f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                         f"psd={float(row['ps_discount']):.3f} | "
                         f"ped={float(row['pe_discount']):.3f}"
                     )
@@ -2365,8 +2407,8 @@ def run_scan(
                     f"score={float(row['composite_score']):.3f} | "
                     f"psd={float(row['ps_discount']):.3f} | "
                     f"ped={float(row['pe_discount']):.3f} | "
-                    f"ai={float(row['ai_score']):.3f} | "
-                    f"enabler={float(row['enabler_score']):.3f}"
+                    f"bucket={str(row.get('watchlist_bucket', ''))} | "
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
                 )
     print("=== End Low-Value Shortlist ===")
     print("")
@@ -2386,8 +2428,8 @@ def run_scan(
                 print(
                     "  - "
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
-                    f"ai={float(row['ai_score']):.3f} | "
-                    f"enabler={float(row['enabler_score']):.3f}"
+                    f"bucket={str(row.get('watchlist_bucket', ''))} | "
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
                 )
     print("=== End Industry Trend Shortlist ===")
     print("")
@@ -2408,8 +2450,8 @@ def run_scan(
                     "  - "
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
                     f"r20={float(row['return_20d']):.3f} | "
-                    f"ai={float(row['ai_score']):.3f} | "
-                    f"enabler={float(row['enabler_score']):.3f}"
+                    f"bucket={str(row.get('watchlist_bucket', ''))} | "
+                    f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)}"
                 )
     print("=== End Momentum Shortlist ===")
     log_status(started_at, "INFO", "Scan completed successfully.")

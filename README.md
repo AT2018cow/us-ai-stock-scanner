@@ -53,6 +53,7 @@ ALPACA_FEED=iex
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
+- 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
@@ -70,6 +71,7 @@ ALPACA_FEED=iex
 - 扫描阶段只读取本地 watchlist，不会自动刷新
 - watchlist 维护由独立脚本执行（需要时手工运行）
 - 当 `use_ai_watchlist_only=true` 时，不使用 `min_ai_score/min_enabler_score` 等 AI 相关阈值做过滤；三清单只做“watchlist成员 + 财务/价格/流动性”筛选。
+- 在该模式下，`ai_score/enabler_score` 仅用于成员映射与兼容旧字段，默认不再作为排序主权重。
 
 默认 ETF 集合：
 - `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
@@ -381,7 +383,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
-- `ai_score` / `enabler_score`：观察清单相关性得分（来自 ETF 持仓映射）
+- `ai_score` / `enabler_score`：观察清单成员映射字段（在 watchlist-only 模式下通常为二值化）
 - `watchlist_etf_count`：观察清单 ETF 命中数量
 - `watchlist_bucket` / `watchlist_source` / `watchlist_etfs`：观察清单来源信息
 - `news_count`：固定为 `0`（已移除新闻打分依赖）
@@ -409,9 +411,9 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 - `ps_discount = 1 - (ps / 同SIC行业中位数ps)`
 - `pe_discount = 1 - (pe / 同SIC行业中位数pe)`
-- `ai_score`：观察清单中 `core_ai` 桶映射得分
-- `enabler_score`：观察清单中 `ai_enabler` 桶映射得分
-- `core_ai` 和 `ai_enabler` 使用各自权重（`channel_profiles.<channel>.score_weights`）
+- 默认综合评分主要使用：`ps_discount`、`pe_discount`、`liquidity`、`watchlist_etf_count`
+- 可选价格位置维度：`range_position_52w_low`（即 `1-range_position_52w`）、`days_below_sma200`、`drawdown_from_52w_high`
+- 各通道权重由 `channel_profiles.<channel>.score_weights`、`trend_score_weights`、`momentum_score_weights` 配置
 
 ## 10. 回测模块（MVP+）
 
