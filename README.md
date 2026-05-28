@@ -89,8 +89,8 @@ ALPACA_FEED=iex
 - `etf_count`：命中的 ETF 数量
 - `etfs`：命中的 ETF 列表
 - `enabled`：是否生效（`1/0`）
-- `updated_utc`：更新时间
-- 注意：扫描端按上述字段做严格校验，不再兼容旧 schema。
+- `updated_utc`：更新时间（建议保留，当前扫描端不强制）
+- 注意：扫描端严格校验必填字段为 `symbol,bucket,etf_count,etfs,enabled`，不再兼容旧 schema。
 
 生成与维护方式（定稿）：
 1. 手工刷新（按需执行，不随扫描自动触发）
@@ -120,7 +120,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - 扫描端只使用本地 `data/ai_watchlist.csv`，不自动刷新。
 - 扫描前先加载 watchlist，并将股票 universe 收缩到 watchlist 符号（不再先扫描全市场再过滤）。
 - 已移除 `use_ai_watchlist_only` 开关；扫描逻辑固定为 watchlist-only。
-- watchlist schema 严格校验：`symbol,bucket,etf_count,etfs,enabled,updated_utc`。
+- watchlist schema 严格校验：`symbol,bucket,etf_count,etfs,enabled`（`updated_utc` 建议保留但非强制）。
 - 已移除 `source` 字段与旧 schema 兼容路径（项目未上线前主动去除遗留逻辑）。
 - `watchlist_etf_count` 与 `watchlist_etfs` 使用统一口径：`etf_count = 去重后 etfs 数量`。
 
@@ -263,7 +263,7 @@ python run_scan.py --max-symbols 300
 运行时终端会持续打印：
 - 当前阶段（`[1/6]...[6/6]`）
 - 耗时与状态时间戳
-- SEC/News 长阶段的进度百分比
+- SEC 长阶段的进度百分比
 - 失败时的错误类型与 traceback
 
 全量扫描：
@@ -334,11 +334,10 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
   - 完整 traceback
 
 程序结束时会打印简短清单：
-- `=== Low-Value Shortlist (Top 3 Per Channel) ===`
-- `=== Industry Trend Shortlist (Top 3 Per Channel) ===`
-- `=== Momentum Shortlist (Top 3 Per Channel) ===`
-- `Low-Value` 展示 `keep/watch` Top3（不展示 `drop`）
-- `Industry-Trend` 与 `Momentum` 展示各自打分 Top3
+- `=== Low-Value Shortlist (All Selected Per Channel) ===`
+- `=== Industry Trend Shortlist (All Selected Per Channel) ===`
+- `=== Momentum Shortlist (All Selected Per Channel) ===`
+- 三张清单均按通道打印全部入选股票（按 `composite_score` 降序）
 
 ## 6. 输出文件命名与含义
 

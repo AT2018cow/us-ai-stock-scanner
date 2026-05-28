@@ -2515,17 +2515,15 @@ def run_scan(
     log_status(started_at, "INFO", f"Detailed report: {paths['report_md']}")
 
     print("")
-    print("=== Low-Value Shortlist (Top 3 Per Channel) ===")
+    print("=== Low-Value Shortlist (All Selected Per Channel) ===")
     if ranked.empty:
         print("No candidates.")
     else:
         for channel_name in channel_profiles.keys():
             print(f"[{channel_name}]")
-            top = ranked[
-                (ranked["channel"] == channel_name) & (ranked["triage_label"] != "drop")
-            ].sort_values(
+            top = ranked[ranked["channel"] == channel_name].sort_values(
                 "composite_score", ascending=False
-            ).head(3)
+            )
             if top.empty:
                 print("  - none")
                 continue
@@ -2542,7 +2540,7 @@ def run_scan(
                 )
     print("=== End Low-Value Shortlist ===")
     print("")
-    print("=== Industry Trend Shortlist (Top 3 Per Channel) ===")
+    print("=== Industry Trend Shortlist (All Selected Per Channel) ===")
     if industry_trend.empty:
         print("No industry trend candidates.")
     else:
@@ -2550,7 +2548,7 @@ def run_scan(
             print(f"[{channel_name}]")
             top = industry_trend[industry_trend["channel"] == channel_name].sort_values(
                 "composite_score", ascending=False
-            ).head(3)
+            )
             if top.empty:
                 print("  - none")
                 continue
@@ -2564,7 +2562,7 @@ def run_scan(
                 )
     print("=== End Industry Trend Shortlist ===")
     print("")
-    print("=== Momentum Shortlist (Top 3 Per Channel) ===")
+    print("=== Momentum Shortlist (All Selected Per Channel) ===")
     if momentum.empty:
         print("No momentum candidates.")
     else:
@@ -2572,7 +2570,7 @@ def run_scan(
             print(f"[{channel_name}]")
             top = momentum[momentum["channel"] == channel_name].sort_values(
                 "composite_score", ascending=False
-            ).head(3)
+            )
             if top.empty:
                 print("  - none")
                 continue
