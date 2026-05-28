@@ -71,13 +71,13 @@ ALPACA_FEED=iex
 - watchlist 维护由独立脚本执行（需要时手工运行）
 
 默认 ETF 集合：
-- `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH`
-- `ai_enabler`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR`
+- `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
+- `ai_enabler`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
 
 `data/ai_watchlist.csv` 字段：
 - `symbol`：股票代码
 - `bucket`：`core_ai` 或 `ai_enabler`
-- `confidence`：该桶置信度（`0~1`）
+- `confidence`：成员标记（固定 `1.0`，不做强弱打分）
 - `source`：来源（当前为 `etf`）
 - `etf_count`：命中的 ETF 数量
 - `etfs`：命中的 ETF 列表

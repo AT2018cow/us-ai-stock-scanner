@@ -40,11 +40,44 @@ STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 
 def default_watchlist_core_etfs() -> list[str]:
-    return ["AIQ", "BOTZ", "ROBT", "WTAI", "SOXX", "SMH"]
+    return [
+        "AIQ",
+        "BOTZ",
+        "ROBT",
+        "WTAI",
+        "SOXX",
+        "SMH",
+        "IRBO",
+        "ARKQ",
+        "IGV",
+        "IGM",
+        "FDN",
+        "PNQI",
+        "SOXQ",
+        "XSD",
+        "KOMP",
+    ]
 
 
 def default_watchlist_enabler_etfs() -> list[str]:
-    return ["DTCR", "IFRA", "XLI", "XLU", "NLR", "URA", "SKYY", "CLOU", "SRVR", "GRID", "CIBR"]
+    return [
+        "DTCR",
+        "IFRA",
+        "XLI",
+        "XLU",
+        "NLR",
+        "URA",
+        "SKYY",
+        "CLOU",
+        "SRVR",
+        "GRID",
+        "CIBR",
+        "IHAK",
+        "BUG",
+        "PAVE",
+        "IGF",
+        "IXP",
+    ]
 
 
 def default_channel_profiles() -> dict[str, dict[str, Any]]:
@@ -884,7 +917,7 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
     now_iso = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, Any]] = []
     for symbol, n in core_counts.items():
-        conf = min(1.0, 0.50 + 0.10 * n)
+        conf = 1.0
         rows.append(
             {
                 "symbol": symbol,
@@ -898,7 +931,7 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
             }
         )
     for symbol, n in enabler_counts.items():
-        conf = min(1.0, 0.50 + 0.10 * n)
+        conf = 1.0
         rows.append(
             {
                 "symbol": symbol,
