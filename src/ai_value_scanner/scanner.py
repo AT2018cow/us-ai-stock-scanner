@@ -83,6 +83,7 @@ def default_watchlist_enabler_etfs() -> list[str]:
 def default_channel_profiles() -> dict[str, dict[str, Any]]:
     return {
         "core_ai": {
+            "min_watchlist_etf_count": 1,
             "min_ps_discount": 0.15,
             "min_pe_discount": 0.10,
             "min_drawdown_from_52w_high": None,
@@ -105,6 +106,7 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             },
         },
         "ai_enabler": {
+            "min_watchlist_etf_count": 1,
             "min_ps_discount": 0.05,
             "min_pe_discount": 0.00,
             "min_drawdown_from_52w_high": None,
@@ -1069,6 +1071,7 @@ def resolve_channel_profile(
 
     return {
         "name": channel_name,
+        "min_watchlist_etf_count": int(profile.get("min_watchlist_etf_count", 1)),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
         "min_drawdown_from_52w_high": (
@@ -1335,6 +1338,14 @@ def build_filter_steps(
                 lambda frame: frame["volatility_60d"].fillna(np.inf) <= cp["max_60d_volatility"],
             )
         )
+    if cp["min_watchlist_etf_count"] > 1:
+        steps.append(
+            (
+                "min_watchlist_etf_count",
+                lambda frame: pd.to_numeric(frame["watchlist_etf_count"], errors="coerce").fillna(0)
+                >= int(cp["min_watchlist_etf_count"]),
+            )
+        )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
 
@@ -1364,6 +1375,9 @@ def build_industry_trend_steps(
 ) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
     trend_weights = channel_profile.get("trend_score_weights")
+    trend_min_watchlist_etf_count = int(
+        channel_profile.get("trend_min_watchlist_etf_count", cp["min_watchlist_etf_count"])
+    )
     if not isinstance(trend_weights, dict):
         if channel_name == "ai_enabler":
             trend_weights = {
@@ -1391,6 +1405,14 @@ def build_industry_trend_steps(
         steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
+    if trend_min_watchlist_etf_count > 1:
+        steps.append(
+            (
+                "trend_min_watchlist_etf_count",
+                lambda frame: pd.to_numeric(frame["watchlist_etf_count"], errors="coerce").fillna(0)
+                >= trend_min_watchlist_etf_count,
+            )
+        )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
 
@@ -1419,6 +1441,9 @@ def build_momentum_steps(
     momentum_min_price_to_sma200 = channel_profile.get("momentum_min_price_to_sma200", 1.05)
     momentum_max_drawdown_from_52w_high = channel_profile.get(
         "momentum_max_drawdown_from_52w_high", 0.25
+    )
+    momentum_min_watchlist_etf_count = int(
+        channel_profile.get("momentum_min_watchlist_etf_count", cp["min_watchlist_etf_count"])
     )
     momentum_weights = channel_profile.get("momentum_score_weights")
     if not isinstance(momentum_weights, dict):
@@ -1450,6 +1475,14 @@ def build_momentum_steps(
             <= float(momentum_max_drawdown_from_52w_high),
         ),
     ]
+    if momentum_min_watchlist_etf_count > 1:
+        steps.append(
+            (
+                "momentum_min_watchlist_etf_count",
+                lambda frame: pd.to_numeric(frame["watchlist_etf_count"], errors="coerce").fillna(0)
+                >= momentum_min_watchlist_etf_count,
+            )
+        )
 
     steps.append(("watchlist_membership", watchlist_member_mask))
 

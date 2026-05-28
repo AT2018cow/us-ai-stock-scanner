@@ -46,7 +46,9 @@ ALPACA_FEED=iex
 默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
+- 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
+- 追涨覆盖阈值：`momentum_min_watchlist_etf_count`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
@@ -223,6 +225,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 当前版本核心原则：
 - AI 相关性由 watchlist 维护脚本负责（ETF 持仓映射），扫描阶段不再计算 `ai_score/enabler_score`。
 - 排序主因子为估值折价、流动性、价格位置和 watchlist 覆盖广度（`watchlist_etf_count`）。
+- 过滤层可额外要求最小 ETF 覆盖数（`min_watchlist_etf_count`），用于收紧候选数量。
 - 输出拆分为三清单（并行）
   - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
   - `*_ranked_industry_trend.csv`（Industry-Trend）：主题相关性优先，偏“产业跟踪”。

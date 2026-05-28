@@ -1,6 +1,6 @@
 {
   "top_n": 50,
-  "top_n_per_channel": 30,
+  "top_n_per_channel": 15,
   "max_symbols": null,
   "max_workers": 8,
   "chunk_size": 200,
@@ -42,22 +42,24 @@
   ],
   "channel_profiles": {
     "core_ai": {
+      "min_watchlist_etf_count": 2,
       "momentum_min_return_20d": 0.05,
       "momentum_min_price_to_sma200": 1.03,
       "momentum_max_drawdown_from_52w_high": 0.3,
+      "momentum_min_watchlist_etf_count": 2,
       "momentum_score_weights": {
         "liquidity": 0.1,
         "return_20d": 0.55,
         "watchlist_etf_count": 0.25,
         "drawdown_from_52w_high": -0.1
       },
-      "min_ps_discount": 0.15,
-      "min_pe_discount": 0.1,
-      "min_drawdown_from_52w_high": 0.2,
+      "min_ps_discount": 0.2,
+      "min_pe_discount": 0.15,
+      "min_drawdown_from_52w_high": 0.25,
       "max_range_position_52w": 0.7,
       "max_price_to_sma200": 1.1,
-      "min_days_below_sma200": 7,
-      "max_20d_return": 0.12,
+      "min_days_below_sma200": 10,
+      "max_20d_return": 0.1,
       "max_60d_volatility": 0.7,
       "include_sic_prefixes": [],
       "exclude_sic_prefixes": [],
@@ -75,22 +77,24 @@
       }
     },
     "ai_enabler": {
+      "min_watchlist_etf_count": 2,
       "momentum_min_return_20d": 0.05,
       "momentum_min_price_to_sma200": 1.05,
       "momentum_max_drawdown_from_52w_high": 0.25,
+      "momentum_min_watchlist_etf_count": 2,
       "momentum_score_weights": {
         "liquidity": 0.1,
         "return_20d": 0.55,
         "watchlist_etf_count": 0.25,
         "drawdown_from_52w_high": -0.1
       },
-      "min_ps_discount": 0.0,
-      "min_pe_discount": -0.1,
-      "min_drawdown_from_52w_high": 0.15,
+      "min_ps_discount": 0.1,
+      "min_pe_discount": 0.0,
+      "min_drawdown_from_52w_high": 0.2,
       "max_range_position_52w": 0.8,
       "max_price_to_sma200": 1.15,
-      "min_days_below_sma200": 5,
-      "max_20d_return": 0.18,
+      "min_days_below_sma200": 7,
+      "max_20d_return": 0.14,
       "max_60d_volatility": 0.85,
       "include_sic_prefixes": [
         "13",
