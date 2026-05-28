@@ -37,6 +37,31 @@ SHARES_TAGS = [
     "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
 ]
+OPERATING_CASH_FLOW_TAGS = [
+    "NetCashProvidedByUsedInOperatingActivities",
+    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+]
+CAPEX_TAGS = [
+    "PaymentsToAcquirePropertyPlantAndEquipment",
+    "CapitalExpendituresIncurredButNotYetPaid",
+    "CapitalExpenditures",
+]
+CASH_AND_EQUIVALENTS_TAGS = [
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+]
+LONG_TERM_DEBT_TAGS = [
+    "LongTermDebtAndFinanceLeaseObligations",
+    "LongTermDebtNoncurrent",
+]
+CURRENT_DEBT_TAGS = [
+    "DebtCurrent",
+    "LongTermDebtAndFinanceLeaseObligationsCurrent",
+]
+EBIT_TAGS = [
+    "OperatingIncomeLoss",
+    "EarningsBeforeInterestAndTaxes",
+]
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 
@@ -87,6 +112,12 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "min_watchlist_etf_count": 1,
             "min_ps_discount": 0.15,
             "min_pe_discount": 0.10,
+            "max_ps_percentile_in_sic": 0.45,
+            "max_pe_percentile_in_sic": 0.45,
+            "max_ev_to_ebit": 24.0,
+            "min_fcf_yield": 0.02,
+            "min_revenue_yoy": 0.00,
+            "min_net_income_yoy": -0.05,
             "min_drawdown_from_52w_high": None,
             "max_range_position_52w": None,
             "max_price_to_sma200": None,
@@ -94,18 +125,31 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "max_20d_return": 0.12,
             "max_60d_volatility": 0.70,
             "score_weights": {
-                "ps_discount": 0.40,
-                "pe_discount": 0.25,
+                "ps_discount": 0.24,
+                "pe_discount": 0.16,
+                "ps_percentile_low": 0.10,
+                "pe_percentile_low": 0.08,
+                "ev_to_ebit_low": 0.08,
+                "fcf_yield": 0.08,
+                "revenue_yoy": 0.05,
+                "net_income_yoy": 0.04,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.15,
                 "range_position_52w_low": 0.10,
                 "days_below_sma200": 0.05,
+                "net_margin": 0.02,
             },
         },
         "ai_enabler": {
             "min_watchlist_etf_count": 1,
             "min_ps_discount": 0.05,
             "min_pe_discount": 0.00,
+            "max_ps_percentile_in_sic": 0.55,
+            "max_pe_percentile_in_sic": 0.55,
+            "max_ev_to_ebit": 28.0,
+            "min_fcf_yield": 0.015,
+            "min_revenue_yoy": -0.02,
+            "min_net_income_yoy": -0.10,
             "min_drawdown_from_52w_high": None,
             "max_range_position_52w": None,
             "max_price_to_sma200": None,
@@ -113,12 +157,19 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "max_20d_return": 0.18,
             "max_60d_volatility": 0.85,
             "score_weights": {
-                "ps_discount": 0.30,
-                "pe_discount": 0.20,
+                "ps_discount": 0.18,
+                "pe_discount": 0.12,
+                "ps_percentile_low": 0.12,
+                "pe_percentile_low": 0.10,
+                "ev_to_ebit_low": 0.08,
+                "fcf_yield": 0.08,
+                "revenue_yoy": 0.05,
+                "net_income_yoy": 0.04,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.25,
                 "range_position_52w_low": 0.15,
                 "days_below_sma200": 0.05,
+                "net_margin": 0.03,
             },
         },
     }
@@ -168,11 +219,25 @@ class ScanConfig:
     min_avg_dollar_volume_20d: float | None = None
     require_positive_revenue: bool = True
     require_positive_net_income: bool = True
+    require_positive_operating_cash_flow: bool = True
+    require_positive_free_cash_flow: bool = True
+    require_positive_ebit: bool = True
     min_revenue: float = 10_000_000.0
     min_net_income: float = 1_000_000.0
+    min_operating_cash_flow: float | None = 0.0
+    min_free_cash_flow: float | None = 0.0
+    min_ebit: float | None = 0.0
     min_net_margin: float | None = None
     max_ps: float | None = None
     max_pe: float | None = None
+    max_ev_to_ebit: float | None = 25.0
+    min_fcf_yield: float | None = 0.02
+    max_ps_percentile_in_sic: float | None = 0.60
+    max_pe_percentile_in_sic: float | None = 0.60
+    min_revenue_yoy: float | None = 0.00
+    min_net_income_yoy: float | None = -0.10
+    score_penalty_overvaluation: float = 0.20
+    score_penalty_deterioration: float = 0.20
     min_ps_discount: float = 0.15
     min_pe_discount: float = 0.10
     price_lookback_days: int = 420
@@ -703,16 +768,16 @@ def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
         yield seq[i : i + size]
 
 
-def pick_latest_fact(
+def pick_annual_facts(
     companyfacts: dict[str, Any], tags: list[str], unit: str
-) -> tuple[float | None, str | None]:
+) -> list[tuple[str, float, str]]:
     facts = companyfacts.get("facts", {}).get("us-gaap", {})
     for tag in tags:
         if tag not in facts:
             continue
         units = facts[tag].get("units", {})
         entries = units.get(unit, [])
-        candidates = []
+        candidates: list[tuple[str, float, str, str]] = []
         for item in entries:
             form = item.get("form")
             if form not in ANNUAL_FORMS:
@@ -722,13 +787,41 @@ def pick_latest_fact(
             end = item.get("end")
             if not end:
                 continue
-            candidates.append((end, float(item["val"]), form))
+            filed = item.get("filed") or ""
+            candidates.append((end, float(item["val"]), str(form), str(filed)))
         if not candidates:
             continue
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        latest = candidates[0]
-        return latest[1], latest[2]
-    return None, None
+        # Keep one observation per fiscal period end; prefer most recently filed.
+        by_end: dict[str, tuple[float, str, str]] = {}
+        for end, val, form, filed in candidates:
+            prev = by_end.get(end)
+            if prev is None or filed > prev[2]:
+                by_end[end] = (val, form, filed)
+        collapsed = [(end, val, form) for end, (val, form, _) in by_end.items()]
+        collapsed.sort(key=lambda x: x[0], reverse=True)
+        return collapsed
+    return []
+
+
+def pick_latest_fact(
+    companyfacts: dict[str, Any], tags: list[str], unit: str
+) -> tuple[float | None, str | None]:
+    values = pick_annual_facts(companyfacts, tags, unit)
+    if not values:
+        return None, None
+    _, val, form = values[0]
+    return val, form
+
+
+def pick_latest_and_prev_fact(
+    companyfacts: dict[str, Any], tags: list[str], unit: str
+) -> tuple[float | None, float | None]:
+    values = pick_annual_facts(companyfacts, tags, unit)
+    if not values:
+        return None, None
+    latest = values[0][1]
+    prev = values[1][1] if len(values) > 1 else None
+    return latest, prev
 
 
 def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -1119,6 +1212,17 @@ def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return out
 
 
+def safe_yoy(latest: float | None, previous: float | None) -> float | None:
+    if latest is None or previous is None:
+        return None
+    if previous == 0:
+        return None
+    try:
+        return float(latest) / float(previous) - 1.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 def watchlist_member_mask(frame: pd.DataFrame) -> pd.Series:
     if "watchlist_bucket" in frame.columns:
         bucket = frame["watchlist_bucket"].astype(str).str.strip()
@@ -1171,6 +1275,51 @@ def resolve_channel_profile(
             None
             if profile.get("min_net_margin", config.min_net_margin) is None
             else float(profile.get("min_net_margin", config.min_net_margin))
+        ),
+        "min_operating_cash_flow": (
+            None
+            if profile.get("min_operating_cash_flow", config.min_operating_cash_flow) is None
+            else float(profile.get("min_operating_cash_flow", config.min_operating_cash_flow))
+        ),
+        "min_free_cash_flow": (
+            None
+            if profile.get("min_free_cash_flow", config.min_free_cash_flow) is None
+            else float(profile.get("min_free_cash_flow", config.min_free_cash_flow))
+        ),
+        "min_ebit": (
+            None
+            if profile.get("min_ebit", config.min_ebit) is None
+            else float(profile.get("min_ebit", config.min_ebit))
+        ),
+        "max_ev_to_ebit": (
+            None
+            if profile.get("max_ev_to_ebit", config.max_ev_to_ebit) is None
+            else float(profile.get("max_ev_to_ebit", config.max_ev_to_ebit))
+        ),
+        "min_fcf_yield": (
+            None
+            if profile.get("min_fcf_yield", config.min_fcf_yield) is None
+            else float(profile.get("min_fcf_yield", config.min_fcf_yield))
+        ),
+        "max_ps_percentile_in_sic": (
+            None
+            if profile.get("max_ps_percentile_in_sic", config.max_ps_percentile_in_sic) is None
+            else float(profile.get("max_ps_percentile_in_sic", config.max_ps_percentile_in_sic))
+        ),
+        "max_pe_percentile_in_sic": (
+            None
+            if profile.get("max_pe_percentile_in_sic", config.max_pe_percentile_in_sic) is None
+            else float(profile.get("max_pe_percentile_in_sic", config.max_pe_percentile_in_sic))
+        ),
+        "min_revenue_yoy": (
+            None
+            if profile.get("min_revenue_yoy", config.min_revenue_yoy) is None
+            else float(profile.get("min_revenue_yoy", config.min_revenue_yoy))
+        ),
+        "min_net_income_yoy": (
+            None
+            if profile.get("min_net_income_yoy", config.min_net_income_yoy) is None
+            else float(profile.get("min_net_income_yoy", config.min_net_income_yoy))
         ),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
@@ -1347,20 +1496,48 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
-    revenue, revenue_form = pick_latest_fact(companyfacts, REVENUE_TAGS, "USD")
-    net_income, net_income_form = pick_latest_fact(companyfacts, NET_INCOME_TAGS, "USD")
+    revenue, revenue_prev = pick_latest_and_prev_fact(companyfacts, REVENUE_TAGS, "USD")
+    net_income, net_income_prev = pick_latest_and_prev_fact(companyfacts, NET_INCOME_TAGS, "USD")
     shares, shares_form = pick_latest_fact(companyfacts, SHARES_TAGS, "shares")
+    ocf, ocf_prev = pick_latest_and_prev_fact(companyfacts, OPERATING_CASH_FLOW_TAGS, "USD")
+    capex_raw, _ = pick_latest_and_prev_fact(companyfacts, CAPEX_TAGS, "USD")
+    ebit, ebit_prev = pick_latest_and_prev_fact(companyfacts, EBIT_TAGS, "USD")
+    cash_and_equivalents, _ = pick_latest_and_prev_fact(
+        companyfacts, CASH_AND_EQUIVALENTS_TAGS, "USD"
+    )
+    debt_long_term, _ = pick_latest_and_prev_fact(companyfacts, LONG_TERM_DEBT_TAGS, "USD")
+    debt_current, _ = pick_latest_and_prev_fact(companyfacts, CURRENT_DEBT_TAGS, "USD")
+
+    capex = abs(capex_raw) if capex_raw is not None else None
+    free_cash_flow = (ocf - capex) if (ocf is not None and capex is not None) else None
+    total_debt = None
+    if debt_long_term is not None or debt_current is not None:
+        total_debt = float(debt_long_term or 0.0) + float(debt_current or 0.0)
+    revenue_yoy = safe_yoy(revenue, revenue_prev)
+    net_income_yoy = safe_yoy(net_income, net_income_prev)
+    ebit_yoy = safe_yoy(ebit, ebit_prev)
+    ocf_yoy = safe_yoy(ocf, ocf_prev)
 
     return {
         "symbol": symbol,
         "sic": str(sic) if sic is not None else None,
         "sic_description": sic_desc,
         "revenue": revenue,
-        "revenue_form": revenue_form,
+        "revenue_form": "annual",
         "net_income": net_income,
-        "net_income_form": net_income_form,
+        "net_income_form": "annual",
         "shares_outstanding": shares,
         "shares_form": shares_form,
+        "operating_cash_flow": ocf,
+        "capex": capex,
+        "free_cash_flow": free_cash_flow,
+        "ebit": ebit,
+        "cash_and_equivalents": cash_and_equivalents,
+        "total_debt": total_debt,
+        "revenue_yoy": revenue_yoy,
+        "net_income_yoy": net_income_yoy,
+        "ebit_yoy": ebit_yoy,
+        "operating_cash_flow_yoy": ocf_yoy,
     }
 
 
@@ -1389,6 +1566,16 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income_form": None,
                         "shares_outstanding": None,
                         "shares_form": None,
+                        "operating_cash_flow": None,
+                        "capex": None,
+                        "free_cash_flow": None,
+                        "ebit": None,
+                        "cash_and_equivalents": None,
+                        "total_debt": None,
+                        "revenue_yoy": None,
+                        "net_income_yoy": None,
+                        "ebit_yoy": None,
+                        "operating_cash_flow_yoy": None,
                     }
                 )
             done += 1
@@ -1426,6 +1613,82 @@ def build_filter_steps(
         steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= config.min_revenue))
     if config.min_net_income is not None:
         steps.append(("min_net_income", lambda frame: frame["net_income"].fillna(0) >= config.min_net_income))
+    if config.require_positive_operating_cash_flow:
+        steps.append(
+            (
+                "positive_operating_cash_flow",
+                lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_free_cash_flow:
+        steps.append(
+            (
+                "positive_free_cash_flow",
+                lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_ebit:
+        steps.append(
+            (
+                "positive_ebit",
+                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if cp["min_operating_cash_flow"] is not None:
+        steps.append(
+            (
+                "min_operating_cash_flow",
+                lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-np.inf)
+                >= cp["min_operating_cash_flow"],
+            )
+        )
+    if cp["min_free_cash_flow"] is not None:
+        steps.append(
+            (
+                "min_free_cash_flow",
+                lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-np.inf)
+                >= cp["min_free_cash_flow"],
+            )
+        )
+    if cp["min_ebit"] is not None:
+        steps.append(
+            (
+                "min_ebit",
+                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-np.inf) >= cp["min_ebit"],
+            )
+        )
+    if cp["min_fcf_yield"] is not None:
+        steps.append(
+            (
+                "min_fcf_yield",
+                lambda frame: pd.to_numeric(frame["fcf_yield"], errors="coerce").fillna(-np.inf)
+                >= cp["min_fcf_yield"],
+            )
+        )
+    if cp["max_ev_to_ebit"] is not None:
+        steps.append(
+            (
+                "max_ev_to_ebit",
+                lambda frame: pd.to_numeric(frame["ev_to_ebit"], errors="coerce").fillna(np.inf)
+                <= cp["max_ev_to_ebit"],
+            )
+        )
+    if cp["min_revenue_yoy"] is not None:
+        steps.append(
+            (
+                "min_revenue_yoy",
+                lambda frame: pd.to_numeric(frame["revenue_yoy"], errors="coerce").fillna(-np.inf)
+                >= cp["min_revenue_yoy"],
+            )
+        )
+    if cp["min_net_income_yoy"] is not None:
+        steps.append(
+            (
+                "min_net_income_yoy",
+                lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+                >= cp["min_net_income_yoy"],
+            )
+        )
     if cp["min_net_margin"] is not None:
         steps.append(
             (
@@ -1550,6 +1813,20 @@ def build_filter_steps(
             ("min_ps_discount", lambda frame: frame["ps_discount"] >= cp["min_ps_discount"]),
             ("min_pe_discount", lambda frame: frame["pe_discount"] >= cp["min_pe_discount"]),
             (
+                "max_ps_percentile_in_sic",
+                lambda frame: pd.to_numeric(frame["ps_percentile_in_sic"], errors="coerce").fillna(np.inf)
+                <= cp["max_ps_percentile_in_sic"]
+                if cp["max_ps_percentile_in_sic"] is not None
+                else pd.Series(True, index=frame.index),
+            ),
+            (
+                "max_pe_percentile_in_sic",
+                lambda frame: pd.to_numeric(frame["pe_percentile_in_sic"], errors="coerce").fillna(np.inf)
+                <= cp["max_pe_percentile_in_sic"]
+                if cp["max_pe_percentile_in_sic"] is not None
+                else pd.Series(True, index=frame.index),
+            ),
+            (
                 "sic_filter",
                 lambda frame: frame["sic"].apply(
                     lambda x: passes_sic_filters(
@@ -1603,6 +1880,77 @@ def build_industry_trend_steps(
         steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
+    if config.require_positive_net_income:
+        steps.append(("positive_net_income", lambda frame: frame["net_income"].fillna(-1) > 0))
+    if config.require_positive_operating_cash_flow:
+        steps.append(
+            (
+                "positive_operating_cash_flow",
+                lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_free_cash_flow:
+        steps.append(
+            (
+                "positive_free_cash_flow",
+                lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_ebit:
+        steps.append(
+            (
+                "positive_ebit",
+                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if cp["min_revenue_yoy"] is not None:
+        steps.append(
+            (
+                "min_revenue_yoy",
+                lambda frame: pd.to_numeric(frame["revenue_yoy"], errors="coerce").fillna(-np.inf)
+                >= cp["min_revenue_yoy"],
+            )
+        )
+    if cp["min_net_income_yoy"] is not None:
+        steps.append(
+            (
+                "min_net_income_yoy",
+                lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+                >= cp["min_net_income_yoy"],
+            )
+        )
+    if cp["min_fcf_yield"] is not None:
+        steps.append(
+            (
+                "min_fcf_yield",
+                lambda frame: pd.to_numeric(frame["fcf_yield"], errors="coerce").fillna(-np.inf)
+                >= cp["min_fcf_yield"],
+            )
+        )
+    if cp["max_ev_to_ebit"] is not None:
+        steps.append(
+            (
+                "max_ev_to_ebit",
+                lambda frame: pd.to_numeric(frame["ev_to_ebit"], errors="coerce").fillna(np.inf)
+                <= cp["max_ev_to_ebit"],
+            )
+        )
+    if cp["max_ps_percentile_in_sic"] is not None:
+        steps.append(
+            (
+                "max_ps_percentile_in_sic",
+                lambda frame: pd.to_numeric(frame["ps_percentile_in_sic"], errors="coerce").fillna(np.inf)
+                <= cp["max_ps_percentile_in_sic"],
+            )
+        )
+    if cp["max_pe_percentile_in_sic"] is not None:
+        steps.append(
+            (
+                "max_pe_percentile_in_sic",
+                lambda frame: pd.to_numeric(frame["pe_percentile_in_sic"], errors="coerce").fillna(np.inf)
+                <= cp["max_pe_percentile_in_sic"],
+            )
+        )
     if trend_min_return_60d is not None:
         steps.append(
             (
@@ -1691,7 +2039,48 @@ def build_momentum_steps(
         ("min_dollar_volume", lambda frame: frame["dollar_volume"].fillna(0) >= config.min_dollar_volume),
         ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
         ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
-        ("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0),
+        (
+            "min_fcf_yield",
+            lambda frame: pd.to_numeric(frame["fcf_yield"], errors="coerce").fillna(-np.inf)
+            >= float(cp["min_fcf_yield"])
+            if cp["min_fcf_yield"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
+        (
+            "max_ev_to_ebit",
+            lambda frame: pd.to_numeric(frame["ev_to_ebit"], errors="coerce").fillna(np.inf)
+            <= float(cp["max_ev_to_ebit"])
+            if cp["max_ev_to_ebit"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
+        (
+            "min_revenue_yoy",
+            lambda frame: pd.to_numeric(frame["revenue_yoy"], errors="coerce").fillna(-np.inf)
+            >= float(cp["min_revenue_yoy"])
+            if cp["min_revenue_yoy"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
+        (
+            "min_net_income_yoy",
+            lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+            >= float(cp["min_net_income_yoy"])
+            if cp["min_net_income_yoy"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
+        (
+            "max_ps_percentile_in_sic",
+            lambda frame: pd.to_numeric(frame["ps_percentile_in_sic"], errors="coerce").fillna(np.inf)
+            <= float(cp["max_ps_percentile_in_sic"])
+            if cp["max_ps_percentile_in_sic"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
+        (
+            "max_pe_percentile_in_sic",
+            lambda frame: pd.to_numeric(frame["pe_percentile_in_sic"], errors="coerce").fillna(np.inf)
+            <= float(cp["max_pe_percentile_in_sic"])
+            if cp["max_pe_percentile_in_sic"] is not None
+            else pd.Series(True, index=frame.index),
+        ),
         (
             "momentum_min_return_20d",
             lambda frame: frame["return_20d"].fillna(-np.inf) >= float(momentum_min_return_20d),
@@ -1706,6 +2095,31 @@ def build_momentum_steps(
             <= float(momentum_max_drawdown_from_52w_high),
         ),
     ]
+    if config.require_positive_revenue:
+        steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
+    if config.require_positive_net_income:
+        steps.append(("positive_net_income", lambda frame: frame["net_income"].fillna(-1) > 0))
+    if config.require_positive_operating_cash_flow:
+        steps.append(
+            (
+                "positive_operating_cash_flow",
+                lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_free_cash_flow:
+        steps.append(
+            (
+                "positive_free_cash_flow",
+                lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
+            )
+        )
+    if config.require_positive_ebit:
+        steps.append(
+            (
+                "positive_ebit",
+                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+            )
+        )
     if momentum_min_return_60d is not None:
         steps.append(
             (
@@ -1842,6 +2256,8 @@ def score_and_rank(
     weights: dict[str, float],
     score_winsor_lower_q: float,
     score_winsor_upper_q: float,
+    overvaluation_penalty_weight: float = 0.20,
+    deterioration_penalty_weight: float = 0.20,
 ) -> pd.DataFrame:
     out = df.copy()
     required_cols = [
@@ -1855,6 +2271,14 @@ def score_and_rank(
         "drawdown_from_52w_high",
         "days_below_sma200",
         "net_margin",
+        "ev_to_ebit",
+        "fcf_yield",
+        "ps_percentile_in_sic",
+        "pe_percentile_in_sic",
+        "revenue_yoy",
+        "net_income_yoy",
+        "ebit_yoy",
+        "operating_cash_flow_yoy",
     ]
     for col in required_cols:
         if col not in out.columns:
@@ -1871,6 +2295,14 @@ def score_and_rank(
         "drawdown_from_52w_high": pd.to_numeric(out["drawdown_from_52w_high"], errors="coerce"),
         "days_below_sma200": pd.to_numeric(out["days_below_sma200"], errors="coerce"),
         "net_margin": pd.to_numeric(out["net_margin"], errors="coerce"),
+        "ev_to_ebit_low": -pd.to_numeric(out["ev_to_ebit"], errors="coerce"),
+        "fcf_yield": pd.to_numeric(out["fcf_yield"], errors="coerce"),
+        "ps_percentile_low": 1 - pd.to_numeric(out["ps_percentile_in_sic"], errors="coerce"),
+        "pe_percentile_low": 1 - pd.to_numeric(out["pe_percentile_in_sic"], errors="coerce"),
+        "revenue_yoy": pd.to_numeric(out["revenue_yoy"], errors="coerce"),
+        "net_income_yoy": pd.to_numeric(out["net_income_yoy"], errors="coerce"),
+        "ebit_yoy": pd.to_numeric(out["ebit_yoy"], errors="coerce"),
+        "operating_cash_flow_yoy": pd.to_numeric(out["operating_cash_flow_yoy"], errors="coerce"),
     }
     default_weights = {
         "ps_discount": 0.40,
@@ -1883,6 +2315,14 @@ def score_and_rank(
         "drawdown_from_52w_high": 0.00,
         "days_below_sma200": 0.00,
         "net_margin": 0.00,
+        "ev_to_ebit_low": 0.00,
+        "fcf_yield": 0.00,
+        "ps_percentile_low": 0.10,
+        "pe_percentile_low": 0.10,
+        "revenue_yoy": 0.00,
+        "net_income_yoy": 0.00,
+        "ebit_yoy": 0.00,
+        "operating_cash_flow_yoy": 0.00,
     }
     out["composite_score"] = 0.0
     use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
@@ -1894,6 +2334,26 @@ def score_and_rank(
         else:
             weight = float(weights.get(key, 0.0))
         out["composite_score"] += weight * out[norm_col]
+
+    ps_pct = pd.to_numeric(out["ps_percentile_in_sic"], errors="coerce").fillna(1.0)
+    pe_pct = pd.to_numeric(out["pe_percentile_in_sic"], errors="coerce").fillna(1.0)
+    # Penalize names that are expensive relative to their own SIC cohort.
+    overvaluation_penalty = ((ps_pct - 0.5).clip(lower=0) + (pe_pct - 0.5).clip(lower=0)) / 1.0
+
+    rev_yoy = pd.to_numeric(out["revenue_yoy"], errors="coerce")
+    ni_yoy = pd.to_numeric(out["net_income_yoy"], errors="coerce")
+    rev_decline = (-rev_yoy).clip(lower=0).fillna(0)
+    ni_decline = (-ni_yoy).clip(lower=0).fillna(0)
+    # Penalize fundamental deterioration (growth turning negative).
+    deterioration_penalty = (rev_decline + ni_decline).clip(upper=1.5) / 1.5
+
+    out["overvaluation_penalty"] = overvaluation_penalty
+    out["deterioration_penalty"] = deterioration_penalty
+    out["composite_score"] = (
+        out["composite_score"]
+        - float(overvaluation_penalty_weight) * out["overvaluation_penalty"]
+        - float(deterioration_penalty_weight) * out["deterioration_penalty"]
+    )
 
     return out.sort_values("composite_score", ascending=False)
 
@@ -2191,11 +2651,29 @@ def run_scan(
     log_status(started_at, "INFO", "SEC fundamentals merge complete.")
 
     log_status(started_at, "INFO", "[4/6] Computing valuation and watchlist funnel.")
-    for col in ["price", "dollar_volume", "shares_outstanding", "revenue", "net_income"]:
+    for col in [
+        "price",
+        "dollar_volume",
+        "shares_outstanding",
+        "revenue",
+        "net_income",
+        "operating_cash_flow",
+        "free_cash_flow",
+        "ebit",
+        "cash_and_equivalents",
+        "total_debt",
+        "revenue_yoy",
+        "net_income_yoy",
+        "ebit_yoy",
+        "operating_cash_flow_yoy",
+    ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
+    df["enterprise_value"] = df["market_cap"] + df["total_debt"].fillna(0) - df["cash_and_equivalents"].fillna(0)
     df["ps"] = safe_divide(df["market_cap"], df["revenue"])
     df["pe"] = safe_divide(df["market_cap"], df["net_income"])
+    df["ev_to_ebit"] = safe_divide(df["enterprise_value"], df["ebit"])
+    df["fcf_yield"] = safe_divide(df["free_cash_flow"], df["market_cap"])
     df["net_margin"] = safe_divide(df["net_income"], df["revenue"])
 
     peer_ps = (
@@ -2214,6 +2692,21 @@ def run_scan(
     df = df.merge(peer_pe, left_on="sic", right_index=True, how="left")
     df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
     df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
+
+    # SIC-relative valuation percentile (lower is cheaper); fall back to neutral 0.5 for tiny cohorts.
+    df["ps_percentile_in_sic"] = 0.5
+    ps_valid = np.isfinite(df["ps"]) & (df["ps"] > 0) & df["sic"].notna()
+    ps_sizes = df.loc[ps_valid].groupby("sic")["ps"].transform("size")
+    ps_rank = df.loc[ps_valid].groupby("sic")["ps"].rank(method="average", pct=True)
+    ps_eligible_idx = ps_sizes[ps_sizes >= 5].index
+    df.loc[ps_eligible_idx, "ps_percentile_in_sic"] = ps_rank.loc[ps_eligible_idx]
+
+    df["pe_percentile_in_sic"] = 0.5
+    pe_valid = np.isfinite(df["pe"]) & (df["pe"] > 0) & df["sic"].notna()
+    pe_sizes = df.loc[pe_valid].groupby("sic")["pe"].transform("size")
+    pe_rank = df.loc[pe_valid].groupby("sic")["pe"].rank(method="average", pct=True)
+    pe_eligible_idx = pe_sizes[pe_sizes >= 5].index
+    df.loc[pe_eligible_idx, "pe_percentile_in_sic"] = pe_rank.loc[pe_eligible_idx]
 
     top_n_low_value = resolve_top_n(config.top_n_per_channel_low_value, 10)
     top_n_trend = resolve_top_n(config.top_n_per_channel_trend, 10)
@@ -2284,6 +2777,8 @@ def run_scan(
             cp["score_weights"],
             config.score_winsor_lower_q,
             config.score_winsor_upper_q,
+            config.score_penalty_overvaluation,
+            config.score_penalty_deterioration,
         ).head(top_n_low_value)
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
@@ -2322,26 +2817,51 @@ def run_scan(
         "volatility_60d",
         "avg_dollar_volume_20d",
         "market_cap",
+        "enterprise_value",
         "revenue",
         "net_income",
+        "operating_cash_flow",
+        "free_cash_flow",
+        "ebit",
+        "cash_and_equivalents",
+        "total_debt",
+        "revenue_yoy",
+        "net_income_yoy",
+        "ebit_yoy",
+        "operating_cash_flow_yoy",
         "net_margin",
         "ps",
         "pe",
+        "ev_to_ebit",
+        "fcf_yield",
         "peer_median_ps",
         "peer_median_pe",
         "ps_discount",
         "pe_discount",
+        "ps_percentile_in_sic",
+        "pe_percentile_in_sic",
+        "overvaluation_penalty",
+        "deterioration_penalty",
         "watchlist_bucket",
         "watchlist_etf_count",
         "watchlist_etfs",
         "news_count",
         "composite_score",
     ]
+
+    def ensure_export_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.copy()
+        for col in cols + ["triage_label"]:
+            if col not in out.columns:
+                out[col] = np.nan
+        return out
+
     ranked = apply_triage_labels(ranked, config.triage_rules)
     if ranked.empty:
         ranked = pd.DataFrame(columns=cols + ["triage_label"])
     else:
         ranked = ranked.sort_values(["channel", "composite_score"], ascending=[True, False])
+    ranked = ensure_export_columns(ranked)
     ranked.to_csv(out_path, index=False, columns=cols + ["triage_label"])
 
     for channel_name in channel_profiles.keys():
@@ -2352,6 +2872,7 @@ def run_scan(
             channel_df = ranked.copy()
         if channel_df.empty:
             channel_df = pd.DataFrame(columns=cols + ["triage_label"])
+        channel_df = ensure_export_columns(channel_df)
         channel_df.to_csv(ch_out, index=False, columns=cols + ["triage_label"])
         log_status(started_at, "INFO", f"Channel output ({channel_name}): {ch_out}")
 
@@ -2366,6 +2887,8 @@ def run_scan(
             trend_weights,
             config.score_winsor_lower_q,
             config.score_winsor_upper_q,
+            config.score_penalty_overvaluation,
+            config.score_penalty_deterioration,
         ).head(top_n_trend)
         trend_ranked["channel"] = channel_name
         trend_frames.append(trend_ranked)
@@ -2386,6 +2909,7 @@ def run_scan(
     industry_trend["triage_label"] = "trend"
     if not industry_trend.empty:
         industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
+    industry_trend = ensure_export_columns(industry_trend)
     trend_out_path = out_path.with_name(f"{out_path.stem}_industry_trend{out_path.suffix or '.csv'}")
     industry_trend.to_csv(trend_out_path, index=False, columns=cols + ["triage_label"])
     for channel_name in channel_profiles.keys():
@@ -2398,6 +2922,7 @@ def run_scan(
             ch_trend_df = industry_trend.copy()
         if ch_trend_df.empty:
             ch_trend_df = pd.DataFrame(columns=cols + ["triage_label"])
+        ch_trend_df = ensure_export_columns(ch_trend_df)
         ch_trend_df.to_csv(ch_trend_out, index=False, columns=cols + ["triage_label"])
         log_status(started_at, "INFO", f"Industry trend output ({channel_name}): {ch_trend_out}")
     log_status(started_at, "INFO", f"Industry trend output: {trend_out_path}")
@@ -2412,6 +2937,8 @@ def run_scan(
             momentum_weights,
             config.score_winsor_lower_q,
             config.score_winsor_upper_q,
+            config.score_penalty_overvaluation,
+            config.score_penalty_deterioration,
         ).head(top_n_momentum)
         momentum_ranked["channel"] = channel_name
         momentum_frames.append(momentum_ranked)
@@ -2434,6 +2961,7 @@ def run_scan(
     momentum["triage_label"] = "momentum"
     if not momentum.empty:
         momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
+    momentum = ensure_export_columns(momentum)
     momentum_out_path = out_path.with_name(f"{out_path.stem}_momentum{out_path.suffix or '.csv'}")
     momentum.to_csv(momentum_out_path, index=False, columns=cols + ["triage_label"])
     for channel_name in channel_profiles.keys():
@@ -2446,6 +2974,7 @@ def run_scan(
             ch_momentum_df = momentum.copy()
         if ch_momentum_df.empty:
             ch_momentum_df = pd.DataFrame(columns=cols + ["triage_label"])
+        ch_momentum_df = ensure_export_columns(ch_momentum_df)
         ch_momentum_df.to_csv(ch_momentum_out, index=False, columns=cols + ["triage_label"])
         log_status(started_at, "INFO", f"Momentum output ({channel_name}): {ch_momentum_out}")
     log_status(started_at, "INFO", f"Momentum output: {momentum_out_path}")

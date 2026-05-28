@@ -55,6 +55,10 @@ ALPACA_FEED=iex
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
+- 现金流与企业价值参数：`require_positive_operating_cash_flow`、`require_positive_free_cash_flow`、`require_positive_ebit`、`min_operating_cash_flow`、`min_free_cash_flow`、`min_ebit`、`max_ev_to_ebit`、`min_fcf_yield`
+- 行业分位数估值参数：`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
+- 基本面恶化过滤参数：`min_revenue_yoy`、`min_net_income_yoy`
+- 打分惩罚参数：`score_penalty_overvaluation`、`score_penalty_deterioration`
 - 质量参数：`min_net_margin`（净利率下限）
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
 - 分位数过滤参数：`min_drawdown_percentile`、`min_avg_dollar_volume_20d_percentile`、`max_60d_volatility_percentile`
@@ -379,9 +383,14 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
 - `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
 - `market_cap` / `revenue` / `net_income` / `net_margin`：市值与基本面（`net_margin = net_income / revenue`）
+- `enterprise_value` / `ebit` / `ev_to_ebit`：企业价值、息税前利润与 EV/EBIT
+- `operating_cash_flow` / `free_cash_flow` / `fcf_yield`：经营现金流、自由现金流与 FCF 收益率
+- `revenue_yoy` / `net_income_yoy` / `ebit_yoy` / `operating_cash_flow_yoy`：年报口径同比变化
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
+- `ps_percentile_in_sic` / `pe_percentile_in_sic`：同 SIC 行业内估值分位（越低越便宜）
+- `overvaluation_penalty` / `deterioration_penalty`：高估值惩罚与基本面恶化惩罚
 - `watchlist_etf_count`：观察清单 ETF 命中数量
 - `watchlist_bucket` / `watchlist_etfs`：观察清单分类与命中 ETF 信息
 - `news_count`：固定为 `0`（已移除新闻打分依赖）
@@ -409,7 +418,11 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 - `ps_discount = 1 - (ps / 同SIC行业中位数ps)`
 - `pe_discount = 1 - (pe / 同SIC行业中位数pe)`
-- 默认综合评分主要使用：`ps_discount`、`pe_discount`、`liquidity`、`watchlist_etf_count`
+- 新增 SIC 分位数口径：`ps_percentile_in_sic`、`pe_percentile_in_sic`（用于过滤与打分）
+- 新增现金流/企业价值口径：`fcf_yield`、`ev_to_ebit`
+- 默认综合评分在加权因子之上，额外扣减：
+  - `overvaluation_penalty`（行业内估值偏高惩罚）
+  - `deterioration_penalty`（营收/净利润同比恶化惩罚）
 - 可选价格位置维度：`range_position_52w_low`（即 `1-range_position_52w`）、`days_below_sma200`、`drawdown_from_52w_high`
 - 各通道权重由 `channel_profiles.<channel>.score_weights`、`trend_score_weights`、`momentum_score_weights` 配置
 
