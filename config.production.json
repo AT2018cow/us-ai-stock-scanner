@@ -46,6 +46,7 @@
   "enable_sic_prefix_filters": false,
   "require_channel_bucket_match": true,
   "enforce_unique_symbol_per_list": true,
+  "enforce_unique_symbol_across_lists": true,
   "include_sic_prefixes": [],
   "exclude_sic_prefixes": [],
   "include_sic_codes": [],

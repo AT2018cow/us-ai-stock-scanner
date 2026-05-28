@@ -240,6 +240,7 @@ class ScanConfig:
     enable_sic_prefix_filters: bool = False
     require_channel_bucket_match: bool = True
     enforce_unique_symbol_per_list: bool = False
+    enforce_unique_symbol_across_lists: bool = False
     include_sic_prefixes: list[str] = field(default_factory=list)
     exclude_sic_prefixes: list[str] = field(default_factory=list)
     include_sic_codes: list[str] = field(default_factory=list)
@@ -1802,6 +1803,15 @@ def dedupe_symbol_by_best_channel(frame: pd.DataFrame) -> tuple[pd.DataFrame, in
     return deduped, int(removed)
 
 
+def drop_symbols(frame: pd.DataFrame, symbols: set[str]) -> tuple[pd.DataFrame, int]:
+    if frame.empty or not symbols or "symbol" not in frame.columns:
+        return frame, 0
+    before = len(frame)
+    keep_mask = ~frame["symbol"].astype(str).isin(symbols)
+    out = frame[keep_mask].copy()
+    return out, int(before - len(out))
+
+
 def summarize_first_fail_reasons(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
 ) -> pd.DataFrame:
@@ -2349,6 +2359,10 @@ def run_scan(
     if config.enforce_unique_symbol_per_list:
         industry_trend, removed = dedupe_symbol_by_best_channel(industry_trend)
         log_status(started_at, "INFO", f"Industry-Trend channel-overlap dedupe removed: {removed}")
+    if config.enforce_unique_symbol_across_lists:
+        low_symbols = set(ranked["symbol"].dropna().astype(str).tolist())
+        industry_trend, removed = drop_symbols(industry_trend, low_symbols)
+        log_status(started_at, "INFO", f"Industry-Trend cross-list dedupe removed: {removed}")
     industry_trend["triage_label"] = "trend"
     if not industry_trend.empty:
         industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -2386,6 +2400,12 @@ def run_scan(
     if config.enforce_unique_symbol_per_list:
         momentum, removed = dedupe_symbol_by_best_channel(momentum)
         log_status(started_at, "INFO", f"Momentum channel-overlap dedupe removed: {removed}")
+    if config.enforce_unique_symbol_across_lists:
+        prior_symbols = set(ranked["symbol"].dropna().astype(str).tolist()) | set(
+            industry_trend["symbol"].dropna().astype(str).tolist()
+        )
+        momentum, removed = drop_symbols(momentum, prior_symbols)
+        log_status(started_at, "INFO", f"Momentum cross-list dedupe removed: {removed}")
     momentum["triage_label"] = "momentum"
     if not momentum.empty:
         momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -2427,6 +2447,7 @@ def run_scan(
         "top_n_per_channel_trend": top_n_trend,
         "top_n_per_channel_momentum": top_n_momentum,
         "enforce_unique_symbol_per_list": bool(config.enforce_unique_symbol_per_list),
+        "enforce_unique_symbol_across_lists": bool(config.enforce_unique_symbol_across_lists),
         "watchlist_csv_path": config.watchlist_csv_path,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
