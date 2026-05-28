@@ -211,6 +211,7 @@ class ScanConfig:
     min_market_cap: float = 100_000_000.0
     max_market_cap: float | None = None
     min_dollar_volume: float = 1_000_000.0
+    min_avg_dollar_volume_20d: float | None = None
     require_positive_revenue: bool = True
     require_positive_net_income: bool = True
     min_revenue: float = 10_000_000.0
@@ -224,6 +225,8 @@ class ScanConfig:
     max_range_position_52w: float | None = None
     max_price_to_sma200: float | None = None
     min_days_below_sma200: int | None = 5
+    min_return_20d: float | None = None
+    min_return_60d: float | None = None
     max_20d_return: float | None = 0.18
     max_60d_volatility: float | None = 0.85
     enabled_exchanges: list[str] = field(
@@ -711,12 +714,15 @@ def price_dimension_from_bars(
             "price_to_sma200": None,
             "days_below_sma200": None,
             "return_20d": None,
+            "return_60d": None,
             "volatility_60d": None,
+            "avg_dollar_volume_20d": None,
         }
 
     highs: list[float] = []
     lows: list[float] = []
     closes: list[float] = []
+    dollar_volumes: list[float] = []
     # Ensure a stable chronological order before computing trailing statistics.
     sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
     for row in sorted_bars:
@@ -724,6 +730,7 @@ def price_dimension_from_bars(
             high = float(row.get("h")) if row.get("h") is not None else None
             low = float(row.get("l")) if row.get("l") is not None else None
             close = float(row.get("c")) if row.get("c") is not None else None
+            volume = float(row.get("v")) if row.get("v") is not None else None
         except (TypeError, ValueError):
             continue
         if high is not None:
@@ -732,6 +739,8 @@ def price_dimension_from_bars(
             lows.append(low)
         if close is not None:
             closes.append(close)
+        if close is not None and volume is not None:
+            dollar_volumes.append(close * volume)
 
     if not highs or not lows:
         return {
@@ -740,7 +749,9 @@ def price_dimension_from_bars(
             "price_to_sma200": None,
             "days_below_sma200": None,
             "return_20d": None,
+            "return_60d": None,
             "volatility_60d": None,
+            "avg_dollar_volume_20d": None,
         }
 
     high_52w = max(highs)
@@ -778,6 +789,10 @@ def price_dimension_from_bars(
     if len(closes) >= 21 and closes[-21] > 0:
         return_20d = (price / closes[-21]) - 1.0
 
+    return_60d = None
+    if len(closes) >= 61 and closes[-61] > 0:
+        return_60d = (price / closes[-61]) - 1.0
+
     volatility_60d = None
     if len(closes) >= 61:
         window_61 = np.asarray(closes[-61:], dtype="float64")
@@ -787,13 +802,23 @@ def price_dimension_from_bars(
             if np.isfinite(vol):
                 volatility_60d = vol
 
+    avg_dollar_volume_20d = None
+    if len(dollar_volumes) >= 20:
+        adv20 = float(np.mean(np.asarray(dollar_volumes[-20:], dtype="float64")))
+        if np.isfinite(adv20):
+            avg_dollar_volume_20d = adv20
+
     return {
         "drawdown_from_52w_high": round(drawdown, 6) if drawdown is not None else None,
         "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
         "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
         "days_below_sma200": int(days_below_sma200) if days_below_sma200 is not None else None,
         "return_20d": round(return_20d, 6) if return_20d is not None else None,
+        "return_60d": round(return_60d, 6) if return_60d is not None else None,
         "volatility_60d": round(volatility_60d, 6) if volatility_60d is not None else None,
+        "avg_dollar_volume_20d": round(avg_dollar_volume_20d, 2)
+        if avg_dollar_volume_20d is not None
+        else None,
     }
 
 
@@ -1075,6 +1100,11 @@ def resolve_channel_profile(
     return {
         "name": channel_name,
         "min_watchlist_etf_count": int(profile.get("min_watchlist_etf_count", 1)),
+        "min_avg_dollar_volume_20d": (
+            None
+            if profile.get("min_avg_dollar_volume_20d", config.min_avg_dollar_volume_20d) is None
+            else float(profile.get("min_avg_dollar_volume_20d", config.min_avg_dollar_volume_20d))
+        ),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
         "min_drawdown_from_52w_high": (
@@ -1096,6 +1126,16 @@ def resolve_channel_profile(
             None
             if profile.get("min_days_below_sma200", config.min_days_below_sma200) is None
             else int(profile.get("min_days_below_sma200", config.min_days_below_sma200))
+        ),
+        "min_return_20d": (
+            None
+            if profile.get("min_return_20d", config.min_return_20d) is None
+            else float(profile.get("min_return_20d", config.min_return_20d))
+        ),
+        "min_return_60d": (
+            None
+            if profile.get("min_return_60d", config.min_return_60d) is None
+            else float(profile.get("min_return_60d", config.min_return_60d))
         ),
         "max_20d_return": (
             None
@@ -1327,6 +1367,20 @@ def build_filter_steps(
                 lambda frame: frame["days_below_sma200"].fillna(-1) >= cp["min_days_below_sma200"],
             )
         )
+    if cp["min_return_20d"] is not None:
+        steps.append(
+            (
+                "min_return_20d",
+                lambda frame: frame["return_20d"].fillna(-np.inf) >= cp["min_return_20d"],
+            )
+        )
+    if cp["min_return_60d"] is not None:
+        steps.append(
+            (
+                "min_return_60d",
+                lambda frame: frame["return_60d"].fillna(-np.inf) >= cp["min_return_60d"],
+            )
+        )
     if cp["max_20d_return"] is not None:
         steps.append(
             (
@@ -1347,6 +1401,14 @@ def build_filter_steps(
                 "min_watchlist_etf_count",
                 lambda frame: pd.to_numeric(frame["watchlist_etf_count"], errors="coerce").fillna(0)
                 >= int(cp["min_watchlist_etf_count"]),
+            )
+        )
+    if cp["min_avg_dollar_volume_20d"] is not None:
+        steps.append(
+            (
+                "min_avg_dollar_volume_20d",
+                lambda frame: pd.to_numeric(frame["avg_dollar_volume_20d"], errors="coerce").fillna(0)
+                >= cp["min_avg_dollar_volume_20d"],
             )
         )
 
@@ -1381,6 +1443,11 @@ def build_industry_trend_steps(
     trend_min_watchlist_etf_count = int(
         channel_profile.get("trend_min_watchlist_etf_count", cp["min_watchlist_etf_count"])
     )
+    trend_min_return_60d = channel_profile.get("trend_min_return_60d", cp["min_return_60d"])
+    trend_max_60d_volatility = channel_profile.get("trend_max_60d_volatility", cp["max_60d_volatility"])
+    trend_min_avg_dollar_volume_20d = channel_profile.get(
+        "trend_min_avg_dollar_volume_20d", cp["min_avg_dollar_volume_20d"]
+    )
     if not isinstance(trend_weights, dict):
         if channel_name == "ai_enabler":
             trend_weights = {
@@ -1408,6 +1475,28 @@ def build_industry_trend_steps(
         steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
+    if trend_min_return_60d is not None:
+        steps.append(
+            (
+                "trend_min_return_60d",
+                lambda frame: frame["return_60d"].fillna(-np.inf) >= float(trend_min_return_60d),
+            )
+        )
+    if trend_max_60d_volatility is not None:
+        steps.append(
+            (
+                "trend_max_60d_volatility",
+                lambda frame: frame["volatility_60d"].fillna(np.inf) <= float(trend_max_60d_volatility),
+            )
+        )
+    if trend_min_avg_dollar_volume_20d is not None:
+        steps.append(
+            (
+                "trend_min_avg_dollar_volume_20d",
+                lambda frame: pd.to_numeric(frame["avg_dollar_volume_20d"], errors="coerce").fillna(0)
+                >= float(trend_min_avg_dollar_volume_20d),
+            )
+        )
     if trend_min_watchlist_etf_count > 1:
         steps.append(
             (
@@ -1448,6 +1537,13 @@ def build_momentum_steps(
     momentum_min_watchlist_etf_count = int(
         channel_profile.get("momentum_min_watchlist_etf_count", cp["min_watchlist_etf_count"])
     )
+    momentum_min_return_60d = channel_profile.get("momentum_min_return_60d", cp["min_return_60d"])
+    momentum_max_60d_volatility = channel_profile.get(
+        "momentum_max_60d_volatility", cp["max_60d_volatility"]
+    )
+    momentum_min_avg_dollar_volume_20d = channel_profile.get(
+        "momentum_min_avg_dollar_volume_20d", cp["min_avg_dollar_volume_20d"]
+    )
     momentum_weights = channel_profile.get("momentum_score_weights")
     if not isinstance(momentum_weights, dict):
         momentum_weights = {
@@ -1478,6 +1574,28 @@ def build_momentum_steps(
             <= float(momentum_max_drawdown_from_52w_high),
         ),
     ]
+    if momentum_min_return_60d is not None:
+        steps.append(
+            (
+                "momentum_min_return_60d",
+                lambda frame: frame["return_60d"].fillna(-np.inf) >= float(momentum_min_return_60d),
+            )
+        )
+    if momentum_max_60d_volatility is not None:
+        steps.append(
+            (
+                "momentum_max_60d_volatility",
+                lambda frame: frame["volatility_60d"].fillna(np.inf) <= float(momentum_max_60d_volatility),
+            )
+        )
+    if momentum_min_avg_dollar_volume_20d is not None:
+        steps.append(
+            (
+                "momentum_min_avg_dollar_volume_20d",
+                lambda frame: pd.to_numeric(frame["avg_dollar_volume_20d"], errors="coerce").fillna(0)
+                >= float(momentum_min_avg_dollar_volume_20d),
+            )
+        )
     if momentum_min_watchlist_etf_count > 1:
         steps.append(
             (
@@ -1554,6 +1672,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "pe_discount",
         "dollar_volume",
         "return_20d",
+        "return_60d",
         "watchlist_etf_count",
         "range_position_52w",
         "drawdown_from_52w_high",
@@ -1568,6 +1687,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "pe_discount": out["pe_discount"],
         "liquidity": np.log1p(pd.to_numeric(out["dollar_volume"], errors="coerce").fillna(0)),
         "return_20d": out["return_20d"],
+        "return_60d": out["return_60d"],
         "watchlist_etf_count": pd.to_numeric(out["watchlist_etf_count"], errors="coerce"),
         "range_position_52w_low": 1 - pd.to_numeric(out["range_position_52w"], errors="coerce"),
         "drawdown_from_52w_high": pd.to_numeric(out["drawdown_from_52w_high"], errors="coerce"),
@@ -1578,6 +1698,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "pe_discount": 0.30,
         "liquidity": 0.05,
         "return_20d": 0.00,
+        "return_60d": 0.00,
         "watchlist_etf_count": 0.00,
         "range_position_52w_low": 0.00,
         "drawdown_from_52w_high": 0.00,
@@ -2012,7 +2133,9 @@ def run_scan(
         "price_to_sma200",
         "days_below_sma200",
         "return_20d",
+        "return_60d",
         "volatility_60d",
+        "avg_dollar_volume_20d",
         "market_cap",
         "revenue",
         "net_income",

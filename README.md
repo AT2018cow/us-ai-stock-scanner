@@ -48,7 +48,9 @@ ALPACA_FEED=iex
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
+- 量价质量门槛：`min_avg_dollar_volume_20d`、`min_return_20d`、`min_return_60d`
 - 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
+- 趋势/动量收紧阈值：`trend_min_return_60d`、`trend_max_60d_volatility`、`trend_min_avg_dollar_volume_20d`、`momentum_min_return_60d`、`momentum_max_60d_volatility`、`momentum_min_avg_dollar_volume_20d`
 - 追涨覆盖阈值：`momentum_min_watchlist_etf_count`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
@@ -369,7 +371,9 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `price_to_sma200`：当前价格 / 200 日均价（越小越偏低）
 - `days_below_sma200`：最近连续低于 200 日均线的天数（越大越“压在均线下方”）
 - `return_20d`：最近 20 日涨跌幅（用于限制过快反弹）
+- `return_60d`：最近 60 日涨跌幅（用于过滤中期弱势票）
 - `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
+- `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
 - `market_cap` / `revenue` / `net_income`：市值与基本面
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
