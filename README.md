@@ -56,7 +56,10 @@ ALPACA_FEED=iex
 - 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
+- 质量参数：`min_net_margin`（净利率下限）
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
+- 分位数过滤参数：`min_drawdown_percentile`、`min_avg_dollar_volume_20d_percentile`、`max_60d_volatility_percentile`
+- 稳健打分参数：`score_winsor_lower_q`、`score_winsor_upper_q`（winsorize + z-score 归一化）
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
@@ -379,7 +382,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `return_60d`：最近 60 日涨跌幅（用于过滤中期弱势票）
 - `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
 - `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
-- `market_cap` / `revenue` / `net_income`：市值与基本面
+- `market_cap` / `revenue` / `net_income` / `net_margin`：市值与基本面（`net_margin = net_income / revenue`）
 - `ps` / `pe`：估值倍数
 - `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
 - `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）

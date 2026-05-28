@@ -221,6 +221,7 @@ class ScanConfig:
     require_positive_net_income: bool = True
     min_revenue: float = 10_000_000.0
     min_net_income: float = 1_000_000.0
+    min_net_margin: float | None = None
     max_ps: float | None = None
     max_pe: float | None = None
     min_ps_discount: float = 0.15
@@ -234,6 +235,11 @@ class ScanConfig:
     min_return_60d: float | None = None
     max_20d_return: float | None = 0.18
     max_60d_volatility: float | None = 0.85
+    min_drawdown_percentile: float | None = None
+    min_avg_dollar_volume_20d_percentile: float | None = None
+    max_60d_volatility_percentile: float | None = None
+    score_winsor_lower_q: float = 0.05
+    score_winsor_upper_q: float = 0.95
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
@@ -1119,11 +1125,45 @@ def load_watchlist_scores(config: ScanConfig) -> pd.DataFrame:
     return watchlist_rows_to_scores(raw)
 
 
-def normalize_score(series: pd.Series) -> pd.Series:
-    lo, hi = series.min(), series.max()
-    if np.isnan(lo) or np.isnan(hi) or math.isclose(lo, hi):
-        return pd.Series([0.5] * len(series), index=series.index)
-    return (series - lo) / (hi - lo)
+def percentile_floor_mask(series: pd.Series, q: float) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce")
+    valid = s.dropna()
+    if valid.empty:
+        return pd.Series(False, index=series.index, dtype="bool")
+    threshold = float(valid.quantile(q))
+    return s.fillna(-np.inf) >= threshold
+
+
+def percentile_cap_mask(series: pd.Series, q: float) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce")
+    valid = s.dropna()
+    if valid.empty:
+        return pd.Series(False, index=series.index, dtype="bool")
+    threshold = float(valid.quantile(q))
+    return s.fillna(np.inf) <= threshold
+
+
+def robust_normalize_score(series: pd.Series, lower_q: float, upper_q: float) -> pd.Series:
+    x = pd.to_numeric(series, errors="coerce").astype(float)
+    valid = x.dropna()
+    if valid.empty:
+        return pd.Series([0.5] * len(x), index=x.index, dtype="float64")
+    lo = float(valid.quantile(lower_q))
+    hi = float(valid.quantile(upper_q))
+    if not np.isfinite(lo):
+        lo = float(valid.min())
+    if not np.isfinite(hi):
+        hi = float(valid.max())
+    if hi < lo:
+        lo, hi = hi, lo
+    clipped = x.clip(lower=lo, upper=hi)
+    mean = float(clipped.mean())
+    std = float(clipped.std(ddof=0))
+    if not np.isfinite(std) or std <= 1e-12:
+        return pd.Series([0.5] * len(x), index=x.index, dtype="float64")
+    z = (clipped - mean) / std
+    # Map z-score to [0,1], reducing outlier dominance while preserving order.
+    return 1.0 / (1.0 + np.exp(-z))
 
 
 def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
@@ -1208,6 +1248,11 @@ def resolve_channel_profile(
             if profile.get("min_avg_dollar_volume_20d", config.min_avg_dollar_volume_20d) is None
             else float(profile.get("min_avg_dollar_volume_20d", config.min_avg_dollar_volume_20d))
         ),
+        "min_net_margin": (
+            None
+            if profile.get("min_net_margin", config.min_net_margin) is None
+            else float(profile.get("min_net_margin", config.min_net_margin))
+        ),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
         "min_drawdown_from_52w_high": (
@@ -1249,6 +1294,28 @@ def resolve_channel_profile(
             None
             if profile.get("max_60d_volatility", config.max_60d_volatility) is None
             else float(profile.get("max_60d_volatility", config.max_60d_volatility))
+        ),
+        "min_drawdown_percentile": (
+            None
+            if profile.get("min_drawdown_percentile", config.min_drawdown_percentile) is None
+            else float(profile.get("min_drawdown_percentile", config.min_drawdown_percentile))
+        ),
+        "min_avg_dollar_volume_20d_percentile": (
+            None
+            if profile.get(
+                "min_avg_dollar_volume_20d_percentile", config.min_avg_dollar_volume_20d_percentile
+            )
+            is None
+            else float(
+                profile.get(
+                    "min_avg_dollar_volume_20d_percentile", config.min_avg_dollar_volume_20d_percentile
+                )
+            )
+        ),
+        "max_60d_volatility_percentile": (
+            None
+            if profile.get("max_60d_volatility_percentile", config.max_60d_volatility_percentile) is None
+            else float(profile.get("max_60d_volatility_percentile", config.max_60d_volatility_percentile))
         ),
         "include_sic_prefixes": include_prefixes,
         "exclude_sic_prefixes": exclude_prefixes,
@@ -1443,6 +1510,14 @@ def build_filter_steps(
         steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= config.min_revenue))
     if config.min_net_income is not None:
         steps.append(("min_net_income", lambda frame: frame["net_income"].fillna(0) >= config.min_net_income))
+    if cp["min_net_margin"] is not None:
+        steps.append(
+            (
+                "min_net_margin",
+                lambda frame: pd.to_numeric(frame["net_margin"], errors="coerce").fillna(-np.inf)
+                >= cp["min_net_margin"],
+            )
+        )
     if config.max_ps is not None:
         steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= config.max_ps))
     if config.max_pe is not None:
@@ -1501,6 +1576,31 @@ def build_filter_steps(
             (
                 "max_60d_volatility",
                 lambda frame: frame["volatility_60d"].fillna(np.inf) <= cp["max_60d_volatility"],
+            )
+        )
+    if cp["min_drawdown_percentile"] is not None:
+        steps.append(
+            (
+                "min_drawdown_percentile",
+                lambda frame: percentile_floor_mask(frame["drawdown_from_52w_high"], cp["min_drawdown_percentile"]),
+            )
+        )
+    if cp["min_avg_dollar_volume_20d_percentile"] is not None:
+        steps.append(
+            (
+                "min_avg_dollar_volume_20d_percentile",
+                lambda frame: percentile_floor_mask(
+                    frame["avg_dollar_volume_20d"], cp["min_avg_dollar_volume_20d_percentile"]
+                ),
+            )
+        )
+    if cp["max_60d_volatility_percentile"] is not None:
+        steps.append(
+            (
+                "max_60d_volatility_percentile",
+                lambda frame: percentile_cap_mask(
+                    frame["volatility_60d"], cp["max_60d_volatility_percentile"]
+                ),
             )
         )
     if cp["min_watchlist_etf_count"] > 1:
@@ -1830,7 +1930,12 @@ def summarize_first_fail_reasons(
     return summary
 
 
-def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
+def score_and_rank(
+    df: pd.DataFrame,
+    weights: dict[str, float],
+    score_winsor_lower_q: float,
+    score_winsor_upper_q: float,
+) -> pd.DataFrame:
     out = df.copy()
     required_cols = [
         "ps_discount",
@@ -1842,6 +1947,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "range_position_52w",
         "drawdown_from_52w_high",
         "days_below_sma200",
+        "net_margin",
     ]
     for col in required_cols:
         if col not in out.columns:
@@ -1857,6 +1963,7 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "range_position_52w_low": 1 - pd.to_numeric(out["range_position_52w"], errors="coerce"),
         "drawdown_from_52w_high": pd.to_numeric(out["drawdown_from_52w_high"], errors="coerce"),
         "days_below_sma200": pd.to_numeric(out["days_below_sma200"], errors="coerce"),
+        "net_margin": pd.to_numeric(out["net_margin"], errors="coerce"),
     }
     default_weights = {
         "ps_discount": 0.40,
@@ -1868,12 +1975,13 @@ def score_and_rank(df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
         "range_position_52w_low": 0.00,
         "drawdown_from_52w_high": 0.00,
         "days_below_sma200": 0.00,
+        "net_margin": 0.00,
     }
     out["composite_score"] = 0.0
     use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
     for key, raw in component_series.items():
         norm_col = f"{key}_norm"
-        out[norm_col] = normalize_score(raw)
+        out[norm_col] = robust_normalize_score(raw, score_winsor_lower_q, score_winsor_upper_q)
         if use_fallback_defaults:
             weight = float(default_weights.get(key, 0.0))
         else:
@@ -2187,6 +2295,7 @@ def run_scan(
     df["market_cap"] = df["price"] * df["shares_outstanding"]
     df["ps"] = safe_divide(df["market_cap"], df["revenue"])
     df["pe"] = safe_divide(df["market_cap"], df["net_income"])
+    df["net_margin"] = safe_divide(df["net_income"], df["revenue"])
 
     peer_ps = (
         df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0)]
@@ -2270,7 +2379,12 @@ def run_scan(
         log_status(started_at, "INFO", f"  Diagnostics: {diag_file}")
         log_status(started_at, "INFO", f"  First-fail: {fail_file}")
 
-        ranked = score_and_rank(filtered, cp["score_weights"]).head(top_n_low_value)
+        ranked = score_and_rank(
+            filtered,
+            cp["score_weights"],
+            config.score_winsor_lower_q,
+            config.score_winsor_upper_q,
+        ).head(top_n_low_value)
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
         filtered_counts[channel_name] = len(filtered)
@@ -2310,6 +2424,7 @@ def run_scan(
         "market_cap",
         "revenue",
         "net_income",
+        "net_margin",
         "ps",
         "pe",
         "peer_median_ps",
@@ -2346,7 +2461,12 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         trend_steps, trend_weights = build_industry_trend_steps(config, channel_name, channel_profile)
         trend_filtered, _ = apply_filters_with_diagnostics(df, trend_steps)
-        trend_ranked = score_and_rank(trend_filtered, trend_weights).head(top_n_trend)
+        trend_ranked = score_and_rank(
+            trend_filtered,
+            trend_weights,
+            config.score_winsor_lower_q,
+            config.score_winsor_upper_q,
+        ).head(top_n_trend)
         trend_ranked["channel"] = channel_name
         trend_frames.append(trend_ranked)
 
@@ -2387,7 +2507,12 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         momentum_steps, momentum_weights = build_momentum_steps(config, channel_name, channel_profile)
         momentum_filtered, _ = apply_filters_with_diagnostics(df, momentum_steps)
-        momentum_ranked = score_and_rank(momentum_filtered, momentum_weights).head(top_n_momentum)
+        momentum_ranked = score_and_rank(
+            momentum_filtered,
+            momentum_weights,
+            config.score_winsor_lower_q,
+            config.score_winsor_upper_q,
+        ).head(top_n_momentum)
         momentum_ranked["channel"] = channel_name
         momentum_frames.append(momentum_ranked)
 
