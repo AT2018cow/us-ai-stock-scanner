@@ -93,10 +93,6 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "min_days_below_sma200": 7,
             "max_20d_return": 0.12,
             "max_60d_volatility": 0.70,
-            "include_sic_prefixes": [],
-            "exclude_sic_prefixes": [],
-            "include_sic_codes": [],
-            "exclude_sic_codes": ["6770"],
             "score_weights": {
                 "ps_discount": 0.40,
                 "pe_discount": 0.25,
@@ -116,10 +112,6 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "min_days_below_sma200": 5,
             "max_20d_return": 0.18,
             "max_60d_volatility": 0.85,
-            "include_sic_prefixes": ["13", "16", "17", "35", "36", "37", "38", "48", "49", "73", "87"],
-            "exclude_sic_prefixes": [],
-            "include_sic_codes": [],
-            "exclude_sic_codes": ["6770"],
             "score_weights": {
                 "ps_discount": 0.30,
                 "pe_discount": 0.20,
@@ -155,7 +147,6 @@ def default_triage_rules() -> dict[str, dict[str, Any]]:
 
 @dataclass
 class ScanConfig:
-    top_n: int = 50
     max_symbols: int | None = None
     max_workers: int = 8
     alpaca_max_requests_per_sec: float = 2.5
@@ -170,48 +161,6 @@ class ScanConfig:
     watchlist_enabler_etfs: list[str] = field(default_factory=default_watchlist_enabler_etfs)
     chunk_size: int = 200
     request_timeout_sec: int = 20
-    ai_keywords: list[str] = field(
-        default_factory=lambda: [
-            "artificial intelligence",
-            "machine learning",
-            "generative ai",
-            "large language model",
-            "llm",
-            "ai inference",
-            "ai training",
-            "neural network",
-            "computer vision",
-            "natural language processing",
-            "datacenter gpu",
-            "ai accelerator",
-            "automation software",
-        ]
-    )
-    enabler_keywords: list[str] = field(
-        default_factory=lambda: [
-            "data center",
-            "datacenter",
-            "hyperscale",
-            "power generation",
-            "backup power",
-            "prime power",
-            "grid",
-            "transmission",
-            "substation",
-            "interconnection",
-            "nuclear",
-            "small modular reactor",
-            "smr",
-            "gas turbine",
-            "cooling",
-            "generator set",
-            "genset",
-            "backlog",
-            "book-to-bill",
-            "capital expenditure",
-            "capex",
-        ]
-    )
     min_price: float = 1.0
     min_market_cap: float = 100_000_000.0
     max_market_cap: float | None = None
@@ -243,20 +192,15 @@ class ScanConfig:
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
-    enable_sic_prefix_filters: bool = False
     require_channel_bucket_match: bool = True
     enforce_unique_symbol_per_list: bool = False
     enforce_unique_symbol_across_lists: bool = False
-    include_sic_prefixes: list[str] = field(default_factory=list)
-    exclude_sic_prefixes: list[str] = field(default_factory=list)
-    include_sic_codes: list[str] = field(default_factory=list)
     exclude_sic_codes: list[str] = field(default_factory=lambda: ["6770"])
     channel_profiles: dict[str, dict[str, Any]] = field(default_factory=default_channel_profiles)
     triage_rules: dict[str, dict[str, Any]] = field(default_factory=default_triage_rules)
-    top_n_per_channel: int | None = None
-    top_n_per_channel_low_value: int | None = None
-    top_n_per_channel_trend: int | None = None
-    top_n_per_channel_momentum: int | None = None
+    top_n_per_channel_low_value: int = 10
+    top_n_per_channel_trend: int = 10
+    top_n_per_channel_momentum: int = 10
     cache_dir: str = "cache"
     output_dir: str = "outputs"
 
@@ -1195,32 +1139,14 @@ def channel_bucket_mask(frame: pd.DataFrame, channel_name: str) -> pd.Series:
     return bucket.str.contains(pattern, regex=True)
 
 
-def merge_unique(values: list[str], extras: list[str]) -> list[str]:
-    out: list[str] = []
-    for item in [*values, *extras]:
-        token = str(item).strip()
-        if token and token not in out:
-            out.append(token)
-    return out
-
-
 def passes_sic_filters(
     sic: str | None,
-    include_prefixes: list[str],
-    exclude_prefixes: list[str],
-    include_codes: list[str],
     exclude_codes: list[str],
 ) -> bool:
     if not sic:
         return False
     sic = str(sic)
-    if include_codes and sic not in include_codes:
-        return False
     if exclude_codes and sic in exclude_codes:
-        return False
-    if include_prefixes and not any(sic.startswith(prefix) for prefix in include_prefixes):
-        return False
-    if exclude_prefixes and any(sic.startswith(prefix) for prefix in exclude_prefixes):
         return False
     return True
 
@@ -1228,14 +1154,7 @@ def passes_sic_filters(
 def resolve_channel_profile(
     config: ScanConfig, channel_name: str, profile: dict[str, Any]
 ) -> dict[str, Any]:
-    if config.enable_sic_prefix_filters:
-        include_prefixes = merge_unique(config.include_sic_prefixes, profile.get("include_sic_prefixes", []))
-        exclude_prefixes = merge_unique(config.exclude_sic_prefixes, profile.get("exclude_sic_prefixes", []))
-    else:
-        include_prefixes = []
-        exclude_prefixes = []
-    include_codes = merge_unique(config.include_sic_codes, profile.get("include_sic_codes", []))
-    exclude_codes = merge_unique(config.exclude_sic_codes, profile.get("exclude_sic_codes", []))
+    exclude_codes = sorted(set(str(x).strip() for x in config.exclude_sic_codes if str(x).strip()))
 
     return {
         "name": channel_name,
@@ -1317,9 +1236,6 @@ def resolve_channel_profile(
             if profile.get("max_60d_volatility_percentile", config.max_60d_volatility_percentile) is None
             else float(profile.get("max_60d_volatility_percentile", config.max_60d_volatility_percentile))
         ),
-        "include_sic_prefixes": include_prefixes,
-        "exclude_sic_prefixes": exclude_prefixes,
-        "include_sic_codes": include_codes,
         "exclude_sic_codes": exclude_codes,
         "score_weights": profile.get("score_weights", {}),
     }
@@ -1638,9 +1554,6 @@ def build_filter_steps(
                 lambda frame: frame["sic"].apply(
                     lambda x: passes_sic_filters(
                         x,
-                        cp["include_sic_prefixes"],
-                        cp["exclude_sic_prefixes"],
-                        cp["include_sic_codes"],
                         cp["exclude_sic_codes"],
                     )
                 ),
@@ -1736,9 +1649,6 @@ def build_industry_trend_steps(
             lambda frame: frame["sic"].apply(
                 lambda x: passes_sic_filters(
                     x,
-                    cp["include_sic_prefixes"],
-                    cp["exclude_sic_prefixes"],
-                    cp["include_sic_codes"],
                     cp["exclude_sic_codes"],
                 )
             ),
@@ -1842,9 +1752,6 @@ def build_momentum_steps(
             lambda frame: frame["sic"].apply(
                 lambda x: passes_sic_filters(
                     x,
-                    cp["include_sic_prefixes"],
-                    cp["exclude_sic_prefixes"],
-                    cp["include_sic_codes"],
                     cp["exclude_sic_codes"],
                 )
             ),
@@ -2177,12 +2084,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON file path for filter configuration.",
     )
     parser.add_argument(
-        "--top-n",
-        type=int,
-        default=None,
-        help="Override top_n from config.",
-    )
-    parser.add_argument(
         "--max-symbols",
         type=int,
         default=None,
@@ -2220,7 +2121,7 @@ def run_scan(
 ) -> Path:
     def resolve_top_n(value: Any, fallback: int) -> int:
         try:
-            resolved = int(fallback if value is None else value)
+            resolved = int(value)
         except (TypeError, ValueError):
             resolved = int(fallback)
         return max(1, resolved)
@@ -2314,10 +2215,9 @@ def run_scan(
     df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
     df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
 
-    top_n_default = resolve_top_n(config.top_n_per_channel, config.top_n)
-    top_n_low_value = resolve_top_n(config.top_n_per_channel_low_value, top_n_default)
-    top_n_trend = resolve_top_n(config.top_n_per_channel_trend, top_n_default)
-    top_n_momentum = resolve_top_n(config.top_n_per_channel_momentum, top_n_default)
+    top_n_low_value = resolve_top_n(config.top_n_per_channel_low_value, 10)
+    top_n_trend = resolve_top_n(config.top_n_per_channel_trend, 10)
+    top_n_momentum = resolve_top_n(config.top_n_per_channel_momentum, 10)
     channel_profiles = config.channel_profiles or {"core_ai": {}}
     log_status(started_at, "INFO", "[5/6] Applying watchlist attributes.")
     df = df.merge(watchlist_scores, on="symbol", how="left")
@@ -2566,8 +2466,6 @@ def run_scan(
     report["elapsed_seconds"] = round((finished_at - started_at).total_seconds(), 2)
     report["scan_context"] = {
         "max_symbols": config.max_symbols,
-        "top_n": config.top_n,
-        "top_n_per_channel": top_n_default,
         "top_n_per_channel_low_value": top_n_low_value,
         "top_n_per_channel_trend": top_n_trend,
         "top_n_per_channel_momentum": top_n_momentum,
@@ -2697,8 +2595,6 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config(args.config)
 
-    if args.top_n is not None:
-        config.top_n = args.top_n
     if args.max_symbols is not None:
         config.max_symbols = args.max_symbols
 

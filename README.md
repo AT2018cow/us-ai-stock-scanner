@@ -44,7 +44,6 @@ ALPACA_FEED=iex
 ## 3. 参数化筛选配置
 
 默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
-- 三清单数量控制：`top_n_per_channel_low_value`、`top_n_per_channel_trend`、`top_n_per_channel_momentum`（未设置时回退到 `top_n_per_channel`）
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
@@ -63,7 +62,6 @@ ALPACA_FEED=iex
 - 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
 - 流动性：`min_dollar_volume`、`min_price`
 - 市值区间：`min_market_cap`、`max_market_cap`
-- 行业过滤：`enable_sic_prefix_filters`、`include_sic_prefixes`、`exclude_sic_prefixes`、`include_sic_codes`、`exclude_sic_codes`
 - 通道分流：`require_channel_bucket_match`（按 `watchlist_bucket` 强制 core/enabler 分流，降低清单重叠）
   - 说明：若某股票同时属于 `core_ai,ai_enabler`，仍可能在两个通道同时出现。
 - 单清单去重：`enforce_unique_symbol_per_list`（同一清单内，同一 `symbol` 仅保留得分更高的通道）
@@ -71,7 +69,7 @@ ALPACA_FEED=iex
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
 - 缓存：`cache_dir`、`alpaca_cache_enabled`、`alpaca_cache_ttl_assets_sec`、`alpaca_cache_ttl_snapshots_sec`、`alpaca_cache_ttl_bars_sec`
 
-说明：`enable_sic_prefix_filters` 默认 `false`（不叠加 SIC 前缀筛选）；即使关闭，`include_sic_codes`/`exclude_sic_codes` 仍生效。
+说明：生产配置文件已移除显式的三清单上限与 SIC 黑名单字段，运行时使用代码默认值（`top_n_per_channel_low_value/trend/momentum = 10/10/10`，`exclude_sic_codes = ["6770"]`）。如需覆盖，可在自定义配置中按同名字段显式设置。
 
 ### 3.5 ETF 观察清单（替代新闻打分）
 
@@ -131,8 +129,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 生产参数基线放在 `config.production.json`，用途是稳定运行，不随实验来回波动。  
 当前冻结原则：
 - 保留三清单并行（`Low-Value` / `Industry-Trend` / `Momentum`）
-- 默认收紧每通道输出上限：`low_value=10`、`trend=6`、`momentum=6`
-- 保持 `enable_sic_prefix_filters=false`（默认不叠加 SIC 前缀）
+- 生产配置文件不显式声明三清单上限/SIC 黑名单，统一走代码默认（`10/10/10` 与 `["6770"]`）
 - 采用已通过全量样本回归验证的平衡阈值（可稳定产出且不过度放宽）
 - 将高纯度/高收紧参数留在实验配置中，不直接进入生产默认
 
@@ -258,7 +255,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 先小样本验证（例如 300 只）：
 
 ```bash
-python run_scan.py --max-symbols 300 --top-n 30
+python run_scan.py --max-symbols 300
 ```
 
 说明：`--max-symbols` 会在 watchlist universe 内按 `dollar_volume`（快照成交额）降序取样，避免按原始顺序截断带来的样本偏差。
@@ -278,7 +275,7 @@ python run_scan.py
 自定义配置文件：
 
 ```bash
-python run_scan.py --config config.production.json --top-n 100
+python run_scan.py --config config.production.json
 ```
 
 导出过滤诊断（每一步剔除数量 + 唯一首因统计）：
@@ -315,7 +312,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `intraday_quick_scan`（日内快速复核，可选）
 
 ```bash
-.venv/bin/python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
+.venv/bin/python run_scan.py --config config.production.json --max-symbols 1200
 ```
 
 建议时点：
@@ -429,7 +426,7 @@ python run_backtest.py --mode historical_replay --scan-config config.production.
 - `--mode historical_replay`（历史重放）或 `--mode existing_runs`（仅重放已有扫描文件）
 - `--outputs-dir outputs`
 - `--list-types low_value,industry_trend,momentum`
-- `--top-n 10`
+- 三清单数量由 `top_n_per_channel_low_value/trend/momentum` 控制
 - `--per-channel-top-n` / `--no-per-channel-top-n`
 - `--horizons 20,60,120`
 - `--start-date 2024-01-01 --end-date 2026-05-26`
@@ -529,7 +526,7 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 3. 小样本冒烟（先确认流程）
 
 ```bash
-python run_scan.py --config config.production.json --max-symbols 300 --top-n 30
+python run_scan.py --config config.production.json --max-symbols 300
 ```
 
 4. Watchlist 全量扫描（生产）
@@ -555,7 +552,7 @@ python run_scan.py --config config.production.json
 - 日内快刷（观察 watch/momentum 变化，可选）
 
 ```bash
-python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
+python run_scan.py --config config.production.json --max-symbols 1200
 ```
 
 - 每周一次刷新 watchlist（建议周末或周一盘前）

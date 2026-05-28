@@ -80,7 +80,6 @@ def run_variant(
     output_csv: Path,
     diag_prefix: Path,
     max_symbols: int,
-    top_n: int,
     python_exec: str,
 ) -> RunArtifacts:
     cmd = [
@@ -90,8 +89,6 @@ def run_variant(
         str(cfg_path),
         "--max-symbols",
         str(max_symbols),
-        "--top-n",
-        str(top_n),
         "--output",
         str(output_csv),
         "--diagnostics-output",
@@ -164,7 +161,6 @@ def main() -> None:
                 output_csv=out_csv,
                 diag_prefix=diag_prefix,
                 max_symbols=args.max_symbols,
-                top_n=args.top_n,
                 python_exec=args.python,
             )
         )
