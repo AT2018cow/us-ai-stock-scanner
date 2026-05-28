@@ -44,6 +44,7 @@ ALPACA_FEED=iex
 ## 3. 参数化筛选配置
 
 默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
+- 三清单数量控制：`top_n_per_channel_low_value`、`top_n_per_channel_trend`、`top_n_per_channel_momentum`（未设置时回退到 `top_n_per_channel`）
 - 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
@@ -120,6 +121,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 生产参数基线放在 `config.production.json`，用途是稳定运行，不随实验来回波动。  
 当前冻结原则：
 - 保留三清单并行（`Low-Value` / `Industry-Trend` / `Momentum`）
+- 默认收紧每通道输出上限：`low_value=10`、`trend=6`、`momentum=6`
 - 保持 `enable_sic_prefix_filters=false`（默认不叠加 SIC 前缀）
 - 采用已通过全量样本回归验证的平衡阈值（可稳定产出且不过度放宽）
 - 将高纯度/高收紧参数留在实验配置中，不直接进入生产默认

@@ -1,6 +1,9 @@
 {
   "top_n": 50,
-  "top_n_per_channel": 15,
+  "top_n_per_channel": 12,
+  "top_n_per_channel_low_value": 10,
+  "top_n_per_channel_trend": 6,
+  "top_n_per_channel_momentum": 6,
   "max_symbols": null,
   "max_workers": 8,
   "chunk_size": 200,

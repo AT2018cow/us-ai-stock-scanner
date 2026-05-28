@@ -237,6 +237,9 @@ class ScanConfig:
     channel_profiles: dict[str, dict[str, Any]] = field(default_factory=default_channel_profiles)
     triage_rules: dict[str, dict[str, Any]] = field(default_factory=default_triage_rules)
     top_n_per_channel: int | None = None
+    top_n_per_channel_low_value: int | None = None
+    top_n_per_channel_trend: int | None = None
+    top_n_per_channel_momentum: int | None = None
     cache_dir: str = "cache"
     output_dir: str = "outputs"
 
@@ -1821,6 +1824,13 @@ def run_scan(
     network_report_output_path: str | None = None,
     report_output_path: str | None = None,
 ) -> Path:
+    def resolve_top_n(value: Any, fallback: int) -> int:
+        try:
+            resolved = int(fallback if value is None else value)
+        except (TypeError, ValueError):
+            resolved = int(fallback)
+        return max(1, resolved)
+
     started_at = datetime.now(timezone.utc)
     paths = resolve_output_paths(
         config,
@@ -1906,7 +1916,10 @@ def run_scan(
     df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
     df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
 
-    top_n_per_channel = config.top_n_per_channel or config.top_n
+    top_n_default = resolve_top_n(config.top_n_per_channel, config.top_n)
+    top_n_low_value = resolve_top_n(config.top_n_per_channel_low_value, top_n_default)
+    top_n_trend = resolve_top_n(config.top_n_per_channel_trend, top_n_default)
+    top_n_momentum = resolve_top_n(config.top_n_per_channel_momentum, top_n_default)
     channel_profiles = config.channel_profiles or {"core_ai": {}}
     log_status(started_at, "INFO", "[5/6] Applying watchlist attributes.")
     df = df.merge(watchlist_scores, on="symbol", how="left")
@@ -1933,6 +1946,11 @@ def run_scan(
     for channel_name, count in watchlist_counts.items():
         log_status(started_at, "INFO", f"  {channel_name}: {count}")
     log_status(started_at, "INFO", f"Watchlist matched symbols: {watchlist_symbol_count}")
+    log_status(
+        started_at,
+        "INFO",
+        f"Per-channel output caps => low_value={top_n_low_value}, trend={top_n_trend}, momentum={top_n_momentum}",
+    )
 
     ranked_frames: list[pd.DataFrame] = []
     filtered_counts: dict[str, int] = {}
@@ -1963,7 +1981,7 @@ def run_scan(
         log_status(started_at, "INFO", f"  Diagnostics: {diag_file}")
         log_status(started_at, "INFO", f"  First-fail: {fail_file}")
 
-        ranked = score_and_rank(filtered, cp["score_weights"]).head(top_n_per_channel)
+        ranked = score_and_rank(filtered, cp["score_weights"]).head(top_n_low_value)
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
         filtered_counts[channel_name] = len(filtered)
@@ -2034,7 +2052,7 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         trend_steps, trend_weights = build_industry_trend_steps(config, channel_name, channel_profile)
         trend_filtered, _ = apply_filters_with_diagnostics(df, trend_steps)
-        trend_ranked = score_and_rank(trend_filtered, trend_weights).head(top_n_per_channel)
+        trend_ranked = score_and_rank(trend_filtered, trend_weights).head(top_n_trend)
         trend_ranked["channel"] = channel_name
         trend_frames.append(trend_ranked)
 
@@ -2068,7 +2086,7 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         momentum_steps, momentum_weights = build_momentum_steps(config, channel_name, channel_profile)
         momentum_filtered, _ = apply_filters_with_diagnostics(df, momentum_steps)
-        momentum_ranked = score_and_rank(momentum_filtered, momentum_weights).head(top_n_per_channel)
+        momentum_ranked = score_and_rank(momentum_filtered, momentum_weights).head(top_n_momentum)
         momentum_ranked["channel"] = channel_name
         momentum_frames.append(momentum_ranked)
 
@@ -2114,7 +2132,10 @@ def run_scan(
     report["scan_context"] = {
         "max_symbols": config.max_symbols,
         "top_n": config.top_n,
-        "top_n_per_channel": config.top_n_per_channel or config.top_n,
+        "top_n_per_channel": top_n_default,
+        "top_n_per_channel_low_value": top_n_low_value,
+        "top_n_per_channel_trend": top_n_trend,
+        "top_n_per_channel_momentum": top_n_momentum,
         "watchlist_csv_path": config.watchlist_csv_path,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
