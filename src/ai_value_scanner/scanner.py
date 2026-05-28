@@ -972,16 +972,14 @@ def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
     for row in work.itertuples(index=False):
         symbol = str(row.symbol)
         bucket = str(row.bucket)
-        etf_count = int(row.etf_count)
         etfs = str(row.etfs)
         if symbol not in rows:
             rows[symbol] = {
                 "symbol": symbol,
                 "watchlist_bucket": bucket,
-                "watchlist_etf_count": etf_count,
+                "watchlist_etf_count": 0,
                 "watchlist_etfs": etfs,
             }
-        rows[symbol]["watchlist_etf_count"] = max(int(rows[symbol]["watchlist_etf_count"]), etf_count)
         prev_bucket = str(rows[symbol]["watchlist_bucket"])
         if prev_bucket != bucket and bucket not in prev_bucket.split(","):
             rows[symbol]["watchlist_bucket"] = f"{prev_bucket},{bucket}" if prev_bucket else bucket
@@ -989,6 +987,14 @@ def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
             prev = set(x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x)
             now = set(x for x in etfs.split(",") if x)
             rows[symbol]["watchlist_etfs"] = ",".join(sorted(prev.union(now)))
+        else:
+            # Keep a deterministic empty list representation for count recalculation.
+            rows[symbol]["watchlist_etfs"] = ",".join(
+                sorted(x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x)
+            )
+
+        etf_tokens = [x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x]
+        rows[symbol]["watchlist_etf_count"] = len(set(etf_tokens))
 
     out = pd.DataFrame(rows.values())
     return out[WATCHLIST_SCORE_COLUMNS]
@@ -1171,7 +1177,11 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
 
 
 def collect_candidates(
-    alpaca: AlpacaClient, sec: SecClient, config: ScanConfig, asset_status: str = "active"
+    alpaca: AlpacaClient,
+    sec: SecClient,
+    config: ScanConfig,
+    asset_status: str = "active",
+    symbol_allowlist: set[str] | None = None,
 ) -> pd.DataFrame:
     assets = alpaca.get_assets(status=asset_status)
     df_assets = pd.DataFrame(assets)
@@ -1179,6 +1189,8 @@ def collect_candidates(
     if config.enabled_exchanges:
         df_assets = df_assets[df_assets["exchange"].isin(config.enabled_exchanges)]
     df_assets["symbol"] = df_assets["symbol"].str.upper()
+    if symbol_allowlist is not None:
+        df_assets = df_assets[df_assets["symbol"].isin(symbol_allowlist)].copy()
 
     mapping = sec.ticker_mapping()
     merged = df_assets.merge(mapping, on="symbol", how="inner")
@@ -1893,10 +1905,26 @@ def run_scan(
     log_status(started_at, "INFO", f"Ranked output target: {paths['ranked_csv']}")
     alpaca, sec, network_monitor = load_runtime_settings(config)
 
-    log_status(started_at, "INFO", "[1/6] Loading tradable US equities from Alpaca.")
-    df = collect_candidates(alpaca, sec, config)
+    log_status(started_at, "INFO", "[1/6] Loading AI watchlist and tradable universe.")
+    watchlist_scores = load_watchlist_scores(config)
+    if watchlist_scores.empty:
+        raise ValueError(
+            "Watchlist is empty or missing. Run "
+            "`python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv` "
+            "or populate watchlist_csv_path manually."
+        )
+    watchlist_allowlist = set(watchlist_scores["symbol"].dropna().astype(str).tolist())
+    log_status(started_at, "INFO", f"Watchlist rows loaded: {len(watchlist_scores)}")
+    log_status(started_at, "INFO", f"Watchlist unique symbols: {len(watchlist_allowlist)}")
+
+    df = collect_candidates(
+        alpaca,
+        sec,
+        config,
+        symbol_allowlist=watchlist_allowlist if config.use_ai_watchlist_only else None,
+    )
     merged_count = len(df)
-    log_status(started_at, "INFO", f"Merged symbols: {merged_count}")
+    log_status(started_at, "INFO", f"Universe symbols after tradable/mapping merge: {merged_count}")
 
     df = df[
         df["price"].notna()
@@ -1955,14 +1983,7 @@ def run_scan(
             "INFO",
             "use_ai_watchlist_only=false is ignored: news-based theme scoring has been removed.",
         )
-    log_status(started_at, "INFO", "[5/6] Loading AI watchlist scores.")
-    watchlist_scores = load_watchlist_scores(config)
-    if watchlist_scores.empty:
-        raise ValueError(
-            "Watchlist is empty or missing. Run "
-            "`python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv` "
-            "or populate watchlist_csv_path manually."
-        )
+    log_status(started_at, "INFO", "[5/6] Applying watchlist attributes.")
     df = df.merge(watchlist_scores, on="symbol", how="left")
     for missing_col, default_val in [
         ("watchlist_etf_count", 0),

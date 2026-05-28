@@ -103,13 +103,22 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 4. 观察清单刷新采用手工触发，不在扫描阶段自动更新；建议在定期刷新后做一次人工抽检。
 5. 暂无按日期归档的 watchlist 快照；当前可通过版本控制（git）追踪变更历史。
 
+### 3.6 Watchlist 定稿（2026-05-28）
+
+当前 watchlist 机制已定稿，后续按此作为基线：
+- 扫描端只使用本地 `data/ai_watchlist.csv`，不自动刷新。
+- 扫描前先加载 watchlist，并将股票 universe 收缩到 watchlist 符号（不再先扫描全市场再过滤）。
+- watchlist schema 严格校验：`symbol,bucket,etf_count,etfs,enabled,updated_utc`。
+- 已移除 `source` 字段与旧 schema 兼容路径（项目未上线前主动去除遗留逻辑）。
+- `watchlist_etf_count` 与 `watchlist_etfs` 使用统一口径：`etf_count = 去重后 etfs 数量`。
+
 ### 3.4 生产参数固化（v1）
 
 生产参数基线放在 `config.production.json`，用途是稳定运行，不随实验来回波动。  
 当前冻结原则：
 - 保留三清单并行（`Low-Value` / `Industry-Trend` / `Momentum`）
 - 保持 `enable_sic_prefix_filters=false`（默认不叠加 SIC 前缀）
-- 采用已通过全市场回归验证的平衡阈值（可稳定产出且不过度放宽）
+- 采用已通过全量样本回归验证的平衡阈值（可稳定产出且不过度放宽）
 - 将高纯度/高收紧参数留在实验配置中，不直接进入生产默认
 
 建议：
@@ -206,7 +215,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - 第 6 步：在 `config.filters.json` 增加参数键，并给出初始策略值
 - 第 7 步：在 README 的“参数说明”和“输出字段说明”同步更新
 
-建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑全市场。
+建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑 watchlist 全量。
 
 ### 3.3 当前版本筛选逻辑（v2）
 
@@ -223,7 +232,8 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 策略执行顺序：
 - 先按需手工刷新 watchlist（非每次必做）
-- 先做价格/流动性预筛，再请求 SEC 基本面
+- 先读取本地 watchlist，并将可交易股票 universe 收缩到 watchlist 符号
+- 再做价格/流动性预筛，然后请求 SEC 基本面
 - 计算估值与价格位置指标
 - 合并 ETF 观察清单字段（`watchlist_bucket/watchlist_etf_count/watchlist_etfs`）
 - 生成三清单：`low-value`、`industry-trend`、`momentum`
@@ -235,7 +245,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 python run_scan.py --max-symbols 300 --top-n 30
 ```
 
-说明：`--max-symbols` 会在全市场候选里按 `dollar_volume`（快照成交额）降序取样，避免按原始顺序截断带来的样本偏差。
+说明：`--max-symbols` 会在 watchlist universe 内按 `dollar_volume`（快照成交额）降序取样，避免按原始顺序截断带来的样本偏差。
 
 运行时终端会持续打印：
 - 当前阶段（`[1/6]...[6/6]`）
@@ -280,21 +290,22 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 ```
 
 推荐运行节奏：
-- `weekly_full`（每周 1 次，全市场）
+- `daily_full_scan`（每天 1~多次，watchlist 全量）
 
 ```bash
 .venv/bin/python run_scan.py --config config.production.json
 ```
 
-- `daily_watch_refresh`（每个交易日 1 次，快速复核）
+- `intraday_quick_scan`（日内快速复核，可选）
 
 ```bash
 .venv/bin/python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
 ```
 
 建议时点：
-- `weekly_full`：周末或周一美股盘前
-- `daily_watch_refresh`：每个交易日收盘后
+- `daily_full_scan`：每个交易日收盘后（或盘前）
+- `intraday_quick_scan`：盘中按需多次
+- `watchlist_refresh`：每周 1 次（建议周末或周一盘前）
 
 ## 5. 运行状态与进度说明
 
@@ -474,7 +485,7 @@ python run_backtest.py --mode historical_replay --scan-config config.production.
 
 若你需要更高质量基本面，可额外接入第三方财务数据 API（例如更标准化的 TTM、前瞻一致预期、分行业估值基准）。
 
-## 12. 快速上手与每周执行清单
+## 12. 快速上手与日常执行清单
 
 最简使用流程：
 
@@ -503,7 +514,7 @@ SEC_USER_AGENT=ai-value-scanner your_email@example.com
 python run_scan.py --config config.production.json --max-symbols 300 --top-n 30
 ```
 
-4. 全市场扫描（生产）
+4. Watchlist 全量扫描（生产）
 
 ```bash
 python run_scan.py --config config.production.json
@@ -517,16 +528,22 @@ python run_backtest.py --mode historical_replay --scan-config config.production.
 
 建议的固定节奏：
 
-- 每周一次全市场扫描（建议周末或周一盘前）
+- 每个交易日可执行 1~多次 watchlist 全量扫描
 
 ```bash
 python run_scan.py --config config.production.json
 ```
 
-- 每个交易日一次快刷（观察 watch/momentum 变化）
+- 日内快刷（观察 watch/momentum 变化，可选）
 
 ```bash
 python run_scan.py --config config.production.json --max-symbols 1200 --top-n 30
+```
+
+- 每周一次刷新 watchlist（建议周末或周一盘前）
+
+```bash
+python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
 ```
 
 - 每周一次策略体检回测（建议关闭扰动以缩短时长）
