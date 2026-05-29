@@ -56,9 +56,17 @@ ALPACA_FEED=iex
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 现金流与企业价值参数：`require_positive_operating_cash_flow`、`require_positive_free_cash_flow`、`require_positive_ebit`、`min_operating_cash_flow`、`min_free_cash_flow`、`min_ebit`、`max_ev_to_ebit`、`min_fcf_yield`
-- 非经常性调整参数：`use_adjusted_quality_metrics`、`nonrecurring_addback_revenue_cap`（对并购/重组/减值等费用做受限加回，避免一次性损益误杀）
+- 非经常性与口径参数：`use_adjusted_quality_metrics`、`use_ttm_metrics`、`nonrecurring_addback_revenue_cap`（对并购/重组/减值费用加回，并对处置资产等一次性收益做扣减）
 - 行业分位数估值参数：`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
 - 基本面恶化过滤参数：`min_revenue_yoy`、`min_net_income_yoy`
+- 基本面质量/资产负债约束：`min_fundamental_quality_score`、`max_net_debt_to_ebitda`、`min_interest_coverage`、`max_current_debt_ratio`、`min_current_ratio`、`min_ocf_to_net_income`、`max_accrual_ratio`
+- 营运与稀释约束：`max_receivables_growth_gap`、`max_inventory_growth_gap`、`max_shares_yoy`
+- 自身历史估值与预期约束：`own_history_valuation_window_days`、`max_ps_hist_percentile`、`max_pe_hist_percentile`、`min_expectation_proxy`、`min_cycle_proxy`
+- 交易容量约束：`assumed_position_usd`、`max_adv_participation`、`max_estimated_slippage_bps`
+- 清单分散化约束：`max_per_sector_per_list`、`max_per_watchlist_etf_source_per_list`
+- 指标可用性分级开关：`metric_hard_filter_coverage_mode`（`high_coverage_only`/`balanced`/`all_metrics`）
+- 低覆盖硬过滤总开关：`force_hard_filter_low_coverage_metrics`（默认 `false`）
+- 低覆盖软约束权重：`low_coverage_soft_score_weights`（默认把低覆盖指标用于打分）
 - 打分惩罚参数：`score_penalty_overvaluation`、`score_penalty_deterioration`
 - 质量参数：`min_net_margin`（净利率下限）
 - 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
@@ -73,6 +81,11 @@ ALPACA_FEED=iex
 - 跨清单去重：`enforce_unique_symbol_across_lists`（按 `Low-Value > Industry-Trend > Momentum` 优先级分配，同一 `symbol` 仅出现在一张清单）
 - 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
 - 缓存：`cache_dir`、`alpaca_cache_enabled`、`alpaca_cache_ttl_assets_sec`、`alpaca_cache_ttl_snapshots_sec`、`alpaca_cache_ttl_bars_sec`
+
+分级开关说明：
+- `high_coverage_only`：仅高完备指标进入硬过滤（生产默认）
+- `balanced`：高完备 + 中等完备指标进入硬过滤
+- `all_metrics`：全部指标都可进入硬过滤（最严格）
 
 说明：生产配置文件已移除显式的三清单上限与 SIC 黑名单字段，运行时使用代码默认值（`top_n_per_channel_low_value/trend/momentum = 10/10/10`，`exclude_sic_codes = ["6770"]`）。如需覆盖，可在自定义配置中按同名字段显式设置。
 
@@ -239,6 +252,8 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 当前版本核心原则：
 - AI 相关性由 watchlist 维护脚本负责（ETF 持仓映射），扫描阶段不再计算 `ai_score/enabler_score`。
 - 排序主因子为估值折价、流动性、价格位置和 watchlist 覆盖广度（`watchlist_etf_count`）。
+- 低覆盖指标（如 `current_debt_ratio`、`inventory_growth_gap`）默认走软约束（打分），不默认做硬过滤。
+- 如需强制硬过滤低覆盖指标，可开启 `force_hard_filter_low_coverage_metrics=true` 或在通道配置中设置 `hard_filter_current_debt_ratio` / `hard_filter_inventory_growth_gap`。
 - 过滤层可额外要求最小 ETF 覆盖数（`min_watchlist_etf_count`），用于收紧候选数量。
 - 输出拆分为三清单（并行）
   - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
@@ -385,8 +400,18 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
 - `market_cap` / `revenue` / `net_income` / `net_margin`：市值与基本面（`net_margin = net_income / revenue`）
 - `nonrecurring_expense_addback`：识别到的一次性费用加回额（受 `nonrecurring_addback_revenue_cap` 限制）
-- `adjusted_net_income` / `adjusted_ebit`：扣除一次性费用影响后的质量口径
+- `nonrecurring_gain_subtraction`：识别到的一次性收益扣减额（受 `nonrecurring_addback_revenue_cap` 限制）
+- `adjusted_net_income` / `adjusted_ebit` / `adjusted_ebitda`：非经常性调整后的质量口径
 - `adjusted_net_income_yoy` / `adjusted_ebit_yoy`：调整后同比
+- `interest_coverage` / `net_debt_to_ebitda`：偿债与杠杆质量
+- `current_ratio` / `current_debt_ratio`：短债与流动性约束（`current_debt_ratio` 为低覆盖指标，支持推断）
+- `current_debt_ratio_reported` / `current_debt_ratio_inferred` / `current_debt_ratio_source`：原始口径、推断口径和来源标签
+- `ocf_to_net_income` / `accrual_ratio` / `fundamental_quality_score`：利润现金化与综合质量
+- `receivables_growth_gap` / `inventory_growth_gap` / `shares_yoy`：营运与稀释风险
+- `inventory_growth_gap_reported` / `inventory_growth_gap_inferred` / `inventory_growth_gap_source`：库存增速缺口原始值、推断值与来源标签
+- `ps_hist_percentile` / `pe_hist_percentile`：个股自身历史估值分位（基于价格历史近似）
+- `expectation_proxy` / `cycle_proxy`：预期差与周期性代理因子
+- `adv_participation` / `estimated_slippage_bps`：按假设下单规模估算的成交参与率与冲击成本
 - `enterprise_value` / `ebit` / `ev_to_ebit`：企业价值、息税前利润与 EV/EBIT
 - `operating_cash_flow` / `free_cash_flow` / `fcf_yield`：经营现金流、自由现金流与 FCF 收益率
 - `revenue_yoy` / `net_income_yoy` / `ebit_yoy` / `operating_cash_flow_yoy`：年报口径同比变化

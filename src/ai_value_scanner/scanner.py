@@ -25,6 +25,7 @@ from urllib3.util.retry import Retry
 
 
 ANNUAL_FORMS = {"10-K", "20-F", "40-F"}
+QUARTERLY_FORMS = {"10-Q", "10-K", "20-F", "40-F"}
 REVENUE_TAGS = [
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -69,6 +70,24 @@ NONRECURRING_EXPENSE_TAGS = [
     "AssetImpairmentCharges",
     "GoodwillImpairmentLoss",
 ]
+NONRECURRING_GAIN_TAGS = [
+    "GainLossOnDispositionOfAssets",
+    "GainLossOnSaleOfBusiness",
+    "GainLossOnSaleOfPropertyPlantEquipment",
+    "GainLossOnSaleOfOtherAssets",
+]
+INTEREST_EXPENSE_TAGS = [
+    "InterestExpense",
+    "InterestAndDebtExpense",
+]
+DA_TAGS = [
+    "DepreciationAndAmortization",
+    "DepreciationDepletionAndAmortization",
+]
+ASSETS_CURRENT_TAGS = ["AssetsCurrent"]
+LIABILITIES_CURRENT_TAGS = ["LiabilitiesCurrent"]
+RECEIVABLES_CURRENT_TAGS = ["AccountsReceivableNetCurrent", "ReceivablesNetCurrent"]
+INVENTORY_TAGS = ["InventoryNet"]
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 
@@ -203,6 +222,13 @@ def default_triage_rules() -> dict[str, dict[str, Any]]:
     }
 
 
+def default_low_coverage_soft_score_weights() -> dict[str, float]:
+    return {
+        "current_debt_ratio_low": 0.03,
+        "inventory_growth_gap_low": 0.03,
+    }
+
+
 @dataclass
 class ScanConfig:
     max_symbols: int | None = None
@@ -231,6 +257,8 @@ class ScanConfig:
     require_positive_ebit: bool = True
     use_adjusted_quality_metrics: bool = True
     nonrecurring_addback_revenue_cap: float | None = 0.25
+    use_ttm_metrics: bool = True
+    min_fundamental_quality_score: float | None = 0.45
     min_revenue: float = 10_000_000.0
     min_net_income: float = 1_000_000.0
     min_operating_cash_flow: float | None = 0.0
@@ -245,6 +273,30 @@ class ScanConfig:
     max_pe_percentile_in_sic: float | None = 0.60
     min_revenue_yoy: float | None = 0.00
     min_net_income_yoy: float | None = -0.10
+    max_net_debt_to_ebitda: float | None = 5.0
+    min_interest_coverage: float | None = 1.8
+    max_current_debt_ratio: float | None = 0.75
+    min_current_ratio: float | None = 0.90
+    min_ocf_to_net_income: float | None = 0.60
+    max_accrual_ratio: float | None = 0.35
+    max_receivables_growth_gap: float | None = 0.60
+    max_inventory_growth_gap: float | None = 1.00
+    max_shares_yoy: float | None = 0.08
+    own_history_valuation_window_days: int = 252
+    max_ps_hist_percentile: float | None = 0.85
+    max_pe_hist_percentile: float | None = 0.85
+    min_expectation_proxy: float | None = -0.20
+    min_cycle_proxy: float | None = None
+    assumed_position_usd: float = 250_000.0
+    max_adv_participation: float = 0.05
+    max_estimated_slippage_bps: float | None = 40.0
+    max_per_sector_per_list: int | None = 3
+    max_per_watchlist_etf_source_per_list: int | None = None
+    metric_hard_filter_coverage_mode: str = "high_coverage_only"
+    force_hard_filter_low_coverage_metrics: bool = False
+    low_coverage_soft_score_weights: dict[str, float] = field(
+        default_factory=default_low_coverage_soft_score_weights
+    )
     score_penalty_overvaluation: float = 0.20
     score_penalty_deterioration: float = 0.20
     min_ps_discount: float = 0.15
@@ -777,10 +829,23 @@ def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
         yield seq[i : i + size]
 
 
-def pick_annual_facts(
-    companyfacts: dict[str, Any], tags: list[str], unit: str
+def _merged_standard_taxonomy_facts(companyfacts: dict[str, Any]) -> dict[str, Any]:
+    raw_facts = companyfacts.get("facts", {})
+    merged: dict[str, Any] = {}
+    for taxonomy in ("us-gaap", "ifrs-full"):
+        facts = raw_facts.get(taxonomy, {})
+        if not isinstance(facts, dict):
+            continue
+        for key, value in facts.items():
+            if key not in merged:
+                merged[key] = value
+    return merged
+
+
+def pick_facts_with_forms(
+    companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
 ) -> list[tuple[str, float, str]]:
-    facts = companyfacts.get("facts", {}).get("us-gaap", {})
+    facts = _merged_standard_taxonomy_facts(companyfacts)
     for tag in tags:
         if tag not in facts:
             continue
@@ -789,7 +854,7 @@ def pick_annual_facts(
         candidates: list[tuple[str, float, str, str]] = []
         for item in entries:
             form = item.get("form")
-            if form not in ANNUAL_FORMS:
+            if form not in allowed_forms:
                 continue
             if "val" not in item:
                 continue
@@ -815,7 +880,7 @@ def pick_annual_facts(
 def pick_latest_fact(
     companyfacts: dict[str, Any], tags: list[str], unit: str
 ) -> tuple[float | None, str | None]:
-    values = pick_annual_facts(companyfacts, tags, unit)
+    values = pick_facts_with_forms(companyfacts, tags, unit, ANNUAL_FORMS)
     if not values:
         return None, None
     _, val, form = values[0]
@@ -825,7 +890,7 @@ def pick_latest_fact(
 def pick_latest_and_prev_fact(
     companyfacts: dict[str, Any], tags: list[str], unit: str
 ) -> tuple[float | None, float | None]:
-    values = pick_annual_facts(companyfacts, tags, unit)
+    values = pick_facts_with_forms(companyfacts, tags, unit, ANNUAL_FORMS)
     if not values:
         return None, None
     latest = values[0][1]
@@ -841,7 +906,7 @@ def pick_sum_latest_and_prev_facts(
     has_latest = False
     has_prev = False
     for tag in tags:
-        values = pick_annual_facts(companyfacts, [tag], unit)
+        values = pick_facts_with_forms(companyfacts, [tag], unit, ANNUAL_FORMS)
         if not values:
             continue
         # Treat expense-like tags as add-backs only when positive.
@@ -853,6 +918,49 @@ def pick_sum_latest_and_prev_facts(
             prev_sum += prev_val
             has_prev = has_prev or prev_val > 0
     return (latest_sum if has_latest else None, prev_sum if has_prev else None)
+
+
+def pick_latest_and_year_ago_with_forms(
+    companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
+) -> tuple[float | None, float | None]:
+    values = pick_facts_with_forms(companyfacts, tags, unit, allowed_forms)
+    if not values:
+        return None, None
+    latest_end = pd.to_datetime(values[0][0], errors="coerce")
+    latest = float(values[0][1])
+    if pd.isna(latest_end):
+        prev = float(values[1][1]) if len(values) > 1 else None
+        return latest, prev
+    # Prefer a year-ago point for balance-sheet metrics; fallback to second latest.
+    year_ago = latest_end - pd.Timedelta(days=300)
+    for end, val, _ in values[1:]:
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if not pd.isna(end_dt) and end_dt <= year_ago:
+            return latest, float(val)
+    prev = float(values[1][1]) if len(values) > 1 else None
+    return latest, prev
+
+
+def pick_latest_and_prev_ttm(
+    companyfacts: dict[str, Any], tags: list[str], unit: str
+) -> tuple[float | None, float | None]:
+    values = pick_facts_with_forms(companyfacts, tags, unit, QUARTERLY_FORMS)
+    if len(values) < 4:
+        return None, None
+    latest_ttm = float(sum(v for _, v, _ in values[:4]))
+    prev_ttm = float(sum(v for _, v, _ in values[4:8])) if len(values) >= 8 else None
+    return latest_ttm, prev_ttm
+
+
+def pick_latest_and_prev_with_forms(
+    companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
+) -> tuple[float | None, float | None]:
+    values = pick_facts_with_forms(companyfacts, tags, unit, allowed_forms)
+    if not values:
+        return None, None
+    latest = values[0][1]
+    prev = values[1][1] if len(values) > 1 else None
+    return latest, prev
 
 
 def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -1254,6 +1362,167 @@ def safe_yoy(latest: float | None, previous: float | None) -> float | None:
         return None
 
 
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+HIGH_COVERAGE_HARD_FILTER_METRICS = {
+    "fundamental_quality_score",
+    "net_debt_to_ebitda",
+    "current_ratio",
+    "ocf_to_net_income",
+    "accrual_ratio",
+    "shares_yoy",
+    "ps_hist_percentile",
+    "pe_hist_percentile",
+    "adv_participation",
+    "estimated_slippage_bps",
+}
+MEDIUM_COVERAGE_HARD_FILTER_METRICS = {
+    "interest_coverage",
+    "receivables_growth_gap",
+    "expectation_proxy",
+    "cycle_proxy",
+}
+LOW_COVERAGE_HARD_FILTER_METRICS = {
+    "current_debt_ratio",
+    "inventory_growth_gap",
+}
+
+
+def hard_filter_metric_enabled(metric: str, config: ScanConfig, cp: dict[str, Any]) -> bool:
+    mode = str(config.metric_hard_filter_coverage_mode or "high_coverage_only").strip().lower()
+    if metric in LOW_COVERAGE_HARD_FILTER_METRICS:
+        if metric == "current_debt_ratio" and cp.get("hard_filter_current_debt_ratio", False):
+            return True
+        if metric == "inventory_growth_gap" and cp.get("hard_filter_inventory_growth_gap", False):
+            return True
+        if bool(config.force_hard_filter_low_coverage_metrics):
+            return True
+        return False
+    if mode == "all_metrics":
+        return True
+    if mode == "balanced":
+        return metric in HIGH_COVERAGE_HARD_FILTER_METRICS or metric in MEDIUM_COVERAGE_HARD_FILTER_METRICS
+    # high_coverage_only
+    return metric in HIGH_COVERAGE_HARD_FILTER_METRICS
+
+
+def merge_soft_score_weights(
+    base_weights: dict[str, float] | None, soft_weights: dict[str, float]
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    if isinstance(base_weights, dict):
+        for k, v in base_weights.items():
+            try:
+                out[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    for k, v in soft_weights.items():
+        if k not in out:
+            out[k] = float(v)
+    return out
+
+
+def fundamental_quality_score_from_metrics(
+    net_debt_to_ebitda: float | None,
+    interest_coverage: float | None,
+    current_ratio: float | None,
+    ocf_to_net_income: float | None,
+    accrual_ratio: float | None,
+) -> float:
+    # Neutral fallback for missing inputs keeps coverage broad while rewarding quality.
+    nd_component = 0.5
+    if net_debt_to_ebitda is not None:
+        if net_debt_to_ebitda <= 0:
+            nd_component = 1.0
+        else:
+            nd_component = clamp01(1.0 - (float(net_debt_to_ebitda) / 6.0))
+
+    ic_component = 0.5
+    if interest_coverage is not None:
+        ic_component = clamp01(float(interest_coverage) / 8.0)
+
+    cr_component = 0.5
+    if current_ratio is not None:
+        cr_component = clamp01(float(current_ratio) / 2.0)
+
+    ocf_component = 0.5
+    if ocf_to_net_income is not None:
+        ocf_component = clamp01(float(ocf_to_net_income) / 1.2)
+
+    accrual_component = 0.5
+    if accrual_ratio is not None:
+        accrual_component = clamp01(1.0 - abs(float(accrual_ratio)))
+
+    return round(
+        float(np.mean([nd_component, ic_component, cr_component, ocf_component, accrual_component])),
+        6,
+    )
+
+
+def compute_price_history_percentile(
+    bars: list[dict[str, Any]], window_days: int
+) -> float | None:
+    if not bars:
+        return None
+    closes: list[float] = []
+    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
+    for row in sorted_bars:
+        value = row.get("c")
+        if value is None:
+            continue
+        try:
+            close = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(close) and close > 0:
+            closes.append(close)
+    if len(closes) < 20:
+        return None
+    window = closes[-int(max(20, window_days)) :]
+    latest = window[-1]
+    arr = np.asarray(window, dtype="float64")
+    pct = float(np.mean(arr <= latest))
+    if np.isfinite(pct):
+        return round(pct, 6)
+    return None
+
+
+def apply_group_caps(
+    frame: pd.DataFrame,
+    max_per_sector: int | None,
+    max_per_watchlist_etf_source: int | None,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    out_rows: list[pd.Series] = []
+    sector_count: dict[str, int] = {}
+    etf_count: dict[str, int] = {}
+
+    for _, row in frame.iterrows():
+        sector_key = str(row.get("sic", "") or "")[:2]
+        etf_tokens = [x for x in str(row.get("watchlist_etfs", "") or "").split(",") if x]
+        primary_etf = sorted(etf_tokens)[0] if etf_tokens else ""
+
+        if max_per_sector is not None and sector_key:
+            if sector_count.get(sector_key, 0) >= int(max_per_sector):
+                continue
+        if max_per_watchlist_etf_source is not None and primary_etf:
+            if etf_count.get(primary_etf, 0) >= int(max_per_watchlist_etf_source):
+                continue
+
+        out_rows.append(row)
+        if sector_key:
+            sector_count[sector_key] = sector_count.get(sector_key, 0) + 1
+        if primary_etf:
+            etf_count[primary_etf] = etf_count.get(primary_etf, 0) + 1
+
+    if not out_rows:
+        return frame.iloc[0:0].copy()
+    return pd.DataFrame(out_rows).reset_index(drop=True)
+
+
 def watchlist_member_mask(frame: pd.DataFrame) -> pd.Series:
     if "watchlist_bucket" in frame.columns:
         bucket = frame["watchlist_bucket"].astype(str).str.strip()
@@ -1290,6 +1559,10 @@ def resolve_channel_profile(
     config: ScanConfig, channel_name: str, profile: dict[str, Any]
 ) -> dict[str, Any]:
     exclude_codes = sorted(set(str(x).strip() for x in config.exclude_sic_codes if str(x).strip()))
+    score_weights = merge_soft_score_weights(
+        profile.get("score_weights", {}),
+        config.low_coverage_soft_score_weights,
+    )
 
     return {
         "name": channel_name,
@@ -1351,6 +1624,92 @@ def resolve_channel_profile(
             None
             if profile.get("min_net_income_yoy", config.min_net_income_yoy) is None
             else float(profile.get("min_net_income_yoy", config.min_net_income_yoy))
+        ),
+        "min_fundamental_quality_score": (
+            None
+            if profile.get("min_fundamental_quality_score", config.min_fundamental_quality_score) is None
+            else float(profile.get("min_fundamental_quality_score", config.min_fundamental_quality_score))
+        ),
+        "max_net_debt_to_ebitda": (
+            None
+            if profile.get("max_net_debt_to_ebitda", config.max_net_debt_to_ebitda) is None
+            else float(profile.get("max_net_debt_to_ebitda", config.max_net_debt_to_ebitda))
+        ),
+        "min_interest_coverage": (
+            None
+            if profile.get("min_interest_coverage", config.min_interest_coverage) is None
+            else float(profile.get("min_interest_coverage", config.min_interest_coverage))
+        ),
+        "max_current_debt_ratio": (
+            None
+            if profile.get("max_current_debt_ratio", config.max_current_debt_ratio) is None
+            else float(profile.get("max_current_debt_ratio", config.max_current_debt_ratio))
+        ),
+        "min_current_ratio": (
+            None
+            if profile.get("min_current_ratio", config.min_current_ratio) is None
+            else float(profile.get("min_current_ratio", config.min_current_ratio))
+        ),
+        "min_ocf_to_net_income": (
+            None
+            if profile.get("min_ocf_to_net_income", config.min_ocf_to_net_income) is None
+            else float(profile.get("min_ocf_to_net_income", config.min_ocf_to_net_income))
+        ),
+        "max_accrual_ratio": (
+            None
+            if profile.get("max_accrual_ratio", config.max_accrual_ratio) is None
+            else float(profile.get("max_accrual_ratio", config.max_accrual_ratio))
+        ),
+        "max_receivables_growth_gap": (
+            None
+            if profile.get("max_receivables_growth_gap", config.max_receivables_growth_gap) is None
+            else float(profile.get("max_receivables_growth_gap", config.max_receivables_growth_gap))
+        ),
+        "max_inventory_growth_gap": (
+            None
+            if profile.get("max_inventory_growth_gap", config.max_inventory_growth_gap) is None
+            else float(profile.get("max_inventory_growth_gap", config.max_inventory_growth_gap))
+        ),
+        "max_shares_yoy": (
+            None
+            if profile.get("max_shares_yoy", config.max_shares_yoy) is None
+            else float(profile.get("max_shares_yoy", config.max_shares_yoy))
+        ),
+        "max_ps_hist_percentile": (
+            None
+            if profile.get("max_ps_hist_percentile", config.max_ps_hist_percentile) is None
+            else float(profile.get("max_ps_hist_percentile", config.max_ps_hist_percentile))
+        ),
+        "max_pe_hist_percentile": (
+            None
+            if profile.get("max_pe_hist_percentile", config.max_pe_hist_percentile) is None
+            else float(profile.get("max_pe_hist_percentile", config.max_pe_hist_percentile))
+        ),
+        "min_expectation_proxy": (
+            None
+            if profile.get("min_expectation_proxy", config.min_expectation_proxy) is None
+            else float(profile.get("min_expectation_proxy", config.min_expectation_proxy))
+        ),
+        "min_cycle_proxy": (
+            None
+            if profile.get("min_cycle_proxy", config.min_cycle_proxy) is None
+            else float(profile.get("min_cycle_proxy", config.min_cycle_proxy))
+        ),
+        "max_adv_participation": (
+            None
+            if profile.get("max_adv_participation", config.max_adv_participation) is None
+            else float(profile.get("max_adv_participation", config.max_adv_participation))
+        ),
+        "max_estimated_slippage_bps": (
+            None
+            if profile.get("max_estimated_slippage_bps", config.max_estimated_slippage_bps) is None
+            else float(profile.get("max_estimated_slippage_bps", config.max_estimated_slippage_bps))
+        ),
+        "hard_filter_current_debt_ratio": bool(
+            profile.get("hard_filter_current_debt_ratio", config.force_hard_filter_low_coverage_metrics)
+        ),
+        "hard_filter_inventory_growth_gap": bool(
+            profile.get("hard_filter_inventory_growth_gap", config.force_hard_filter_low_coverage_metrics)
         ),
         "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
         "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
@@ -1417,7 +1776,7 @@ def resolve_channel_profile(
             else float(profile.get("max_60d_volatility_percentile", config.max_60d_volatility_percentile))
         ),
         "exclude_sic_codes": exclude_codes,
-        "score_weights": profile.get("score_weights", {}),
+        "score_weights": score_weights,
     }
 
 
@@ -1527,30 +1886,88 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
-    revenue, revenue_prev = pick_latest_and_prev_fact(companyfacts, REVENUE_TAGS, "USD")
-    net_income, net_income_prev = pick_latest_and_prev_fact(companyfacts, NET_INCOME_TAGS, "USD")
-    shares, shares_form = pick_latest_fact(companyfacts, SHARES_TAGS, "shares")
-    ocf, ocf_prev = pick_latest_and_prev_fact(companyfacts, OPERATING_CASH_FLOW_TAGS, "USD")
-    capex_raw, _ = pick_latest_and_prev_fact(companyfacts, CAPEX_TAGS, "USD")
-    ebit, ebit_prev = pick_latest_and_prev_fact(companyfacts, EBIT_TAGS, "USD")
-    cash_and_equivalents, _ = pick_latest_and_prev_fact(
-        companyfacts, CASH_AND_EQUIVALENTS_TAGS, "USD"
+
+    def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
+        if config.use_ttm_metrics:
+            latest, prev = pick_latest_and_prev_ttm(companyfacts, tags, unit)
+            if latest is not None:
+                return latest, prev, "ttm"
+        latest, prev = pick_latest_and_prev_fact(companyfacts, tags, unit)
+        if latest is not None:
+            return latest, prev, "annual"
+        latest, prev = pick_latest_and_prev_with_forms(companyfacts, tags, unit, QUARTERLY_FORMS)
+        if latest is not None:
+            return latest, prev, "periodic"
+        return None, None, "missing"
+
+    def pick_latest_with_forms(tags: list[str], unit: str) -> tuple[float | None, float | None]:
+        return pick_latest_and_year_ago_with_forms(companyfacts, tags, unit, QUARTERLY_FORMS)
+
+    def pick_sum_positive_flows(tags: list[str]) -> tuple[float | None, float | None]:
+        latest_sum = 0.0
+        prev_sum = 0.0
+        has_latest = False
+        has_prev = False
+        for tag in tags:
+            latest = None
+            prev = None
+            if config.use_ttm_metrics:
+                latest, prev = pick_latest_and_prev_ttm(companyfacts, [tag], "USD")
+            if latest is None:
+                values = pick_facts_with_forms(companyfacts, [tag], "USD", ANNUAL_FORMS)
+                if values:
+                    latest = float(values[0][1])
+                    prev = float(values[1][1]) if len(values) > 1 else None
+            if latest is None:
+                continue
+            latest_val = max(0.0, float(latest))
+            latest_sum += latest_val
+            has_latest = has_latest or latest_val > 0
+            if prev is not None:
+                prev_val = max(0.0, float(prev))
+                prev_sum += prev_val
+                has_prev = has_prev or prev_val > 0
+        return (latest_sum if has_latest else None, prev_sum if has_prev else None)
+
+    revenue, revenue_prev, revenue_form = pick_flow_pair(REVENUE_TAGS, "USD")
+    net_income, net_income_prev, net_income_form = pick_flow_pair(NET_INCOME_TAGS, "USD")
+    ocf, ocf_prev, operating_cash_flow_form = pick_flow_pair(OPERATING_CASH_FLOW_TAGS, "USD")
+    capex_raw, _, _ = pick_flow_pair(CAPEX_TAGS, "USD")
+    ebit, ebit_prev, ebit_form = pick_flow_pair(EBIT_TAGS, "USD")
+    interest_expense, interest_expense_prev, _ = pick_flow_pair(INTEREST_EXPENSE_TAGS, "USD")
+    da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
+
+    shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
+    shares_form = "periodic" if shares is not None else None
+    cash_and_equivalents, _ = pick_latest_with_forms(CASH_AND_EQUIVALENTS_TAGS, "USD")
+    debt_long_term, _ = pick_latest_with_forms(LONG_TERM_DEBT_TAGS, "USD")
+    debt_current, _ = pick_latest_with_forms(CURRENT_DEBT_TAGS, "USD")
+    assets_current, _ = pick_latest_with_forms(ASSETS_CURRENT_TAGS, "USD")
+    liabilities_current, _ = pick_latest_with_forms(LIABILITIES_CURRENT_TAGS, "USD")
+    receivables_current, receivables_prev = pick_latest_with_forms(RECEIVABLES_CURRENT_TAGS, "USD")
+    inventory_current, inventory_prev = pick_latest_with_forms(INVENTORY_TAGS, "USD")
+
+    nonrecurring_addback_raw, nonrecurring_addback_prev_raw = pick_sum_positive_flows(
+        NONRECURRING_EXPENSE_TAGS
     )
-    debt_long_term, _ = pick_latest_and_prev_fact(companyfacts, LONG_TERM_DEBT_TAGS, "USD")
-    debt_current, _ = pick_latest_and_prev_fact(companyfacts, CURRENT_DEBT_TAGS, "USD")
-    nonrecurring_addback_raw, nonrecurring_addback_prev_raw = pick_sum_latest_and_prev_facts(
-        companyfacts, NONRECURRING_EXPENSE_TAGS, "USD"
-    )
+    nonrecurring_gain_raw, nonrecurring_gain_prev_raw = pick_sum_positive_flows(NONRECURRING_GAIN_TAGS)
 
     capex = abs(capex_raw) if capex_raw is not None else None
     free_cash_flow = (ocf - capex) if (ocf is not None and capex is not None) else None
     total_debt = None
     if debt_long_term is not None or debt_current is not None:
         total_debt = float(debt_long_term or 0.0) + float(debt_current or 0.0)
+    net_debt = None
+    if total_debt is not None or cash_and_equivalents is not None:
+        net_debt = float(total_debt or 0.0) - float(cash_and_equivalents or 0.0)
     revenue_yoy = safe_yoy(revenue, revenue_prev)
     net_income_yoy = safe_yoy(net_income, net_income_prev)
     ebit_yoy = safe_yoy(ebit, ebit_prev)
     ocf_yoy = safe_yoy(ocf, ocf_prev)
+    shares_yoy = safe_yoy(shares, shares_prev)
+    receivables_yoy = safe_yoy(receivables_current, receivables_prev)
+    inventory_yoy = safe_yoy(inventory_current, inventory_prev)
+    da_yoy = safe_yoy(da, da_prev)
     addback_cap_ratio = config.nonrecurring_addback_revenue_cap
     nonrecurring_addback = nonrecurring_addback_raw
     nonrecurring_addback_prev = nonrecurring_addback_prev_raw
@@ -1562,47 +1979,172 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                 nonrecurring_addback_prev,
                 float(revenue_prev) * float(addback_cap_ratio),
             )
+    nonrecurring_gain = nonrecurring_gain_raw
+    nonrecurring_gain_prev = nonrecurring_gain_prev_raw
+    if addback_cap_ratio is not None:
+        if nonrecurring_gain is not None and revenue is not None and revenue > 0:
+            nonrecurring_gain = min(nonrecurring_gain, float(revenue) * float(addback_cap_ratio))
+        if nonrecurring_gain_prev is not None and revenue_prev is not None and revenue_prev > 0:
+            nonrecurring_gain_prev = min(
+                nonrecurring_gain_prev,
+                float(revenue_prev) * float(addback_cap_ratio),
+            )
 
     adjusted_net_income = None
     if net_income is not None:
-        adjusted_net_income = float(net_income) + float(nonrecurring_addback or 0.0)
+        adjusted_net_income = (
+            float(net_income)
+            + float(nonrecurring_addback or 0.0)
+            - float(nonrecurring_gain or 0.0)
+        )
     adjusted_ebit = None
     if ebit is not None:
-        adjusted_ebit = float(ebit) + float(nonrecurring_addback or 0.0)
+        adjusted_ebit = (
+            float(ebit) + float(nonrecurring_addback or 0.0) - float(nonrecurring_gain or 0.0)
+        )
     adjusted_net_income_prev = None
     if net_income_prev is not None:
-        adjusted_net_income_prev = float(net_income_prev) + float(nonrecurring_addback_prev or 0.0)
+        adjusted_net_income_prev = (
+            float(net_income_prev)
+            + float(nonrecurring_addback_prev or 0.0)
+            - float(nonrecurring_gain_prev or 0.0)
+        )
     adjusted_ebit_prev = None
     if ebit_prev is not None:
-        adjusted_ebit_prev = float(ebit_prev) + float(nonrecurring_addback_prev or 0.0)
+        adjusted_ebit_prev = (
+            float(ebit_prev)
+            + float(nonrecurring_addback_prev or 0.0)
+            - float(nonrecurring_gain_prev or 0.0)
+        )
     adjusted_net_income_yoy = safe_yoy(adjusted_net_income, adjusted_net_income_prev)
     adjusted_ebit_yoy = safe_yoy(adjusted_ebit, adjusted_ebit_prev)
+    adjusted_da = float(da or 0.0) + float(nonrecurring_addback or 0.0) - float(nonrecurring_gain or 0.0)
+    adjusted_ebitda = (float(adjusted_ebit) + adjusted_da) if adjusted_ebit is not None else None
 
+    interest_expense_abs = abs(float(interest_expense)) if interest_expense is not None else None
+    interest_coverage = None
+    if adjusted_ebit is not None and interest_expense_abs is not None and interest_expense_abs > 0:
+        interest_coverage = float(adjusted_ebit) / interest_expense_abs
+
+    net_debt_to_ebitda = None
+    if net_debt is not None and adjusted_ebitda is not None and adjusted_ebitda != 0:
+        net_debt_to_ebitda = float(net_debt) / float(adjusted_ebitda)
+
+    current_ratio = None
+    if assets_current is not None and liabilities_current not in (None, 0):
+        current_ratio = float(assets_current) / float(liabilities_current)
+
+    current_debt_ratio_reported = None
+    current_debt_ratio_inferred = None
+    current_debt_ratio = None
+    current_debt_ratio_source = "missing"
+    if debt_current is not None and assets_current not in (None, 0):
+        current_debt_ratio_reported = float(debt_current) / float(assets_current)
+        current_debt_ratio = current_debt_ratio_reported
+        current_debt_ratio_source = "reported"
+    elif assets_current not in (None, 0):
+        if total_debt is not None and total_debt <= 0:
+            current_debt_ratio_inferred = 0.0
+            current_debt_ratio = current_debt_ratio_inferred
+            current_debt_ratio_source = "inferred_zero_nonpositive_total_debt"
+        elif total_debt is not None and liabilities_current not in (None, 0):
+            inferred_current_debt = min(max(float(total_debt), 0.0), float(liabilities_current))
+            current_debt_ratio_inferred = inferred_current_debt / float(assets_current)
+            current_debt_ratio = current_debt_ratio_inferred
+            current_debt_ratio_source = "inferred_total_debt_capped_by_current_liabilities"
+
+    ocf_to_net_income = None
+    if ocf is not None and adjusted_net_income not in (None, 0):
+        ocf_to_net_income = float(ocf) / float(adjusted_net_income)
+
+    accrual_ratio = None
+    if adjusted_net_income is not None and ocf is not None and assets_current not in (None, 0):
+        accrual_ratio = (float(adjusted_net_income) - float(ocf)) / float(assets_current)
+
+    receivables_growth_gap = None
+    if receivables_yoy is not None and revenue_yoy is not None:
+        receivables_growth_gap = float(receivables_yoy) - float(revenue_yoy)
+    inventory_growth_gap_reported = None
+    inventory_growth_gap_inferred = None
+    inventory_growth_gap = None
+    inventory_growth_gap_source = "missing"
+    if inventory_yoy is not None and revenue_yoy is not None:
+        inventory_growth_gap_reported = float(inventory_yoy) - float(revenue_yoy)
+        inventory_growth_gap = inventory_growth_gap_reported
+        inventory_growth_gap_source = "reported"
+    elif revenue_yoy is not None:
+        # Inventory is often not applicable for software/service names; use neutral fallback.
+        inventory_not_applicable = (
+            (inventory_current is None and inventory_prev is None)
+            or ((inventory_current in (0, 0.0)) and (inventory_prev in (0, 0.0)))
+        )
+        if inventory_not_applicable:
+            inventory_growth_gap_inferred = 0.0
+            inventory_growth_gap = inventory_growth_gap_inferred
+            inventory_growth_gap_source = "inferred_inventory_not_applicable"
+
+    quality_score = fundamental_quality_score_from_metrics(
+        net_debt_to_ebitda=net_debt_to_ebitda,
+        interest_coverage=interest_coverage,
+        current_ratio=current_ratio,
+        ocf_to_net_income=ocf_to_net_income,
+        accrual_ratio=accrual_ratio,
+    )
     return {
         "symbol": symbol,
         "sic": str(sic) if sic is not None else None,
         "sic_description": sic_desc,
         "revenue": revenue,
-        "revenue_form": "annual",
+        "revenue_form": revenue_form,
         "net_income": net_income,
-        "net_income_form": "annual",
+        "net_income_form": net_income_form,
         "shares_outstanding": shares,
         "shares_form": shares_form,
         "operating_cash_flow": ocf,
+        "operating_cash_flow_form": operating_cash_flow_form,
         "capex": capex,
         "free_cash_flow": free_cash_flow,
         "ebit": ebit,
+        "ebit_form": ebit_form,
         "cash_and_equivalents": cash_and_equivalents,
         "total_debt": total_debt,
+        "net_debt": net_debt,
+        "interest_expense": interest_expense_abs,
+        "depreciation_and_amortization": da,
+        "current_assets": assets_current,
+        "current_liabilities": liabilities_current,
+        "receivables_current": receivables_current,
+        "inventory_current": inventory_current,
         "revenue_yoy": revenue_yoy,
         "net_income_yoy": net_income_yoy,
         "ebit_yoy": ebit_yoy,
+        "da_yoy": da_yoy,
         "operating_cash_flow_yoy": ocf_yoy,
+        "shares_yoy": shares_yoy,
+        "receivables_yoy": receivables_yoy,
+        "inventory_yoy": inventory_yoy,
+        "receivables_growth_gap": receivables_growth_gap,
+        "inventory_growth_gap": inventory_growth_gap,
         "nonrecurring_expense_addback": nonrecurring_addback,
+        "nonrecurring_gain_subtraction": nonrecurring_gain,
         "adjusted_net_income": adjusted_net_income,
         "adjusted_ebit": adjusted_ebit,
+        "adjusted_ebitda": adjusted_ebitda,
         "adjusted_net_income_yoy": adjusted_net_income_yoy,
         "adjusted_ebit_yoy": adjusted_ebit_yoy,
+        "interest_coverage": interest_coverage,
+        "net_debt_to_ebitda": net_debt_to_ebitda,
+        "current_ratio": current_ratio,
+        "current_debt_ratio_reported": current_debt_ratio_reported,
+        "current_debt_ratio_inferred": current_debt_ratio_inferred,
+        "current_debt_ratio": current_debt_ratio,
+        "current_debt_ratio_source": current_debt_ratio_source,
+        "ocf_to_net_income": ocf_to_net_income,
+        "accrual_ratio": accrual_ratio,
+        "inventory_growth_gap_reported": inventory_growth_gap_reported,
+        "inventory_growth_gap_inferred": inventory_growth_gap_inferred,
+        "inventory_growth_gap_source": inventory_growth_gap_source,
+        "fundamental_quality_score": quality_score,
     }
 
 
@@ -1632,20 +2174,50 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "shares_outstanding": None,
                         "shares_form": None,
                         "operating_cash_flow": None,
+                        "operating_cash_flow_form": None,
                         "capex": None,
                         "free_cash_flow": None,
                         "ebit": None,
+                        "ebit_form": None,
                         "cash_and_equivalents": None,
                         "total_debt": None,
+                        "net_debt": None,
+                        "interest_expense": None,
+                        "depreciation_and_amortization": None,
+                        "current_assets": None,
+                        "current_liabilities": None,
+                        "receivables_current": None,
+                        "inventory_current": None,
                         "revenue_yoy": None,
                         "net_income_yoy": None,
                         "ebit_yoy": None,
+                        "da_yoy": None,
                         "operating_cash_flow_yoy": None,
+                        "shares_yoy": None,
+                        "receivables_yoy": None,
+                        "inventory_yoy": None,
+                        "receivables_growth_gap": None,
+                        "inventory_growth_gap": None,
                         "nonrecurring_expense_addback": None,
+                        "nonrecurring_gain_subtraction": None,
                         "adjusted_net_income": None,
                         "adjusted_ebit": None,
+                        "adjusted_ebitda": None,
                         "adjusted_net_income_yoy": None,
                         "adjusted_ebit_yoy": None,
+                        "interest_coverage": None,
+                        "net_debt_to_ebitda": None,
+                        "current_ratio": None,
+                        "current_debt_ratio_reported": None,
+                        "current_debt_ratio_inferred": None,
+                        "current_debt_ratio": None,
+                        "current_debt_ratio_source": None,
+                        "ocf_to_net_income": None,
+                        "accrual_ratio": None,
+                        "inventory_growth_gap_reported": None,
+                        "inventory_growth_gap_inferred": None,
+                        "inventory_growth_gap_source": None,
+                        "fundamental_quality_score": None,
                     }
                 )
             done += 1
@@ -1655,6 +2227,233 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                     print(f"  [progress] SEC fundamentals: {done}/{total} ({pct}%)")
                     last_reported_pct = pct
     return pd.DataFrame(rows)
+
+
+def append_professional_filter_steps(
+    steps: list[tuple[str, Any]], cp: dict[str, Any], config: ScanConfig
+) -> list[tuple[str, Any]]:
+    if cp["min_fundamental_quality_score"] is not None and hard_filter_metric_enabled(
+        "fundamental_quality_score", config, cp
+    ):
+        steps.append(
+            (
+                "min_fundamental_quality_score",
+                lambda frame: pd.to_numeric(frame["fundamental_quality_score"], errors="coerce").fillna(-np.inf)
+                >= cp["min_fundamental_quality_score"],
+            )
+        )
+    if cp["max_net_debt_to_ebitda"] is not None and hard_filter_metric_enabled(
+        "net_debt_to_ebitda", config, cp
+    ):
+        steps.append(
+            (
+                "max_net_debt_to_ebitda",
+                lambda frame: (
+                    pd.to_numeric(frame["net_debt_to_ebitda"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["net_debt_to_ebitda"], errors="coerce")
+                        <= cp["max_net_debt_to_ebitda"]
+                    )
+                ),
+            )
+        )
+    if cp["min_interest_coverage"] is not None and hard_filter_metric_enabled(
+        "interest_coverage", config, cp
+    ):
+        steps.append(
+            (
+                "min_interest_coverage",
+                lambda frame: (
+                    pd.to_numeric(frame["interest_coverage"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["interest_coverage"], errors="coerce")
+                        >= cp["min_interest_coverage"]
+                    )
+                ),
+            )
+        )
+    if cp["max_current_debt_ratio"] is not None and hard_filter_metric_enabled(
+        "current_debt_ratio", config, cp
+    ):
+        steps.append(
+            (
+                "max_current_debt_ratio",
+                lambda frame: (
+                    pd.to_numeric(frame["current_debt_ratio"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["current_debt_ratio"], errors="coerce")
+                        <= cp["max_current_debt_ratio"]
+                    )
+                ),
+            )
+        )
+    if cp["min_current_ratio"] is not None and hard_filter_metric_enabled("current_ratio", config, cp):
+        steps.append(
+            (
+                "min_current_ratio",
+                lambda frame: (
+                    pd.to_numeric(frame["current_ratio"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["current_ratio"], errors="coerce")
+                        >= cp["min_current_ratio"]
+                    )
+                ),
+            )
+        )
+    if cp["min_ocf_to_net_income"] is not None and hard_filter_metric_enabled(
+        "ocf_to_net_income", config, cp
+    ):
+        steps.append(
+            (
+                "min_ocf_to_net_income",
+                lambda frame: (
+                    pd.to_numeric(frame["ocf_to_net_income"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["ocf_to_net_income"], errors="coerce")
+                        >= cp["min_ocf_to_net_income"]
+                    )
+                ),
+            )
+        )
+    if cp["max_accrual_ratio"] is not None and hard_filter_metric_enabled("accrual_ratio", config, cp):
+        steps.append(
+            (
+                "max_accrual_ratio",
+                lambda frame: (
+                    pd.to_numeric(frame["accrual_ratio"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["accrual_ratio"], errors="coerce").abs()
+                        <= cp["max_accrual_ratio"]
+                    )
+                ),
+            )
+        )
+    if cp["max_receivables_growth_gap"] is not None and hard_filter_metric_enabled(
+        "receivables_growth_gap", config, cp
+    ):
+        steps.append(
+            (
+                "max_receivables_growth_gap",
+                lambda frame: (
+                    pd.to_numeric(frame["receivables_growth_gap"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["receivables_growth_gap"], errors="coerce")
+                        <= cp["max_receivables_growth_gap"]
+                    )
+                ),
+            )
+        )
+    if cp["max_inventory_growth_gap"] is not None and hard_filter_metric_enabled(
+        "inventory_growth_gap", config, cp
+    ):
+        steps.append(
+            (
+                "max_inventory_growth_gap",
+                lambda frame: (
+                    pd.to_numeric(frame["inventory_growth_gap"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["inventory_growth_gap"], errors="coerce")
+                        <= cp["max_inventory_growth_gap"]
+                    )
+                ),
+            )
+        )
+    if cp["max_shares_yoy"] is not None and hard_filter_metric_enabled("shares_yoy", config, cp):
+        steps.append(
+            (
+                "max_shares_yoy",
+                lambda frame: (
+                    pd.to_numeric(frame["shares_yoy"], errors="coerce").isna()
+                    | (pd.to_numeric(frame["shares_yoy"], errors="coerce") <= cp["max_shares_yoy"])
+                ),
+            )
+        )
+    if cp["max_ps_hist_percentile"] is not None and hard_filter_metric_enabled(
+        "ps_hist_percentile", config, cp
+    ):
+        steps.append(
+            (
+                "max_ps_hist_percentile",
+                lambda frame: (
+                    pd.to_numeric(frame["ps_hist_percentile"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["ps_hist_percentile"], errors="coerce")
+                        <= cp["max_ps_hist_percentile"]
+                    )
+                ),
+            )
+        )
+    if cp["max_pe_hist_percentile"] is not None and hard_filter_metric_enabled(
+        "pe_hist_percentile", config, cp
+    ):
+        steps.append(
+            (
+                "max_pe_hist_percentile",
+                lambda frame: (
+                    pd.to_numeric(frame["pe_hist_percentile"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["pe_hist_percentile"], errors="coerce")
+                        <= cp["max_pe_hist_percentile"]
+                    )
+                ),
+            )
+        )
+    if cp["min_expectation_proxy"] is not None and hard_filter_metric_enabled(
+        "expectation_proxy", config, cp
+    ):
+        steps.append(
+            (
+                "min_expectation_proxy",
+                lambda frame: (
+                    pd.to_numeric(frame["expectation_proxy"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["expectation_proxy"], errors="coerce")
+                        >= cp["min_expectation_proxy"]
+                    )
+                ),
+            )
+        )
+    if cp["min_cycle_proxy"] is not None and hard_filter_metric_enabled("cycle_proxy", config, cp):
+        steps.append(
+            (
+                "min_cycle_proxy",
+                lambda frame: (
+                    pd.to_numeric(frame["cycle_proxy"], errors="coerce").isna()
+                    | (pd.to_numeric(frame["cycle_proxy"], errors="coerce") >= cp["min_cycle_proxy"])
+                ),
+            )
+        )
+    if cp["max_adv_participation"] is not None and hard_filter_metric_enabled(
+        "adv_participation", config, cp
+    ):
+        steps.append(
+            (
+                "max_adv_participation",
+                lambda frame: (
+                    pd.to_numeric(frame["adv_participation"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["adv_participation"], errors="coerce")
+                        <= cp["max_adv_participation"]
+                    )
+                ),
+            )
+        )
+    if cp["max_estimated_slippage_bps"] is not None and hard_filter_metric_enabled(
+        "estimated_slippage_bps", config, cp
+    ):
+        steps.append(
+            (
+                "max_estimated_slippage_bps",
+                lambda frame: (
+                    pd.to_numeric(frame["estimated_slippage_bps"], errors="coerce").isna()
+                    | (
+                        pd.to_numeric(frame["estimated_slippage_bps"], errors="coerce")
+                        <= cp["max_estimated_slippage_bps"]
+                    )
+                ),
+            )
+        )
+    return steps
 
 
 def build_filter_steps(
@@ -1885,6 +2684,7 @@ def build_filter_steps(
             )
         )
 
+    steps = append_professional_filter_steps(steps, cp, config)
     steps.append(("watchlist_membership", watchlist_member_mask))
     if cp["require_channel_bucket_match"]:
         steps.append(
@@ -1959,6 +2759,7 @@ def build_industry_trend_steps(
                 "return_20d": 0.35,
                 "drawdown_from_52w_high": -0.10,
             }
+    trend_weights = merge_soft_score_weights(trend_weights, config.low_coverage_soft_score_weights)
 
     steps: list[tuple[str, Any]] = [
         ("price_notna", lambda frame: frame["price"].notna()),
@@ -2078,6 +2879,7 @@ def build_industry_trend_steps(
             )
         )
 
+    steps = append_professional_filter_steps(steps, cp, config)
     steps.append(("watchlist_membership", watchlist_member_mask))
     if cp["require_channel_bucket_match"]:
         steps.append(
@@ -2133,6 +2935,9 @@ def build_momentum_steps(
             "watchlist_etf_count": 0.25,
             "drawdown_from_52w_high": -0.10,
         }
+    momentum_weights = merge_soft_score_weights(
+        momentum_weights, config.low_coverage_soft_score_weights
+    )
 
     steps: list[tuple[str, Any]] = [
         ("price_notna", lambda frame: frame["price"].notna()),
@@ -2257,6 +3062,7 @@ def build_momentum_steps(
             )
         )
 
+    steps = append_professional_filter_steps(steps, cp, config)
     steps.append(("watchlist_membership", watchlist_member_mask))
     if cp["require_channel_bucket_match"]:
         steps.append(
@@ -2386,6 +3192,20 @@ def score_and_rank(
         "adjusted_net_income_yoy",
         "ebit_yoy",
         "operating_cash_flow_yoy",
+        "fundamental_quality_score",
+        "net_debt_to_ebitda",
+        "interest_coverage",
+        "ocf_to_net_income",
+        "accrual_ratio",
+        "shares_yoy",
+        "ps_hist_percentile",
+        "pe_hist_percentile",
+        "expectation_proxy",
+        "cycle_proxy",
+        "adv_participation",
+        "estimated_slippage_bps",
+        "current_debt_ratio",
+        "inventory_growth_gap",
     ]
     for col in required_cols:
         if col not in out.columns:
@@ -2410,6 +3230,20 @@ def score_and_rank(
         "net_income_yoy": pd.to_numeric(out["net_income_yoy"], errors="coerce"),
         "ebit_yoy": pd.to_numeric(out["ebit_yoy"], errors="coerce"),
         "operating_cash_flow_yoy": pd.to_numeric(out["operating_cash_flow_yoy"], errors="coerce"),
+        "fundamental_quality_score": pd.to_numeric(out["fundamental_quality_score"], errors="coerce"),
+        "net_debt_to_ebitda_low": -pd.to_numeric(out["net_debt_to_ebitda"], errors="coerce"),
+        "interest_coverage": pd.to_numeric(out["interest_coverage"], errors="coerce"),
+        "ocf_to_net_income": pd.to_numeric(out["ocf_to_net_income"], errors="coerce"),
+        "accrual_ratio_low": -pd.to_numeric(out["accrual_ratio"], errors="coerce").abs(),
+        "shares_yoy_low": -pd.to_numeric(out["shares_yoy"], errors="coerce"),
+        "ps_hist_percentile_low": 1 - pd.to_numeric(out["ps_hist_percentile"], errors="coerce"),
+        "pe_hist_percentile_low": 1 - pd.to_numeric(out["pe_hist_percentile"], errors="coerce"),
+        "expectation_proxy": pd.to_numeric(out["expectation_proxy"], errors="coerce"),
+        "cycle_proxy": pd.to_numeric(out["cycle_proxy"], errors="coerce"),
+        "adv_participation_low": -pd.to_numeric(out["adv_participation"], errors="coerce"),
+        "estimated_slippage_bps_low": -pd.to_numeric(out["estimated_slippage_bps"], errors="coerce"),
+        "current_debt_ratio_low": -pd.to_numeric(out["current_debt_ratio"], errors="coerce"),
+        "inventory_growth_gap_low": -pd.to_numeric(out["inventory_growth_gap"], errors="coerce"),
     }
     default_weights = {
         "ps_discount": 0.40,
@@ -2430,6 +3264,20 @@ def score_and_rank(
         "net_income_yoy": 0.00,
         "ebit_yoy": 0.00,
         "operating_cash_flow_yoy": 0.00,
+        "fundamental_quality_score": 0.00,
+        "net_debt_to_ebitda_low": 0.00,
+        "interest_coverage": 0.00,
+        "ocf_to_net_income": 0.00,
+        "accrual_ratio_low": 0.00,
+        "shares_yoy_low": 0.00,
+        "ps_hist_percentile_low": 0.00,
+        "pe_hist_percentile_low": 0.00,
+        "expectation_proxy": 0.00,
+        "cycle_proxy": 0.00,
+        "adv_participation_low": 0.00,
+        "estimated_slippage_bps_low": 0.00,
+        "current_debt_ratio_low": 0.00,
+        "inventory_growth_gap_low": 0.00,
     }
     out["composite_score"] = 0.0
     use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
@@ -2748,7 +3596,13 @@ def run_scan(
     bars_map = alpaca.get_daily_bars(symbols_for_bars, bars_start_iso, config.chunk_size)
     price_feature_rows: list[dict[str, Any]] = []
     for row in df.itertuples(index=False):
-        features = price_dimension_from_bars(row.price, bars_map.get(row.symbol, []))
+        symbol_bars = bars_map.get(row.symbol, [])
+        features = price_dimension_from_bars(row.price, symbol_bars)
+        hist_pct = compute_price_history_percentile(
+            symbol_bars, config.own_history_valuation_window_days
+        )
+        features["ps_hist_percentile"] = hist_pct
+        features["pe_hist_percentile"] = hist_pct
         price_feature_rows.append({"symbol": row.symbol, **features})
     df_price_features = pd.DataFrame(price_feature_rows)
     df = df.merge(df_price_features, on="symbol", how="left")
@@ -2770,24 +3624,74 @@ def run_scan(
         "free_cash_flow",
         "ebit",
         "adjusted_ebit",
+        "adjusted_ebitda",
         "cash_and_equivalents",
         "total_debt",
+        "net_debt",
+        "interest_expense",
+        "depreciation_and_amortization",
+        "current_assets",
+        "current_liabilities",
+        "receivables_current",
+        "inventory_current",
         "revenue_yoy",
         "net_income_yoy",
         "adjusted_net_income_yoy",
         "ebit_yoy",
         "adjusted_ebit_yoy",
+        "da_yoy",
         "operating_cash_flow_yoy",
+        "shares_yoy",
+        "receivables_yoy",
+        "inventory_yoy",
+        "receivables_growth_gap",
+        "inventory_growth_gap",
         "nonrecurring_expense_addback",
+        "nonrecurring_gain_subtraction",
+        "interest_coverage",
+        "net_debt_to_ebitda",
+        "current_ratio",
+        "current_debt_ratio_reported",
+        "current_debt_ratio_inferred",
+        "current_debt_ratio",
+        "ocf_to_net_income",
+        "accrual_ratio",
+        "inventory_growth_gap_reported",
+        "inventory_growth_gap_inferred",
+        "fundamental_quality_score",
+        "ps_hist_percentile",
+        "pe_hist_percentile",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
     df["enterprise_value"] = df["market_cap"] + df["total_debt"].fillna(0) - df["cash_and_equivalents"].fillna(0)
+    earnings_col = "adjusted_net_income" if config.use_adjusted_quality_metrics else "net_income"
+    ebit_col = "adjusted_ebit" if config.use_adjusted_quality_metrics else "ebit"
+    earnings_yoy_col = (
+        "adjusted_net_income_yoy" if config.use_adjusted_quality_metrics else "net_income_yoy"
+    )
     df["ps"] = safe_divide(df["market_cap"], df["revenue"])
-    df["pe"] = safe_divide(df["market_cap"], df["net_income"])
-    df["ev_to_ebit"] = safe_divide(df["enterprise_value"], df["ebit"])
+    df["pe"] = safe_divide(df["market_cap"], df[earnings_col])
+    df["ev_to_ebit"] = safe_divide(df["enterprise_value"], df[ebit_col])
     df["fcf_yield"] = safe_divide(df["free_cash_flow"], df["market_cap"])
-    df["net_margin"] = safe_divide(df["net_income"], df["revenue"])
+    df["net_margin"] = safe_divide(df[earnings_col], df["revenue"])
+    df.loc[pd.to_numeric(df[earnings_col], errors="coerce").fillna(0) <= 0, "pe_hist_percentile"] = np.nan
+    df["expectation_proxy"] = (
+        0.5 * pd.to_numeric(df["revenue_yoy"], errors="coerce").fillna(0)
+        + 0.5 * pd.to_numeric(df[earnings_yoy_col], errors="coerce").fillna(0)
+        - 0.5 * pd.to_numeric(df["return_20d"], errors="coerce").fillna(0)
+        - 0.5 * pd.to_numeric(df["return_60d"], errors="coerce").fillna(0)
+    )
+    df["cycle_proxy"] = pd.to_numeric(df["adjusted_ebit_yoy"], errors="coerce").fillna(
+        pd.to_numeric(df["ebit_yoy"], errors="coerce")
+    ) - pd.to_numeric(df["revenue_yoy"], errors="coerce")
+    df["adv_participation"] = safe_divide(
+        pd.Series(float(config.assumed_position_usd), index=df.index),
+        df["avg_dollar_volume_20d"],
+    )
+    df["estimated_slippage_bps"] = 200.0 * np.sqrt(
+        pd.to_numeric(df["adv_participation"], errors="coerce").clip(lower=0)
+    )
 
     peer_ps = (
         df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0)]
@@ -2892,6 +3796,11 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+        )
+        ranked = apply_group_caps(
+            ranked,
+            config.max_per_sector_per_list,
+            config.max_per_watchlist_etf_source_per_list,
         ).head(top_n_low_value)
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
@@ -2938,15 +3847,49 @@ def run_scan(
         "free_cash_flow",
         "ebit",
         "adjusted_ebit",
+        "adjusted_ebitda",
         "nonrecurring_expense_addback",
+        "nonrecurring_gain_subtraction",
         "cash_and_equivalents",
         "total_debt",
+        "net_debt",
+        "interest_expense",
+        "depreciation_and_amortization",
+        "current_assets",
+        "current_liabilities",
+        "receivables_current",
+        "inventory_current",
         "revenue_yoy",
         "net_income_yoy",
         "adjusted_net_income_yoy",
         "ebit_yoy",
         "adjusted_ebit_yoy",
+        "da_yoy",
         "operating_cash_flow_yoy",
+        "shares_yoy",
+        "receivables_yoy",
+        "inventory_yoy",
+        "receivables_growth_gap",
+        "inventory_growth_gap",
+        "interest_coverage",
+        "net_debt_to_ebitda",
+        "current_ratio",
+        "current_debt_ratio_reported",
+        "current_debt_ratio_inferred",
+        "current_debt_ratio",
+        "current_debt_ratio_source",
+        "ocf_to_net_income",
+        "accrual_ratio",
+        "fundamental_quality_score",
+        "inventory_growth_gap_reported",
+        "inventory_growth_gap_inferred",
+        "inventory_growth_gap_source",
+        "ps_hist_percentile",
+        "pe_hist_percentile",
+        "expectation_proxy",
+        "cycle_proxy",
+        "adv_participation",
+        "estimated_slippage_bps",
         "net_margin",
         "ps",
         "pe",
@@ -3007,6 +3950,11 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+        )
+        trend_ranked = apply_group_caps(
+            trend_ranked,
+            config.max_per_sector_per_list,
+            config.max_per_watchlist_etf_source_per_list,
         ).head(top_n_trend)
         trend_ranked["channel"] = channel_name
         trend_frames.append(trend_ranked)
@@ -3057,6 +4005,11 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+        )
+        momentum_ranked = apply_group_caps(
+            momentum_ranked,
+            config.max_per_sector_per_list,
+            config.max_per_watchlist_etf_source_per_list,
         ).head(top_n_momentum)
         momentum_ranked["channel"] = channel_name
         momentum_frames.append(momentum_ranked)
@@ -3121,6 +4074,16 @@ def run_scan(
         "watchlist_csv_path": config.watchlist_csv_path,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
+        "use_ttm_metrics": bool(config.use_ttm_metrics),
+        "use_adjusted_quality_metrics": bool(config.use_adjusted_quality_metrics),
+        "min_fundamental_quality_score": config.min_fundamental_quality_score,
+        "max_net_debt_to_ebitda": config.max_net_debt_to_ebitda,
+        "min_interest_coverage": config.min_interest_coverage,
+        "metric_hard_filter_coverage_mode": config.metric_hard_filter_coverage_mode,
+        "force_hard_filter_low_coverage_metrics": bool(config.force_hard_filter_low_coverage_metrics),
+        "low_coverage_soft_score_weights": config.low_coverage_soft_score_weights,
+        "max_adv_participation": config.max_adv_participation,
+        "max_estimated_slippage_bps": config.max_estimated_slippage_bps,
     }
     network_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     log_status(started_at, "INFO", f"Network report: {network_report_path}")
