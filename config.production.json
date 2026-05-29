@@ -21,6 +21,8 @@
   "require_positive_operating_cash_flow": true,
   "require_positive_free_cash_flow": true,
   "require_positive_ebit": true,
+  "use_adjusted_quality_metrics": true,
+  "nonrecurring_addback_revenue_cap": 0.25,
   "min_revenue": 10000000.0,
   "min_net_income": 1000000.0,
   "min_operating_cash_flow": 0.0,

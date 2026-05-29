@@ -56,6 +56,7 @@ ALPACA_FEED=iex
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 现金流与企业价值参数：`require_positive_operating_cash_flow`、`require_positive_free_cash_flow`、`require_positive_ebit`、`min_operating_cash_flow`、`min_free_cash_flow`、`min_ebit`、`max_ev_to_ebit`、`min_fcf_yield`
+- 非经常性调整参数：`use_adjusted_quality_metrics`、`nonrecurring_addback_revenue_cap`（对并购/重组/减值等费用做受限加回，避免一次性损益误杀）
 - 行业分位数估值参数：`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
 - 基本面恶化过滤参数：`min_revenue_yoy`、`min_net_income_yoy`
 - 打分惩罚参数：`score_penalty_overvaluation`、`score_penalty_deterioration`
@@ -383,6 +384,9 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
 - `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
 - `market_cap` / `revenue` / `net_income` / `net_margin`：市值与基本面（`net_margin = net_income / revenue`）
+- `nonrecurring_expense_addback`：识别到的一次性费用加回额（受 `nonrecurring_addback_revenue_cap` 限制）
+- `adjusted_net_income` / `adjusted_ebit`：扣除一次性费用影响后的质量口径
+- `adjusted_net_income_yoy` / `adjusted_ebit_yoy`：调整后同比
 - `enterprise_value` / `ebit` / `ev_to_ebit`：企业价值、息税前利润与 EV/EBIT
 - `operating_cash_flow` / `free_cash_flow` / `fcf_yield`：经营现金流、自由现金流与 FCF 收益率
 - `revenue_yoy` / `net_income_yoy` / `ebit_yoy` / `operating_cash_flow_yoy`：年报口径同比变化

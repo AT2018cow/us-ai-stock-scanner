@@ -62,6 +62,13 @@ EBIT_TAGS = [
     "OperatingIncomeLoss",
     "EarningsBeforeInterestAndTaxes",
 ]
+NONRECURRING_EXPENSE_TAGS = [
+    "BusinessCombinationAcquisitionRelatedCosts",
+    "BusinessCombinationIntegrationRelatedCosts",
+    "RestructuringCharges",
+    "AssetImpairmentCharges",
+    "GoodwillImpairmentLoss",
+]
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 
@@ -222,6 +229,8 @@ class ScanConfig:
     require_positive_operating_cash_flow: bool = True
     require_positive_free_cash_flow: bool = True
     require_positive_ebit: bool = True
+    use_adjusted_quality_metrics: bool = True
+    nonrecurring_addback_revenue_cap: float | None = 0.25
     min_revenue: float = 10_000_000.0
     min_net_income: float = 1_000_000.0
     min_operating_cash_flow: float | None = 0.0
@@ -822,6 +831,28 @@ def pick_latest_and_prev_fact(
     latest = values[0][1]
     prev = values[1][1] if len(values) > 1 else None
     return latest, prev
+
+
+def pick_sum_latest_and_prev_facts(
+    companyfacts: dict[str, Any], tags: list[str], unit: str
+) -> tuple[float | None, float | None]:
+    latest_sum = 0.0
+    prev_sum = 0.0
+    has_latest = False
+    has_prev = False
+    for tag in tags:
+        values = pick_annual_facts(companyfacts, [tag], unit)
+        if not values:
+            continue
+        # Treat expense-like tags as add-backs only when positive.
+        latest_val = max(0.0, float(values[0][1]))
+        latest_sum += latest_val
+        has_latest = has_latest or latest_val > 0
+        if len(values) > 1:
+            prev_val = max(0.0, float(values[1][1]))
+            prev_sum += prev_val
+            has_prev = has_prev or prev_val > 0
+    return (latest_sum if has_latest else None, prev_sum if has_prev else None)
 
 
 def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -1490,7 +1521,7 @@ def collect_candidates(
     return out
 
 
-def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any]:
+def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConfig) -> dict[str, Any]:
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
 
@@ -1507,6 +1538,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any
     )
     debt_long_term, _ = pick_latest_and_prev_fact(companyfacts, LONG_TERM_DEBT_TAGS, "USD")
     debt_current, _ = pick_latest_and_prev_fact(companyfacts, CURRENT_DEBT_TAGS, "USD")
+    nonrecurring_addback_raw, nonrecurring_addback_prev_raw = pick_sum_latest_and_prev_facts(
+        companyfacts, NONRECURRING_EXPENSE_TAGS, "USD"
+    )
 
     capex = abs(capex_raw) if capex_raw is not None else None
     free_cash_flow = (ocf - capex) if (ocf is not None and capex is not None) else None
@@ -1517,6 +1551,32 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any
     net_income_yoy = safe_yoy(net_income, net_income_prev)
     ebit_yoy = safe_yoy(ebit, ebit_prev)
     ocf_yoy = safe_yoy(ocf, ocf_prev)
+    addback_cap_ratio = config.nonrecurring_addback_revenue_cap
+    nonrecurring_addback = nonrecurring_addback_raw
+    nonrecurring_addback_prev = nonrecurring_addback_prev_raw
+    if addback_cap_ratio is not None:
+        if nonrecurring_addback is not None and revenue is not None and revenue > 0:
+            nonrecurring_addback = min(nonrecurring_addback, float(revenue) * float(addback_cap_ratio))
+        if nonrecurring_addback_prev is not None and revenue_prev is not None and revenue_prev > 0:
+            nonrecurring_addback_prev = min(
+                nonrecurring_addback_prev,
+                float(revenue_prev) * float(addback_cap_ratio),
+            )
+
+    adjusted_net_income = None
+    if net_income is not None:
+        adjusted_net_income = float(net_income) + float(nonrecurring_addback or 0.0)
+    adjusted_ebit = None
+    if ebit is not None:
+        adjusted_ebit = float(ebit) + float(nonrecurring_addback or 0.0)
+    adjusted_net_income_prev = None
+    if net_income_prev is not None:
+        adjusted_net_income_prev = float(net_income_prev) + float(nonrecurring_addback_prev or 0.0)
+    adjusted_ebit_prev = None
+    if ebit_prev is not None:
+        adjusted_ebit_prev = float(ebit_prev) + float(nonrecurring_addback_prev or 0.0)
+    adjusted_net_income_yoy = safe_yoy(adjusted_net_income, adjusted_net_income_prev)
+    adjusted_ebit_yoy = safe_yoy(adjusted_ebit, adjusted_ebit_prev)
 
     return {
         "symbol": symbol,
@@ -1538,6 +1598,11 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str) -> dict[str, Any
         "net_income_yoy": net_income_yoy,
         "ebit_yoy": ebit_yoy,
         "operating_cash_flow_yoy": ocf_yoy,
+        "nonrecurring_expense_addback": nonrecurring_addback,
+        "adjusted_net_income": adjusted_net_income,
+        "adjusted_ebit": adjusted_ebit,
+        "adjusted_net_income_yoy": adjusted_net_income_yoy,
+        "adjusted_ebit_yoy": adjusted_ebit_yoy,
     }
 
 
@@ -1548,7 +1613,7 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
     last_reported_pct = -1
     with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
         futures = {
-            pool.submit(load_one_fundamental, sec, row.symbol, row.cik): row.symbol
+            pool.submit(load_one_fundamental, sec, row.symbol, row.cik, config): row.symbol
             for row in df.itertuples(index=False)
         }
         for future in as_completed(futures):
@@ -1576,6 +1641,11 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income_yoy": None,
                         "ebit_yoy": None,
                         "operating_cash_flow_yoy": None,
+                        "nonrecurring_expense_addback": None,
+                        "adjusted_net_income": None,
+                        "adjusted_ebit": None,
+                        "adjusted_net_income_yoy": None,
+                        "adjusted_ebit_yoy": None,
                     }
                 )
             done += 1
@@ -1591,6 +1661,11 @@ def build_filter_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> list[tuple[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
+    net_income_col = "adjusted_net_income" if config.use_adjusted_quality_metrics else "net_income"
+    net_income_yoy_col = (
+        "adjusted_net_income_yoy" if config.use_adjusted_quality_metrics else "net_income_yoy"
+    )
+    ebit_col = "adjusted_ebit" if config.use_adjusted_quality_metrics else "ebit"
 
     steps: list[tuple[str, Any]] = [
         ("price_notna", lambda frame: frame["price"].notna()),
@@ -1608,11 +1683,22 @@ def build_filter_steps(
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
     if config.require_positive_net_income:
-        steps.append(("positive_net_income", lambda frame: frame["net_income"].fillna(-1) > 0))
+        steps.append(
+            (
+                "positive_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
+            )
+        )
     if config.min_revenue is not None:
         steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= config.min_revenue))
     if config.min_net_income is not None:
-        steps.append(("min_net_income", lambda frame: frame["net_income"].fillna(0) >= config.min_net_income))
+        steps.append(
+            (
+                "min_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(0)
+                >= config.min_net_income,
+            )
+        )
     if config.require_positive_operating_cash_flow:
         steps.append(
             (
@@ -1631,7 +1717,7 @@ def build_filter_steps(
         steps.append(
             (
                 "positive_ebit",
-                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+                lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-1) > 0,
             )
         )
     if cp["min_operating_cash_flow"] is not None:
@@ -1654,7 +1740,7 @@ def build_filter_steps(
         steps.append(
             (
                 "min_ebit",
-                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-np.inf) >= cp["min_ebit"],
+                lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-np.inf) >= cp["min_ebit"],
             )
         )
     if cp["min_fcf_yield"] is not None:
@@ -1685,7 +1771,7 @@ def build_filter_steps(
         steps.append(
             (
                 "min_net_income_yoy",
-                lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+                lambda frame: pd.to_numeric(frame[net_income_yoy_col], errors="coerce").fillna(-np.inf)
                 >= cp["min_net_income_yoy"],
             )
         )
@@ -1844,6 +1930,11 @@ def build_industry_trend_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
+    net_income_col = "adjusted_net_income" if config.use_adjusted_quality_metrics else "net_income"
+    net_income_yoy_col = (
+        "adjusted_net_income_yoy" if config.use_adjusted_quality_metrics else "net_income_yoy"
+    )
+    ebit_col = "adjusted_ebit" if config.use_adjusted_quality_metrics else "ebit"
     trend_weights = channel_profile.get("trend_score_weights")
     trend_min_watchlist_etf_count = int(
         channel_profile.get("trend_min_watchlist_etf_count", cp["min_watchlist_etf_count"])
@@ -1881,7 +1972,12 @@ def build_industry_trend_steps(
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
     if config.require_positive_net_income:
-        steps.append(("positive_net_income", lambda frame: frame["net_income"].fillna(-1) > 0))
+        steps.append(
+            (
+                "positive_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
+            )
+        )
     if config.require_positive_operating_cash_flow:
         steps.append(
             (
@@ -1900,7 +1996,7 @@ def build_industry_trend_steps(
         steps.append(
             (
                 "positive_ebit",
-                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+                lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-1) > 0,
             )
         )
     if cp["min_revenue_yoy"] is not None:
@@ -1915,7 +2011,7 @@ def build_industry_trend_steps(
         steps.append(
             (
                 "min_net_income_yoy",
-                lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+                lambda frame: pd.to_numeric(frame[net_income_yoy_col], errors="coerce").fillna(-np.inf)
                 >= cp["min_net_income_yoy"],
             )
         )
@@ -2009,6 +2105,11 @@ def build_momentum_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> tuple[list[tuple[str, Any]], dict[str, Any]]:
     cp = resolve_channel_profile(config, channel_name, channel_profile)
+    net_income_col = "adjusted_net_income" if config.use_adjusted_quality_metrics else "net_income"
+    net_income_yoy_col = (
+        "adjusted_net_income_yoy" if config.use_adjusted_quality_metrics else "net_income_yoy"
+    )
+    ebit_col = "adjusted_ebit" if config.use_adjusted_quality_metrics else "ebit"
     momentum_min_return_20d = channel_profile.get("momentum_min_return_20d", 0.05)
     momentum_min_price_to_sma200 = channel_profile.get("momentum_min_price_to_sma200", 1.05)
     momentum_max_drawdown_from_52w_high = channel_profile.get(
@@ -2062,7 +2163,7 @@ def build_momentum_steps(
         ),
         (
             "min_net_income_yoy",
-            lambda frame: pd.to_numeric(frame["net_income_yoy"], errors="coerce").fillna(-np.inf)
+            lambda frame: pd.to_numeric(frame[net_income_yoy_col], errors="coerce").fillna(-np.inf)
             >= float(cp["min_net_income_yoy"])
             if cp["min_net_income_yoy"] is not None
             else pd.Series(True, index=frame.index),
@@ -2098,7 +2199,12 @@ def build_momentum_steps(
     if config.require_positive_revenue:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
     if config.require_positive_net_income:
-        steps.append(("positive_net_income", lambda frame: frame["net_income"].fillna(-1) > 0))
+        steps.append(
+            (
+                "positive_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
+            )
+        )
     if config.require_positive_operating_cash_flow:
         steps.append(
             (
@@ -2117,7 +2223,7 @@ def build_momentum_steps(
         steps.append(
             (
                 "positive_ebit",
-                lambda frame: pd.to_numeric(frame["ebit"], errors="coerce").fillna(-1) > 0,
+                lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-1) > 0,
             )
         )
     if momentum_min_return_60d is not None:
@@ -2277,6 +2383,7 @@ def score_and_rank(
         "pe_percentile_in_sic",
         "revenue_yoy",
         "net_income_yoy",
+        "adjusted_net_income_yoy",
         "ebit_yoy",
         "operating_cash_flow_yoy",
     ]
@@ -2341,7 +2448,8 @@ def score_and_rank(
     overvaluation_penalty = ((ps_pct - 0.5).clip(lower=0) + (pe_pct - 0.5).clip(lower=0)) / 1.0
 
     rev_yoy = pd.to_numeric(out["revenue_yoy"], errors="coerce")
-    ni_yoy = pd.to_numeric(out["net_income_yoy"], errors="coerce")
+    adj_ni_yoy = pd.to_numeric(out["adjusted_net_income_yoy"], errors="coerce")
+    ni_yoy = adj_ni_yoy.where(adj_ni_yoy.notna(), pd.to_numeric(out["net_income_yoy"], errors="coerce"))
     rev_decline = (-rev_yoy).clip(lower=0).fillna(0)
     ni_decline = (-ni_yoy).clip(lower=0).fillna(0)
     # Penalize fundamental deterioration (growth turning negative).
@@ -2657,15 +2765,20 @@ def run_scan(
         "shares_outstanding",
         "revenue",
         "net_income",
+        "adjusted_net_income",
         "operating_cash_flow",
         "free_cash_flow",
         "ebit",
+        "adjusted_ebit",
         "cash_and_equivalents",
         "total_debt",
         "revenue_yoy",
         "net_income_yoy",
+        "adjusted_net_income_yoy",
         "ebit_yoy",
+        "adjusted_ebit_yoy",
         "operating_cash_flow_yoy",
+        "nonrecurring_expense_addback",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
@@ -2820,14 +2933,19 @@ def run_scan(
         "enterprise_value",
         "revenue",
         "net_income",
+        "adjusted_net_income",
         "operating_cash_flow",
         "free_cash_flow",
         "ebit",
+        "adjusted_ebit",
+        "nonrecurring_expense_addback",
         "cash_and_equivalents",
         "total_debt",
         "revenue_yoy",
         "net_income_yoy",
+        "adjusted_net_income_yoy",
         "ebit_yoy",
+        "adjusted_ebit_yoy",
         "operating_cash_flow_yoy",
         "net_margin",
         "ps",
