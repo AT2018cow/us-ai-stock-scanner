@@ -8,6 +8,10 @@ import pandas as pd
 
 from ai_value_scanner.scanner import (
     ScanConfig,
+    ai_backlog_signal_from_companyfacts,
+    ai_disclosure_score_from_submissions,
+    ai_etf_consensus_score,
+    ai_market_link_score,
     compute_price_history_percentile,
     fundamental_quality_score_from_metrics,
     hard_filter_metric_enabled,
@@ -405,6 +409,56 @@ class Gap12MetricTests(unittest.TestCase):
         self.assertTrue(hard_filter_metric_enabled("net_debt_to_ebitda", cfg, cp))
         cp_force = resolve_channel_profile(cfg, "core_ai", {"hard_filter_inventory_growth_gap": True})
         self.assertTrue(hard_filter_metric_enabled("inventory_growth_gap", cfg, cp_force))
+
+    def test_ai_disclosure_and_market_link_components(self) -> None:
+        submissions = {
+            "name": "Test Grid Systems",
+            "sicDescription": "Electric Services",
+            "business": {"description": "Data center cooling and grid connection for AI workloads."},
+            "filings": {
+                "recent": {
+                    "form": ["10-K", "10-Q"],
+                    "primaryDocDescription": ["capacity expansion for AI inference clusters", "general update"],
+                }
+            },
+        }
+        score, group_hits, keyword_hits = ai_disclosure_score_from_submissions(
+            submissions, disclosure_keyword_cap=6
+        )
+        self.assertGreater(score, 0.0)
+        self.assertGreaterEqual(group_hits, 1)
+        self.assertGreaterEqual(keyword_hits, 1)
+
+        etf_score = ai_etf_consensus_score(3, etf_count_saturation=4)
+        self.assertAlmostEqual(etf_score, 0.75, places=6)
+
+        market_score = ai_market_link_score(
+            symbol_return_20d=0.12,
+            symbol_return_60d=0.18,
+            benchmark_return_20d=0.10,
+            benchmark_return_60d=0.20,
+            tol_20d=0.25,
+            tol_60d=0.40,
+        )
+        self.assertGreater(market_score, 0.8)
+
+    def test_ai_backlog_signal_from_companyfacts(self) -> None:
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "RevenueRemainingPerformanceObligation": {
+                        "units": {
+                            "USD": [
+                                _entry("2025-12-31", 120.0, "10-K", "2026-02-20"),
+                                _entry("2024-12-31", 80.0, "10-K", "2025-02-20"),
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        signal = ai_backlog_signal_from_companyfacts(facts, revenue=300.0, cap_ratio=0.20)
+        self.assertAlmostEqual(signal, 1.0, places=6)
 
 
 if __name__ == "__main__":

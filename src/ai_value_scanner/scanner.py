@@ -88,7 +88,66 @@ ASSETS_CURRENT_TAGS = ["AssetsCurrent"]
 LIABILITIES_CURRENT_TAGS = ["LiabilitiesCurrent"]
 RECEIVABLES_CURRENT_TAGS = ["AccountsReceivableNetCurrent", "ReceivablesNetCurrent"]
 INVENTORY_TAGS = ["InventoryNet"]
+BACKLOG_TAGS = [
+    "RevenueRemainingPerformanceObligation",
+    "ContractWithCustomerLiability",
+    "DeferredRevenueCurrentAndNoncurrent",
+]
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
+AI_DISCLOSURE_KEYWORD_GROUPS: dict[str, list[str]] = {
+    "ai_compute": [
+        "artificial intelligence",
+        "ai workload",
+        "machine learning",
+        "llm",
+        "generative ai",
+        "inference",
+        "training cluster",
+    ],
+    "data_center": [
+        "data center",
+        "hyperscaler",
+        "colocation",
+        "server rack",
+        "cooling system",
+    ],
+    "semiconductor": [
+        "gpu",
+        "accelerator",
+        "semiconductor",
+        "advanced packaging",
+        "high bandwidth memory",
+    ],
+    "power_grid": [
+        "grid connection",
+        "substation",
+        "power demand",
+        "load growth",
+        "transmission",
+        "nuclear",
+    ],
+    "commercial_signal": [
+        "remaining performance obligation",
+        "backlog",
+        "order book",
+        "book-to-bill",
+        "capacity expansion",
+    ],
+}
+
+
+def default_ai_link_benchmark_etfs() -> list[str]:
+    return [
+        "AIQ",
+        "BOTZ",
+        "SMH",
+        "SOXX",
+        "XLK",
+        "XLI",
+        "XLU",
+        "PAVE",
+    ]
 
 
 def default_watchlist_core_etfs() -> list[str]:
@@ -132,10 +191,28 @@ def default_watchlist_enabler_etfs() -> list[str]:
     ]
 
 
+def default_watchlist_peripheral_etfs() -> list[str]:
+    return [
+        "XLB",
+        "VIS",
+        "ITA",
+        "IYT",
+        "ITB",
+        "PICK",
+        "COPX",
+        "VPU",
+        "XLRE",
+        "VNQ",
+        "FXR",
+        "IGE",
+    ]
+
+
 def default_channel_profiles() -> dict[str, dict[str, Any]]:
     return {
         "core_ai": {
             "min_watchlist_etf_count": 1,
+            "min_ai_link_score": 0.30,
             "min_ps_discount": 0.15,
             "min_pe_discount": 0.10,
             "max_ps_percentile_in_sic": 0.45,
@@ -161,6 +238,7 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
                 "net_income_yoy": 0.04,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.15,
+                "ai_link_score": 0.10,
                 "range_position_52w_low": 0.10,
                 "days_below_sma200": 0.05,
                 "net_margin": 0.02,
@@ -168,11 +246,12 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
         },
         "ai_enabler": {
             "min_watchlist_etf_count": 1,
-            "min_ps_discount": 0.05,
-            "min_pe_discount": 0.00,
+            "min_ai_link_score": 0.45,
+            "min_ps_discount": 0.08,
+            "min_pe_discount": 0.02,
             "max_ps_percentile_in_sic": 0.55,
             "max_pe_percentile_in_sic": 0.55,
-            "max_ev_to_ebit": 28.0,
+            "max_ev_to_ebit": 30.0,
             "min_fcf_yield": 0.015,
             "min_revenue_yoy": -0.02,
             "min_net_income_yoy": -0.10,
@@ -193,10 +272,54 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
                 "net_income_yoy": 0.04,
                 "liquidity": 0.05,
                 "watchlist_etf_count": 0.25,
+                "ai_link_score": 0.12,
                 "range_position_52w_low": 0.15,
                 "days_below_sma200": 0.05,
                 "net_margin": 0.03,
             },
+        },
+        "ai_peripheral": {
+            "min_watchlist_etf_count": 1,
+            "min_ai_link_score": 0.55,
+            "min_ps_discount": 0.02,
+            "min_pe_discount": -0.10,
+            "max_ps_percentile_in_sic": 0.70,
+            "max_pe_percentile_in_sic": 0.70,
+            "max_ev_to_ebit": 36.0,
+            "min_fcf_yield": 0.005,
+            "min_revenue_yoy": -0.05,
+            "min_net_income_yoy": -0.15,
+            "min_drawdown_from_52w_high": 0.05,
+            "max_range_position_52w": 0.90,
+            "max_price_to_sma200": 1.20,
+            "min_days_below_sma200": 3,
+            "max_20d_return": 0.18,
+            "max_60d_volatility": 0.95,
+            "score_weights": {
+                "ps_discount": 0.24,
+                "pe_discount": 0.16,
+                "ps_percentile_low": 0.10,
+                "pe_percentile_low": 0.08,
+                "ev_to_ebit_low": 0.08,
+                "fcf_yield": 0.08,
+                "revenue_yoy": 0.05,
+                "net_income_yoy": 0.04,
+                "liquidity": 0.07,
+                "watchlist_etf_count": 0.08,
+                "ai_link_score": 0.15,
+                "range_position_52w_low": 0.08,
+                "days_below_sma200": 0.04,
+            },
+            "trend_min_return_60d": -0.03,
+            "trend_max_60d_volatility": 0.70,
+            "trend_min_avg_dollar_volume_20d": 20000000.0,
+            "momentum_min_return_20d": 0.06,
+            "momentum_min_return_60d": 0.05,
+            "momentum_min_price_to_sma200": 1.06,
+            "momentum_max_drawdown_from_52w_high": 0.25,
+            "momentum_max_60d_volatility": 0.75,
+            "momentum_min_avg_dollar_volume_20d": 25000000.0,
+            "momentum_min_watchlist_etf_count": 1,
         },
     }
 
@@ -213,6 +336,11 @@ def default_triage_rules() -> dict[str, dict[str, Any]]:
                 "min_composite_score": 0.45,
                 "min_ps_discount": 0.00,
                 "min_pe_discount": -0.10,
+            },
+            "ai_peripheral": {
+                "min_composite_score": 0.50,
+                "min_ps_discount": 0.05,
+                "min_pe_discount": 0.00,
             },
         },
         "drop": {
@@ -241,8 +369,15 @@ class ScanConfig:
     alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     watchlist_fetch_timeout_sec: int = 20
+    ai_link_benchmark_etfs: list[str] = field(default_factory=default_ai_link_benchmark_etfs)
+    ai_link_etf_count_saturation: int = 4
+    ai_link_disclosure_keyword_cap: int = 6
+    ai_link_market_return_tolerance_20d: float = 0.25
+    ai_link_market_return_tolerance_60d: float = 0.40
+    ai_link_backlog_ratio_cap: float = 0.20
     watchlist_core_etfs: list[str] = field(default_factory=default_watchlist_core_etfs)
     watchlist_enabler_etfs: list[str] = field(default_factory=default_watchlist_enabler_etfs)
+    watchlist_peripheral_etfs: list[str] = field(default_factory=default_watchlist_peripheral_etfs)
     chunk_size: int = 200
     request_timeout_sec: int = 20
     min_price: float = 1.0
@@ -1133,6 +1268,135 @@ def compile_keyword_patterns(keywords: tuple[str, ...]) -> tuple[re.Pattern[str]
     return tuple(patterns)
 
 
+def _append_text_fragments(node: Any, sink: list[str]) -> None:
+    if node is None:
+        return
+    if isinstance(node, str):
+        text = node.strip()
+        if text:
+            sink.append(text)
+        return
+    if isinstance(node, dict):
+        for value in node.values():
+            _append_text_fragments(value, sink)
+        return
+    if isinstance(node, list):
+        for value in node:
+            _append_text_fragments(value, sink)
+
+
+def build_submissions_disclosure_text(submissions: dict[str, Any], max_recent_forms: int = 20) -> str:
+    parts: list[str] = []
+    _append_text_fragments(submissions.get("name"), parts)
+    _append_text_fragments(submissions.get("sicDescription"), parts)
+    _append_text_fragments(submissions.get("business"), parts)
+
+    recent = submissions.get("filings", {}).get("recent", {})
+    if isinstance(recent, dict):
+        candidate_fields = ["form", "primaryDocDescription", "items", "primaryDocument"]
+        for field in candidate_fields:
+            values = recent.get(field, [])
+            if isinstance(values, list):
+                for value in values[: max(0, int(max_recent_forms))]:
+                    _append_text_fragments(value, parts)
+
+    if not parts:
+        return ""
+    return " ".join(parts).lower()
+
+
+def ai_disclosure_score_from_submissions(
+    submissions: dict[str, Any], disclosure_keyword_cap: int = 6
+) -> tuple[float, int, int]:
+    text = build_submissions_disclosure_text(submissions)
+    if not text:
+        return 0.0, 0, 0
+
+    group_hits = 0
+    keyword_hits = 0
+    total_groups = len(AI_DISCLOSURE_KEYWORD_GROUPS)
+    for keywords in AI_DISCLOSURE_KEYWORD_GROUPS.values():
+        local_hits = 0
+        for pattern in compile_keyword_patterns(tuple(k.lower() for k in keywords)):
+            if pattern.search(text):
+                local_hits += 1
+        if local_hits > 0:
+            group_hits += 1
+            keyword_hits += local_hits
+
+    if total_groups <= 0:
+        return 0.0, group_hits, keyword_hits
+    group_coverage = group_hits / float(total_groups)
+    keyword_density = min(1.0, keyword_hits / max(1.0, float(disclosure_keyword_cap)))
+    score = clamp01(0.7 * group_coverage + 0.3 * keyword_density)
+    return round(score, 6), int(group_hits), int(keyword_hits)
+
+
+def ai_backlog_signal_from_companyfacts(
+    companyfacts: dict[str, Any], revenue: float | None, cap_ratio: float
+) -> float:
+    backlog_latest, _ = pick_latest_and_prev_with_forms(
+        companyfacts, BACKLOG_TAGS, "USD", QUARTERLY_FORMS
+    )
+    if backlog_latest is None or revenue is None or revenue <= 0:
+        return 0.0
+    ratio = float(backlog_latest) / float(revenue)
+    if cap_ratio <= 0:
+        return 0.0
+    return round(clamp01(ratio / float(cap_ratio)), 6)
+
+
+def ai_etf_consensus_score(watchlist_etf_count: float | int | None, etf_count_saturation: int) -> float:
+    if watchlist_etf_count is None:
+        return 0.0
+    try:
+        count = float(watchlist_etf_count)
+    except (TypeError, ValueError):
+        return 0.0
+    saturation = max(1.0, float(etf_count_saturation))
+    return round(clamp01(count / saturation), 6)
+
+
+def bars_return_from_lookback(bars: list[dict[str, Any]], lookback_days: int) -> float | None:
+    if not bars or lookback_days <= 0:
+        return None
+    closes: list[float] = []
+    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
+    for row in sorted_bars:
+        try:
+            close = float(row.get("c")) if row.get("c") is not None else None
+        except (TypeError, ValueError):
+            close = None
+        if close is not None and np.isfinite(close) and close > 0:
+            closes.append(close)
+    if len(closes) <= lookback_days:
+        return None
+    base = closes[-(lookback_days + 1)]
+    latest = closes[-1]
+    if base <= 0:
+        return None
+    return (latest / base) - 1.0
+
+
+def ai_market_link_score(
+    symbol_return_20d: float | None,
+    symbol_return_60d: float | None,
+    benchmark_return_20d: float | None,
+    benchmark_return_60d: float | None,
+    tol_20d: float,
+    tol_60d: float,
+) -> float:
+    score_20 = 0.5
+    if symbol_return_20d is not None and benchmark_return_20d is not None and tol_20d > 0:
+        score_20 = clamp01(1.0 - (abs(symbol_return_20d - benchmark_return_20d) / tol_20d))
+
+    score_60 = 0.5
+    if symbol_return_60d is not None and benchmark_return_60d is not None and tol_60d > 0:
+        score_60 = clamp01(1.0 - (abs(symbol_return_60d - benchmark_return_60d) / tol_60d))
+
+    return round(clamp01(0.4 * score_20 + 0.6 * score_60), 6)
+
+
 def normalize_equity_symbol(raw: Any) -> str:
     token = str(raw or "").strip().upper()
     if token.startswith("$"):
@@ -1187,47 +1451,39 @@ def fetch_stockanalysis_etf_symbols(
 
 
 def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
-    core_counts: dict[str, int] = {}
-    enabler_counts: dict[str, int] = {}
-    core_etf_hits: dict[str, list[str]] = {}
-    enabler_etf_hits: dict[str, list[str]] = {}
+    bucket_to_etfs: dict[str, list[str]] = {
+        "core_ai": list(config.watchlist_core_etfs),
+        "ai_enabler": list(config.watchlist_enabler_etfs),
+        "ai_peripheral": list(config.watchlist_peripheral_etfs),
+    }
+    bucket_counts: dict[str, dict[str, int]] = {
+        bucket: {} for bucket in bucket_to_etfs.keys()
+    }
+    bucket_etf_hits: dict[str, dict[str, list[str]]] = {
+        bucket: {} for bucket in bucket_to_etfs.keys()
+    }
 
-    for etf in config.watchlist_core_etfs:
-        symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
-        for symbol in symbols:
-            core_counts[symbol] = core_counts.get(symbol, 0) + 1
-            core_etf_hits.setdefault(symbol, []).append(str(etf).upper())
-
-    for etf in config.watchlist_enabler_etfs:
-        symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
-        for symbol in symbols:
-            enabler_counts[symbol] = enabler_counts.get(symbol, 0) + 1
-            enabler_etf_hits.setdefault(symbol, []).append(str(etf).upper())
+    for bucket, etf_list in bucket_to_etfs.items():
+        for etf in etf_list:
+            symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
+            for symbol in symbols:
+                bucket_counts[bucket][symbol] = bucket_counts[bucket].get(symbol, 0) + 1
+                bucket_etf_hits[bucket].setdefault(symbol, []).append(str(etf).upper())
 
     now_iso = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, Any]] = []
-    for symbol, n in core_counts.items():
-        rows.append(
-            {
-                "symbol": symbol,
-                "bucket": "core_ai",
-                "etf_count": int(n),
-                "etfs": ",".join(sorted(set(core_etf_hits.get(symbol, [])))),
-                "enabled": 1,
-                "updated_utc": now_iso,
-            }
-        )
-    for symbol, n in enabler_counts.items():
-        rows.append(
-            {
-                "symbol": symbol,
-                "bucket": "ai_enabler",
-                "etf_count": int(n),
-                "etfs": ",".join(sorted(set(enabler_etf_hits.get(symbol, [])))),
-                "enabled": 1,
-                "updated_utc": now_iso,
-            }
-        )
+    for bucket, counts in bucket_counts.items():
+        for symbol, n in counts.items():
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "bucket": bucket,
+                    "etf_count": int(n),
+                    "etfs": ",".join(sorted(set(bucket_etf_hits[bucket].get(symbol, [])))),
+                    "enabled": 1,
+                    "updated_utc": now_iso,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -1570,6 +1826,11 @@ def resolve_channel_profile(
             profile.get("require_channel_bucket_match", config.require_channel_bucket_match)
         ),
         "min_watchlist_etf_count": int(profile.get("min_watchlist_etf_count", 1)),
+        "min_ai_link_score": (
+            None
+            if profile.get("min_ai_link_score") is None
+            else float(profile.get("min_ai_link_score"))
+        ),
         "min_avg_dollar_volume_20d": (
             None
             if profile.get("min_avg_dollar_volume_20d", config.min_avg_dollar_volume_20d) is None
@@ -2021,6 +2282,15 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     adjusted_da = float(da or 0.0) + float(nonrecurring_addback or 0.0) - float(nonrecurring_gain or 0.0)
     adjusted_ebitda = (float(adjusted_ebit) + adjusted_da) if adjusted_ebit is not None else None
 
+    ai_disclosure_score, ai_disclosure_group_hits, ai_disclosure_keyword_hits = (
+        ai_disclosure_score_from_submissions(
+            submissions, disclosure_keyword_cap=config.ai_link_disclosure_keyword_cap
+        )
+    )
+    ai_backlog_signal = ai_backlog_signal_from_companyfacts(
+        companyfacts, revenue=revenue, cap_ratio=config.ai_link_backlog_ratio_cap
+    )
+
     interest_expense_abs = abs(float(interest_expense)) if interest_expense is not None else None
     interest_coverage = None
     if adjusted_ebit is not None and interest_expense_abs is not None and interest_expense_abs > 0:
@@ -2145,6 +2415,10 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "inventory_growth_gap_inferred": inventory_growth_gap_inferred,
         "inventory_growth_gap_source": inventory_growth_gap_source,
         "fundamental_quality_score": quality_score,
+        "ai_disclosure_score": ai_disclosure_score,
+        "ai_disclosure_group_hits": ai_disclosure_group_hits,
+        "ai_disclosure_keyword_hits": ai_disclosure_keyword_hits,
+        "ai_backlog_signal": ai_backlog_signal,
     }
 
 
@@ -2218,6 +2492,10 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "inventory_growth_gap_inferred": None,
                         "inventory_growth_gap_source": None,
                         "fundamental_quality_score": None,
+                        "ai_disclosure_score": None,
+                        "ai_disclosure_group_hits": None,
+                        "ai_disclosure_keyword_hits": None,
+                        "ai_backlog_signal": None,
                     }
                 )
             done += 1
@@ -2693,6 +2971,14 @@ def build_filter_steps(
                 lambda frame: channel_bucket_mask(frame, channel_name),
             )
         )
+    if cp["min_ai_link_score"] is not None:
+        steps.append(
+            (
+                "min_ai_link_score",
+                lambda frame: pd.to_numeric(frame["ai_link_score"], errors="coerce").fillna(-np.inf)
+                >= cp["min_ai_link_score"],
+            )
+        )
 
     steps.extend(
         [
@@ -2748,14 +3034,16 @@ def build_industry_trend_steps(
         if channel_name == "ai_enabler":
             trend_weights = {
                 "liquidity": 0.20,
-                "watchlist_etf_count": 0.40,
+                "watchlist_etf_count": 0.30,
+                "ai_link_score": 0.20,
                 "return_20d": 0.30,
                 "drawdown_from_52w_high": -0.10,
             }
         else:
             trend_weights = {
                 "liquidity": 0.20,
-                "watchlist_etf_count": 0.35,
+                "watchlist_etf_count": 0.25,
+                "ai_link_score": 0.20,
                 "return_20d": 0.35,
                 "drawdown_from_52w_high": -0.10,
             }
@@ -2888,6 +3176,14 @@ def build_industry_trend_steps(
                 lambda frame: channel_bucket_mask(frame, channel_name),
             )
         )
+    if cp["min_ai_link_score"] is not None:
+        steps.append(
+            (
+                "min_ai_link_score",
+                lambda frame: pd.to_numeric(frame["ai_link_score"], errors="coerce").fillna(-np.inf)
+                >= cp["min_ai_link_score"],
+            )
+        )
 
     steps.append(
         (
@@ -2931,8 +3227,9 @@ def build_momentum_steps(
     if not isinstance(momentum_weights, dict):
         momentum_weights = {
             "liquidity": 0.10,
-            "return_20d": 0.55,
-            "watchlist_etf_count": 0.25,
+            "return_20d": 0.50,
+            "watchlist_etf_count": 0.20,
+            "ai_link_score": 0.20,
             "drawdown_from_52w_high": -0.10,
         }
     momentum_weights = merge_soft_score_weights(
@@ -3071,6 +3368,14 @@ def build_momentum_steps(
                 lambda frame: channel_bucket_mask(frame, channel_name),
             )
         )
+    if cp["min_ai_link_score"] is not None:
+        steps.append(
+            (
+                "min_ai_link_score",
+                lambda frame: pd.to_numeric(frame["ai_link_score"], errors="coerce").fillna(-np.inf)
+                >= cp["min_ai_link_score"],
+            )
+        )
 
     steps.append(
         (
@@ -3206,6 +3511,7 @@ def score_and_rank(
         "estimated_slippage_bps",
         "current_debt_ratio",
         "inventory_growth_gap",
+        "ai_link_score",
     ]
     for col in required_cols:
         if col not in out.columns:
@@ -3244,6 +3550,7 @@ def score_and_rank(
         "estimated_slippage_bps_low": -pd.to_numeric(out["estimated_slippage_bps"], errors="coerce"),
         "current_debt_ratio_low": -pd.to_numeric(out["current_debt_ratio"], errors="coerce"),
         "inventory_growth_gap_low": -pd.to_numeric(out["inventory_growth_gap"], errors="coerce"),
+        "ai_link_score": pd.to_numeric(out["ai_link_score"], errors="coerce"),
     }
     default_weights = {
         "ps_discount": 0.40,
@@ -3278,6 +3585,7 @@ def score_and_rank(
         "estimated_slippage_bps_low": 0.00,
         "current_debt_ratio_low": 0.00,
         "inventory_growth_gap_low": 0.00,
+        "ai_link_score": 0.00,
     }
     out["composite_score"] = 0.0
     use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
@@ -3462,6 +3770,7 @@ def build_run_report_markdown(
                         "- "
                         f"{row['symbol']} | triage={row['triage_label']} | "
                         f"score={float(row['composite_score']):.3f} | "
+                        f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                         f"bucket={str(row.get('watchlist_bucket', ''))} | "
                         f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                         f"etfs={str(row.get('watchlist_etfs', ''))} | "
@@ -3593,7 +3902,35 @@ def run_scan(
     )
     bars_start_iso = bars_start_dt.isoformat().replace("+00:00", "Z")
     symbols_for_bars = df["symbol"].dropna().astype(str).tolist()
-    bars_map = alpaca.get_daily_bars(symbols_for_bars, bars_start_iso, config.chunk_size)
+    benchmark_symbols = sorted(
+        {
+            normalize_equity_symbol(sym)
+            for sym in (config.ai_link_benchmark_etfs or [])
+            if normalize_equity_symbol(sym)
+        }
+    )
+    bars_symbols = sorted(set(symbols_for_bars).union(set(benchmark_symbols)))
+    bars_map = alpaca.get_daily_bars(bars_symbols, bars_start_iso, config.chunk_size)
+    benchmark_returns_20d: list[float] = []
+    benchmark_returns_60d: list[float] = []
+    for etf in benchmark_symbols:
+        bench_bars = bars_map.get(etf, [])
+        ret20 = bars_return_from_lookback(bench_bars, 20)
+        ret60 = bars_return_from_lookback(bench_bars, 60)
+        if ret20 is not None and np.isfinite(ret20):
+            benchmark_returns_20d.append(float(ret20))
+        if ret60 is not None and np.isfinite(ret60):
+            benchmark_returns_60d.append(float(ret60))
+    benchmark_median_return_20d = (
+        float(np.median(np.asarray(benchmark_returns_20d, dtype="float64")))
+        if benchmark_returns_20d
+        else None
+    )
+    benchmark_median_return_60d = (
+        float(np.median(np.asarray(benchmark_returns_60d, dtype="float64")))
+        if benchmark_returns_60d
+        else None
+    )
     price_feature_rows: list[dict[str, Any]] = []
     for row in df.itertuples(index=False):
         symbol_bars = bars_map.get(row.symbol, [])
@@ -3659,6 +3996,10 @@ def run_scan(
         "inventory_growth_gap_reported",
         "inventory_growth_gap_inferred",
         "fundamental_quality_score",
+        "ai_disclosure_score",
+        "ai_disclosure_group_hits",
+        "ai_disclosure_keyword_hits",
+        "ai_backlog_signal",
         "ps_hist_percentile",
         "pe_hist_percentile",
     ]:
@@ -3741,14 +4082,48 @@ def run_scan(
     df["watchlist_etf_count"] = pd.to_numeric(df["watchlist_etf_count"], errors="coerce").fillna(0).astype(int)
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
     df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
+    df["ai_etf_consensus_score"] = df["watchlist_etf_count"].apply(
+        lambda x: ai_etf_consensus_score(x, config.ai_link_etf_count_saturation)
+    )
+    df["ai_market_link_score"] = df.apply(
+        lambda row: ai_market_link_score(
+            symbol_return_20d=(
+                float(row["return_20d"])
+                if pd.notna(pd.to_numeric(row["return_20d"], errors="coerce"))
+                else None
+            ),
+            symbol_return_60d=(
+                float(row["return_60d"])
+                if pd.notna(pd.to_numeric(row["return_60d"], errors="coerce"))
+                else None
+            ),
+            benchmark_return_20d=benchmark_median_return_20d,
+            benchmark_return_60d=benchmark_median_return_60d,
+            tol_20d=float(config.ai_link_market_return_tolerance_20d),
+            tol_60d=float(config.ai_link_market_return_tolerance_60d),
+        ),
+        axis=1,
+    )
+    if "ai_disclosure_score" not in df.columns:
+        df["ai_disclosure_score"] = 0.0
+    if "ai_backlog_signal" not in df.columns:
+        df["ai_backlog_signal"] = 0.0
+    df["ai_disclosure_score"] = pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
+    df["ai_backlog_signal"] = pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
+    df["ai_link_score"] = (
+        0.40 * pd.to_numeric(df["ai_etf_consensus_score"], errors="coerce").fillna(0.0)
+        + 0.35 * pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
+        + 0.15 * pd.to_numeric(df["ai_market_link_score"], errors="coerce").fillna(0.0)
+        + 0.10 * pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
+    ).clip(lower=0.0, upper=1.0)
     df["news_count"] = 0
 
-    core_bucket_mask = df["watchlist_bucket"].str.contains(r"(?:^|,)core_ai(?:,|$)", regex=True)
-    enabler_bucket_mask = df["watchlist_bucket"].str.contains(r"(?:^|,)ai_enabler(?:,|$)", regex=True)
-    watchlist_counts = {
-        "core_ai": int(core_bucket_mask.sum()),
-        "ai_enabler": int(enabler_bucket_mask.sum()),
-    }
+    watchlist_counts: dict[str, int] = {}
+    for channel_name in channel_profiles.keys():
+        channel_mask = df["watchlist_bucket"].str.contains(
+            rf"(?:^|,){re.escape(str(channel_name))}(?:,|$)", regex=True
+        )
+        watchlist_counts[channel_name] = int(channel_mask.sum())
     watchlist_symbol_count = int(watchlist_member_mask(df).sum())
     log_status(started_at, "INFO", "Watchlist candidates by channel:")
     for channel_name, count in watchlist_counts.items():
@@ -3884,6 +4259,13 @@ def run_scan(
         "inventory_growth_gap_reported",
         "inventory_growth_gap_inferred",
         "inventory_growth_gap_source",
+        "ai_etf_consensus_score",
+        "ai_disclosure_score",
+        "ai_disclosure_group_hits",
+        "ai_disclosure_keyword_hits",
+        "ai_market_link_score",
+        "ai_backlog_signal",
+        "ai_link_score",
         "ps_hist_percentile",
         "pe_hist_percentile",
         "expectation_proxy",
@@ -4072,8 +4454,17 @@ def run_scan(
         "enforce_unique_symbol_per_list": bool(config.enforce_unique_symbol_per_list),
         "enforce_unique_symbol_across_lists": bool(config.enforce_unique_symbol_across_lists),
         "watchlist_csv_path": config.watchlist_csv_path,
+        "ai_link_benchmark_etfs": config.ai_link_benchmark_etfs,
+        "ai_link_etf_count_saturation": config.ai_link_etf_count_saturation,
+        "ai_link_disclosure_keyword_cap": config.ai_link_disclosure_keyword_cap,
+        "ai_link_market_return_tolerance_20d": config.ai_link_market_return_tolerance_20d,
+        "ai_link_market_return_tolerance_60d": config.ai_link_market_return_tolerance_60d,
+        "ai_link_backlog_ratio_cap": config.ai_link_backlog_ratio_cap,
+        "ai_link_benchmark_median_return_20d": benchmark_median_return_20d,
+        "ai_link_benchmark_median_return_60d": benchmark_median_return_60d,
         "watchlist_core_etfs": config.watchlist_core_etfs,
         "watchlist_enabler_etfs": config.watchlist_enabler_etfs,
+        "watchlist_peripheral_etfs": config.watchlist_peripheral_etfs,
         "use_ttm_metrics": bool(config.use_ttm_metrics),
         "use_adjusted_quality_metrics": bool(config.use_adjusted_quality_metrics),
         "min_fundamental_quality_score": config.min_fundamental_quality_score,
@@ -4142,6 +4533,7 @@ def run_scan(
                     "  - "
                     f"{row['symbol']} | triage={row['triage_label']} | "
                     f"score={float(row['composite_score']):.3f} | "
+                    f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                     f"psd={float(row['ps_discount']):.3f} | "
                     f"ped={float(row['pe_discount']):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
@@ -4166,6 +4558,7 @@ def run_scan(
                 print(
                     "  - "
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
                     f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                     f"etfs={str(row.get('watchlist_etfs', ''))}"
@@ -4188,6 +4581,7 @@ def run_scan(
                 print(
                     "  - "
                     f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                     f"r20={float(row['return_20d']):.3f} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
                     f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "

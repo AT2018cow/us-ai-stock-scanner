@@ -1,6 +1,6 @@
 # AI Undervalued US Stocks Scanner (Alpaca)
 
-本项目会扫描 Alpaca 可交易的美国股票，结合 SEC 基本面与 ETF 观察清单（watchlist），输出两套候选：`core_ai`（AI核心）和 `ai_enabler`（AI基础设施受益）。
+本项目会扫描 Alpaca 可交易的美国股票，结合 SEC 基本面与 ETF 观察清单（watchlist），输出三套候选：`core_ai`（AI核心）、`ai_enabler`（AI基础设施受益）、`ai_peripheral`（AI边际受益）。
 
 ## 1. 本地初始化
 
@@ -44,7 +44,7 @@ ALPACA_FEED=iex
 ## 3. 参数化筛选配置
 
 默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
-- 双通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`
+- 三通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`、`channel_profiles.ai_peripheral`
 - 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
 - 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
 - 量价质量门槛：`min_avg_dollar_volume_20d`、`min_return_20d`、`min_return_60d`
@@ -52,7 +52,8 @@ ALPACA_FEED=iex
 - 趋势/动量收紧阈值：`trend_min_return_60d`、`trend_max_60d_volatility`、`trend_min_avg_dollar_volume_20d`、`momentum_min_return_60d`、`momentum_max_60d_volatility`、`momentum_min_avg_dollar_volume_20d`
 - 追涨覆盖阈值：`momentum_min_watchlist_etf_count`
 - 三档分组：`triage_rules`（`keep/watch/drop`）
-- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`
+- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`、`watchlist_peripheral_etfs`
+- AI 关联度参数：`ai_link_benchmark_etfs`、`ai_link_etf_count_saturation`、`ai_link_disclosure_keyword_cap`、`ai_link_market_return_tolerance_20d`、`ai_link_market_return_tolerance_60d`、`ai_link_backlog_ratio_cap`、`channel_profiles.<channel>.min_ai_link_score`
 - 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
 - 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
 - 现金流与企业价值参数：`require_positive_operating_cash_flow`、`require_positive_free_cash_flow`、`require_positive_ebit`、`min_operating_cash_flow`、`min_free_cash_flow`、`min_ebit`、`max_ev_to_ebit`、`min_fcf_yield`
@@ -97,13 +98,14 @@ ALPACA_FEED=iex
 - watchlist 维护由独立脚本执行（需要时手工运行）
 - 三清单统一执行“watchlist 成员 + 财务/价格/流动性”筛选，不再依赖新闻主题分数。
 
-默认 ETF 集合：
+默认 ETF 集合（三池）：
 - `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
 - `ai_enabler`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
+- `ai_peripheral`：`XLB,VIS,ITA,IYT,ITB,PICK,COPX,VPU,XLRE,VNQ,FXR,IGE`
 
 `data/ai_watchlist.csv` 字段：
 - `symbol`：股票代码
-- `bucket`：`core_ai` 或 `ai_enabler`
+- `bucket`：`core_ai`、`ai_enabler` 或 `ai_peripheral`
 - `etf_count`：命中的 ETF 数量
 - `etfs`：命中的 ETF 列表
 - `enabled`：是否生效（`1/0`）
@@ -250,7 +252,13 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 ### 3.3 当前版本筛选逻辑（v2）
 
 当前版本核心原则：
-- AI 相关性由 watchlist 维护脚本负责（ETF 持仓映射），扫描阶段不再计算 `ai_score/enabler_score`。
+- AI 相关性采用 `ai_link_score`（0~1）：
+  - `ai_etf_consensus_score`：ETF 共识覆盖强度
+  - `ai_disclosure_score`：SEC submissions 披露关键词命中强度
+  - `ai_market_link_score`：与 AI 基准 ETF 近 20/60 日收益联动强度
+  - `ai_backlog_signal`：backlog/remaining performance obligation 相对收入的强度
+  - 综合：`0.40*etf + 0.35*disclosure + 0.15*market + 0.10*backlog`
+- 三池默认 `min_ai_link_score`：`core_ai=0.30`、`ai_enabler=0.45`、`ai_peripheral=0.55`。
 - 排序主因子为估值折价、流动性、价格位置和 watchlist 覆盖广度（`watchlist_etf_count`）。
 - 低覆盖指标（如 `current_debt_ratio`、`inventory_growth_gap`）默认走软约束（打分），不默认做硬过滤。
 - 如需强制硬过滤低覆盖指标，可开启 `force_hard_filter_low_coverage_metrics=true` 或在通道配置中设置 `hard_filter_current_debt_ratio` / `hard_filter_inventory_growth_gap`。
@@ -367,11 +375,11 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 
 输出结果文件：
 - 默认命名：`outputs/ai_value_scan_YYYYMMDDTHHMMSSZ_<scope>_ranked.csv`
-- 分通道结果：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`
+- 分通道结果：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
 - 产业趋势清单：`..._ranked_industry_trend.csv`
-- 产业趋势分通道：`..._ranked_industry_trend_core_ai.csv`、`..._ranked_industry_trend_ai_enabler.csv`
+- 产业趋势分通道：`..._ranked_industry_trend_core_ai.csv`、`..._ranked_industry_trend_ai_enabler.csv`、`..._ranked_industry_trend_ai_peripheral.csv`
 - 追涨清单：`..._ranked_momentum.csv`
-- 追涨分通道：`..._ranked_momentum_core_ai.csv`、`..._ranked_momentum_ai_enabler.csv`
+- 追涨分通道：`..._ranked_momentum_core_ai.csv`、`..._ranked_momentum_ai_enabler.csv`、`..._ranked_momentum_ai_peripheral.csv`
 - 详细报告：`..._ranked_report.md`
 - 过滤诊断：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断：`..._ranked_diagnostics_<channel>_first_fail.csv`
@@ -387,7 +395,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 ## 7. 输出字段说明
 
 主结果 CSV（`*_ranked.csv`）关键字段：
-- `channel`：候选通道（`core_ai` 或 `ai_enabler`）
+- `channel`：候选通道（`core_ai`、`ai_enabler`、`ai_peripheral`）
 - `symbol` / `company_name`：股票代码与公司名
 - `price` / `dollar_volume`：价格与日美元成交额
 - `drawdown_from_52w_high`：距 52 周高点回撤比例（越大越接近低位）
@@ -422,6 +430,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 - `overvaluation_penalty` / `deterioration_penalty`：高估值惩罚与基本面恶化惩罚
 - `watchlist_etf_count`：观察清单 ETF 命中数量
 - `watchlist_bucket` / `watchlist_etfs`：观察清单分类与命中 ETF 信息
+- `ai_etf_consensus_score` / `ai_disclosure_score` / `ai_market_link_score` / `ai_backlog_signal` / `ai_link_score`：AI 关联度及其分解项
 - `news_count`：固定为 `0`（已移除新闻打分依赖）
 - `composite_score`：通道内综合评分
 - `triage_label`：`keep/watch/drop` 三档分组
@@ -453,6 +462,7 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
   - `overvaluation_penalty`（行业内估值偏高惩罚）
   - `deterioration_penalty`（营收/净利润同比恶化惩罚）
 - 可选价格位置维度：`range_position_52w_low`（即 `1-range_position_52w`）、`days_below_sma200`、`drawdown_from_52w_high`
+- AI 关联度维度：`ai_link_score`（可通过 `score_weights/trend_score_weights/momentum_score_weights` 配置权重）
 - 各通道权重由 `channel_profiles.<channel>.score_weights`、`trend_score_weights`、`momentum_score_weights` 配置
 
 ## 10. 回测模块（MVP+）
