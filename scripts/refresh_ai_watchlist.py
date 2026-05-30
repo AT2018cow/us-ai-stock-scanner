@@ -24,9 +24,13 @@ def main() -> None:
     else:
         df = df.sort_values(["bucket", "symbol"]).drop_duplicates(subset=["symbol", "bucket"], keep="first")
         df.to_csv(out, index=False)
-        core_n = int((df["bucket"] == "core_ai").sum()) if "bucket" in df.columns else 0
-        enabler_n = int((df["bucket"] == "ai_enabler").sum()) if "bucket" in df.columns else 0
-        print(f"[watchlist] rows={len(df)} core_ai={core_n} ai_enabler={enabler_n}")
+        bucket_counts = (
+            df["bucket"].value_counts().sort_index().to_dict()
+            if "bucket" in df.columns
+            else {}
+        )
+        counts_str = " ".join(f"{k}={int(v)}" for k, v in bucket_counts.items())
+        print(f"[watchlist] rows={len(df)} {counts_str}".rstrip())
     print(f"[watchlist] output={out}")
 
 

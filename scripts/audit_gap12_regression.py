@@ -33,7 +33,6 @@ from ai_value_scanner.scanner import (
 )
 
 
-CHANNELS = ("core_ai", "ai_enabler")
 LIST_TYPES = ("low_value", "industry_trend", "momentum")
 NEW_METRIC_COVERAGE_FIELDS = [
     "ps_hist_percentile",
@@ -403,7 +402,10 @@ def jaccard(a: set[str], b: set[str]) -> float:
 
 def compare_scenarios(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {"channels": {}, "lists": {}}
-    for ch in CHANNELS:
+    channel_names = sorted(
+        set(base.get("channel_summary", {}).keys()).union(set(new.get("channel_summary", {}).keys()))
+    )
+    for ch in channel_names:
         b = base["channel_summary"].get(ch, {})
         n = new["channel_summary"].get(ch, {})
         out["channels"][ch] = {
@@ -474,7 +476,8 @@ def render_markdown(
     lines.append("")
     lines.append("| 通道 | low pass 基线 | low pass 新版 | low pass rate 基线 | low pass rate 新版 | trend pass 基线 | trend pass 新版 | momentum pass 基线 | momentum pass 新版 |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
-    for ch in CHANNELS:
+    channel_names = sorted(compare.get("channels", {}).keys())
+    for ch in channel_names:
         row = compare["channels"][ch]
         lines.append(
             "| "
@@ -487,7 +490,7 @@ def render_markdown(
     lines.append("")
     lines.append("### 3.2 首因失败（新版 Top-5）")
     lines.append("")
-    for ch in CHANNELS:
+    for ch in channel_names:
         lines.append(f"#### {ch}")
         top = compare["channels"][ch]["top_first_fail_new"]
         if not top:
