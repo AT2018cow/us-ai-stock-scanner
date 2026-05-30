@@ -1,27 +1,52 @@
-# AI Undervalued US Stocks Scanner (Alpaca)
+# AI Undervalued US Stocks Scanner (Alpaca + SEC)
 
-本项目会扫描 Alpaca 可交易的美国股票，结合 SEC 基本面与 ETF 观察清单（watchlist），输出三套候选：`core_ai`（AI核心）、`ai_enabler`（AI基础设施受益）、`ai_peripheral`（AI边际受益）。
+基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 `AI 观察清单`执行多通道筛选，输出三张候选清单：
+- `Low-Value`：估值与质量优先
+- `Industry-Trend`：产业趋势与主题联动优先
+- `Momentum`：价格动量优先
 
-## 1. 本地初始化
+项目默认只扫描本地 watchlist 中的股票，不执行全市场无约束遍历。
+
+## 1. 核心能力
+
+- Watchlist-only 扫描（候选池可控，执行速度稳定）
+- 三池并行通道：`core_ai`、`ai_enabler`、`ai_peripheral`
+- 三张并行清单：`low_value`、`industry_trend`、`momentum`
+- 硬过滤 + 打分排序 + `triage` 分层（`keep/watch/drop`）
+- 网络/限流诊断、过滤诊断、Markdown 运行报告
+- Alpaca 与 SEC 本地缓存（降低重复请求）
+- 可选历史回测（`run_backtest.py`）
+
+## 2. 数据源
+
+- Alpaca API：可交易资产、快照、日线
+- SEC EDGAR：公司财报事实（companyfacts/submissions）
+- ETF 持仓页面（watchlist 刷新脚本使用）
+
+扫描主流程不依赖新闻打分。
+
+## 3. 快速开始
+
+### 3.1 初始化环境
 
 ```bash
-git init
+cd <repo_root>
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -e .
 ```
 
-如果你不想 `pip install -e .`，也可：
+可选安装方式：
 
 ```bash
 pip install -r requirements.txt
 PYTHONPATH=src python run_scan.py --help
 ```
 
-## 2. 填写 `.env`
+### 3.2 配置 `.env`
 
-你只需要填写以下必填项：
+必填：
 
 ```dotenv
 ALPACA_API_ENDPOINT=
@@ -30,596 +55,233 @@ ALPACA_API_SECRET=
 SEC_USER_AGENT=ai-value-scanner your_email@example.com
 ```
 
-可选项：
+可选：
 
 ```dotenv
 ALPACA_DATA_ENDPOINT=https://data.alpaca.markets
 ALPACA_FEED=iex
 ```
 
-说明：
-- `ALPACA_API_ENDPOINT` 常见为 `https://paper-api.alpaca.markets` 或实盘 endpoint。
-- `SEC_USER_AGENT` 建议写真实联系信息，避免被 SEC 限流。
-
-## 3. 参数化筛选配置
-
-默认参数在 `config.production.json`，可按策略自由修改，核心维度包括：
-- 三通道：`channel_profiles.core_ai`、`channel_profiles.ai_enabler`、`channel_profiles.ai_peripheral`
-- 观察清单成员过滤：`watchlist_bucket`/`watchlist_etf_count`（扫描阶段统一使用 watchlist 成员门槛）
-- 观察清单覆盖门槛：`min_watchlist_etf_count`（可按通道、趋势、动量分别设置）
-- 量价质量门槛：`min_avg_dollar_volume_20d`、`min_return_20d`、`min_return_60d`
-- 追涨价格阈值：`momentum_min_return_20d`、`momentum_min_price_to_sma200`、`momentum_max_drawdown_from_52w_high`
-- 趋势/动量收紧阈值：`trend_min_return_60d`、`trend_max_60d_volatility`、`trend_min_avg_dollar_volume_20d`、`momentum_min_return_60d`、`momentum_max_60d_volatility`、`momentum_min_avg_dollar_volume_20d`
-- 追涨覆盖阈值：`momentum_min_watchlist_etf_count`
-- 三档分组：`triage_rules`（`keep/watch/drop`）
-- 主题相关性：`watchlist_csv_path`、`watchlist_core_etfs`、`watchlist_enabler_etfs`、`watchlist_peripheral_etfs`
-- AI 关联度参数：`ai_link_benchmark_etfs`、`ai_link_etf_count_saturation`、`ai_link_disclosure_keyword_cap`、`ai_link_market_return_tolerance_20d`、`ai_link_market_return_tolerance_60d`、`ai_link_backlog_ratio_cap`、`channel_profiles.<channel>.min_ai_link_score`
-- 观察清单强度：`watchlist_etf_count`（可用于排序权重，不作为硬过滤必需）
-- 估值参数（便宜程度）：`max_ps`、`max_pe`、`min_ps_discount`、`min_pe_discount`
-- 现金流与企业价值参数：`require_positive_operating_cash_flow`、`require_positive_free_cash_flow`、`require_positive_ebit`、`min_operating_cash_flow`、`min_free_cash_flow`、`min_ebit`、`max_ev_to_ebit`、`min_fcf_yield`
-- 非经常性与口径参数：`use_adjusted_quality_metrics`、`use_ttm_metrics`、`nonrecurring_addback_revenue_cap`（对并购/重组/减值费用加回，并对处置资产等一次性收益做扣减）
-- 行业分位数估值参数：`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
-- 基本面恶化过滤参数：`min_revenue_yoy`、`min_net_income_yoy`
-- 基本面质量/资产负债约束：`min_fundamental_quality_score`、`max_net_debt_to_ebitda`、`min_interest_coverage`、`max_current_debt_ratio`、`min_current_ratio`、`min_ocf_to_net_income`、`max_accrual_ratio`
-- 营运与稀释约束：`max_receivables_growth_gap`、`max_inventory_growth_gap`、`max_shares_yoy`
-- 自身历史估值与预期约束：`own_history_valuation_window_days`、`max_ps_hist_percentile`、`max_pe_hist_percentile`、`min_expectation_proxy`、`min_cycle_proxy`
-- 交易容量约束：`assumed_position_usd`、`max_adv_participation`、`max_estimated_slippage_bps`
-- 清单分散化约束：`max_per_sector_per_list`、`max_per_watchlist_etf_source_per_list`
-- 指标可用性分级开关：`metric_hard_filter_coverage_mode`（`high_coverage_only`/`balanced`/`all_metrics`）
-- 低覆盖硬过滤总开关：`force_hard_filter_low_coverage_metrics`（默认 `false`）
-- 低覆盖软约束权重：`low_coverage_soft_score_weights`（默认把低覆盖指标用于打分）
-- 打分惩罚参数：`score_penalty_overvaluation`、`score_penalty_deterioration`
-- 质量参数：`min_net_margin`（净利率下限）
-- 价格位置/低位识别参数：`price_lookback_days`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`max_20d_return`、`max_60d_volatility`
-- 分位数过滤参数：`min_drawdown_percentile`、`min_avg_dollar_volume_20d_percentile`、`max_60d_volatility_percentile`
-- 稳健打分参数：`score_winsor_lower_q`、`score_winsor_upper_q`（winsorize + z-score 归一化）
-- 质量：`require_positive_revenue`、`require_positive_net_income`、`min_revenue`、`min_net_income`
-- 流动性：`min_dollar_volume`、`min_price`
-- 市值区间：`min_market_cap`、`max_market_cap`
-- 通道分流：`require_channel_bucket_match`（按 `watchlist_bucket` 强制 core/enabler 分流，降低清单重叠）
-  - 说明：若某股票同时属于 `core_ai,ai_enabler`，仍可能在两个通道同时出现。
-- 单清单去重：`enforce_unique_symbol_per_list`（同一清单内，同一 `symbol` 仅保留得分更高的通道）
-- 跨清单去重：`enforce_unique_symbol_across_lists`（按 `Low-Value > Industry-Trend > Momentum` 优先级分配，同一 `symbol` 仅出现在一张清单）
-- 限速与性能：`max_workers`、`max_symbols`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
-- 缓存：`cache_dir`、`alpaca_cache_enabled`、`alpaca_cache_ttl_assets_sec`、`alpaca_cache_ttl_snapshots_sec`、`alpaca_cache_ttl_bars_sec`
-
-分级开关说明：
-- `high_coverage_only`：仅高完备指标进入硬过滤（生产默认）
-- `balanced`：高完备 + 中等完备指标进入硬过滤
-- `all_metrics`：全部指标都可进入硬过滤（最严格）
-
-说明：生产配置文件已移除显式的三清单上限与 SIC 黑名单字段，运行时使用代码默认值（`top_n_per_channel_low_value/trend/momentum = 10/10/10`，`exclude_sic_codes = ["6770"]`）。如需覆盖，可在自定义配置中按同名字段显式设置。
-
-### 3.5 ETF 观察清单（替代新闻打分）
-
-当前版本已移除“新闻主题打分”作为主流程依赖，改为 ETF 观察清单打分：
-- 默认清单文件：`data/ai_watchlist.csv`
-- 扫描阶段只读取本地 watchlist，不会自动刷新
-- watchlist 维护由独立脚本执行（需要时手工运行）
-- 三清单统一执行“watchlist 成员 + 财务/价格/流动性”筛选，不再依赖新闻主题分数。
-
-默认 ETF 集合（三池）：
-- `core_ai`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
-- `ai_enabler`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
-- `ai_peripheral`：`XLB,VIS,ITA,IYT,ITB,PICK,COPX,VPU,XLRE,VNQ,FXR,IGE`
-
-`data/ai_watchlist.csv` 字段：
-- `symbol`：股票代码
-- `bucket`：`core_ai`、`ai_enabler` 或 `ai_peripheral`
-- `etf_count`：命中的 ETF 数量
-- `etfs`：命中的 ETF 列表
-- `enabled`：是否生效（`1/0`）
-- `updated_utc`：更新时间（建议保留，当前扫描端不强制）
-- 注意：扫描端严格校验必填字段为 `symbol,bucket,etf_count,etfs,enabled`，不再兼容旧 schema。
-
-生成与维护方式（定稿）：
-1. 手工刷新（按需执行，不随扫描自动触发）
+### 3.3 刷新 watchlist（按需手工执行）
 
 ```bash
 python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
 ```
 
-2. 人工维护（可选）
-- 直接编辑 `data/ai_watchlist.csv`
-- 常见动作：新增符号、调整 `bucket`、设置 `enabled=0` 排除符号
+### 3.4 运行扫描
 
-3. 扫描执行
-- `run_scan.py` 只读取本地 `data/ai_watchlist.csv`
-- 若文件缺失或为空，扫描会直接报错并提示先刷新
-
-当前可接受风险（后续有时间再优化）：
-1. ETF 持仓抓取目前基于网页解析，若页面结构变化可能需要调整解析逻辑。
-2. 暂无自动差异报告（新增/移除/桶变更），当前通过结果文件人工复核。
-3. 暂无独立 `manual_overrides` 层（强制纳入/排除）；当前通过直接编辑 `ai_watchlist.csv` 实现。
-4. 观察清单刷新采用手工触发，不在扫描阶段自动更新；建议在定期刷新后做一次人工抽检。
-5. 暂无按日期归档的 watchlist 快照；当前可通过版本控制（git）追踪变更历史。
-
-### 3.6 Watchlist 定稿（2026-05-28）
-
-当前 watchlist 机制已定稿，后续按此作为基线：
-- 扫描端只使用本地 `data/ai_watchlist.csv`，不自动刷新。
-- 扫描前先加载 watchlist，并将股票 universe 收缩到 watchlist 符号（不再先扫描全市场再过滤）。
-- 已移除 `use_ai_watchlist_only` 开关；扫描逻辑固定为 watchlist-only。
-- watchlist schema 严格校验：`symbol,bucket,etf_count,etfs,enabled`（`updated_utc` 建议保留但非强制）。
-- 已移除 `source` 字段与旧 schema 兼容路径（项目未上线前主动去除遗留逻辑）。
-- `watchlist_etf_count` 与 `watchlist_etfs` 使用统一口径：`etf_count = 去重后 etfs 数量`。
-
-### 3.4 生产参数固化（v1）
-
-生产参数基线放在 `config.production.json`，用途是稳定运行，不随实验来回波动。  
-当前冻结原则：
-- 保留三清单并行（`Low-Value` / `Industry-Trend` / `Momentum`）
-- 生产配置文件不显式声明三清单上限/SIC 黑名单，统一走代码默认（`10/10/10` 与 `["6770"]`）
-- 采用已通过全量样本回归验证的平衡阈值（可稳定产出且不过度放宽）
-- 将高纯度/高收紧参数留在实验配置中，不直接进入生产默认
-
-建议：
-- 生产运行默认使用 `config.production.json`
-- 如需实验参数，建议从 `config.production.json` 复制出临时配置文件再运行。
-
-### 3.1 价格位置/低位识别参数
-
-价格位置参数分两层：
-- 全局层（`config.production.json` 顶层）：给所有通道提供默认值
-- 通道层（`channel_profiles.<channel>`）：可覆盖全局默认值
-
-参数说明：
-- `price_lookback_days`
-  - 含义：回看日K线窗口（自然日），用于计算 52 周高低区间与 SMA 基准
-  - 默认：`420`
-  - 调大：更平滑，响应更慢
-  - 调小：更敏感，波动更大
-- `min_drawdown_from_52w_high`
-  - 含义：距区间高点最小回撤比例，`1 - price/high_52w`
-  - 取值：`0~1`，越大越“离高点远”
-  - 示例：`0.20` 表示至少较高点回撤 20%
-- `max_range_position_52w`
-  - 含义：当前价格在区间 `[low_52w, high_52w]` 的相对位置
-  - 公式：`(price-low_52w)/(high_52w-low_52w)`
-  - 取值：`0~1`，越小越靠近区间底部
-  - 示例：`0.70` 表示仅保留位于区间下 70% 的标的
-- `max_price_to_sma200`
-  - 含义：当前价格相对 200 日均价的倍数
-  - 公式：`price / SMA200`
-  - 取值：通常大于 0
-  - 示例：`1.10` 表示价格不超过 200 日均价的 110%
-- `min_days_below_sma200`
-  - 含义：最近连续低于各自 200 日均线的交易日数量下限
-  - 取值：`>=0` 的整数
-  - 默认：`core_ai=7`，`ai_enabler=5`
-  - 示例：`10` 表示要求至少连续 10 个交易日位于 200 日均线下方
-- `max_20d_return`
-  - 含义：最近 20 个交易日价格涨幅上限，避免追短期急拉
-  - 公式：`price / close_20d_ago - 1`
-  - 默认：`core_ai=0.12`，`ai_enabler=0.18`
-  - 示例：`0.15` 表示 20 日涨幅不超过 15%
-- `max_60d_volatility`
-  - 含义：最近 60 日年化波动率上限，过滤高波动“低位陷阱”
-  - 公式：`std(daily_return_60d) * sqrt(252)`
-  - 默认：`core_ai=0.70`，`ai_enabler=0.85`
-  - 示例：`0.60` 表示年化波动率不超过 60%
-
-说明：
-- `PE/PS` 等属于估值参数（衡量“便宜”），不是价格位置参数（衡量“低位”）。
-- 两类建议同时使用：先做低位识别，再做估值约束。
-- `ai_and_enabler` 适合做高纯度模式（同时要求 AI 与 enabler 信号达标）。
-
-配置示例（全局默认 + 通道覆盖）：
-
-```json
-{
-  "price_lookback_days": 420,
-  "min_drawdown_from_52w_high": null,
-  "max_range_position_52w": null,
-  "max_price_to_sma200": null,
-  "min_days_below_sma200": 5,
-  "max_20d_return": 0.18,
-  "max_60d_volatility": 0.85,
-  "channel_profiles": {
-    "core_ai": {
-      "min_drawdown_from_52w_high": 0.2,
-      "max_range_position_52w": 0.7,
-      "max_price_to_sma200": 1.1,
-      "min_days_below_sma200": 7,
-      "max_20d_return": 0.12,
-      "max_60d_volatility": 0.7
-    },
-    "ai_enabler": {
-      "min_drawdown_from_52w_high": 0.15,
-      "max_range_position_52w": 0.8,
-      "max_price_to_sma200": 1.15,
-      "min_days_below_sma200": 5,
-      "max_20d_return": 0.18,
-      "max_60d_volatility": 0.85
-    }
-  }
-}
-```
-
-### 3.2 如何扩展新的筛选参数
-
-如果你要新增一个参数（例如 `min_gross_margin`），按下面路径扩展：
-- 第 1 步：在 `ScanConfig` 增加字段和默认值（`src/ai_value_scanner/scanner.py`）
-- 第 2 步：在 `resolve_channel_profile` 增加“全局默认 + 通道覆盖”的解析逻辑
-- 第 3 步：如果依赖新数据源/新指标，在数据准备阶段计算新列（如 `run_scan` 或相应 helper）
-- 第 4 步：在 `build_filter_steps` 增加筛选条件（`lambda frame: ...`）
-- 第 5 步：如需参与排序，在 `score_and_rank` 的标准化与权重中接入
-- 第 6 步：在配置文件中增加参数键，并给出初始策略值
-- 第 7 步：在 README 的“参数说明”和“输出字段说明”同步更新
-
-建议：新增参数后，先跑 `--max-symbols 500/1000` 观察 `*_diagnostics_*` 的“首因失败”分布，再跑 watchlist 全量。
-
-### 3.3 当前版本筛选逻辑（v2）
-
-当前版本核心原则：
-- AI 相关性采用 `ai_link_score`（0~1）：
-  - `ai_etf_consensus_score`：ETF 共识覆盖强度
-  - `ai_disclosure_score`：SEC submissions 披露关键词命中强度
-  - `ai_market_link_score`：与 AI 基准 ETF 近 20/60 日收益联动强度
-  - `ai_backlog_signal`：backlog/remaining performance obligation 相对收入的强度
-  - 综合：`0.40*etf + 0.35*disclosure + 0.15*market + 0.10*backlog`
-- 三池默认 `min_ai_link_score`：`core_ai=0.30`、`ai_enabler=0.45`、`ai_peripheral=0.55`。
-- 排序主因子为估值折价、流动性、价格位置和 watchlist 覆盖广度（`watchlist_etf_count`）。
-- 低覆盖指标（如 `current_debt_ratio`、`inventory_growth_gap`）默认走软约束（打分），不默认做硬过滤。
-- 如需强制硬过滤低覆盖指标，可开启 `force_hard_filter_low_coverage_metrics=true` 或在通道配置中设置 `hard_filter_current_debt_ratio` / `hard_filter_inventory_growth_gap`。
-- 过滤层可额外要求最小 ETF 覆盖数（`min_watchlist_etf_count`），用于收紧候选数量。
-- 输出拆分为三清单（并行）
-  - `*_ranked.csv`（Low-Value）：低位+估值优先，偏“择时/估值”。
-  - `*_ranked_industry_trend.csv`（Industry-Trend）：主题相关性优先，偏“产业跟踪”。
-  - `*_ranked_momentum.csv`（Momentum）：强势追涨优先，偏“强者恒强”。
-  - 三者是并行、正交逻辑，不是父子子集关系。
-
-## 4. 运行方式
-
-策略执行顺序：
-- 先按需手工刷新 watchlist（非每次必做）
-- 先读取本地 watchlist，并将可交易股票 universe 收缩到 watchlist 符号
-- 再做价格/流动性预筛，然后请求 SEC 基本面
-- 计算估值与价格位置指标
-- 合并 ETF 观察清单字段（`watchlist_bucket/watchlist_etf_count/watchlist_etfs`）
-- 生成三清单：`low-value`、`industry-trend`、`momentum`
-
-
-先小样本验证（例如 300 只）：
+示例（限制扫描数量）：
 
 ```bash
-python run_scan.py --max-symbols 300
+python run_scan.py --config config.production.json --max-symbols 300
 ```
 
-说明：`--max-symbols` 会在 watchlist universe 内按 `dollar_volume`（快照成交额）降序取样，避免按原始顺序截断带来的样本偏差。
-
-运行时终端会持续打印：
-- 当前阶段（`[1/6]...[6/6]`）
-- 耗时与状态时间戳
-- SEC 长阶段的进度百分比
-- 失败时的错误类型与 traceback
-
-全量扫描：
-
-```bash
-python run_scan.py
-```
-
-自定义配置文件：
+全量 watchlist：
 
 ```bash
 python run_scan.py --config config.production.json
 ```
 
-导出过滤诊断（每一步剔除数量 + 唯一首因统计）：
+## 4. Watchlist 机制
+
+### 4.1 运行时行为
+
+- `run_scan.py` 只读取本地 `watchlist_csv_path`（默认 `data/ai_watchlist.csv`）
+- 扫描前不会自动刷新 watchlist
+- watchlist 缺失或为空时会直接报错并终止
+
+### 4.2 CSV 字段规范
+
+扫描端要求以下必填列：
+- `symbol`
+- `bucket`（`core_ai`/`ai_enabler`/`ai_peripheral`）
+- `etf_count`
+- `etfs`
+- `enabled`
+
+`updated_utc` 建议保留，但不是扫描必需列。
+
+### 4.3 默认 ETF 三池（来自 `config.production.json`）
+
+- `watchlist_core_etfs`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
+- `watchlist_enabler_etfs`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
+- `watchlist_peripheral_etfs`：`XLB,VIS,ITA,IYT,ITB,PICK,COPX,VPU,XLRE,VNQ,FXR,IGE`
+
+## 5. 扫描逻辑
+
+### 5.1 6 阶段流程
+
+`run_scan.py` 运行时会输出 `[1/6]` 到 `[6/6]`：
+1. 加载 watchlist + 可交易标的
+2. 拉取行情并计算价格维度指标
+3. 拉取 SEC 基本面（含缓存）
+4. 计算估值/历史估值分位/质量指标
+5. 合并 watchlist 属性，执行三通道筛选与打分
+6. 写出 CSV/JSON/Markdown，并打印控制台简表
+
+### 5.2 三张清单（并行）
+
+- `Low-Value`：价值与质量因子主导，输出 `triage_label=keep/watch/drop`
+- `Industry-Trend`：趋势相关约束与趋势权重打分，`triage_label=trend`
+- `Momentum`：动量约束与动量权重打分，`triage_label=momentum`
+
+三张清单是并行结果，不是子集关系。
+
+### 5.3 AI 关联度评分
+
+`ai_link_score`（0~1）由四部分组成：
+- `ai_etf_consensus_score`（权重 0.40）
+- `ai_disclosure_score`（权重 0.35）
+- `ai_market_link_score`（权重 0.15）
+- `ai_backlog_signal`（权重 0.10）
+
+### 5.4 低估与质量口径（关键点）
+
+- 估值：`ps`、`pe`、`ev_to_ebit`、`fcf_yield`
+- 行业相对估值：`ps_percentile_in_sic`、`pe_percentile_in_sic`
+- 个股历史估值分位：`ps_hist_percentile`、`pe_hist_percentile`
+  - 基于“历史价格 + 历史 TTM 分母 + 历史股本”重建估值序列计算
+  - 来源字段：`*_hist_percentile_source`、`*_hist_observation_count`
+- 质量与稳健性：
+  - 盈利/现金流（可切换 `use_adjusted_quality_metrics`、`use_ttm_metrics`）
+  - 资产负债与现金化（如 `interest_coverage`、`net_debt_to_ebitda`、`ocf_to_net_income`）
+  - 营运与稀释（如 `receivables_growth_gap`、`inventory_growth_gap`、`shares_yoy`）
+
+## 6. 配置说明
+
+默认扫描配置：`config.production.json`（`run_scan.py` 默认读取该文件）。
+
+### 6.1 参数层级
+
+- 全局参数：`ScanConfig` 顶层字段
+- 通道参数：`channel_profiles.<channel>`（覆盖全局默认）
+
+### 6.2 生产配置关键默认值
+
+- `metric_hard_filter_coverage_mode = "balanced"`
+- `force_hard_filter_low_coverage_metrics = false`
+- `require_channel_bucket_match = true`
+- `enforce_unique_symbol_per_list = false`
+- `enforce_unique_symbol_across_lists = false`
+- `own_history_valuation_window_days = 720`
+
+说明：
+- `top_n_per_channel_low_value/trend/momentum` 若未在配置显式设置，代码默认值为 `10/10/10`
+- `exclude_sic_codes` 若未显式设置，代码默认值为 `["6770"]`
+
+### 6.3 常用可调参数组
+
+- Universe 与流动性：`min_price`、`min_dollar_volume`、`enabled_exchanges`
+- 估值与折价：`min_ps_discount`、`min_pe_discount`、`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
+- 质量与现金流：`min_fundamental_quality_score`、`min_interest_coverage`、`min_ocf_to_net_income`
+- 价格维度：`min_drawdown_from_52w_high`、`max_price_to_sma200`、`max_60d_volatility`
+- AI 关联：`min_ai_link_score`、`ai_link_*`
+- 输出与性能：`max_workers`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
+
+## 7. 运行参数
 
 ```bash
-python run_scan.py --diagnostics-output outputs/diagnostics.csv
+python run_scan.py --help
 ```
 
-导出网络/限流诊断（统计 429、重试、超时、连接错误、限速等待时长）：
+常用参数：
+- `--config`：配置文件路径（默认 `config.production.json`）
+- `--max-symbols`：样本上限（在 watchlist 内按快照成交额降序截取）
+- `--output`：主结果 CSV 路径
+- `--diagnostics-output`：过滤诊断输出基路径
+- `--network-report-output`：网络诊断 JSON 路径
+- `--report-output`：Markdown 详细报告路径
 
-```bash
-python run_scan.py --network-report-output outputs/network_report.json
-```
+## 8. 输出文件
 
-导出详细分析报告（markdown）：
+默认命名基准：
+- `outputs/ai_value_scan_YYYYMMDDTHHMMSSZ_<scope>_ranked.csv`
+- `<scope>` 为 `full` 或 `sample<max_symbols>`
 
-```bash
-python run_scan.py --report-output outputs/run_report.md
-```
+基于主文件会生成：
+- 主清单：`..._ranked.csv`
+- 主清单分通道：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
+- 行业趋势：`..._ranked_industry_trend.csv` 及其分通道文件
+- 动量清单：`..._ranked_momentum.csv` 及其分通道文件
+- 过滤诊断（按通道）：`..._ranked_diagnostics_<channel>.csv`
+- 首因诊断（按通道）：`..._ranked_diagnostics_<channel>_first_fail.csv`
+- 网络诊断：`..._ranked_network.json`
+- Markdown 报告：`..._ranked_report.md`
 
-单独刷新 ETF 观察清单（可选）：
+## 9. 运行日志与诊断
 
-```bash
-python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
-```
+### 9.1 终端日志
 
-推荐运行节奏：
-- `daily_full_scan`（每天 1~多次，watchlist 全量）
+扫描日志格式：`[HH:MM:SS][LEVEL][+elapsed] message`  
+回测日志格式：`[scope HH:MM:SS +elapsed] message`
 
-```bash
-.venv/bin/python run_scan.py --config config.production.json
-```
+包含：
+- 阶段进度（`[1/6]` ~ `[6/6]`）
+- SEC 长阶段进度
+- 输出文件路径
+- 结束时三张清单按通道的入选股票汇总
 
-- `intraday_quick_scan`（日内快速复核，可选）
+### 9.2 网络诊断 JSON
 
-```bash
-.venv/bin/python run_scan.py --config config.production.json --max-symbols 1200
-```
+按服务（`alpaca`、`sec`）统计：
+- 请求量、状态码分布、重试、异常
+- 限速等待次数/耗时
+- 缓存命中（`cache_hits`/`cache_misses`）
+- 汇总标记：`had_rate_limit_or_network_issue`
 
-建议时点：
-- `daily_full_scan`：每个交易日收盘后（或盘前）
-- `intraday_quick_scan`：盘中按需多次
-- `watchlist_refresh`：每周 1 次（建议周末或周一盘前）
+## 10. 缓存与限速
 
-## 5. 运行状态与进度说明
+默认开启本地缓存（目录 `cache/`）：
+- Alpaca：assets/snapshots/bars（TTL 可配置）
+- SEC：ticker mapping、submissions、companyfacts
 
-程序运行时会持续打印结构化日志：
-- 格式：`[HH:MM:SS][LEVEL][+elapsed_seconds] message`
-- 阶段：`[1/6]` 到 `[6/6]`
-- 长耗时进度：
-  - `SEC fundamentals: x/y (z%)`
-  - `Watchlist refresh: rows=...`
-- 失败时会打印：
-  - 异常类型
-  - 异常信息
-  - 完整 traceback
+相关参数：
+- `alpaca_cache_enabled`
+- `alpaca_cache_ttl_assets_sec`
+- `alpaca_cache_ttl_snapshots_sec`
+- `alpaca_cache_ttl_bars_sec`
+- `alpaca_max_requests_per_sec`
+- `sec_max_requests_per_sec`
 
-程序结束时会打印简短清单：
-- `=== Low-Value Shortlist (All Selected Per Channel) ===`
-- `=== Industry Trend Shortlist (All Selected Per Channel) ===`
-- `=== Momentum Shortlist (All Selected Per Channel) ===`
-- 三张清单均按通道打印全部入选股票（按 `composite_score` 降序）
+## 11. 回测（可选）
 
-## 6. 输出文件命名与含义
-
-网络诊断输出：
-- 默认：与结果 CSV 同名后缀 `_network.json`
-- 可通过 `--network-report-output` 指定路径
-
-输出结果文件：
-- 默认命名：`outputs/ai_value_scan_YYYYMMDDTHHMMSSZ_<scope>_ranked.csv`
-- 分通道结果：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
-- 产业趋势清单：`..._ranked_industry_trend.csv`
-- 产业趋势分通道：`..._ranked_industry_trend_core_ai.csv`、`..._ranked_industry_trend_ai_enabler.csv`、`..._ranked_industry_trend_ai_peripheral.csv`
-- 追涨清单：`..._ranked_momentum.csv`
-- 追涨分通道：`..._ranked_momentum_core_ai.csv`、`..._ranked_momentum_ai_enabler.csv`、`..._ranked_momentum_ai_peripheral.csv`
-- 详细报告：`..._ranked_report.md`
-- 过滤诊断：`..._ranked_diagnostics_<channel>.csv`
-- 首因诊断：`..._ranked_diagnostics_<channel>_first_fail.csv`
-- 其中 `<scope>` 为 `full` 或 `sample<max_symbols>`
-
-示例（全量扫描）：
-- `outputs/ai_value_scan_20260526T013236Z_full_ranked.csv`
-- `outputs/ai_value_scan_20260526T013236Z_full_ranked_core_ai.csv`
-- `outputs/ai_value_scan_20260526T013236Z_full_ranked_ai_enabler.csv`
-- `outputs/ai_value_scan_20260526T013236Z_full_ranked_network.json`
-- `outputs/ai_value_scan_20260526T013236Z_full_ranked_report.md`
-
-## 7. 输出字段说明
-
-主结果 CSV（`*_ranked.csv`）关键字段：
-- `channel`：候选通道（`core_ai`、`ai_enabler`、`ai_peripheral`）
-- `symbol` / `company_name`：股票代码与公司名
-- `price` / `dollar_volume`：价格与日美元成交额
-- `drawdown_from_52w_high`：距 52 周高点回撤比例（越大越接近低位）
-- `range_position_52w`：当前价格在 52 周高低区间中的相对位置（越小越接近低位）
-- `price_to_sma200`：当前价格 / 200 日均价（越小越偏低）
-- `days_below_sma200`：最近连续低于 200 日均线的天数（越大越“压在均线下方”）
-- `return_20d`：最近 20 日涨跌幅（用于限制过快反弹）
-- `return_60d`：最近 60 日涨跌幅（用于过滤中期弱势票）
-- `volatility_60d`：最近 60 日年化波动率（用于控制波动风险）
-- `avg_dollar_volume_20d`：最近 20 个交易日平均美元成交额（用于过滤流动性不足标的）
-- `market_cap` / `revenue` / `net_income` / `net_margin`：市值与基本面（`net_margin = net_income / revenue`）
-- `nonrecurring_expense_addback`：识别到的一次性费用加回额（受 `nonrecurring_addback_revenue_cap` 限制）
-- `nonrecurring_gain_subtraction`：识别到的一次性收益扣减额（受 `nonrecurring_addback_revenue_cap` 限制）
-- `adjusted_net_income` / `adjusted_ebit` / `adjusted_ebitda`：非经常性调整后的质量口径
-- `adjusted_net_income_yoy` / `adjusted_ebit_yoy`：调整后同比
-- `interest_coverage` / `net_debt_to_ebitda`：偿债与杠杆质量
-- `current_ratio` / `current_debt_ratio`：短债与流动性约束（`current_debt_ratio` 为低覆盖指标，支持推断）
-- `current_debt_ratio_reported` / `current_debt_ratio_inferred` / `current_debt_ratio_source`：原始口径、推断口径和来源标签
-- `ocf_to_net_income` / `accrual_ratio` / `fundamental_quality_score`：利润现金化与综合质量
-- `receivables_growth_gap` / `inventory_growth_gap` / `shares_yoy`：营运与稀释风险
-- `inventory_growth_gap_reported` / `inventory_growth_gap_inferred` / `inventory_growth_gap_source`：库存增速缺口原始值、推断值与来源标签
-- `ps_hist_percentile` / `pe_hist_percentile`：个股自身历史估值分位（基于价格历史近似）
-- `expectation_proxy` / `cycle_proxy`：预期差与周期性代理因子
-- `adv_participation` / `estimated_slippage_bps`：按假设下单规模估算的成交参与率与冲击成本
-- `enterprise_value` / `ebit` / `ev_to_ebit`：企业价值、息税前利润与 EV/EBIT
-- `operating_cash_flow` / `free_cash_flow` / `fcf_yield`：经营现金流、自由现金流与 FCF 收益率
-- `revenue_yoy` / `net_income_yoy` / `ebit_yoy` / `operating_cash_flow_yoy`：年报口径同比变化
-- `ps` / `pe`：估值倍数
-- `peer_median_ps` / `peer_median_pe`：同 SIC 行业中位估值
-- `ps_discount` / `pe_discount`：相对行业折价（`1 - 自身/行业中位`）
-- `ps_percentile_in_sic` / `pe_percentile_in_sic`：同 SIC 行业内估值分位（越低越便宜）
-- `overvaluation_penalty` / `deterioration_penalty`：高估值惩罚与基本面恶化惩罚
-- `watchlist_etf_count`：观察清单 ETF 命中数量
-- `watchlist_bucket` / `watchlist_etfs`：观察清单分类与命中 ETF 信息
-- `ai_etf_consensus_score` / `ai_disclosure_score` / `ai_market_link_score` / `ai_backlog_signal` / `ai_link_score`：AI 关联度及其分解项
-- `news_count`：固定为 `0`（已移除新闻打分依赖）
-- `composite_score`：通道内综合评分
-- `triage_label`：`keep/watch/drop` 三档分组
-
-## 8. 缓存与网络诊断说明
-
-`*_network.json` 按服务输出网络统计（`alpaca` / `sec`）：
-- 请求：`requests_started`、`responses`
-- 状态码：`http_2xx`、`http_4xx`、`http_429`、`http_5xx`
-- 重试：`retries`、`retry_429`、`retry_5xx`
-- 异常：`exceptions_total`、`exceptions_timeout`、`exceptions_connection`
-- 限速等待：`limiter_wait_calls`、`limiter_wait_seconds`
-- SEC 缓存：`cache_hits`、`cache_misses`、`cache_hit_rate`
-
-终端摘要会额外打印：
-- `SEC cache: hits=..., misses=..., hit_rate=...%`
-
-`had_rate_limit_or_network_issue` 为 `true` 时，表示本次运行中出现了限流/网络异常信号。
-
-## 9. 评分逻辑（默认）
-
-结果会额外给出 `triage_label`（`keep/watch/drop`），规则在 `triage_rules` 中可调。
-
-- `ps_discount = 1 - (ps / 同SIC行业中位数ps)`
-- `pe_discount = 1 - (pe / 同SIC行业中位数pe)`
-- 新增 SIC 分位数口径：`ps_percentile_in_sic`、`pe_percentile_in_sic`（用于过滤与打分）
-- 新增现金流/企业价值口径：`fcf_yield`、`ev_to_ebit`
-- 默认综合评分在加权因子之上，额外扣减：
-  - `overvaluation_penalty`（行业内估值偏高惩罚）
-  - `deterioration_penalty`（营收/净利润同比恶化惩罚）
-- 可选价格位置维度：`range_position_52w_low`（即 `1-range_position_52w`）、`days_below_sma200`、`drawdown_from_52w_high`
-- AI 关联度维度：`ai_link_score`（可通过 `score_weights/trend_score_weights/momentum_score_weights` 配置权重）
-- 各通道权重由 `channel_profiles.<channel>.score_weights`、`trend_score_weights`、`momentum_score_weights` 配置
-
-## 10. 回测模块（MVP+）
-
-回测入口：
+入口：
 
 ```bash
 python run_backtest.py --mode historical_replay --scan-config config.production.json
 ```
 
 常用参数：
-- `--mode historical_replay`（历史重放）或 `--mode existing_runs`（仅重放已有扫描文件）
-- `--outputs-dir outputs`
+- `--mode historical_replay|existing_runs`
+- `--outputs-dir`
 - `--list-types low_value,industry_trend,momentum`
-- 三清单数量由 `top_n_per_channel_low_value/trend/momentum` 控制
-- `--per-channel-top-n` / `--no-per-channel-top-n`
-- `--horizons 20,60,120`
-- `--start-date 2024-01-01 --end-date 2026-05-26`
-- `--rebalance-frequency weekly|monthly`
-- `--replay-max-symbols 800`
-- `--replay-asset-status all|active|inactive`
-- `--enable-perturbation` / `--no-perturbation`
+- `--top-n`、`--per-channel-top-n`
+- `--start-date`、`--end-date`、`--rebalance-frequency`
+- `--replay-max-symbols`、`--replay-asset-status`
+- `--entry-price-mode next_open|next_close`
+- `--exit-price-mode close|open`
+- `--watchlist-history-dir data/watchlist_history`
+- `--allow-latest-watchlist-fallback`（默认关闭，避免无快照时引入前视）
+- `--disclosure-lookback-days`
+- `--enable-perturbation|--no-perturbation`
 - `--theme-source rules_proxy|historical_news|latest_scan|zero`
-- `--historical-news-lookback-days 180`
-- `--historical-news-limit-per-symbol 80`
-- `--delist-return-assumption -0.55`
-- `--delist-detection-buffer-days 7`
-- `--max-runs 60`（仅 `existing_runs` 模式）
-- `--benchmark-symbols QQQ,SOXX,XLI,XLU`
-- `--trading-cost-bps 15`
-- `--dry-run`（仅构建信号，不拉取价格）
 
-说明：
-- `--outputs-dir` 同时用于回测产物输出目录；在 `existing_runs` 模式下，也用于读取历史 `ai_value_scan_*` 文件。
+默认输出（`outputs/backtest_<mode>_<UTC>_*`）：
+- `*_signals.csv`
+- `*_events.csv`
+- `*_summary.csv`
+- `*_benchmarks.csv`
+- `*_segments.csv`
+- `*_report.md`
+- `*_report_network.json`
 
-输出文件（默认 `outputs/backtest_<UTC>_*`）：
-- `*_events.csv`：每次信号事件在各持有期的组合收益
-- `*_summary.csv`：按清单类型与持有期聚合的统计指标（含 `n_events_total` 与 `n_events_valid`）
-- `*_benchmarks.csv`：对应基准收益（默认含 `QQQ`）
-- `*_segments.csv`：分段统计（如 `2023/2024/2025/2026YTD`）
-- `*_report.md`：简版回测报告
-- `*_report_network.json`：回测阶段网络统计
+## 12. 说明与限制
 
-`historical_replay` 定义：
-- 在历史调仓日（周/月）重建当日横截面并生成三清单信号
-- 从信号日后的下一个交易日开仓，持有 `20/60/120` 个交易日
-- 组合收益默认等权，支持交易成本（双边）
-- 可输出 `base/loose/strict` 参数扰动结果用于稳健性比较
-- 默认 `theme_source=rules_proxy`：基于公司元数据（名称/SIC描述）关键词静态打分，稳定可复现
-- 支持 `theme_source=historical_news`：按每个调仓日回看历史新闻窗口打分（可选实验模式）
-- 支持退市收益假设：当标的在回测窗口结束前明显提前消失，可按 `delist_return_assumption` 计入
-
-`existing_runs` 定义：
-- 回测对象是已有扫描结果文件（`ai_value_scan_*_ranked*.csv`）
-- 每个扫描时点都视为一次“决策点”
-
-重要局限：
-- `historical_replay` 仍是近似 PIT，不等价于 CRSP/Compustat 级无偏研究库
-- 即使使用 `replay-asset-status=all`，历史可交易池与真实当时成分仍可能存在偏差
-- `theme_source=latest_scan` 仍有前视风险；不建议作为主评估口径
-- `theme_source=historical_news` 受新闻可得性和文本噪声影响，稳定性弱于 `rules_proxy`
-- 退市收益假设是模型参数，不是逐笔真实退市结算
-
-后续优化清单（已确认，暂不在本次实现）：
-1. 组合净值回放：
-   - 从“事件平均收益”升级为“可执行组合回测”（固定资金、按调仓持仓、空仓处理、持仓延续）。
-   - 增加组合级指标：`CAGR`、`MDD`、`Sharpe`、`Calmar`、回撤区间统计。
-2. 生存者偏差控制：
-   - 现有 `replay-asset-status=active` 可能高估效果。
-   - 优先切到 `all` + 更严格退市收益处理；后续可接入历史成分库（如 CRSP/Norgate/Polygon）。
-3. 交易可实现性建模：
-   - 将交易成本从固定 bps 扩展为分层滑点模型（按市值/流动性分档）。
-   - 引入容量约束（如单票成交不超过 ADV 某比例）。
-4. 样本覆盖与统计稳健性：
-   - 为回测单独配置“覆盖优先”参数，保证每期最小持仓数量。
-   - 增加滚动分段统计与 block bootstrap 置信区间，检验稳健性。
-5. 反前视审计增强：
-   - 对公司名称/SIC 等元数据建立 as-of 快照，减少静态元数据引入的潜在前视偏差。
-   - 将该审计过程纳入回测报告输出。
-
-## 11. 你可能还想开通的服务（可选）
-
-当前代码已使用：
-- Alpaca Trading/Data API
-- SEC EDGAR API（免费，无需密钥）
-
-若你需要更高质量基本面，可额外接入第三方财务数据 API（例如更标准化的 TTM、前瞻一致预期、分行业估值基准）。
-
-## 12. 快速上手与日常执行清单
-
-最简使用流程：
-
-1. 初始化环境
-
-```bash
-cd /home/ss/codex_ws/stock
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
-```
-
-2. 配置 `.env`（必填）
-
-```dotenv
-ALPACA_API_ENDPOINT=
-ALPACA_API_KEY=
-ALPACA_API_SECRET=
-SEC_USER_AGENT=ai-value-scanner your_email@example.com
-```
-
-3. 小样本冒烟（先确认流程）
-
-```bash
-python run_scan.py --config config.production.json --max-symbols 300
-```
-
-4. Watchlist 全量扫描（生产）
-
-```bash
-python run_scan.py --config config.production.json
-```
-
-5. 历史回测（默认稳定口径）
-
-```bash
-python run_backtest.py --mode historical_replay --scan-config config.production.json
-```
-
-建议的固定节奏：
-
-- 每个交易日可执行 1~多次 watchlist 全量扫描
-
-```bash
-python run_scan.py --config config.production.json
-```
-
-- 日内快刷（观察 watch/momentum 变化，可选）
-
-```bash
-python run_scan.py --config config.production.json --max-symbols 1200
-```
-
-- 每周一次刷新 watchlist（建议周末或周一盘前）
-
-```bash
-python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
-```
-
-- 每周一次策略体检回测（建议关闭扰动以缩短时长）
-
-```bash
-python run_backtest.py \
-  --mode historical_replay \
-  --scan-config config.production.json \
-  --theme-source rules_proxy \
-  --no-perturbation \
-  --replay-asset-status active \
-  --replay-max-symbols 800
-```
+- 本项目用于研究与筛选，不构成投资建议。
+- 历史回测为工程近似，不等价于完整 PIT 学术数据库回测。
+- ETF 持仓抓取依赖第三方页面结构，建议定期抽检 watchlist 刷新结果。
+- 配置扩展建议遵循：
+  1. 在 `ScanConfig` 增加字段
+  2. 在 `resolve_channel_profile` 接入通道覆盖
+  3. 在过滤步骤或打分逻辑中显式使用
+  4. 同步更新本 README
