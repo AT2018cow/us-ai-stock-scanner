@@ -151,32 +151,223 @@ python run_scan.py --config config.production.json
 
 默认扫描配置：`config.production.json`（`run_scan.py` 默认读取该文件）。
 
-### 6.1 参数层级
+### 6.1 参数生效顺序与覆盖关系
 
-- 全局参数：`ScanConfig` 顶层字段
-- 通道参数：`channel_profiles.<channel>`（覆盖全局默认）
+1. `run_scan.py` CLI 参数先应用（例如 `--max-symbols` 会覆盖配置中的 `max_symbols`）。
+2. 全局参数来自配置文件顶层（`ScanConfig` 顶层字段）。
+3. 通道参数来自 `channel_profiles.<channel>`，会覆盖同名全局参数。
+4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
+5. 配置中的未知字段会被忽略（不会报错，也不会生效）。
 
-### 6.2 生产配置关键默认值
+### 6.2 全局参数与阈值（`config.production.json`）
 
-- `metric_hard_filter_coverage_mode = "balanced"`
-- `force_hard_filter_low_coverage_metrics = false`
-- `require_channel_bucket_match = true`
-- `enforce_unique_symbol_per_list = false`
-- `enforce_unique_symbol_across_lists = false`
-- `own_history_valuation_window_days = 720`
+#### 6.2.1 运行、并发、缓存、限速
 
-说明：
-- `top_n_per_channel_low_value/trend/momentum` 若未在配置显式设置，代码默认值为 `10/10/10`
-- `exclude_sic_codes` 若未显式设置，代码默认值为 `["6770"]`
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
+| `max_workers` | `8` | 并发线程数。 |
+| `chunk_size` | `200` | 拉取数据的批处理大小。 |
+| `request_timeout_sec` | `20` | HTTP 请求超时秒数。 |
+| `alpaca_max_requests_per_sec` | `2.5` | Alpaca 限速上限。 |
+| `sec_max_requests_per_sec` | `5.0` | SEC 限速上限。 |
+| `alpaca_cache_enabled` | `true` | 是否启用 Alpaca 本地缓存。 |
+| `alpaca_cache_ttl_assets_sec` | `21600` | `assets` 缓存 TTL（秒）。 |
+| `alpaca_cache_ttl_snapshots_sec` | `120` | `snapshots` 缓存 TTL（秒）。 |
+| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。 |
+| `cache_dir` | `cache` | 缓存目录（默认值来自代码）。 |
+| `output_dir` | `outputs` | 输出目录（默认值来自代码）。 |
 
-### 6.3 常用可调参数组
+#### 6.2.2 Watchlist 与 AI 关联评分
 
-- Universe 与流动性：`min_price`、`min_dollar_volume`、`enabled_exchanges`
-- 估值与折价：`min_ps_discount`、`min_pe_discount`、`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`
-- 质量与现金流：`min_fundamental_quality_score`、`min_interest_coverage`、`min_ocf_to_net_income`
-- 价格维度：`min_drawdown_from_52w_high`、`max_price_to_sma200`、`max_60d_volatility`
-- AI 关联：`min_ai_link_score`、`ai_link_*`
-- 输出与性能：`max_workers`、`chunk_size`、`alpaca_max_requests_per_sec`、`sec_max_requests_per_sec`
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `watchlist_csv_path` | `data/ai_watchlist.csv` | 扫描输入 watchlist 路径。 |
+| `watchlist_fetch_timeout_sec` | `20` | watchlist 刷新脚本网络超时。 |
+| `watchlist_core_etfs` | 15 个 ETF | 生成 `core_ai` 池的 ETF 源。 |
+| `watchlist_enabler_etfs` | 16 个 ETF | 生成 `ai_enabler` 池的 ETF 源。 |
+| `watchlist_peripheral_etfs` | 12 个 ETF | 生成 `ai_peripheral` 池的 ETF 源。 |
+| `ai_link_benchmark_etfs` | 8 个 ETF | 计算 `ai_market_link_score` 的基准篮子。 |
+| `ai_link_etf_count_saturation` | `4` | ETF 计数映射到 `ai_etf_consensus_score` 的饱和值。 |
+| `ai_link_disclosure_keyword_cap` | `6` | 披露关键词计分上限。 |
+| `ai_link_market_return_tolerance_20d` | `0.25` | 20 日收益与基准偏离容忍度。 |
+| `ai_link_market_return_tolerance_60d` | `0.4` | 60 日收益与基准偏离容忍度。 |
+| `ai_link_backlog_ratio_cap` | `0.2` | backlog 信号归一化上限。 |
+
+#### 6.2.3 Universe 与流动性门槛
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `enabled_exchanges` | `NYSE,NASDAQ,AMEX,ARCA,BATS` | 交易所白名单。 |
+| `min_price` | `1.0` | 最低股价。 |
+| `min_market_cap` | `300000000` | 最低市值。 |
+| `max_market_cap` | `null` | 最高市值（`null` 为不限制）。 |
+| `min_dollar_volume` | `2000000` | 当日最低成交额。 |
+| `min_avg_dollar_volume_20d` | `null` | 20 日平均成交额下限（可选）。 |
+
+#### 6.2.4 财务口径与正值开关
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `use_ttm_metrics` | `true` | 优先使用 TTM 指标。 |
+| `use_adjusted_quality_metrics` | `true` | 质量与盈利相关指标使用“调整后”口径。 |
+| `nonrecurring_addback_revenue_cap` | `0.25` | 非经常损益回补上限（占营收比例上限）。 |
+| `require_positive_revenue` | `true` | 收入必须为正。 |
+| `require_positive_net_income` | `false` | 净利润必须为正（当前关闭）。 |
+| `require_positive_operating_cash_flow` | `true` | 经营现金流必须为正。 |
+| `require_positive_free_cash_flow` | `false` | 自由现金流必须为正（当前关闭）。 |
+| `require_positive_ebit` | `true` | EBIT 必须为正。 |
+
+#### 6.2.5 价值、质量与风险硬过滤阈值
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `min_fundamental_quality_score` | `0.56` | 质量综合分下限。 |
+| `min_revenue` | `10000000` | 收入下限。 |
+| `min_net_income` | `-20000000` | 净利润下限（允许小幅亏损）。 |
+| `min_operating_cash_flow` | `0.0` | 经营现金流下限。 |
+| `min_free_cash_flow` | `-100000000` | 自由现金流下限。 |
+| `min_ebit` | `0.0` | EBIT 下限。 |
+| `min_net_margin` | `null` | 净利率下限（可选）。 |
+| `max_ps` / `max_pe` | `null` / `null` | 绝对 PS/PE 上限（可选）。 |
+| `max_ev_to_ebit` | `38.0` | EV/EBIT 上限。 |
+| `min_fcf_yield` | `0.005` | FCF Yield 下限。 |
+| `min_ps_discount` | `0.15` | 相对行业 PS 折价下限。 |
+| `min_pe_discount` | `0.10` | 相对行业 PE 折价下限。 |
+| `max_ps_percentile_in_sic` | `0.6` | SIC 内 PS 分位上限。 |
+| `max_pe_percentile_in_sic` | `0.6` | SIC 内 PE 分位上限。 |
+| `own_history_valuation_window_days` | `720` | 历史估值分位回看窗口（天）。 |
+| `max_ps_hist_percentile` | `0.7` | 个股历史 PS 分位上限。 |
+| `max_pe_hist_percentile` | `0.7` | 个股历史 PE 分位上限。 |
+| `min_revenue_yoy` | `-0.1` | 营收同比下限。 |
+| `min_net_income_yoy` | `-0.25` | 净利润同比下限。 |
+| `max_net_debt_to_ebitda` | `4.0` | 杠杆上限。 |
+| `min_interest_coverage` | `2.0` | 利息覆盖倍数下限。 |
+| `max_current_debt_ratio` | `0.75` | 流动负债占流动资产比上限。 |
+| `min_current_ratio` | `1.0` | 流动比率下限。 |
+| `min_ocf_to_net_income` | `0.7` | 现金利润匹配度下限。 |
+| `max_accrual_ratio` | `0.3` | 应计比率上限。 |
+| `max_receivables_growth_gap` | `0.55` | 应收增速相对营收增速的偏离上限。 |
+| `max_inventory_growth_gap` | `0.9` | 存货增速相对营收增速的偏离上限。 |
+| `max_shares_yoy` | `0.08` | 股本同比稀释上限。 |
+| `min_expectation_proxy` | `-0.2` | 预期代理指标下限。 |
+| `min_cycle_proxy` | `null` | 周期代理指标下限（可选）。 |
+
+#### 6.2.6 价格行为与波动阈值
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `price_lookback_days` | `420` | 价格特征计算回看天数。 |
+| `min_drawdown_from_52w_high` | `null` | 52 周高点回撤下限。 |
+| `max_range_position_52w` | `null` | 52 周区间位置上限。 |
+| `max_price_to_sma200` | `null` | 价格/SMA200 上限。 |
+| `min_days_below_sma200` | `5` | 连续低于 SMA200 的最少天数。 |
+| `min_return_20d` / `min_return_60d` | `null` / `null` | 20/60 日收益下限。 |
+| `max_20d_return` | `0.18` | 20 日收益上限（防短期过热）。 |
+| `max_60d_volatility` | `0.85` | 60 日波动率上限。 |
+| `min_drawdown_percentile` | `null` | 回撤分位下限（横截面）。 |
+| `min_avg_dollar_volume_20d_percentile` | `null` | 流动性分位下限（横截面）。 |
+| `max_60d_volatility_percentile` | `null` | 波动率分位上限（横截面）。 |
+
+#### 6.2.7 可交易性、分散化、评分稳健性
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `assumed_position_usd` | `250000` | 估算冲击成本的单票仓位。 |
+| `max_adv_participation` | `0.05` | 交易参与度（仓位/ADV）上限。 |
+| `max_estimated_slippage_bps` | `45.0` | 估算滑点上限。 |
+| `max_per_sector_per_list` | `3` | 单行业在单清单中的上限。 |
+| `max_per_watchlist_etf_source_per_list` | `null` | 单 ETF 来源上限（可选）。 |
+| `score_winsor_lower_q` | `0.05` | 打分 winsor 下分位。 |
+| `score_winsor_upper_q` | `0.95` | 打分 winsor 上分位。 |
+| `score_penalty_overvaluation` | `0.2` | 高估惩罚系数。 |
+| `score_penalty_deterioration` | `0.2` | 基本面恶化惩罚系数。 |
+
+#### 6.2.8 覆盖率模式、去重与输出数量
+
+| 参数 | 默认值（production） | 作用 |
+|---|---:|---|
+| `metric_hard_filter_coverage_mode` | `balanced` | 硬过滤覆盖率模式：`high_coverage_only` / `balanced` / `all_metrics`。 |
+| `force_hard_filter_low_coverage_metrics` | `false` | 是否将低覆盖指标强制纳入硬过滤。 |
+| `low_coverage_soft_score_weights` | `{current_debt_ratio_low:0.03, inventory_growth_gap_low:0.03}` | 低覆盖指标默认作为软约束时的加权。 |
+| `require_channel_bucket_match` | `true` | 是否要求符号与通道 bucket 匹配。 |
+| `enforce_unique_symbol_per_list` | `false` | 单清单跨通道是否去重。 |
+| `enforce_unique_symbol_across_lists` | `false` | 三清单之间是否去重。 |
+| `exclude_sic_codes` | `["6770"]` | 按 SIC 代码排除。 |
+| `top_n_per_channel_low_value` | `10` | `low_value` 每通道输出上限。 |
+| `top_n_per_channel_trend` | `10` | `industry_trend` 每通道输出上限。 |
+| `top_n_per_channel_momentum` | `10` | `momentum` 每通道输出上限。 |
+
+#### 6.2.9 `triage_rules` 分层规则
+
+`triage_rules` 仅作用于 `low_value` 清单，结构如下：
+- `keep.<channel>.min_composite_score`
+- `keep.<channel>.min_ps_discount`
+- `keep.<channel>.min_pe_discount`
+- `drop.max_composite_score`
+- `drop.require_both_value_premium`
+
+作用：在通过硬过滤后，将 `low_value` 进一步标记为 `keep/watch/drop`，用于人工复核优先级。
+
+### 6.3 通道参数（`channel_profiles.<channel>`）
+
+每个通道（`core_ai`、`ai_enabler`、`ai_peripheral`）都可覆盖以下参数：
+
+- 与全局同名的门槛：`min_ai_link_score`、`min_ps_discount`、`min_pe_discount`、`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`、`max_ev_to_ebit`、`min_fcf_yield`、`min_revenue_yoy`、`min_net_income_yoy`、`min_fundamental_quality_score`、`min_net_margin`、`min_avg_dollar_volume_20d`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`min_return_20d`、`min_return_60d`、`max_20d_return`、`max_60d_volatility`、`min_drawdown_percentile`、`min_avg_dollar_volume_20d_percentile`、`max_60d_volatility_percentile`。
+- 专业质量过滤：`max_net_debt_to_ebitda`、`min_interest_coverage`、`max_current_debt_ratio`、`min_current_ratio`、`min_ocf_to_net_income`、`max_accrual_ratio`、`max_receivables_growth_gap`、`max_inventory_growth_gap`、`max_shares_yoy`、`max_ps_hist_percentile`、`max_pe_hist_percentile`、`min_expectation_proxy`、`min_cycle_proxy`、`max_adv_participation`、`max_estimated_slippage_bps`。
+- 低覆盖指标硬过滤开关：`hard_filter_current_debt_ratio`、`hard_filter_inventory_growth_gap`。
+- 通道约束：`require_channel_bucket_match`、`min_watchlist_etf_count`。
+- 打分权重：`score_weights`（`low_value` 使用）。
+
+`industry_trend` 额外支持：
+- `trend_min_watchlist_etf_count`
+- `trend_min_return_60d`
+- `trend_max_60d_volatility`
+- `trend_min_avg_dollar_volume_20d`
+- `trend_score_weights`
+
+`momentum` 额外支持：
+- `momentum_min_return_20d`
+- `momentum_min_return_60d`
+- `momentum_min_price_to_sma200`
+- `momentum_max_drawdown_from_52w_high`
+- `momentum_max_60d_volatility`
+- `momentum_min_avg_dollar_volume_20d`
+- `momentum_min_watchlist_etf_count`
+- `momentum_score_weights`
+
+### 6.4 阈值调节方向（如何改参数）
+
+- 提高 `min_*`：更严格，入选数量通常减少。
+- 降低 `min_*`：更宽松，入选数量通常增加。
+- 降低 `max_*`：更严格，入选数量通常减少。
+- 提高 `max_*`：更宽松，入选数量通常增加。
+- 对 `_percentile` 参数：越接近 `0` 越严格（要求越便宜/更低波动分位）。
+- 参数设为 `null`：关闭该条硬过滤。
+- `metric_hard_filter_coverage_mode` 从 `high_coverage_only -> balanced -> all_metrics`：硬过滤覆盖指标逐步增加、淘汰会更严格。
+
+### 6.5 配置示例（按通道覆盖）
+
+```json
+{
+  "min_market_cap": 500000000.0,
+  "max_ev_to_ebit": 35.0,
+  "channel_profiles": {
+    "core_ai": {
+      "min_ai_link_score": 0.45,
+      "max_ps_hist_percentile": 0.65,
+      "trend_min_return_60d": -0.03
+    },
+    "ai_enabler": {
+      "min_ai_link_score": 0.33,
+      "min_ps_discount": 0.03,
+      "momentum_min_return_20d": 0.035
+    }
+  }
+}
+```
+
+上例中，`core_ai.max_ev_to_ebit` 若未显式指定，将继承全局 `max_ev_to_ebit=35.0`。
 
 ## 7. 运行参数
 
