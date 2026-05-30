@@ -427,7 +427,7 @@ class ScanConfig:
     max_estimated_slippage_bps: float | None = 40.0
     max_per_sector_per_list: int | None = 3
     max_per_watchlist_etf_source_per_list: int | None = None
-    metric_hard_filter_coverage_mode: str = "high_coverage_only"
+    metric_hard_filter_coverage_mode: str = "balanced"
     force_hard_filter_low_coverage_metrics: bool = False
     low_coverage_soft_score_weights: dict[str, float] = field(
         default_factory=default_low_coverage_soft_score_weights
@@ -735,6 +735,95 @@ class AlpacaClient:
                 self.monitor.record_cache("alpaca", hit=False)
             return None
 
+    def _load_cache_stale(self, namespace: str, key_payload: dict[str, Any]) -> Any | None:
+        if not self.cache_enabled:
+            return None
+        cache_path = self._cache_file(namespace, key_payload)
+        if not cache_path.exists():
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=False)
+            return None
+        try:
+            payload = json.loads(cache_path.read_text())
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=True)
+            return payload
+        except Exception:
+            if self.monitor:
+                self.monitor.record_cache("alpaca", hit=False)
+            return None
+
+    def _load_snapshots_from_any_cache(self, symbols: list[str]) -> dict[str, Any]:
+        if not self.cache_enabled:
+            return {}
+        remaining = set(str(s).upper() for s in symbols if s)
+        if not remaining:
+            return {}
+        out: dict[str, Any] = {}
+        for path in sorted(self.cache_dir.glob("snapshots_*.json")):
+            if not remaining:
+                break
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            hit = False
+            for symbol in list(remaining):
+                if symbol in payload:
+                    out[symbol] = payload[symbol]
+                    remaining.discard(symbol)
+                    hit = True
+            if hit and self.monitor:
+                self.monitor.record_cache("alpaca", hit=True)
+        if out:
+            return out
+        if self.monitor:
+            self.monitor.record_cache("alpaca", hit=False)
+        return {}
+
+    def _load_bars_from_any_cache(self, symbols: list[str], start_iso: str) -> dict[str, list[dict[str, Any]]]:
+        if not self.cache_enabled:
+            return {}
+        remaining = set(str(s).upper() for s in symbols if s)
+        if not remaining:
+            return {}
+        out: dict[str, list[dict[str, Any]]] = {}
+        start_key = str(start_iso or "")
+        for path in sorted(self.cache_dir.glob("bars_*.json")):
+            if not remaining:
+                break
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            hit = False
+            for symbol in list(remaining):
+                rows = payload.get(symbol)
+                if not isinstance(rows, list):
+                    continue
+                filtered: list[dict[str, Any]] = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    ts = str(row.get("t") or "")
+                    if start_key and ts and ts < start_key:
+                        continue
+                    filtered.append(row)
+                out[symbol] = filtered if filtered else rows
+                remaining.discard(symbol)
+                hit = True
+            if hit and self.monitor:
+                self.monitor.record_cache("alpaca", hit=True)
+        if out:
+            return out
+        if self.monitor:
+            self.monitor.record_cache("alpaca", hit=False)
+        return {}
+
     def _save_cache(self, namespace: str, key_payload: dict[str, Any], payload: Any) -> None:
         if not self.cache_enabled:
             return
@@ -771,10 +860,16 @@ class AlpacaClient:
         cached = self._load_cache("assets", cache_key, self.cache_ttl_assets_sec)
         if isinstance(cached, list):
             return cached
-        resp = self._get(url, params=params)
-        payload = resp.json()
-        self._save_cache("assets", cache_key, payload)
-        return payload
+        try:
+            resp = self._get(url, params=params)
+            payload = resp.json()
+            self._save_cache("assets", cache_key, payload)
+            return payload
+        except Exception:
+            stale = self._load_cache_stale("assets", cache_key)
+            if isinstance(stale, list):
+                return stale
+            raise
 
     def get_snapshots(self, symbols: list[str], chunk_size: int) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -787,19 +882,30 @@ class AlpacaClient:
             }
             payload = self._load_cache("snapshots", cache_key, self.cache_ttl_snapshots_sec)
             if not isinstance(payload, dict):
-                url = f"{self.data_endpoint}/v2/stocks/snapshots"
-                params = {"symbols": ",".join(batch), "feed": self.feed}
-                resp = self._get(url, params=params)
-                raw = resp.json()
-                # Alpaca may return either {"snapshots": {...}} or a top-level
-                # {SYMBOL: snapshot} mapping depending on endpoint version.
-                if isinstance(raw, dict) and "snapshots" in raw:
-                    payload = raw.get("snapshots", {})
-                elif isinstance(raw, dict):
-                    payload = raw
-                else:
-                    payload = {}
-                self._save_cache("snapshots", cache_key, payload)
+                try:
+                    url = f"{self.data_endpoint}/v2/stocks/snapshots"
+                    params = {"symbols": ",".join(batch), "feed": self.feed}
+                    resp = self._get(url, params=params)
+                    raw = resp.json()
+                    # Alpaca may return either {"snapshots": {...}} or a top-level
+                    # {SYMBOL: snapshot} mapping depending on endpoint version.
+                    if isinstance(raw, dict) and "snapshots" in raw:
+                        payload = raw.get("snapshots", {})
+                    elif isinstance(raw, dict):
+                        payload = raw
+                    else:
+                        payload = {}
+                    self._save_cache("snapshots", cache_key, payload)
+                except Exception:
+                    stale = self._load_cache_stale("snapshots", cache_key)
+                    if isinstance(stale, dict):
+                        payload = stale
+                    else:
+                        any_cache = self._load_snapshots_from_any_cache(batch)
+                        if any_cache:
+                            payload = any_cache
+                        else:
+                            raise
             result.update(payload)
             time.sleep(0.05)
         return result
@@ -845,30 +951,45 @@ class AlpacaClient:
                 continue
 
             batch_bars: dict[str, list[dict[str, Any]]] = {}
-            page_token: str | None = None
-            while True:
-                params: dict[str, Any] = {
-                    "symbols": ",".join(batch),
-                    "timeframe": "1Day",
-                    "start": start_iso,
-                    "limit": 10000,
-                    "feed": self.feed,
-                    "adjustment": "raw",
-                }
-                if page_token:
-                    params["page_token"] = page_token
-                url = f"{self.data_endpoint}/v2/stocks/bars"
-                resp = self._get(url, params=params)
-                payload = resp.json()
-                bars = payload.get("bars", {}) if isinstance(payload, dict) else {}
-                if isinstance(bars, dict):
-                    for symbol, rows in bars.items():
-                        if not isinstance(rows, list):
-                            continue
-                        batch_bars.setdefault(symbol, []).extend(rows)
-                page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
-                if not page_token:
-                    break
+            try:
+                page_token: str | None = None
+                while True:
+                    params: dict[str, Any] = {
+                        "symbols": ",".join(batch),
+                        "timeframe": "1Day",
+                        "start": start_iso,
+                        "limit": 10000,
+                        "feed": self.feed,
+                        "adjustment": "raw",
+                    }
+                    if page_token:
+                        params["page_token"] = page_token
+                    url = f"{self.data_endpoint}/v2/stocks/bars"
+                    resp = self._get(url, params=params)
+                    payload = resp.json()
+                    bars = payload.get("bars", {}) if isinstance(payload, dict) else {}
+                    if isinstance(bars, dict):
+                        for symbol, rows in bars.items():
+                            if not isinstance(rows, list):
+                                continue
+                            batch_bars.setdefault(symbol, []).extend(rows)
+                    page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+                    if not page_token:
+                        break
+            except Exception:
+                stale = self._load_cache_stale("bars", cache_key)
+                if isinstance(stale, dict):
+                    for symbol, rows in stale.items():
+                        if isinstance(rows, list):
+                            batch_bars.setdefault(symbol, []).extend(rows)
+                else:
+                    any_cache = self._load_bars_from_any_cache(batch, start_iso)
+                    if any_cache:
+                        for symbol, rows in any_cache.items():
+                            if isinstance(rows, list):
+                                batch_bars.setdefault(symbol, []).extend(rows)
+                    else:
+                        raise
             self._save_cache("bars", cache_key, batch_bars)
             for symbol, rows in batch_bars.items():
                 bars_by_symbol.setdefault(symbol, []).extend(rows)
@@ -908,21 +1029,86 @@ class SecClient:
                 self.monitor.record_exception("sec", exc)
             raise
 
+    def _ticker_mapping_from_cached_submissions(self) -> pd.DataFrame:
+        rows: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for path in sorted(self.cache_dir.glob("submissions_*.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            cik_raw = payload.get("cik")
+            cik = ""
+            if cik_raw is not None:
+                cik = str(cik_raw).strip()
+            if not cik:
+                stem = path.stem
+                if stem.startswith("submissions_"):
+                    cik = stem.replace("submissions_", "", 1).strip()
+            if not cik:
+                continue
+            if cik.isdigit():
+                cik = cik.zfill(10)
+            company_name = str(payload.get("name") or "").strip()
+            tickers = payload.get("tickers")
+            candidates: list[str] = []
+            if isinstance(tickers, list):
+                candidates = [str(t) for t in tickers]
+            else:
+                ticker = payload.get("ticker")
+                if ticker:
+                    candidates = [str(ticker)]
+            for ticker in candidates:
+                symbol = ticker.strip().upper()
+                if not symbol or not STANDARD_EQUITY_SYMBOL_PATTERN.match(symbol):
+                    continue
+                key = (symbol, cik)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "cik": cik,
+                        "company_name": company_name,
+                    }
+                )
+        if not rows:
+            return pd.DataFrame(columns=["symbol", "cik", "company_name"])
+        return pd.DataFrame(rows)
+
     def ticker_mapping(self) -> pd.DataFrame:
         url = "https://www.sec.gov/files/company_tickers.json"
-        resp = self._get(url)
-        resp.raise_for_status()
-        raw = resp.json()
-        rows = []
-        for row in raw.values():
-            rows.append(
-                {
-                    "symbol": row["ticker"].upper(),
-                    "cik": str(row["cik_str"]).zfill(10),
-                    "company_name": row["title"],
-                }
-            )
-        return pd.DataFrame(rows)
+        primary_exc: Exception | None = None
+        try:
+            resp = self._get(url)
+            resp.raise_for_status()
+            raw = resp.json()
+            rows = []
+            for row in raw.values():
+                rows.append(
+                    {
+                        "symbol": row["ticker"].upper(),
+                        "cik": str(row["cik_str"]).zfill(10),
+                        "company_name": row["title"],
+                    }
+                )
+            out = pd.DataFrame(rows)
+            if not out.empty:
+                return out
+        except Exception as exc:
+            primary_exc = exc
+
+        fallback = self._ticker_mapping_from_cached_submissions()
+        if not fallback.empty:
+            return fallback
+        if primary_exc is not None:
+            raise RuntimeError(
+                "Failed to load SEC ticker mapping from both network and local submissions cache."
+            ) from primary_exc
+        return fallback
 
     def get_submissions(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"submissions_{cik}.json"
@@ -1085,6 +1271,211 @@ def pick_latest_and_prev_ttm(
     latest_ttm = float(sum(v for _, v, _ in values[:4]))
     prev_ttm = float(sum(v for _, v, _ in values[4:8])) if len(values) >= 8 else None
     return latest_ttm, prev_ttm
+
+
+def build_ttm_history(
+    companyfacts: dict[str, Any],
+    tags: list[str],
+    unit: str,
+    max_points: int = 16,
+) -> list[tuple[str, float]]:
+    periodic_values = pick_facts_with_forms(companyfacts, tags, unit, QUARTERLY_FORMS)
+    quarterly: list[tuple[pd.Timestamp, float]] = []
+    for end, val, form in periodic_values:
+        if form in ANNUAL_FORMS:
+            continue
+        end_dt = pd.to_datetime(end, errors="coerce", utc=True)
+        if pd.isna(end_dt):
+            continue
+        quarterly.append((end_dt, float(val)))
+    quarterly.sort(key=lambda x: x[0])
+
+    out: list[tuple[str, float]] = []
+    if len(quarterly) >= 4:
+        for idx in range(3, len(quarterly)):
+            end_dt = quarterly[idx][0]
+            ttm = float(sum(quarterly[j][1] for j in range(idx - 3, idx + 1)))
+            out.append((end_dt.strftime("%Y-%m-%d"), ttm))
+        return out[-int(max(1, max_points)) :]
+
+    annual_values = pick_facts_with_forms(companyfacts, tags, unit, ANNUAL_FORMS)
+    annual: list[tuple[pd.Timestamp, float]] = []
+    for end, val, _ in annual_values:
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if pd.isna(end_dt):
+            continue
+        annual.append((end_dt, float(val)))
+    annual.sort(key=lambda x: x[0])
+    for end_dt, value in annual:
+        out.append((end_dt.strftime("%Y-%m-%d"), float(value)))
+    return out[-int(max(1, max_points)) :]
+
+
+def build_fact_history(
+    companyfacts: dict[str, Any],
+    tags: list[str],
+    unit: str,
+    allowed_forms: set[str],
+    max_points: int = 24,
+) -> list[tuple[str, float]]:
+    values = pick_facts_with_forms(companyfacts, tags, unit, allowed_forms)
+    out: list[tuple[pd.Timestamp, float]] = []
+    for end, val, _ in values:
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if pd.isna(end_dt):
+            continue
+        out.append((end_dt, float(val)))
+    out.sort(key=lambda x: x[0])
+    return [
+        (end_dt.strftime("%Y-%m-%d"), float(value))
+        for end_dt, value in out[-int(max(1, max_points)) :]
+    ]
+
+
+def serialize_history_pairs(pairs: list[tuple[str, float]]) -> str | None:
+    if not pairs:
+        return None
+    payload = [{"end": end, "value": float(value)} for end, value in pairs]
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def parse_history_pairs(raw: Any) -> list[tuple[pd.Timestamp, float]]:
+    if raw is None:
+        return []
+    if isinstance(raw, float) and np.isnan(raw):
+        return []
+    data: Any
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            data = json.loads(text)
+        except Exception:
+            return []
+    elif isinstance(raw, list):
+        data = raw
+    else:
+        return []
+
+    out: list[tuple[pd.Timestamp, float]] = []
+    for item in data:
+        end: Any = None
+        value: Any = None
+        if isinstance(item, dict):
+            end = item.get("end")
+            value = item.get("value")
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            end, value = item[0], item[1]
+        end_dt = pd.to_datetime(end, errors="coerce", utc=True)
+        if pd.isna(end_dt):
+            continue
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(val):
+            continue
+        out.append((end_dt.normalize(), val))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def extract_close_history_from_bars(bars: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
+    out: list[tuple[pd.Timestamp, float]] = []
+    for row in bars:
+        ts = pd.to_datetime(row.get("t"), errors="coerce", utc=True)
+        if pd.isna(ts):
+            continue
+        value = row.get("c")
+        try:
+            close = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(close) or close <= 0:
+            continue
+        out.append((ts.normalize(), close))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def lookup_value_on_or_before(
+    points: list[tuple[pd.Timestamp, float]], target_ts: pd.Timestamp
+) -> float | None:
+    if not points:
+        return None
+    value: float | None = None
+    for ts, val in points:
+        if ts <= target_ts:
+            value = float(val)
+        else:
+            break
+    return value
+
+
+def lookup_close_on_or_before(
+    closes: list[tuple[pd.Timestamp, float]],
+    target_ts: pd.Timestamp,
+    max_gap_days: int = 14,
+) -> float | None:
+    if not closes:
+        return None
+    max_gap = max(0, int(max_gap_days))
+    for ts, close in reversed(closes):
+        if ts <= target_ts:
+            if max_gap <= 0:
+                return float(close)
+            gap_days = int((target_ts - ts).days)
+            if gap_days <= max_gap:
+                return float(close)
+            return None
+    return None
+
+
+def compute_historical_valuation_percentile(
+    current_multiple: float | None,
+    closes: list[tuple[pd.Timestamp, float]],
+    denominator_history: list[tuple[pd.Timestamp, float]],
+    shares_history: list[tuple[pd.Timestamp, float]],
+    current_shares: float | None,
+    window_days: int,
+    min_observations: int = 3,
+) -> tuple[float | None, int]:
+    if current_multiple is None or not np.isfinite(current_multiple) or current_multiple <= 0:
+        return None, 0
+    if not closes or not denominator_history:
+        return None, 0
+
+    latest_ts = closes[-1][0]
+    start_ts = latest_ts - pd.Timedelta(days=max(30, int(window_days)))
+    samples: list[float] = []
+
+    for end_ts, denom in denominator_history:
+        if end_ts < start_ts:
+            continue
+        if not np.isfinite(denom) or denom <= 0:
+            continue
+        close = lookup_close_on_or_before(closes, end_ts, max_gap_days=14)
+        if close is None:
+            continue
+        shares = lookup_value_on_or_before(shares_history, end_ts)
+        if shares is None and current_shares is not None and np.isfinite(current_shares):
+            shares = float(current_shares)
+        if shares is None or not np.isfinite(shares) or shares <= 0:
+            continue
+        multiple = float(close) * float(shares) / float(denom)
+        if np.isfinite(multiple) and multiple > 0:
+            samples.append(multiple)
+
+    obs = len(samples)
+    if obs < int(max(1, min_observations)):
+        return None, obs
+
+    arr = np.asarray(samples, dtype="float64")
+    pct = float(np.mean(arr <= float(current_multiple)))
+    if not np.isfinite(pct):
+        return None, obs
+    return round(pct, 6), obs
 
 
 def pick_latest_and_prev_with_forms(
@@ -1595,7 +1986,9 @@ def robust_normalize_score(series: pd.Series, lower_q: float, upper_q: float) ->
         return pd.Series([0.5] * len(x), index=x.index, dtype="float64")
     z = (clipped - mean) / std
     # Map z-score to [0,1], reducing outlier dominance while preserving order.
-    return 1.0 / (1.0 + np.exp(-z))
+    norm = 1.0 / (1.0 + np.exp(-z))
+    # Missing inputs should be neutral, not NaN, to keep composite scores stable.
+    return pd.to_numeric(norm, errors="coerce").fillna(0.5)
 
 
 def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
@@ -2199,6 +2592,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
 
     shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
+    revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
+    net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
+    shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
     shares_form = "periodic" if shares is not None else None
     cash_and_equivalents, _ = pick_latest_with_forms(CASH_AND_EQUIVALENTS_TAGS, "USD")
     debt_long_term, _ = pick_latest_with_forms(LONG_TERM_DEBT_TAGS, "USD")
@@ -2369,6 +2765,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "net_income": net_income,
         "net_income_form": net_income_form,
         "shares_outstanding": shares,
+        "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
+        "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
+        "shares_history_json": serialize_history_pairs(shares_history),
         "shares_form": shares_form,
         "operating_cash_flow": ocf,
         "operating_cash_flow_form": operating_cash_flow_form,
@@ -2446,6 +2845,9 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income": None,
                         "net_income_form": None,
                         "shares_outstanding": None,
+                        "revenue_ttm_history_json": None,
+                        "net_income_ttm_history_json": None,
+                        "shares_history_json": None,
                         "shares_form": None,
                         "operating_cash_flow": None,
                         "operating_cash_flow_form": None,
@@ -2982,8 +3384,15 @@ def build_filter_steps(
 
     steps.extend(
         [
-            ("min_ps_discount", lambda frame: frame["ps_discount"] >= cp["min_ps_discount"]),
-            ("min_pe_discount", lambda frame: frame["pe_discount"] >= cp["min_pe_discount"]),
+            (
+                "min_value_discount_any",
+                lambda frame: (
+                    pd.to_numeric(frame["ps_discount"], errors="coerce").fillna(-np.inf) >= cp["min_ps_discount"]
+                )
+                | (
+                    pd.to_numeric(frame["pe_discount"], errors="coerce").fillna(-np.inf) >= cp["min_pe_discount"]
+                ),
+            ),
             (
                 "max_ps_percentile_in_sic",
                 lambda frame: pd.to_numeric(frame["ps_percentile_in_sic"], errors="coerce").fillna(np.inf)
@@ -3627,9 +4036,18 @@ def assign_triage_label(row: pd.Series, triage_rules: dict[str, dict[str, Any]])
     keep_cfg = triage_rules.get("keep", {}).get(channel, {})
     drop_cfg = triage_rules.get("drop", {})
 
-    comp = float(row.get("composite_score", 0.0) or 0.0)
-    psd = float(row.get("ps_discount", 0.0) or 0.0)
-    ped = float(row.get("pe_discount", 0.0) or 0.0)
+    def to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not np.isfinite(out):
+            return default
+        return out
+
+    comp = to_float(row.get("composite_score", 0.0), default=0.0)
+    psd = to_float(row.get("ps_discount", 0.0), default=0.0)
+    ped = to_float(row.get("pe_discount", 0.0), default=0.0)
 
     if keep_cfg:
         keep_ok = comp >= float(keep_cfg.get("min_composite_score", 0.5))
@@ -3639,6 +4057,8 @@ def assign_triage_label(row: pd.Series, triage_rules: dict[str, dict[str, Any]])
             return "keep"
 
     drop_by_score = comp <= float(drop_cfg.get("max_composite_score", 0.35))
+    if drop_by_score and bool(drop_cfg.get("require_both_value_premium", False)):
+        drop_by_score = (psd <= 0.0) and (ped <= 0.0)
     if drop_by_score:
         return "drop"
     return "watch"
@@ -3935,11 +4355,6 @@ def run_scan(
     for row in df.itertuples(index=False):
         symbol_bars = bars_map.get(row.symbol, [])
         features = price_dimension_from_bars(row.price, symbol_bars)
-        hist_pct = compute_price_history_percentile(
-            symbol_bars, config.own_history_valuation_window_days
-        )
-        features["ps_hist_percentile"] = hist_pct
-        features["pe_hist_percentile"] = hist_pct
         price_feature_rows.append({"symbol": row.symbol, **features})
     df_price_features = pd.DataFrame(price_feature_rows)
     df = df.merge(df_price_features, on="symbol", how="left")
@@ -3950,6 +4365,19 @@ def run_scan(
     log_status(started_at, "INFO", "SEC fundamentals merge complete.")
 
     log_status(started_at, "INFO", "[4/6] Computing valuation and watchlist funnel.")
+    for col, default in [
+        ("ps_hist_percentile", np.nan),
+        ("pe_hist_percentile", np.nan),
+        ("ps_hist_observation_count", np.nan),
+        ("pe_hist_observation_count", np.nan),
+        ("ps_hist_percentile_source", "insufficient_history"),
+        ("pe_hist_percentile_source", "insufficient_history"),
+        ("revenue_ttm_history_json", None),
+        ("net_income_ttm_history_json", None),
+        ("shares_history_json", None),
+    ]:
+        if col not in df.columns:
+            df[col] = default
     for col in [
         "price",
         "dollar_volume",
@@ -4002,6 +4430,8 @@ def run_scan(
         "ai_backlog_signal",
         "ps_hist_percentile",
         "pe_hist_percentile",
+        "ps_hist_observation_count",
+        "pe_hist_observation_count",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["market_cap"] = df["price"] * df["shares_outstanding"]
@@ -4016,7 +4446,79 @@ def run_scan(
     df["ev_to_ebit"] = safe_divide(df["enterprise_value"], df[ebit_col])
     df["fcf_yield"] = safe_divide(df["free_cash_flow"], df["market_cap"])
     df["net_margin"] = safe_divide(df[earnings_col], df["revenue"])
-    df.loc[pd.to_numeric(df[earnings_col], errors="coerce").fillna(0) <= 0, "pe_hist_percentile"] = np.nan
+    ps_hist_values: list[float | None] = []
+    pe_hist_values: list[float | None] = []
+    ps_hist_obs: list[int] = []
+    pe_hist_obs: list[int] = []
+    ps_hist_sources: list[str] = []
+    pe_hist_sources: list[str] = []
+    for row in df.itertuples(index=False):
+        closes = extract_close_history_from_bars(bars_map.get(row.symbol, []))
+        revenue_hist = parse_history_pairs(getattr(row, "revenue_ttm_history_json", None))
+        net_income_hist = parse_history_pairs(getattr(row, "net_income_ttm_history_json", None))
+        shares_hist = parse_history_pairs(getattr(row, "shares_history_json", None))
+
+        current_shares_raw = getattr(row, "shares_outstanding", None)
+        current_shares = None
+        try:
+            if current_shares_raw is not None:
+                current_shares = float(current_shares_raw)
+        except (TypeError, ValueError):
+            current_shares = None
+        if current_shares is not None and (not np.isfinite(current_shares) or current_shares <= 0):
+            current_shares = None
+
+        current_ps_raw = getattr(row, "ps", None)
+        current_ps = None
+        try:
+            if current_ps_raw is not None:
+                current_ps = float(current_ps_raw)
+        except (TypeError, ValueError):
+            current_ps = None
+        if current_ps is not None and (not np.isfinite(current_ps) or current_ps <= 0):
+            current_ps = None
+
+        current_pe_raw = getattr(row, "pe", None)
+        current_pe = None
+        try:
+            if current_pe_raw is not None:
+                current_pe = float(current_pe_raw)
+        except (TypeError, ValueError):
+            current_pe = None
+        if current_pe is not None and (not np.isfinite(current_pe) or current_pe <= 0):
+            current_pe = None
+
+        ps_hist_pct, ps_obs = compute_historical_valuation_percentile(
+            current_multiple=current_ps,
+            closes=closes,
+            denominator_history=revenue_hist,
+            shares_history=shares_hist,
+            current_shares=current_shares,
+            window_days=config.own_history_valuation_window_days,
+            min_observations=3,
+        )
+        pe_hist_pct, pe_obs = compute_historical_valuation_percentile(
+            current_multiple=current_pe,
+            closes=closes,
+            denominator_history=net_income_hist,
+            shares_history=shares_hist,
+            current_shares=current_shares,
+            window_days=config.own_history_valuation_window_days,
+            min_observations=3,
+        )
+        ps_hist_values.append(ps_hist_pct)
+        pe_hist_values.append(pe_hist_pct)
+        ps_hist_obs.append(int(ps_obs))
+        pe_hist_obs.append(int(pe_obs))
+        ps_hist_sources.append("valuation_history" if ps_hist_pct is not None else "insufficient_history")
+        pe_hist_sources.append("valuation_history" if pe_hist_pct is not None else "insufficient_history")
+
+    df["ps_hist_percentile"] = ps_hist_values
+    df["pe_hist_percentile"] = pe_hist_values
+    df["ps_hist_observation_count"] = ps_hist_obs
+    df["pe_hist_observation_count"] = pe_hist_obs
+    df["ps_hist_percentile_source"] = ps_hist_sources
+    df["pe_hist_percentile_source"] = pe_hist_sources
     df["expectation_proxy"] = (
         0.5 * pd.to_numeric(df["revenue_yoy"], errors="coerce").fillna(0)
         + 0.5 * pd.to_numeric(df[earnings_yoy_col], errors="coerce").fillna(0)
@@ -4197,6 +4699,9 @@ def run_scan(
 
     cols = [
         "channel",
+        "primary_channel",
+        "eligible_channels",
+        "channel_scores",
         "symbol",
         "name",
         "exchange",
@@ -4268,6 +4773,10 @@ def run_scan(
         "ai_link_score",
         "ps_hist_percentile",
         "pe_hist_percentile",
+        "ps_hist_observation_count",
+        "pe_hist_observation_count",
+        "ps_hist_percentile_source",
+        "pe_hist_percentile_source",
         "expectation_proxy",
         "cycle_proxy",
         "adv_participation",
@@ -4292,6 +4801,58 @@ def run_scan(
         "composite_score",
     ]
 
+    def attach_channel_membership_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.copy()
+        for col, default in [
+            ("eligible_channels", ""),
+            ("channel_scores", "{}"),
+            ("primary_channel", ""),
+        ]:
+            if col not in out.columns:
+                out[col] = default
+        if out.empty or "symbol" not in out.columns or "channel" not in out.columns:
+            return out
+
+        work = out.copy()
+        work["_symbol"] = work["symbol"].astype(str)
+        work["_channel"] = work["channel"].fillna("").astype(str)
+        work["_score"] = pd.to_numeric(work.get("composite_score"), errors="coerce")
+        work = work.sort_values(
+            by=["_symbol", "_score", "_channel"],
+            ascending=[True, False, True],
+        )
+
+        eligible_map: dict[str, str] = {}
+        scores_map: dict[str, str] = {}
+        primary_map: dict[str, str] = {}
+        for symbol, grp in work.groupby("_symbol", dropna=False):
+            if not symbol or symbol.lower() == "nan":
+                continue
+            channels: list[str] = []
+            score_dict: dict[str, float | None] = {}
+            for _, row in grp.iterrows():
+                channel = str(row.get("_channel", "") or "")
+                if not channel or channel in score_dict:
+                    continue
+                raw_score = row.get("_score", np.nan)
+                if pd.notna(raw_score) and np.isfinite(raw_score):
+                    score_dict[channel] = round(float(raw_score), 6)
+                else:
+                    score_dict[channel] = None
+                channels.append(channel)
+            if not channels:
+                continue
+            eligible_map[symbol] = ",".join(channels)
+            primary_map[symbol] = channels[0]
+            scores_map[symbol] = json.dumps(score_dict, ensure_ascii=False, separators=(",", ":"))
+
+        out["_symbol"] = out["symbol"].astype(str)
+        out["eligible_channels"] = out["_symbol"].map(eligible_map).fillna("")
+        out["channel_scores"] = out["_symbol"].map(scores_map).fillna("{}")
+        out["primary_channel"] = out["_symbol"].map(primary_map).fillna("")
+        out = out.drop(columns=["_symbol"], errors="ignore")
+        return out
+
     def ensure_export_columns(frame: pd.DataFrame) -> pd.DataFrame:
         out = frame.copy()
         for col in cols + ["triage_label"]:
@@ -4300,6 +4861,7 @@ def run_scan(
         return out
 
     ranked = apply_triage_labels(ranked, config.triage_rules)
+    ranked = attach_channel_membership_columns(ranked)
     if ranked.empty:
         ranked = pd.DataFrame(columns=cols + ["triage_label"])
     else:
@@ -4355,6 +4917,7 @@ def run_scan(
         industry_trend, removed = drop_symbols(industry_trend, low_symbols)
         log_status(started_at, "INFO", f"Industry-Trend cross-list dedupe removed: {removed}")
     industry_trend["triage_label"] = "trend"
+    industry_trend = attach_channel_membership_columns(industry_trend)
     if not industry_trend.empty:
         industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
     industry_trend = ensure_export_columns(industry_trend)
@@ -4412,6 +4975,7 @@ def run_scan(
         momentum, removed = drop_symbols(momentum, prior_symbols)
         log_status(started_at, "INFO", f"Momentum cross-list dedupe removed: {removed}")
     momentum["triage_label"] = "momentum"
+    momentum = attach_channel_membership_columns(momentum)
     if not momentum.empty:
         momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
     momentum = ensure_export_columns(momentum)

@@ -6,6 +6,7 @@ import copy
 import json
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -17,8 +18,23 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ai_value_scanner.scanner import (
+    AI_DISCLOSURE_KEYWORD_GROUPS,
     ANNUAL_FORMS,
+    ASSETS_CURRENT_TAGS,
+    BACKLOG_TAGS,
+    CAPEX_TAGS,
+    CASH_AND_EQUIVALENTS_TAGS,
+    CURRENT_DEBT_TAGS,
+    DA_TAGS,
+    EBIT_TAGS,
+    INTEREST_EXPENSE_TAGS,
+    INVENTORY_TAGS,
+    LIABILITIES_CURRENT_TAGS,
+    LONG_TERM_DEBT_TAGS,
     NET_INCOME_TAGS,
+    OPERATING_CASH_FLOW_TAGS,
+    QUARTERLY_FORMS,
+    RECEIVABLES_CURRENT_TAGS,
     REVENUE_TAGS,
     SHARES_TAGS,
     AlpacaClient,
@@ -26,16 +42,24 @@ from ai_value_scanner.scanner import (
     RequestRateLimiter,
     ScanConfig,
     SecClient,
+    ai_disclosure_score_from_submissions,
+    ai_etf_consensus_score,
+    ai_market_link_score,
     apply_filters_with_diagnostics,
     build_filter_steps,
     build_industry_trend_steps,
     build_momentum_steps,
     build_session,
     compile_keyword_patterns,
+    compute_historical_valuation_percentile,
     load_config,
+    load_watchlist_scores,
+    watchlist_rows_to_scores,
     resolve_channel_profile,
     safe_divide,
+    safe_yoy,
     score_and_rank,
+    fundamental_quality_score_from_metrics,
     theme_score_from_news,
 )
 
@@ -77,6 +101,13 @@ class BacktestConfig:
     replay_asset_status: str = "all"
     delist_return_assumption: float = -0.55
     delist_detection_buffer_days: int = 7
+    use_historical_watchlist: bool = True
+    watchlist_history_dir: str = "data/watchlist_history"
+    allow_latest_watchlist_fallback: bool = False
+    disclosure_lookback_days: int = 720
+    entry_price_mode: str = "next_open"
+    exit_price_mode: str = "close"
+    allow_lookahead_theme_source: bool = False
 
 
 @dataclass
@@ -86,6 +117,22 @@ class FundamentalPointInTime:
     revenue_series: list[tuple[pd.Timestamp, float]]
     net_income_series: list[tuple[pd.Timestamp, float]]
     shares_series: list[tuple[pd.Timestamp, float]]
+    operating_cash_flow_series: list[tuple[pd.Timestamp, float]]
+    capex_series: list[tuple[pd.Timestamp, float]]
+    ebit_series: list[tuple[pd.Timestamp, float]]
+    cash_series: list[tuple[pd.Timestamp, float]]
+    long_term_debt_series: list[tuple[pd.Timestamp, float]]
+    current_debt_series: list[tuple[pd.Timestamp, float]]
+    current_assets_series: list[tuple[pd.Timestamp, float]]
+    current_liabilities_series: list[tuple[pd.Timestamp, float]]
+    receivables_series: list[tuple[pd.Timestamp, float]]
+    inventory_series: list[tuple[pd.Timestamp, float]]
+    interest_expense_series: list[tuple[pd.Timestamp, float]]
+    da_series: list[tuple[pd.Timestamp, float]]
+    backlog_series: list[tuple[pd.Timestamp, float]]
+    disclosure_series: list[tuple[pd.Timestamp, str]]
+    ai_disclosure_score: float
+    ai_backlog_signal: float
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -122,6 +169,345 @@ def parse_run_timestamp(run_stem: str) -> datetime | None:
         return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _format_elapsed(seconds: float) -> str:
+    whole = max(0, int(seconds))
+    mins, sec = divmod(whole, 60)
+    hrs, mins = divmod(mins, 60)
+    if hrs > 0:
+        return f"{hrs}h{mins:02d}m{sec:02d}s"
+    if mins > 0:
+        return f"{mins}m{sec:02d}s"
+    return f"{sec}s"
+
+
+def bt_log(message: str, scope: str = "backtest", started_at_monotonic: float | None = None) -> None:
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    elapsed = ""
+    if started_at_monotonic is not None:
+        elapsed = f" +{_format_elapsed(time.monotonic() - started_at_monotonic)}"
+    print(f"[{scope} {ts}{elapsed}] {message}", flush=True)
+
+
+def keyword_list_from_groups(group_names: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in group_names:
+        for token in AI_DISCLOSURE_KEYWORD_GROUPS.get(group, []):
+            key = str(token).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def resolve_ai_and_enabler_keywords(scan_config: ScanConfig) -> tuple[list[str], list[str]]:
+    raw_ai = getattr(scan_config, "ai_keywords", None)
+    if isinstance(raw_ai, list) and raw_ai:
+        ai_keywords = [str(x).strip().lower() for x in raw_ai if str(x).strip()]
+    else:
+        ai_keywords = keyword_list_from_groups(["ai_compute", "semiconductor", "data_center"])
+
+    raw_enabler = getattr(scan_config, "enabler_keywords", None)
+    if isinstance(raw_enabler, list) and raw_enabler:
+        enabler_keywords = [str(x).strip().lower() for x in raw_enabler if str(x).strip()]
+    else:
+        enabler_keywords = keyword_list_from_groups(["power_grid", "commercial_signal", "data_center"])
+
+    return ai_keywords, enabler_keywords
+
+
+def parse_watchlist_snapshot_date(path: Path) -> pd.Timestamp | None:
+    name = path.stem
+    patterns = [
+        r"(\d{8}T\d{6}Z)",
+        r"(\d{4}-\d{2}-\d{2})",
+        r"(\d{8})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, name)
+        if not m:
+            continue
+        token = m.group(1)
+        try:
+            if "T" in token:
+                dt = pd.Timestamp(datetime.strptime(token, "%Y%m%dT%H%M%SZ"), tz="UTC")
+            elif "-" in token:
+                dt = pd.Timestamp(datetime.strptime(token, "%Y-%m-%d"), tz="UTC")
+            else:
+                dt = pd.Timestamp(datetime.strptime(token, "%Y%m%d"), tz="UTC")
+            return dt.normalize()
+        except Exception:
+            continue
+    return None
+
+
+def watchlist_map_from_scores(scores: pd.DataFrame) -> dict[str, tuple[str, int, str]]:
+    out: dict[str, tuple[str, int, str]] = {}
+    if scores.empty:
+        return out
+    for row in scores.itertuples(index=False):
+        symbol = str(getattr(row, "symbol", "")).upper().strip()
+        if not symbol:
+            continue
+        out[symbol] = (
+            str(getattr(row, "watchlist_bucket", "") or ""),
+            int(getattr(row, "watchlist_etf_count", 0) or 0),
+            str(getattr(row, "watchlist_etfs", "") or ""),
+        )
+    return out
+
+
+def load_watchlist_snapshots(
+    cfg: BacktestConfig,
+    scan_config: ScanConfig,
+) -> tuple[list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]], dict[str, tuple[str, int, str]]]:
+    latest_scores = load_watchlist_scores(scan_config)
+    latest_map = watchlist_map_from_scores(latest_scores)
+    snapshots: list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]] = []
+    if not cfg.use_historical_watchlist:
+        return snapshots, latest_map
+
+    history_dir = Path(cfg.watchlist_history_dir)
+    if not history_dir.exists() or not history_dir.is_dir():
+        return snapshots, latest_map
+
+    for path in sorted(history_dir.glob("*.csv")):
+        snap_dt = parse_watchlist_snapshot_date(path)
+        if snap_dt is None:
+            continue
+        try:
+            raw = pd.read_csv(path)
+            scores = watchlist_rows_to_scores(raw)
+            snap_map = watchlist_map_from_scores(scores)
+        except Exception:
+            continue
+        if not snap_map:
+            continue
+        snapshots.append((snap_dt, snap_map, path.name))
+
+    snapshots.sort(key=lambda x: x[0])
+    return snapshots, latest_map
+
+
+def resolve_watchlist_asof(
+    asof: pd.Timestamp,
+    snapshots: list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]],
+    latest_map: dict[str, tuple[str, int, str]],
+    allow_latest_fallback: bool,
+) -> tuple[dict[str, tuple[str, int, str]], str]:
+    if snapshots:
+        dates = [x[0] for x in snapshots]
+        idx = bisect.bisect_right(dates, asof.normalize()) - 1
+        if idx >= 0:
+            dt, mapping, name = snapshots[idx]
+            return mapping, f"snapshot:{name}@{dt.date().isoformat()}"
+    if allow_latest_fallback and latest_map:
+        return latest_map, "latest_fallback"
+    return {}, "none"
+
+
+def _merged_standard_taxonomy_facts(companyfacts: dict[str, Any]) -> dict[str, Any]:
+    raw_facts = companyfacts.get("facts", {})
+    merged: dict[str, Any] = {}
+    for taxonomy in ("us-gaap", "ifrs-full"):
+        facts = raw_facts.get(taxonomy, {})
+        if not isinstance(facts, dict):
+            continue
+        for key, value in facts.items():
+            if key not in merged:
+                merged[key] = value
+    return merged
+
+
+def form_matches_allowed(form: Any, allowed_forms: set[str]) -> bool:
+    token = str(form or "").strip().upper()
+    if not token:
+        return False
+    if token in allowed_forms:
+        return True
+    if "/" in token:
+        base = token.split("/", 1)[0]
+        if base in allowed_forms:
+            return True
+    if token.endswith("A") and len(token) > 1:
+        if token[:-1] in allowed_forms:
+            return True
+    return False
+
+
+def normalize_form_token(form: Any) -> str:
+    token = str(form or "").strip().upper()
+    if not token:
+        return ""
+    if "/" in token:
+        token = token.split("/", 1)[0]
+    if token.endswith("A") and token[:-1] in ANNUAL_FORMS.union(QUARTERLY_FORMS):
+        token = token[:-1]
+    return token
+
+
+def extract_metric_points(
+    companyfacts: dict[str, Any],
+    tags: list[str],
+    unit: str,
+    allowed_forms: set[str],
+) -> list[dict[str, Any]]:
+    facts = _merged_standard_taxonomy_facts(companyfacts)
+    for tag in tags:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {})
+        entries = units.get(unit, [])
+        points: list[dict[str, Any]] = []
+        for item in entries:
+            if not form_matches_allowed(item.get("form"), allowed_forms):
+                continue
+            end = item.get("end")
+            filed = item.get("filed")
+            val = item.get("val")
+            if val is None or end is None:
+                continue
+            visible = filed or end
+            try:
+                end_dt = pd.Timestamp(end, tz="UTC").normalize()
+                vis_dt = pd.Timestamp(visible, tz="UTC").normalize()
+                fv = float(val)
+            except Exception:
+                continue
+            if not np.isfinite(fv):
+                continue
+            points.append(
+                {
+                    "end": end_dt,
+                    "visible": vis_dt,
+                    "value": fv,
+                    "form": str(item.get("form") or "").upper(),
+                }
+            )
+        if points:
+            return points
+    return []
+
+
+def collapse_points_by_end(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not points:
+        return []
+    best_by_end: dict[pd.Timestamp, dict[str, Any]] = {}
+    for point in points:
+        end = point["end"]
+        prev = best_by_end.get(end)
+        if prev is None or point["visible"] > prev["visible"]:
+            best_by_end[end] = point
+    out = list(best_by_end.values())
+    out.sort(key=lambda x: x["end"])
+    return out
+
+
+def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
+    if not points:
+        return []
+    by_visible: dict[pd.Timestamp, float] = {}
+    for point in points:
+        vis = point["visible"]
+        by_visible[vis] = float(point["value"])
+    out = sorted(by_visible.items(), key=lambda x: x[0])
+    return out
+
+
+def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
+    if not points:
+        return []
+    quarterly = [p for p in points if normalize_form_token(p.get("form")) not in ANNUAL_FORMS]
+    annual = [p for p in points if normalize_form_token(p.get("form")) in ANNUAL_FORMS]
+    quarterly = collapse_points_by_end(quarterly)
+    ttm_pairs: list[tuple[pd.Timestamp, float]] = []
+    if len(quarterly) >= 4:
+        for idx in range(3, len(quarterly)):
+            window = quarterly[idx - 3 : idx + 1]
+            visible = max(p["visible"] for p in window)
+            ttm = float(sum(float(p["value"]) for p in window))
+            ttm_pairs.append((visible, ttm))
+        by_visible: dict[pd.Timestamp, float] = {}
+        for vis, value in ttm_pairs:
+            by_visible[vis] = value
+        return sorted(by_visible.items(), key=lambda x: x[0])
+
+    annual = collapse_points_by_end(annual)
+    return build_level_series(annual)
+
+
+def build_disclosure_series_from_submissions(submissions: dict[str, Any]) -> list[tuple[pd.Timestamp, str]]:
+    recent = submissions.get("filings", {}).get("recent", {})
+    if not isinstance(recent, dict):
+        return []
+
+    forms = recent.get("form", [])
+    filed = recent.get("filingDate", recent.get("filed", []))
+    items = recent.get("items", [])
+    primary_desc = recent.get("primaryDocDescription", [])
+    primary_doc = recent.get("primaryDocument", [])
+    n = max(
+        len(forms) if isinstance(forms, list) else 0,
+        len(filed) if isinstance(filed, list) else 0,
+        len(items) if isinstance(items, list) else 0,
+        len(primary_desc) if isinstance(primary_desc, list) else 0,
+        len(primary_doc) if isinstance(primary_doc, list) else 0,
+    )
+    out: list[tuple[pd.Timestamp, str]] = []
+    for i in range(n):
+        filed_val = filed[i] if isinstance(filed, list) and i < len(filed) else None
+        if not filed_val:
+            continue
+        try:
+            filed_dt = pd.Timestamp(filed_val, tz="UTC").normalize()
+        except Exception:
+            continue
+        parts = [
+            str(forms[i]) if isinstance(forms, list) and i < len(forms) else "",
+            str(items[i]) if isinstance(items, list) and i < len(items) else "",
+            str(primary_desc[i]) if isinstance(primary_desc, list) and i < len(primary_desc) else "",
+            str(primary_doc[i]) if isinstance(primary_doc, list) and i < len(primary_doc) else "",
+        ]
+        text = " ".join(x for x in parts if x).strip().lower()
+        if text:
+            out.append((filed_dt, text))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def ai_disclosure_score_asof(
+    disclosure_series: list[tuple[pd.Timestamp, str]],
+    asof: pd.Timestamp,
+    lookback_days: int,
+    disclosure_keyword_cap: int,
+) -> float:
+    if not disclosure_series:
+        return 0.0
+    cutoff = asof.normalize() - pd.Timedelta(days=max(1, int(lookback_days)))
+    snippets: list[str] = [
+        text for ts, text in disclosure_series if cutoff <= ts <= asof.normalize() and text
+    ]
+    if not snippets:
+        return 0.0
+    text = " ".join(snippets)
+    group_hits = 0
+    keyword_hits = 0
+    total_groups = len(AI_DISCLOSURE_KEYWORD_GROUPS)
+    for keywords in AI_DISCLOSURE_KEYWORD_GROUPS.values():
+        local_hits = 0
+        for pattern in compile_keyword_patterns(tuple(k.lower() for k in keywords)):
+            if pattern.search(text):
+                local_hits += 1
+        if local_hits > 0:
+            group_hits += 1
+            keyword_hits += local_hits
+    if total_groups <= 0:
+        return 0.0
+    group_coverage = group_hits / float(total_groups)
+    keyword_density = min(1.0, keyword_hits / max(1.0, float(disclosure_keyword_cap)))
+    return round(float(np.clip(0.7 * group_coverage + 0.3 * keyword_density, 0.0, 1.0)), 6)
 
 
 def discover_runs(outputs_dir: Path) -> list[dict[str, Any]]:
@@ -252,6 +638,7 @@ def build_signal_events_from_existing_runs(
                     "symbols": symbols,
                     "n_selected": len(symbols),
                     "source_csv": str(path),
+                    "watchlist_source": "existing_runs",
                 }
             )
     if not rows:
@@ -265,6 +652,7 @@ def build_signal_events_from_existing_runs(
                 "symbols",
                 "n_selected",
                 "source_csv",
+                "watchlist_source",
             ]
         )
     return pd.DataFrame(rows)
@@ -296,6 +684,11 @@ def load_alpaca_client(scan_config: ScanConfig) -> tuple[AlpacaClient, NetworkMo
         feed=feed,
         timeout_sec=scan_config.request_timeout_sec,
         request_limiter=limiter,
+        cache_dir=Path(scan_config.cache_dir),
+        cache_enabled=scan_config.alpaca_cache_enabled,
+        cache_ttl_assets_sec=scan_config.alpaca_cache_ttl_assets_sec,
+        cache_ttl_snapshots_sec=scan_config.alpaca_cache_ttl_snapshots_sec,
+        cache_ttl_bars_sec=scan_config.alpaca_cache_ttl_bars_sec,
         monitor=monitor,
     )
     return client, monitor
@@ -346,18 +739,18 @@ def build_universe_for_replay(
     sec: SecClient,
     scan_config: ScanConfig,
     asset_status: str,
+    symbol_allowlist: set[str] | None = None,
 ) -> pd.DataFrame:
     assets = client.get_assets(status=asset_status)
     df_assets = pd.DataFrame(assets)
-    if df_assets.empty:
-        return pd.DataFrame(columns=["symbol", "name", "exchange", "cik", "company_name"])
-    if "symbol" not in df_assets.columns:
-        return pd.DataFrame(columns=["symbol", "name", "exchange", "cik", "company_name"])
+    if df_assets.empty or "symbol" not in df_assets.columns:
+        df_assets = pd.DataFrame(columns=["symbol", "name", "exchange", "status"])
 
-    df_assets["symbol"] = df_assets["symbol"].astype(str).str.upper()
-    df_assets = df_assets[df_assets["symbol"].apply(is_standard_equity_symbol)]
-    if scan_config.enabled_exchanges and "exchange" in df_assets.columns:
-        df_assets = df_assets[df_assets["exchange"].isin(scan_config.enabled_exchanges)]
+    if not df_assets.empty:
+        df_assets["symbol"] = df_assets["symbol"].astype(str).str.upper()
+        df_assets = df_assets[df_assets["symbol"].apply(is_standard_equity_symbol)]
+        if scan_config.enabled_exchanges and "exchange" in df_assets.columns:
+            df_assets = df_assets[df_assets["exchange"].isin(scan_config.enabled_exchanges)]
 
     cols = ["symbol", "name", "exchange", "status"]
     for col in cols:
@@ -375,41 +768,29 @@ def build_universe_for_replay(
         merged["cik"] = None
     merged = merged[["symbol", "name", "exchange", "status", "cik", "company_name"]]
     merged = merged.dropna(subset=["symbol"]).drop_duplicates(subset=["symbol"]).reset_index(drop=True)
+
+    if symbol_allowlist:
+        allowlist = set(str(x).upper() for x in symbol_allowlist if str(x).strip())
+        merged["symbol"] = merged["symbol"].astype(str).str.upper()
+        existing = set(merged["symbol"].tolist())
+        missing = sorted(allowlist.difference(existing))
+        if missing:
+            mapping_extra = mapping.copy()
+            mapping_extra["symbol"] = mapping_extra["symbol"].astype(str).str.upper()
+            mapping_extra = mapping_extra[mapping_extra["symbol"].isin(missing)].copy()
+            if not mapping_extra.empty:
+                for col in ("name", "exchange", "status"):
+                    mapping_extra[col] = None
+                for col in ("cik", "company_name"):
+                    if col not in mapping_extra.columns:
+                        mapping_extra[col] = None
+                mapping_extra = mapping_extra[
+                    ["symbol", "name", "exchange", "status", "cik", "company_name"]
+                ].drop_duplicates(subset=["symbol"])
+                merged = pd.concat([merged, mapping_extra], ignore_index=True)
+        merged = merged[merged["symbol"].isin(allowlist)].copy()
+        merged = merged.drop_duplicates(subset=["symbol"]).reset_index(drop=True)
     return merged
-
-
-def extract_metric_series(
-    companyfacts: dict[str, Any],
-    tags: list[str],
-    unit: str,
-) -> list[tuple[pd.Timestamp, float]]:
-    facts = companyfacts.get("facts", {}).get("us-gaap", {})
-    by_end: dict[pd.Timestamp, float] = {}
-    for tag in tags:
-        tag_obj = facts.get(tag, {})
-        units = tag_obj.get("units", {})
-        entries = units.get(unit, [])
-        for item in entries:
-            if item.get("form") not in ANNUAL_FORMS:
-                continue
-            filed = item.get("filed")
-            end = item.get("end")
-            val = item.get("val")
-            visible_date = filed or end
-            if visible_date is None or val is None:
-                continue
-            try:
-                dt = pd.Timestamp(visible_date, tz="UTC").normalize()
-                fv = float(val)
-            except Exception:
-                continue
-            if not np.isfinite(fv):
-                continue
-            if dt not in by_end:
-                by_end[dt] = fv
-            else:
-                by_end[dt] = fv
-    return sorted(by_end.items(), key=lambda x: x[0])
 
 
 def latest_asof(series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp) -> float | None:
@@ -422,15 +803,175 @@ def latest_asof(series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp) ->
     return float(series[idx][1])
 
 
+def latest_and_prev_asof(
+    series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp
+) -> tuple[float | None, float | None]:
+    if not series:
+        return None, None
+    dates = [x[0] for x in series]
+    idx = bisect.bisect_right(dates, asof) - 1
+    if idx < 0:
+        return None, None
+    latest = float(series[idx][1])
+    prev = float(series[idx - 1][1]) if idx - 1 >= 0 else None
+    return latest, prev
+
+
+def series_up_to_asof(
+    series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp
+) -> list[tuple[pd.Timestamp, float]]:
+    out: list[tuple[pd.Timestamp, float]] = []
+    for ts, val in series:
+        if ts > asof:
+            break
+        try:
+            fv = float(val)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(fv):
+            continue
+        out.append((ts, fv))
+    return out
+
+
+def close_history_from_frame_asof(
+    bars: pd.DataFrame, asof: pd.Timestamp
+) -> list[tuple[pd.Timestamp, float]]:
+    if bars is None or bars.empty:
+        return []
+    if "close" not in bars.columns:
+        return []
+    out: list[tuple[pd.Timestamp, float]] = []
+    if isinstance(bars.index, pd.DatetimeIndex):
+        idx = bars.index
+        if idx.tz is None:
+            idx = idx.tz_localize("UTC")
+        else:
+            idx = idx.tz_convert("UTC")
+        up_to = bars.loc[idx <= asof].copy()
+        if up_to.empty:
+            return []
+        for ts, close_raw in up_to["close"].items():
+            try:
+                close = float(close_raw)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(close) or close <= 0:
+                continue
+            out.append((pd.Timestamp(ts).tz_convert("UTC").normalize(), close))
+    elif "date" in bars.columns:
+        up_to = bars[bars["date"] <= asof].copy()
+        if up_to.empty:
+            return []
+        for row in up_to.itertuples(index=False):
+            try:
+                ts_raw = pd.Timestamp(getattr(row, "date"))
+                if ts_raw.tzinfo is None:
+                    ts = ts_raw.tz_localize("UTC").normalize()
+                else:
+                    ts = ts_raw.tz_convert("UTC").normalize()
+                close = float(getattr(row, "close"))
+            except Exception:
+                continue
+            if not np.isfinite(close) or close <= 0:
+                continue
+            out.append((ts, close))
+    else:
+        return []
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[str, FundamentalPointInTime]:
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
+    revenue_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, REVENUE_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    net_income_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    shares_series = build_level_series(
+        extract_metric_points(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
+    )
+    operating_cash_flow_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, OPERATING_CASH_FLOW_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    capex_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, CAPEX_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    ebit_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, EBIT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    cash_series = build_level_series(
+        extract_metric_points(companyfacts, CASH_AND_EQUIVALENTS_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    long_term_debt_series = build_level_series(
+        extract_metric_points(companyfacts, LONG_TERM_DEBT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    current_debt_series = build_level_series(
+        extract_metric_points(companyfacts, CURRENT_DEBT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    current_assets_series = build_level_series(
+        extract_metric_points(companyfacts, ASSETS_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    current_liabilities_series = build_level_series(
+        extract_metric_points(companyfacts, LIABILITIES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    receivables_series = build_level_series(
+        extract_metric_points(companyfacts, RECEIVABLES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    inventory_series = build_level_series(
+        extract_metric_points(companyfacts, INVENTORY_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    interest_expense_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, INTEREST_EXPENSE_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    da_series = build_flow_ttm_or_annual_series(
+        extract_metric_points(companyfacts, DA_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    backlog_series = build_level_series(
+        extract_metric_points(companyfacts, BACKLOG_TAGS, "USD", QUARTERLY_FORMS)
+    )
+    disclosure_series = build_disclosure_series_from_submissions(submissions)
+    ai_disclosure_score, _, _ = ai_disclosure_score_from_submissions(
+        submissions,
+        disclosure_keyword_cap=6,
+    )
+    revenue_for_backlog = latest_asof(revenue_series, pd.Timestamp.now(tz="UTC").normalize())
+    backlog_latest = latest_asof(backlog_series, pd.Timestamp.now(tz="UTC").normalize())
+    ai_backlog_signal = 0.0
+    if backlog_latest is not None and revenue_for_backlog not in (None, 0):
+        ai_backlog_signal = float(
+            np.clip(
+                (float(backlog_latest) / float(revenue_for_backlog))
+                / 0.20,
+                0.0,
+                1.0,
+            )
+        )
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
-        revenue_series=extract_metric_series(companyfacts, REVENUE_TAGS, "USD"),
-        net_income_series=extract_metric_series(companyfacts, NET_INCOME_TAGS, "USD"),
-        shares_series=extract_metric_series(companyfacts, SHARES_TAGS, "shares"),
+        revenue_series=revenue_series,
+        net_income_series=net_income_series,
+        shares_series=shares_series,
+        operating_cash_flow_series=operating_cash_flow_series,
+        capex_series=capex_series,
+        ebit_series=ebit_series,
+        cash_series=cash_series,
+        long_term_debt_series=long_term_debt_series,
+        current_debt_series=current_debt_series,
+        current_assets_series=current_assets_series,
+        current_liabilities_series=current_liabilities_series,
+        receivables_series=receivables_series,
+        inventory_series=inventory_series,
+        interest_expense_series=interest_expense_series,
+        da_series=da_series,
+        backlog_series=backlog_series,
+        disclosure_series=disclosure_series,
+        ai_disclosure_score=float(ai_disclosure_score or 0.0),
+        ai_backlog_signal=float(ai_backlog_signal or 0.0),
     )
     return symbol, f
 
@@ -446,6 +987,7 @@ def build_fundamental_pti_db(
     total = len(symbols)
     done = 0
     last_pct = -1
+    phase_start = time.monotonic()
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futs = {pool.submit(load_symbol_fundamental_pti, sec, sym, cik): sym for sym, cik in symbols}
         for fut in as_completed(futs):
@@ -460,12 +1002,32 @@ def build_fundamental_pti_db(
                     revenue_series=[],
                     net_income_series=[],
                     shares_series=[],
+                    operating_cash_flow_series=[],
+                    capex_series=[],
+                    ebit_series=[],
+                    cash_series=[],
+                    long_term_debt_series=[],
+                    current_debt_series=[],
+                    current_assets_series=[],
+                    current_liabilities_series=[],
+                    receivables_series=[],
+                    inventory_series=[],
+                    interest_expense_series=[],
+                    da_series=[],
+                    backlog_series=[],
+                    disclosure_series=[],
+                    ai_disclosure_score=0.0,
+                    ai_backlog_signal=0.0,
                 )
             done += 1
             if total > 0:
                 pct = int((done * 100) / total)
                 if pct >= last_pct + 10 or done == total:
-                    print(f"  [progress] PIT fundamentals: {done}/{total} ({pct}%)")
+                    bt_log(
+                        f"PIT fundamentals: {done}/{total} ({pct}%)",
+                        scope="replay",
+                        started_at_monotonic=phase_start,
+                    )
                     last_pct = pct
     return out
 
@@ -482,6 +1044,7 @@ def build_bar_db(
         table: list[dict[str, Any]] = []
         for row in rows:
             t = row.get("t")
+            o = row.get("o")
             c = row.get("c")
             h = row.get("h")
             l = row.get("l")
@@ -490,13 +1053,23 @@ def build_bar_db(
                 continue
             try:
                 dt = pd.Timestamp(t, tz="UTC").normalize()
+                open_px = float(o) if o is not None else float(c)
                 close = float(c)
                 high = float(h) if h is not None else close
                 low = float(l) if l is not None else close
                 vol = float(v) if v is not None else 0.0
             except Exception:
                 continue
-            table.append({"date": dt, "close": close, "high": high, "low": low, "volume": vol})
+            table.append(
+                {
+                    "date": dt,
+                    "open": open_px,
+                    "close": close,
+                    "high": high,
+                    "low": low,
+                    "volume": vol,
+                }
+            )
         if not table:
             continue
         df = pd.DataFrame(table).drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -526,6 +1099,7 @@ def compute_price_features_asof(
     low_52w = float(window["low"].min())
     volume = float(window["volume"].iloc[-1]) if "volume" in window.columns else 0.0
     dollar_volume = price * volume
+    avg_dollar_volume_20d = float((up_to["close"].tail(20) * up_to["volume"].tail(20)).mean()) if len(up_to) >= 20 else None
 
     drawdown = None
     if high_52w > 0:
@@ -560,6 +1134,12 @@ def compute_price_features_asof(
         if prev > 0:
             return_20d = (price / prev) - 1.0
 
+    return_60d = None
+    if len(up_to) >= 61:
+        prev_60d = float(up_to["close"].iloc[-61])
+        if prev_60d > 0:
+            return_60d = (price / prev_60d) - 1.0
+
     volatility_60d = None
     if len(up_to) >= 61:
         closes = up_to["close"].tail(61).to_numpy(dtype=float)
@@ -576,7 +1156,9 @@ def compute_price_features_asof(
         "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
         "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
         "days_below_sma200": int(days_below_sma200) if days_below_sma200 is not None else None,
+        "avg_dollar_volume_20d": round(avg_dollar_volume_20d, 2) if avg_dollar_volume_20d is not None else None,
         "return_20d": round(return_20d, 6) if return_20d is not None else None,
+        "return_60d": round(return_60d, 6) if return_60d is not None else None,
         "volatility_60d": round(volatility_60d, 6) if volatility_60d is not None else None,
     }
 
@@ -618,8 +1200,24 @@ def load_latest_theme_scores(outputs_dir: Path) -> dict[str, tuple[float, float]
             symbol = str(getattr(row, "symbol", "")).upper().strip()
             if not symbol:
                 continue
-            ai = float(getattr(row, "ai_score", 0.0) or 0.0)
-            en = float(getattr(row, "enabler_score", 0.0) or 0.0)
+            ai_raw = (
+                getattr(row, "ai_score", None)
+                if hasattr(row, "ai_score")
+                else getattr(row, "ai_link_score", None)
+            )
+            en_raw = (
+                getattr(row, "enabler_score", None)
+                if hasattr(row, "enabler_score")
+                else getattr(row, "ai_backlog_signal", None)
+            )
+            try:
+                ai = float(ai_raw) if ai_raw is not None else 0.0
+            except (TypeError, ValueError):
+                ai = 0.0
+            try:
+                en = float(en_raw) if en_raw is not None else 0.0
+            except (TypeError, ValueError):
+                en = 0.0
             prev = table.get(symbol, (0.0, 0.0))
             table[symbol] = (max(prev[0], ai), max(prev[1], en))
     return table
@@ -659,6 +1257,8 @@ def load_symbol_theme_from_historical_news(
     end_iso: str,
     limit: int,
     cache_dir: Path,
+    ai_keywords: list[str],
+    enabler_keywords: list[str],
 ) -> tuple[str, tuple[float, float]]:
     cache_path = build_news_cache_path(cache_dir, symbol, start_iso, end_iso, limit)
     cached = read_json_file(cache_path)
@@ -671,8 +1271,8 @@ def load_symbol_theme_from_historical_news(
         news = client.get_news(symbol=symbol, start_iso=start_iso, limit=limit, end_iso=end_iso)
     except Exception:
         news = []
-    ai = theme_score_from_news(news, scan_config.ai_keywords)
-    en = theme_score_from_news(news, scan_config.enabler_keywords)
+    ai = theme_score_from_news(news, ai_keywords)
+    en = theme_score_from_news(news, enabler_keywords)
     write_json_file(
         cache_path,
         {
@@ -696,6 +1296,7 @@ def build_theme_scores_historical_news_asof(
     cfg: BacktestConfig,
     cache_dir: Path,
 ) -> dict[str, tuple[float, float]]:
+    ai_keywords, enabler_keywords = resolve_ai_and_enabler_keywords(scan_config)
     start_dt = asof - timedelta(days=cfg.historical_news_lookback_days)
     start_iso = start_dt.isoformat()
     end_iso = asof.isoformat()
@@ -703,6 +1304,7 @@ def build_theme_scores_historical_news_asof(
     total = len(symbols)
     done = 0
     last_pct = -1
+    phase_start = time.monotonic()
     with ThreadPoolExecutor(max_workers=scan_config.max_workers) as pool:
         futs = {
             pool.submit(
@@ -714,6 +1316,8 @@ def build_theme_scores_historical_news_asof(
                 end_iso,
                 cfg.historical_news_limit_per_symbol,
                 cache_dir,
+                ai_keywords,
+                enabler_keywords,
             ): symbol
             for symbol in symbols
         }
@@ -728,7 +1332,11 @@ def build_theme_scores_historical_news_asof(
             if total > 0:
                 pct = int((done * 100) / total)
                 if pct >= last_pct + 25 or done == total:
-                    print(f"    [progress] historical news: {done}/{total} ({pct}%)")
+                    bt_log(
+                        f"historical news scoring: {done}/{total} ({pct}%)",
+                        scope="replay",
+                        started_at_monotonic=phase_start,
+                    )
                     last_pct = pct
     return out
 
@@ -754,6 +1362,7 @@ def build_theme_scores_rules_proxy(
     fundamentals: dict[str, FundamentalPointInTime],
     scan_config: ScanConfig,
 ) -> dict[str, tuple[float, float]]:
+    ai_keywords, enabler_keywords = resolve_ai_and_enabler_keywords(scan_config)
     out: dict[str, tuple[float, float]] = {}
     for row in universe.itertuples(index=False):
         symbol = str(getattr(row, "symbol", "")).upper().strip()
@@ -765,8 +1374,8 @@ def build_theme_scores_rules_proxy(
         sic = str(getattr(f, "sic", "") or "") if f is not None else ""
         sic_desc = str(getattr(f, "sic_description", "") or "") if f is not None else ""
         text = " ".join([name, company_name, sic, sic_desc]).strip()
-        ai = theme_score_from_metadata_text(text, scan_config.ai_keywords)
-        en = theme_score_from_metadata_text(text, scan_config.enabler_keywords)
+        ai = theme_score_from_metadata_text(text, ai_keywords)
+        en = theme_score_from_metadata_text(text, enabler_keywords)
         out[symbol] = (ai, en)
     return out
 
@@ -826,15 +1435,36 @@ def rank_and_pick_symbols(
             cp = resolve_channel_profile(scan_config, channel_name, channel_profile)
             steps = build_filter_steps(scan_config, channel_name, channel_profile)
             filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(filtered, cp["score_weights"])
+            ranked = score_and_rank(
+                filtered,
+                cp["score_weights"],
+                scan_config.score_winsor_lower_q,
+                scan_config.score_winsor_upper_q,
+                scan_config.score_penalty_overvaluation,
+                scan_config.score_penalty_deterioration,
+            )
         elif list_type == "industry_trend":
             steps, weights = build_industry_trend_steps(scan_config, channel_name, channel_profile)
             filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(filtered, weights)
+            ranked = score_and_rank(
+                filtered,
+                weights,
+                scan_config.score_winsor_lower_q,
+                scan_config.score_winsor_upper_q,
+                scan_config.score_penalty_overvaluation,
+                scan_config.score_penalty_deterioration,
+            )
         else:
             steps, weights = build_momentum_steps(scan_config, channel_name, channel_profile)
             filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(filtered, weights)
+            ranked = score_and_rank(
+                filtered,
+                weights,
+                scan_config.score_winsor_lower_q,
+                scan_config.score_winsor_upper_q,
+                scan_config.score_penalty_overvaluation,
+                scan_config.score_penalty_deterioration,
+            )
         if ranked.empty:
             continue
         ranked = ranked.copy()
@@ -861,6 +1491,10 @@ def build_cross_section_asof(
     bar_db: dict[str, pd.DataFrame],
     fundamentals: dict[str, FundamentalPointInTime],
     theme_scores: dict[str, tuple[float, float]],
+    watchlist_by_symbol: dict[str, tuple[str, int, str]],
+    benchmark_return_20d: float | None,
+    benchmark_return_60d: float | None,
+    disclosure_lookback_days: int,
     scan_config: ScanConfig,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
@@ -879,10 +1513,173 @@ def build_cross_section_asof(
         f = fundamentals.get(symbol)
         if f is None:
             continue
-        revenue = latest_asof(f.revenue_series, asof)
-        net_income = latest_asof(f.net_income_series, asof)
-        shares = latest_asof(f.shares_series, asof)
-        ai, en = theme_scores.get(symbol, (0.0, 0.0))
+
+        revenue, revenue_prev = latest_and_prev_asof(f.revenue_series, asof)
+        net_income, net_income_prev = latest_and_prev_asof(f.net_income_series, asof)
+        shares, shares_prev = latest_and_prev_asof(f.shares_series, asof)
+        operating_cash_flow, operating_cash_flow_prev = latest_and_prev_asof(
+            f.operating_cash_flow_series, asof
+        )
+        capex_raw, _ = latest_and_prev_asof(f.capex_series, asof)
+        ebit, ebit_prev = latest_and_prev_asof(f.ebit_series, asof)
+        cash_and_equivalents, _ = latest_and_prev_asof(f.cash_series, asof)
+        debt_long_term, _ = latest_and_prev_asof(f.long_term_debt_series, asof)
+        debt_current, _ = latest_and_prev_asof(f.current_debt_series, asof)
+        current_assets, _ = latest_and_prev_asof(f.current_assets_series, asof)
+        current_liabilities, _ = latest_and_prev_asof(f.current_liabilities_series, asof)
+        receivables_current, receivables_prev = latest_and_prev_asof(f.receivables_series, asof)
+        inventory_current, inventory_prev = latest_and_prev_asof(f.inventory_series, asof)
+        interest_expense, _ = latest_and_prev_asof(f.interest_expense_series, asof)
+        depreciation_and_amortization, depreciation_and_amortization_prev = latest_and_prev_asof(
+            f.da_series, asof
+        )
+
+        capex = abs(capex_raw) if capex_raw is not None else None
+        free_cash_flow = (
+            float(operating_cash_flow) - float(capex)
+            if operating_cash_flow is not None and capex is not None
+            else None
+        )
+        total_debt = None
+        if debt_long_term is not None or debt_current is not None:
+            total_debt = float(debt_long_term or 0.0) + float(debt_current or 0.0)
+        net_debt = None
+        if total_debt is not None or cash_and_equivalents is not None:
+            net_debt = float(total_debt or 0.0) - float(cash_and_equivalents or 0.0)
+
+        adjusted_net_income = net_income
+        adjusted_ebit = ebit
+        adjusted_ebitda = (
+            float(adjusted_ebit or 0.0) + float(depreciation_and_amortization or 0.0)
+            if adjusted_ebit is not None
+            else None
+        )
+
+        revenue_yoy = safe_yoy(revenue, revenue_prev)
+        net_income_yoy = safe_yoy(net_income, net_income_prev)
+        adjusted_net_income_yoy = safe_yoy(adjusted_net_income, net_income_prev)
+        ebit_yoy = safe_yoy(ebit, ebit_prev)
+        adjusted_ebit_yoy = safe_yoy(adjusted_ebit, ebit_prev)
+        operating_cash_flow_yoy = safe_yoy(operating_cash_flow, operating_cash_flow_prev)
+        shares_yoy = safe_yoy(shares, shares_prev)
+        receivables_yoy = safe_yoy(receivables_current, receivables_prev)
+        inventory_yoy = safe_yoy(inventory_current, inventory_prev)
+        da_yoy = safe_yoy(depreciation_and_amortization, depreciation_and_amortization_prev)
+
+        interest_expense_abs = abs(float(interest_expense)) if interest_expense is not None else None
+        interest_coverage = None
+        if adjusted_ebit is not None and interest_expense_abs not in (None, 0):
+            interest_coverage = float(adjusted_ebit) / float(interest_expense_abs)
+
+        net_debt_to_ebitda = None
+        if net_debt is not None and adjusted_ebitda not in (None, 0):
+            net_debt_to_ebitda = float(net_debt) / float(adjusted_ebitda)
+
+        current_ratio = None
+        if current_assets is not None and current_liabilities not in (None, 0):
+            current_ratio = float(current_assets) / float(current_liabilities)
+
+        current_debt_ratio_reported = None
+        current_debt_ratio_inferred = None
+        current_debt_ratio = None
+        current_debt_ratio_source = "missing"
+        if debt_current is not None and current_assets not in (None, 0):
+            current_debt_ratio_reported = float(debt_current) / float(current_assets)
+            current_debt_ratio = current_debt_ratio_reported
+            current_debt_ratio_source = "reported"
+        elif current_assets not in (None, 0):
+            if total_debt is not None and total_debt <= 0:
+                current_debt_ratio_inferred = 0.0
+                current_debt_ratio = 0.0
+                current_debt_ratio_source = "inferred_zero_nonpositive_total_debt"
+            elif total_debt is not None and current_liabilities not in (None, 0):
+                inferred_current_debt = min(max(float(total_debt), 0.0), float(current_liabilities))
+                current_debt_ratio_inferred = inferred_current_debt / float(current_assets)
+                current_debt_ratio = current_debt_ratio_inferred
+                current_debt_ratio_source = "inferred_total_debt_capped_by_current_liabilities"
+
+        ocf_to_net_income = None
+        if operating_cash_flow is not None and adjusted_net_income not in (None, 0):
+            ocf_to_net_income = float(operating_cash_flow) / float(adjusted_net_income)
+
+        accrual_ratio = None
+        if adjusted_net_income is not None and operating_cash_flow is not None and current_assets not in (None, 0):
+            accrual_ratio = (float(adjusted_net_income) - float(operating_cash_flow)) / float(current_assets)
+
+        receivables_growth_gap = None
+        if receivables_yoy is not None and revenue_yoy is not None:
+            receivables_growth_gap = float(receivables_yoy) - float(revenue_yoy)
+
+        inventory_growth_gap_reported = None
+        inventory_growth_gap_inferred = None
+        inventory_growth_gap = None
+        inventory_growth_gap_source = "missing"
+        if inventory_yoy is not None and revenue_yoy is not None:
+            inventory_growth_gap_reported = float(inventory_yoy) - float(revenue_yoy)
+            inventory_growth_gap = inventory_growth_gap_reported
+            inventory_growth_gap_source = "reported"
+        elif revenue_yoy is not None:
+            inventory_not_applicable = (
+                (inventory_current is None and inventory_prev is None)
+                or ((inventory_current in (0, 0.0)) and (inventory_prev in (0, 0.0)))
+            )
+            if inventory_not_applicable:
+                inventory_growth_gap_inferred = 0.0
+                inventory_growth_gap = 0.0
+                inventory_growth_gap_source = "inferred_inventory_not_applicable"
+
+        quality_score = fundamental_quality_score_from_metrics(
+            net_debt_to_ebitda=net_debt_to_ebitda,
+            interest_coverage=interest_coverage,
+            current_ratio=current_ratio,
+            ocf_to_net_income=ocf_to_net_income,
+            accrual_ratio=accrual_ratio,
+        )
+
+        watch_bucket, watch_etf_count, watch_etfs = watchlist_by_symbol.get(symbol, ("", 0, ""))
+        theme_ai, theme_enabler = theme_scores.get(symbol, (0.0, 0.0))
+        asof_disclosure = ai_disclosure_score_asof(
+            f.disclosure_series,
+            asof=asof,
+            lookback_days=disclosure_lookback_days,
+            disclosure_keyword_cap=scan_config.ai_link_disclosure_keyword_cap,
+        )
+        backlog_latest = latest_asof(f.backlog_series, asof)
+        asof_backlog = 0.0
+        if backlog_latest is not None and revenue not in (None, 0) and scan_config.ai_link_backlog_ratio_cap > 0:
+            asof_backlog = float(
+                np.clip(
+                    (float(backlog_latest) / float(revenue))
+                    / float(scan_config.ai_link_backlog_ratio_cap),
+                    0.0,
+                    1.0,
+                )
+            )
+        ai_disclosure_score = float(
+            np.clip(max(float(theme_ai or 0.0), float(asof_disclosure)), 0.0, 1.0)
+        )
+        ai_backlog_signal = float(
+            np.clip(max(float(theme_enabler or 0.0), float(asof_backlog)), 0.0, 1.0)
+        )
+        ai_etf_score = ai_etf_consensus_score(watch_etf_count, scan_config.ai_link_etf_count_saturation)
+        ai_market_score = ai_market_link_score(
+            symbol_return_20d=price_feat.get("return_20d"),
+            symbol_return_60d=price_feat.get("return_60d"),
+            benchmark_return_20d=benchmark_return_20d,
+            benchmark_return_60d=benchmark_return_60d,
+            tol_20d=float(scan_config.ai_link_market_return_tolerance_20d),
+            tol_60d=float(scan_config.ai_link_market_return_tolerance_60d),
+        )
+        ai_link_score = float(
+            np.clip(
+                0.40 * float(ai_etf_score)
+                + 0.35 * float(ai_disclosure_score)
+                + 0.15 * float(ai_market_score)
+                + 0.10 * float(ai_backlog_signal),
+                0.0,
+                1.0,
+            )
+        )
 
         rows.append(
             {
@@ -898,13 +1695,61 @@ def build_cross_section_asof(
                 "range_position_52w": price_feat["range_position_52w"],
                 "price_to_sma200": price_feat["price_to_sma200"],
                 "days_below_sma200": price_feat["days_below_sma200"],
+                "avg_dollar_volume_20d": price_feat["avg_dollar_volume_20d"],
                 "return_20d": price_feat["return_20d"],
+                "return_60d": price_feat["return_60d"],
                 "volatility_60d": price_feat["volatility_60d"],
                 "shares_outstanding": shares,
                 "revenue": revenue,
                 "net_income": net_income,
-                "ai_score": ai,
-                "enabler_score": en,
+                "operating_cash_flow": operating_cash_flow,
+                "free_cash_flow": free_cash_flow,
+                "ebit": ebit,
+                "adjusted_net_income": adjusted_net_income,
+                "adjusted_ebit": adjusted_ebit,
+                "adjusted_ebitda": adjusted_ebitda,
+                "cash_and_equivalents": cash_and_equivalents,
+                "total_debt": total_debt,
+                "net_debt": net_debt,
+                "interest_expense": interest_expense_abs,
+                "depreciation_and_amortization": depreciation_and_amortization,
+                "current_assets": current_assets,
+                "current_liabilities": current_liabilities,
+                "receivables_current": receivables_current,
+                "inventory_current": inventory_current,
+                "revenue_yoy": revenue_yoy,
+                "net_income_yoy": net_income_yoy,
+                "adjusted_net_income_yoy": adjusted_net_income_yoy,
+                "ebit_yoy": ebit_yoy,
+                "adjusted_ebit_yoy": adjusted_ebit_yoy,
+                "da_yoy": da_yoy,
+                "operating_cash_flow_yoy": operating_cash_flow_yoy,
+                "shares_yoy": shares_yoy,
+                "receivables_yoy": receivables_yoy,
+                "inventory_yoy": inventory_yoy,
+                "receivables_growth_gap": receivables_growth_gap,
+                "inventory_growth_gap": inventory_growth_gap,
+                "inventory_growth_gap_reported": inventory_growth_gap_reported,
+                "inventory_growth_gap_inferred": inventory_growth_gap_inferred,
+                "inventory_growth_gap_source": inventory_growth_gap_source,
+                "fundamental_quality_score": quality_score,
+                "interest_coverage": interest_coverage,
+                "net_debt_to_ebitda": net_debt_to_ebitda,
+                "current_ratio": current_ratio,
+                "current_debt_ratio_reported": current_debt_ratio_reported,
+                "current_debt_ratio_inferred": current_debt_ratio_inferred,
+                "current_debt_ratio": current_debt_ratio,
+                "current_debt_ratio_source": current_debt_ratio_source,
+                "ocf_to_net_income": ocf_to_net_income,
+                "accrual_ratio": accrual_ratio,
+                "watchlist_bucket": watch_bucket,
+                "watchlist_etf_count": watch_etf_count,
+                "watchlist_etfs": watch_etfs,
+                "ai_etf_consensus_score": ai_etf_score,
+                "ai_disclosure_score": ai_disclosure_score,
+                "ai_market_link_score": ai_market_score,
+                "ai_backlog_signal": ai_backlog_signal,
+                "ai_link_score": ai_link_score,
                 "news_count": 0,
             }
         )
@@ -914,17 +1759,152 @@ def build_cross_section_asof(
     for col in [
         "price",
         "dollar_volume",
+        "avg_dollar_volume_20d",
+        "return_20d",
+        "return_60d",
+        "volatility_60d",
         "shares_outstanding",
         "revenue",
         "net_income",
-        "ai_score",
-        "enabler_score",
+        "operating_cash_flow",
+        "free_cash_flow",
+        "ebit",
+        "adjusted_net_income",
+        "adjusted_ebit",
+        "adjusted_ebitda",
+        "cash_and_equivalents",
+        "total_debt",
+        "net_debt",
+        "interest_expense",
+        "depreciation_and_amortization",
+        "current_assets",
+        "current_liabilities",
+        "receivables_current",
+        "inventory_current",
+        "revenue_yoy",
+        "net_income_yoy",
+        "adjusted_net_income_yoy",
+        "ebit_yoy",
+        "adjusted_ebit_yoy",
+        "da_yoy",
+        "operating_cash_flow_yoy",
+        "shares_yoy",
+        "receivables_yoy",
+        "inventory_yoy",
+        "receivables_growth_gap",
+        "inventory_growth_gap",
+        "inventory_growth_gap_reported",
+        "inventory_growth_gap_inferred",
+        "fundamental_quality_score",
+        "interest_coverage",
+        "net_debt_to_ebitda",
+        "current_ratio",
+        "current_debt_ratio_reported",
+        "current_debt_ratio_inferred",
+        "current_debt_ratio",
+        "ocf_to_net_income",
+        "accrual_ratio",
+        "watchlist_etf_count",
+        "ai_etf_consensus_score",
+        "ai_disclosure_score",
+        "ai_market_link_score",
+        "ai_backlog_signal",
+        "ai_link_score",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df["market_cap"] = df["price"] * df["shares_outstanding"]
+    df["enterprise_value"] = df["market_cap"] + df["total_debt"].fillna(0) - df["cash_and_equivalents"].fillna(0)
+    earnings_col = "adjusted_net_income" if scan_config.use_adjusted_quality_metrics else "net_income"
+    ebit_col = "adjusted_ebit" if scan_config.use_adjusted_quality_metrics else "ebit"
+    earnings_yoy_col = "adjusted_net_income_yoy" if scan_config.use_adjusted_quality_metrics else "net_income_yoy"
     df["ps"] = safe_divide(df["market_cap"], df["revenue"])
-    df["pe"] = safe_divide(df["market_cap"], df["net_income"])
+    df["pe"] = safe_divide(df["market_cap"], df[earnings_col])
+    df["ev_to_ebit"] = safe_divide(df["enterprise_value"], df[ebit_col])
+    df["fcf_yield"] = safe_divide(df["free_cash_flow"], df["market_cap"])
+    df["net_margin"] = safe_divide(df[earnings_col], df["revenue"])
+
+    df["expectation_proxy"] = (
+        0.5 * pd.to_numeric(df["revenue_yoy"], errors="coerce").fillna(0)
+        + 0.5 * pd.to_numeric(df[earnings_yoy_col], errors="coerce").fillna(0)
+        - 0.5 * pd.to_numeric(df["return_20d"], errors="coerce").fillna(0)
+        - 0.5 * pd.to_numeric(df["return_60d"], errors="coerce").fillna(0)
+    )
+    df["cycle_proxy"] = pd.to_numeric(df["adjusted_ebit_yoy"], errors="coerce").fillna(
+        pd.to_numeric(df["ebit_yoy"], errors="coerce")
+    ) - pd.to_numeric(df["revenue_yoy"], errors="coerce")
+    df["adv_participation"] = safe_divide(
+        pd.Series(float(scan_config.assumed_position_usd), index=df.index),
+        df["avg_dollar_volume_20d"],
+    )
+    df["estimated_slippage_bps"] = 200.0 * np.sqrt(
+        pd.to_numeric(df["adv_participation"], errors="coerce").clip(lower=0)
+    )
+    ps_hist_values: list[float | None] = []
+    pe_hist_values: list[float | None] = []
+    ps_hist_obs: list[int] = []
+    pe_hist_obs: list[int] = []
+    ps_hist_sources: list[str] = []
+    pe_hist_sources: list[str] = []
+    for row in df.itertuples(index=False):
+        symbol = str(getattr(row, "symbol", "")).upper()
+        f = fundamentals.get(symbol)
+        bars = bar_db.get(symbol)
+        if f is None or bars is None:
+            ps_hist_values.append(None)
+            pe_hist_values.append(None)
+            ps_hist_obs.append(0)
+            pe_hist_obs.append(0)
+            ps_hist_sources.append("missing_inputs")
+            pe_hist_sources.append("missing_inputs")
+            continue
+
+        closes = close_history_from_frame_asof(bars, asof)
+        revenue_hist = series_up_to_asof(f.revenue_series, asof)
+        net_income_hist = series_up_to_asof(f.net_income_series, asof)
+        shares_hist = series_up_to_asof(f.shares_series, asof)
+
+        current_shares = pd.to_numeric(pd.Series([getattr(row, "shares_outstanding", None)]), errors="coerce").iloc[0]
+        if not np.isfinite(current_shares) or current_shares <= 0:
+            current_shares = np.nan
+        current_ps = pd.to_numeric(pd.Series([getattr(row, "ps", None)]), errors="coerce").iloc[0]
+        if not np.isfinite(current_ps) or current_ps <= 0:
+            current_ps = np.nan
+        current_pe = pd.to_numeric(pd.Series([getattr(row, "pe", None)]), errors="coerce").iloc[0]
+        if not np.isfinite(current_pe) or current_pe <= 0:
+            current_pe = np.nan
+
+        ps_pct, ps_obs = compute_historical_valuation_percentile(
+            current_multiple=(None if not np.isfinite(current_ps) else float(current_ps)),
+            closes=closes,
+            denominator_history=revenue_hist,
+            shares_history=shares_hist,
+            current_shares=(None if not np.isfinite(current_shares) else float(current_shares)),
+            window_days=scan_config.own_history_valuation_window_days,
+            min_observations=3,
+        )
+        pe_pct, pe_obs = compute_historical_valuation_percentile(
+            current_multiple=(None if not np.isfinite(current_pe) else float(current_pe)),
+            closes=closes,
+            denominator_history=net_income_hist,
+            shares_history=shares_hist,
+            current_shares=(None if not np.isfinite(current_shares) else float(current_shares)),
+            window_days=scan_config.own_history_valuation_window_days,
+            min_observations=3,
+        )
+        ps_hist_values.append(ps_pct)
+        pe_hist_values.append(pe_pct)
+        ps_hist_obs.append(int(ps_obs))
+        pe_hist_obs.append(int(pe_obs))
+        ps_hist_sources.append("valuation_history" if ps_pct is not None else "insufficient_history")
+        pe_hist_sources.append("valuation_history" if pe_pct is not None else "insufficient_history")
+
+    df["ps_hist_percentile"] = ps_hist_values
+    df["pe_hist_percentile"] = pe_hist_values
+    df["ps_hist_observation_count"] = ps_hist_obs
+    df["pe_hist_observation_count"] = pe_hist_obs
+    df["ps_hist_percentile_source"] = ps_hist_sources
+    df["pe_hist_percentile_source"] = pe_hist_sources
 
     peer_ps = (
         df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0)]
@@ -942,6 +1922,14 @@ def build_cross_section_asof(
     df = df.merge(peer_pe, left_on="sic", right_index=True, how="left")
     df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
     df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
+    df["ps_percentile_in_sic"] = (
+        df.groupby("sic", dropna=False)["ps"].rank(pct=True, method="average")
+    )
+    df["pe_percentile_in_sic"] = (
+        df.groupby("sic", dropna=False)["pe"].rank(pct=True, method="average")
+    )
+    df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
+    df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
     return df
 
 
@@ -952,6 +1940,7 @@ def build_signal_events_historical_replay(
     cfg: BacktestConfig,
     scenario: str,
 ) -> pd.DataFrame:
+    replay_start = time.monotonic()
     start_dt = parse_date_utc(cfg.start_date)
     end_dt = parse_date_utc(cfg.end_date)
     if start_dt is None:
@@ -961,15 +1950,29 @@ def build_signal_events_historical_replay(
     if end_dt <= start_dt:
         raise ValueError("end_date must be greater than start_date.")
 
+    snapshots, latest_watchlist_map = load_watchlist_snapshots(cfg, scan_config)
+    if snapshots:
+        watchlist_allowlist = set()
+        for _, mapping, _ in snapshots:
+            watchlist_allowlist.update(mapping.keys())
+    else:
+        watchlist_allowlist = set(latest_watchlist_map.keys())
+    if not watchlist_allowlist:
+        raise ValueError(
+            "No watchlist symbols available for replay. Provide current watchlist or historical snapshots."
+        )
+
     base_universe = build_universe_for_replay(
         client=client,
         sec=sec,
         scan_config=scan_config,
         asset_status=cfg.replay_asset_status,
+        symbol_allowlist=watchlist_allowlist,
     )
     base_universe = base_universe.dropna(subset=["symbol"]).copy()
     base_universe["symbol"] = base_universe["symbol"].astype(str).str.upper()
     base_universe = base_universe.reset_index(drop=True)
+    base_universe = base_universe[base_universe["symbol"].isin(watchlist_allowlist)].copy()
 
     prefetch_universe = base_universe.copy()
     if cfg.replay_max_symbols and cfg.replay_max_symbols > 0:
@@ -980,47 +1983,92 @@ def build_signal_events_historical_replay(
         prefetch_universe = prefetch_universe.head(prefetch_n)
 
     symbols = prefetch_universe["symbol"].dropna().astype(str).tolist()
+    benchmark_etfs = normalize_symbol_list([str(x).upper() for x in (scan_config.ai_link_benchmark_etfs or [])])
+    bars_symbols = normalize_symbol_list(symbols + benchmark_etfs)
 
-    print(f"[replay:{scenario}] universe symbols: {len(symbols)}")
+    bt_log(
+        f"universe symbols: {len(symbols)}",
+        scope=f"replay:{scenario}",
+        started_at_monotonic=replay_start,
+    )
     bars_start = (start_dt - timedelta(days=max(420, scan_config.price_lookback_days))).isoformat()
-    bar_db = build_bar_db(client, symbols, bars_start, scan_config.chunk_size)
-    print(f"[replay:{scenario}] symbols with bars: {len(bar_db)}")
+    bar_db = build_bar_db(client, bars_symbols, bars_start, scan_config.chunk_size)
+    bt_log(
+        f"symbols with bars: {len(bar_db)}",
+        scope=f"replay:{scenario}",
+        started_at_monotonic=replay_start,
+    )
 
     universe = prefetch_universe[prefetch_universe["symbol"].isin(set(bar_db.keys()))].copy()
     universe = universe.dropna(subset=["cik"]).copy()
     if cfg.replay_max_symbols and cfg.replay_max_symbols > 0:
         universe = universe.head(cfg.replay_max_symbols).copy()
     fundamentals = build_fundamental_pti_db(universe, sec, max_workers=scan_config.max_workers)
-    print(f"[replay:{scenario}] fundamentals loaded: {len(fundamentals)}")
+    bt_log(
+        f"fundamentals loaded: {len(fundamentals)}",
+        scope=f"replay:{scenario}",
+        started_at_monotonic=replay_start,
+    )
 
     theme_scores_static: dict[str, tuple[float, float]] | None = None
     news_cache_dir = Path(scan_config.cache_dir) / "backtest_news"
     universe_symbols = universe["symbol"].dropna().astype(str).tolist()
     if cfg.theme_source == "latest_scan":
         theme_scores_static = load_latest_theme_scores(Path(cfg.outputs_dir))
-        print(f"[replay:{scenario}] latest-scan theme map size: {len(theme_scores_static)}")
+        bt_log(
+            f"latest-scan theme map size: {len(theme_scores_static)}",
+            scope=f"replay:{scenario}",
+            started_at_monotonic=replay_start,
+        )
     elif cfg.theme_source == "rules_proxy":
         theme_scores_static = build_theme_scores_rules_proxy(
             universe=universe,
             fundamentals=fundamentals,
             scan_config=scan_config,
         )
-        print(f"[replay:{scenario}] rules-proxy theme map size: {len(theme_scores_static)}")
+        bt_log(
+            f"rules-proxy theme map size: {len(theme_scores_static)}",
+            scope=f"replay:{scenario}",
+            started_at_monotonic=replay_start,
+        )
     elif cfg.theme_source == "historical_news":
-        print(
-            f"[replay:{scenario}] historical-news scoring enabled "
-            f"(lookback={cfg.historical_news_lookback_days}d, limit={cfg.historical_news_limit_per_symbol})"
+        bt_log(
+            "historical-news scoring enabled "
+            f"(lookback={cfg.historical_news_lookback_days}d, limit={cfg.historical_news_limit_per_symbol})",
+            scope=f"replay:{scenario}",
+            started_at_monotonic=replay_start,
         )
     else:
         theme_scores_static = {}
 
     dates = build_rebalance_dates(start_dt, end_dt, cfg.rebalance_frequency)
-    print(f"[replay:{scenario}] rebalance dates: {len(dates)}")
+    bt_log(
+        f"rebalance dates: {len(dates)}",
+        scope=f"replay:{scenario}",
+        started_at_monotonic=replay_start,
+    )
 
     rows: list[dict[str, Any]] = []
+    watchlist_source_counts: dict[str, int] = {}
+    last_heartbeat = 0.0
     for i, asof in enumerate(dates, start=1):
-        if i % 10 == 0 or i == len(dates):
-            print(f"  [progress] replay dates: {i}/{len(dates)}")
+        now_tick = time.monotonic()
+        if i == 1 or i == len(dates) or (now_tick - last_heartbeat) >= 30.0:
+            bt_log(
+                f"replay dates progress: {i}/{len(dates)} (asof={asof.date().isoformat()})",
+                scope=f"replay:{scenario}",
+                started_at_monotonic=replay_start,
+            )
+            last_heartbeat = now_tick
+        watchlist_by_symbol, watchlist_source = resolve_watchlist_asof(
+            asof=asof,
+            snapshots=snapshots,
+            latest_map=latest_watchlist_map,
+            allow_latest_fallback=cfg.allow_latest_watchlist_fallback,
+        )
+        watchlist_source_counts[watchlist_source] = watchlist_source_counts.get(watchlist_source, 0) + 1
+        if not watchlist_by_symbol:
+            continue
         if cfg.theme_source == "historical_news":
             theme_scores = build_theme_scores_historical_news_asof(
                 client=client,
@@ -1032,12 +2080,46 @@ def build_signal_events_historical_replay(
             )
         else:
             theme_scores = theme_scores_static or {}
+
+        benchmark_returns_20d: list[float] = []
+        benchmark_returns_60d: list[float] = []
+        for etf in benchmark_etfs:
+            etf_bars = bar_db.get(etf)
+            if etf_bars is None:
+                continue
+            etf_feat = compute_price_features_asof(
+                etf_bars,
+                asof=asof,
+                lookback_days=scan_config.price_lookback_days,
+            )
+            if not etf_feat:
+                continue
+            r20 = etf_feat.get("return_20d")
+            r60 = etf_feat.get("return_60d")
+            if r20 is not None and np.isfinite(float(r20)):
+                benchmark_returns_20d.append(float(r20))
+            if r60 is not None and np.isfinite(float(r60)):
+                benchmark_returns_60d.append(float(r60))
+        benchmark_median_return_20d = (
+            float(np.median(np.asarray(benchmark_returns_20d, dtype="float64")))
+            if benchmark_returns_20d
+            else None
+        )
+        benchmark_median_return_60d = (
+            float(np.median(np.asarray(benchmark_returns_60d, dtype="float64")))
+            if benchmark_returns_60d
+            else None
+        )
         df = build_cross_section_asof(
             asof=asof,
             universe=universe,
             bar_db=bar_db,
             fundamentals=fundamentals,
             theme_scores=theme_scores,
+            watchlist_by_symbol=watchlist_by_symbol,
+            benchmark_return_20d=benchmark_median_return_20d,
+            benchmark_return_60d=benchmark_median_return_60d,
+            disclosure_lookback_days=cfg.disclosure_lookback_days,
             scan_config=scan_config,
         )
         if df.empty:
@@ -1061,8 +2143,17 @@ def build_signal_events_historical_replay(
                     "symbols": symbols_selected,
                     "n_selected": len(symbols_selected),
                     "source_csv": "",
+                    "watchlist_source": watchlist_source,
                 }
             )
+
+    if watchlist_source_counts:
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(watchlist_source_counts.items()))
+        bt_log(
+            f"watchlist source usage: {summary}",
+            scope=f"replay:{scenario}",
+            started_at_monotonic=replay_start,
+        )
 
     if not rows:
         return pd.DataFrame(
@@ -1075,33 +2166,41 @@ def build_signal_events_historical_replay(
                 "symbols",
                 "n_selected",
                 "source_csv",
+                "watchlist_source",
             ]
         )
     return pd.DataFrame(rows)
 
 
-def build_close_series(bars_map: dict[str, list[dict[str, Any]]]) -> dict[str, pd.Series]:
-    out: dict[str, pd.Series] = {}
+def build_price_frame_map(bars_map: dict[str, list[dict[str, Any]]]) -> dict[str, pd.DataFrame]:
+    out: dict[str, pd.DataFrame] = {}
     for symbol, rows in bars_map.items():
         dates: list[pd.Timestamp] = []
+        opens: list[float] = []
         closes: list[float] = []
         for row in rows:
             t = row.get("t")
+            o = row.get("o")
             c = row.get("c")
             if t is None or c is None:
                 continue
             dt = pd.to_datetime(t, utc=True).normalize()
             try:
+                open_px = float(o) if o is not None else float(c)
                 close = float(c)
             except (TypeError, ValueError):
                 continue
             dates.append(dt)
+            opens.append(open_px)
             closes.append(close)
         if not dates:
             continue
-        s = pd.Series(closes, index=pd.DatetimeIndex(dates), dtype="float64")
-        s = s[~s.index.duplicated(keep="last")].sort_index()
-        out[symbol.upper()] = s
+        frame = pd.DataFrame(
+            {"open": opens, "close": closes},
+            index=pd.DatetimeIndex(dates),
+        )
+        frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+        out[symbol.upper()] = frame
     return out
 
 
@@ -1113,29 +2212,39 @@ def next_trading_index(index: pd.DatetimeIndex, signal_dt: pd.Timestamp) -> int 
 
 
 def forward_return(
-    close_series: pd.Series,
+    price_frame: pd.DataFrame,
     signal_date: str,
     horizon: int,
     roundtrip_cost: float,
+    entry_price_mode: str = "next_open",
+    exit_price_mode: str = "close",
     global_end_date: pd.Timestamp | None = None,
     delist_return_assumption: float | None = None,
     delist_detection_buffer_days: int = 7,
 ) -> float | None:
     signal_dt = pd.Timestamp(signal_date, tz="UTC")
-    idx = next_trading_index(close_series.index, signal_dt)
+    if price_frame is None or price_frame.empty:
+        return None
+    idx = next_trading_index(price_frame.index, signal_dt)
     if idx is None:
         return None
-    exit_idx = idx + horizon
-    if exit_idx >= len(close_series):
+    hold = max(1, int(horizon))
+    exit_idx = idx + hold - 1
+    if exit_idx >= len(price_frame):
         if global_end_date is not None and delist_return_assumption is not None:
-            last_dt = pd.Timestamp(close_series.index[-1]).tz_convert("UTC")
+            last_dt = pd.Timestamp(price_frame.index[-1]).tz_convert("UTC")
             if last_dt < (global_end_date - pd.Timedelta(days=delist_detection_buffer_days)):
                 # Assume an adverse delisting return when a symbol disappears
                 # well before the backtest window end.
                 return float(delist_return_assumption) - roundtrip_cost
         return None
-    entry = float(close_series.iloc[idx])
-    exit_px = float(close_series.iloc[exit_idx])
+
+    entry_col = "open" if str(entry_price_mode).strip().lower() == "next_open" else "close"
+    exit_col = "open" if str(exit_price_mode).strip().lower() == "open" else "close"
+    if entry_col not in price_frame.columns or exit_col not in price_frame.columns:
+        return None
+    entry = float(price_frame.iloc[idx][entry_col])
+    exit_px = float(price_frame.iloc[exit_idx][exit_col])
     if entry <= 0:
         return None
     return (exit_px / entry) - 1.0 - roundtrip_cost
@@ -1143,18 +2252,20 @@ def forward_return(
 
 def event_backtest(
     signals: pd.DataFrame,
-    close_by_symbol: dict[str, pd.Series],
+    prices_by_symbol: dict[str, pd.DataFrame],
     horizons: list[int],
     roundtrip_cost: float,
     benchmark_symbols: list[str],
+    entry_price_mode: str = "next_open",
+    exit_price_mode: str = "close",
     delist_return_assumption: float | None = None,
     delist_detection_buffer_days: int = 7,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     event_rows: list[dict[str, Any]] = []
     benchmark_rows: list[dict[str, Any]] = []
     global_end_date: pd.Timestamp | None = None
-    if close_by_symbol:
-        all_last = [pd.Timestamp(s.index.max()).tz_convert("UTC") for s in close_by_symbol.values() if not s.empty]
+    if prices_by_symbol:
+        all_last = [pd.Timestamp(s.index.max()).tz_convert("UTC") for s in prices_by_symbol.values() if not s.empty]
         if all_last:
             global_end_date = max(all_last)
 
@@ -1164,14 +2275,16 @@ def event_backtest(
             returns: list[float] = []
             priced = 0
             for sym in symbols:
-                series = close_by_symbol.get(sym.upper())
-                if series is None:
+                price_frame = prices_by_symbol.get(sym.upper())
+                if price_frame is None:
                     continue
                 ret = forward_return(
-                    series,
+                    price_frame,
                     row.signal_date,
                     horizon,
                     roundtrip_cost,
+                    entry_price_mode=entry_price_mode,
+                    exit_price_mode=exit_price_mode,
                     global_end_date=global_end_date,
                     delist_return_assumption=delist_return_assumption,
                     delist_detection_buffer_days=delist_detection_buffer_days,
@@ -1195,14 +2308,16 @@ def event_backtest(
                 }
             )
             for bench in benchmark_symbols:
-                series = close_by_symbol.get(bench.upper())
+                price_frame = prices_by_symbol.get(bench.upper())
                 ret = None
-                if series is not None:
+                if price_frame is not None:
                     ret = forward_return(
-                        series,
+                        price_frame,
                         row.signal_date,
                         horizon,
                         0.0,
+                        entry_price_mode=entry_price_mode,
+                        exit_price_mode=exit_price_mode,
                         global_end_date=global_end_date,
                         delist_return_assumption=None,
                         delist_detection_buffer_days=delist_detection_buffer_days,
@@ -1381,11 +2496,18 @@ def build_markdown_report(
     lines.append(f"- top_n: {cfg.top_n}")
     lines.append(f"- per_channel_top_n: {cfg.per_channel_top_n}")
     lines.append(f"- trading_cost_bps(one-way): {cfg.trading_cost_bps}")
+    lines.append(f"- entry_price_mode: {cfg.entry_price_mode}")
+    lines.append(f"- exit_price_mode: {cfg.exit_price_mode}")
     if cfg.mode == "historical_replay":
         lines.append(f"- rebalance_frequency: {cfg.rebalance_frequency}")
         lines.append(f"- replay_max_symbols: {cfg.replay_max_symbols}")
         lines.append(f"- replay_asset_status: {cfg.replay_asset_status}")
+        lines.append(f"- use_historical_watchlist: {cfg.use_historical_watchlist}")
+        lines.append(f"- watchlist_history_dir: {cfg.watchlist_history_dir}")
+        lines.append(f"- allow_latest_watchlist_fallback: {cfg.allow_latest_watchlist_fallback}")
+        lines.append(f"- disclosure_lookback_days: {cfg.disclosure_lookback_days}")
         lines.append(f"- theme_source: {cfg.theme_source}")
+        lines.append(f"- allow_lookahead_theme_source: {cfg.allow_lookahead_theme_source}")
         if cfg.theme_source == "historical_news":
             lines.append(f"- historical_news_lookback_days: {cfg.historical_news_lookback_days}")
             lines.append(f"- historical_news_limit_per_symbol: {cfg.historical_news_limit_per_symbol}")
@@ -1434,7 +2556,7 @@ def build_markdown_report(
     lines.append("")
     lines.append("## Notes")
     lines.append("")
-    lines.append("- `historical_replay` is an approximation: universe uses currently tradable symbols.")
+    lines.append("- `historical_replay` remains an approximation; survivorship bias is reduced but not fully eliminated.")
     lines.append("- Default theme source is `rules_proxy` (metadata keyword scoring), stable and reproducible.")
     lines.append("- `theme_source=latest_scan` and `theme_source=historical_news` are optional comparison modes.")
     lines.append("- This is useful for relative validation before long live accumulation, not a perfect PIT backtest.")
@@ -1454,7 +2576,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-n", type=int, default=10)
     p.add_argument("--per-channel-top-n", action="store_true", default=True)
     p.add_argument("--no-per-channel-top-n", action="store_true")
-    p.add_argument("--include-channels", default="core_ai,ai_enabler")
+    p.add_argument("--include-channels", default="core_ai,ai_enabler,ai_peripheral")
     p.add_argument("--horizons", default="20,60,120")
     p.add_argument("--max-runs", type=int, default=None)
     p.add_argument("--start-date", default="2023-01-01", help="YYYY-MM-DD")
@@ -1462,14 +2584,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--benchmark-symbols", default="QQQ,SOXX,XLI,XLU")
     p.add_argument("--trading-cost-bps", type=float, default=15.0)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--entry-price-mode", default="next_open", choices=["next_open", "next_close"])
+    p.add_argument("--exit-price-mode", default="close", choices=["close", "open"])
     p.add_argument("--rebalance-frequency", default="weekly", choices=["weekly", "monthly"])
     p.add_argument("--replay-max-symbols", type=int, default=800)
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
+    p.add_argument("--watchlist-history-dir", default="data/watchlist_history")
+    p.add_argument("--use-historical-watchlist", action="store_true", default=True)
+    p.add_argument("--no-historical-watchlist", action="store_true")
+    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
+    p.add_argument("--no-latest-watchlist-fallback", action="store_true")
+    p.add_argument("--disclosure-lookback-days", type=int, default=720)
     p.add_argument(
         "--theme-source",
         default="rules_proxy",
         choices=["rules_proxy", "historical_news", "latest_scan", "zero"],
     )
+    p.add_argument("--allow-lookahead-theme-source", action="store_true", default=False)
     p.add_argument("--historical-news-lookback-days", type=int, default=180)
     p.add_argument("--historical-news-limit-per-symbol", type=int, default=80)
     p.add_argument("--delist-return-assumption", type=float, default=-0.55)
@@ -1521,6 +2652,12 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
         )
         return signals, None
 
+    if cfg.theme_source == "latest_scan" and not cfg.allow_lookahead_theme_source:
+        raise ValueError(
+            "theme_source=latest_scan introduces lookahead bias in historical_replay. "
+            "Use --allow-lookahead-theme-source to override explicitly."
+        )
+
     client, monitor = load_alpaca_client(scan_cfg)
     sec = load_sec_client(scan_cfg, monitor)
     scenarios = ["base", "loose", "strict"] if cfg.enable_perturbation else ["base"]
@@ -1541,6 +2678,7 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
 
 
 def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
+    backtest_start = time.monotonic()
     scan_cfg = load_config(cfg.scan_config_path)
     events_path, summary_path, benchmarks_path, segments_path, report_path = resolve_output_paths(
         cfg.output_prefix,
@@ -1548,11 +2686,12 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
         cfg.mode,
     )
 
+    bt_log("building signals...", started_at_monotonic=backtest_start)
     signals, build_monitor = build_signals(cfg, scan_cfg)
     if signals.empty:
         raise ValueError("No signals generated for selected mode/range.")
-    print(f"[backtest] mode: {cfg.mode}")
-    print(f"[backtest] signal rows: {len(signals)}")
+    bt_log(f"mode: {cfg.mode}", started_at_monotonic=backtest_start)
+    bt_log(f"signal rows: {len(signals)}", started_at_monotonic=backtest_start)
 
     signals.to_csv(events_path.with_name(f"{events_path.stem}_signals.csv"), index=False)
 
@@ -1573,7 +2712,7 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
             segment_path=segments_path,
         )
         report_path.write_text(md)
-        print(f"[backtest] dry-run artifacts written: {report_path}")
+        bt_log(f"dry-run artifacts written: {report_path}", started_at_monotonic=backtest_start)
         return {
             "events_path": events_path,
             "summary_path": summary_path,
@@ -1591,26 +2730,33 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     for bench in benchmark_symbols:
         symbol_set.add(bench.upper())
     symbols = sorted(symbol_set)
-    print(f"[backtest] symbols for pricing: {len(symbols)}")
+    bt_log(f"symbols for pricing: {len(symbols)}", started_at_monotonic=backtest_start)
 
     client, run_monitor = load_alpaca_client(scan_cfg)
     start_dt = parse_date_utc(cfg.start_date) or datetime(2023, 1, 1, tzinfo=timezone.utc)
     bars_start = (start_dt - timedelta(days=420)).isoformat()
+    bt_log("loading pricing bars...", started_at_monotonic=backtest_start)
     bars_map = client.get_daily_bars(symbols, bars_start, scan_cfg.chunk_size)
-    close_map = build_close_series(bars_map)
+    price_map = build_price_frame_map(bars_map)
 
     roundtrip_cost = (2.0 * cfg.trading_cost_bps) / 10000.0
     events, benchmarks = event_backtest(
         signals=signals,
-        close_by_symbol=close_map,
+        prices_by_symbol=price_map,
         horizons=cfg.horizons or [20, 60, 120],
         roundtrip_cost=roundtrip_cost,
         benchmark_symbols=benchmark_symbols,
+        entry_price_mode=cfg.entry_price_mode,
+        exit_price_mode=cfg.exit_price_mode,
         delist_return_assumption=cfg.delist_return_assumption,
         delist_detection_buffer_days=cfg.delist_detection_buffer_days,
     )
     summary = summarize_backtest(events, benchmarks)
     segment_summary = summarize_backtest_by_segment(events, benchmarks)
+    bt_log(
+        f"backtest aggregation done (events={len(events)}, summary_rows={len(summary)})",
+        started_at_monotonic=backtest_start,
+    )
 
     events.to_csv(events_path, index=False)
     summary.to_csv(summary_path, index=False)
@@ -1641,20 +2787,21 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
         else 0
     )
     if total_valid_events == 0:
-        print(
-            "[backtest] warning: no valid forward-return events yet. "
-            "Check end_date/horizon or ensure enough future bars exist."
+        bt_log(
+            "warning: no valid forward-return events yet. "
+            "Check end_date/horizon or ensure enough future bars exist.",
+            started_at_monotonic=backtest_start,
         )
 
-    print(f"[backtest] events: {events_path}")
-    print(f"[backtest] summary: {summary_path}")
-    print(f"[backtest] benchmarks: {benchmarks_path}")
-    print(f"[backtest] segments: {segments_path}")
-    print(f"[backtest] report: {report_path}")
-    print(f"[backtest] network: {network_path}")
+    bt_log(f"events: {events_path}", started_at_monotonic=backtest_start)
+    bt_log(f"summary: {summary_path}", started_at_monotonic=backtest_start)
+    bt_log(f"benchmarks: {benchmarks_path}", started_at_monotonic=backtest_start)
+    bt_log(f"segments: {segments_path}", started_at_monotonic=backtest_start)
+    bt_log(f"report: {report_path}", started_at_monotonic=backtest_start)
+    bt_log(f"network: {network_path}", started_at_monotonic=backtest_start)
     if not summary.empty:
-        print("")
-        print("=== Backtest Summary (avg_return) ===")
+        print("", flush=True)
+        print("=== Backtest Summary (avg_return) ===", flush=True)
         for row in summary.itertuples(index=False):
             avg_ret = "nan" if pd.isna(row.avg_return) else f"{row.avg_return:.4f}"
             win = "nan" if pd.isna(row.win_rate) else f"{row.win_rate:.2%}"
@@ -1662,9 +2809,10 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
             print(
                 f"- {row.scenario} | {row.list_type} | H={row.horizon_days} | "
                 f"n={row.n_events_valid}/{row.n_events_total} | avg={avg_ret} | "
-                f"win={win} | excess_vs_QQQ={ex}"
+                f"win={win} | excess_vs_QQQ={ex}",
+                flush=True,
             )
-        print("=== End Backtest Summary ===")
+        print("=== End Backtest Summary ===", flush=True)
 
     return {
         "events_path": events_path,
@@ -1681,6 +2829,10 @@ def main() -> None:
     args = parser.parse_args()
     per_channel = not args.no_per_channel_top_n
     perturb = not args.no_perturbation
+    use_historical_watchlist = bool(args.use_historical_watchlist and not args.no_historical_watchlist)
+    allow_latest_watchlist_fallback = bool(
+        args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
+    )
     cfg = BacktestConfig(
         mode=args.mode,
         scan_config_path=args.scan_config,
@@ -1697,10 +2849,17 @@ def main() -> None:
         benchmark_symbols=parse_csv_list(args.benchmark_symbols),
         trading_cost_bps=args.trading_cost_bps,
         dry_run=bool(args.dry_run),
+        entry_price_mode=args.entry_price_mode,
+        exit_price_mode=args.exit_price_mode,
         rebalance_frequency=args.rebalance_frequency,
         replay_max_symbols=args.replay_max_symbols,
         replay_asset_status=args.replay_asset_status,
+        use_historical_watchlist=use_historical_watchlist,
+        watchlist_history_dir=args.watchlist_history_dir,
+        allow_latest_watchlist_fallback=allow_latest_watchlist_fallback,
+        disclosure_lookback_days=args.disclosure_lookback_days,
         theme_source=args.theme_source,
+        allow_lookahead_theme_source=bool(args.allow_lookahead_theme_source),
         enable_perturbation=perturb,
         historical_news_lookback_days=args.historical_news_lookback_days,
         historical_news_limit_per_symbol=args.historical_news_limit_per_symbol,
