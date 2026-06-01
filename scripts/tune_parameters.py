@@ -104,6 +104,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
     p.add_argument("--theme-source", default="rules_proxy", choices=["rules_proxy", "historical_news", "zero"])
     p.add_argument("--disclosure-lookback-days", type=int, default=720)
+    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=True)
+    p.add_argument("--no-latest-watchlist-fallback", action="store_true")
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
     p.add_argument("--promote", action="store_true", default=True)
@@ -453,6 +455,9 @@ def run_candidate(
             replay_asset_status=args.replay_asset_status,
             theme_source=args.theme_source,
             disclosure_lookback_days=args.disclosure_lookback_days,
+            allow_latest_watchlist_fallback=bool(
+                args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
+            ),
             enable_perturbation=bool(args.enable_perturbation and not args.no_perturbation),
         )
         log(f"{candidate.cid} | window={window.label} | backtest start")

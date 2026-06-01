@@ -1,0 +1,112 @@
+{
+  "axes": [
+    {
+      "name": "core_ai.momentum_min_return_20d",
+      "path": "channel_profiles.core_ai.momentum_min_return_20d",
+      "values": [
+        0.02,
+        0.03,
+        0.04
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_return_60d",
+      "path": "channel_profiles.core_ai.momentum_min_return_60d",
+      "values": [
+        0.005,
+        0.015,
+        0.025
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_price_to_sma200",
+      "path": "channel_profiles.core_ai.momentum_min_price_to_sma200",
+      "values": [
+        0.99,
+        1.0,
+        1.01
+      ]
+    },
+    {
+      "name": "core_ai.momentum_max_60d_volatility",
+      "path": "channel_profiles.core_ai.momentum_max_60d_volatility",
+      "values": [
+        0.74,
+        0.78,
+        0.82
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_return_20d",
+      "path": "channel_profiles.ai_enabler.momentum_min_return_20d",
+      "values": [
+        0.01,
+        0.02,
+        0.03
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_return_60d",
+      "path": "channel_profiles.ai_enabler.momentum_min_return_60d",
+      "values": [
+        0.0,
+        0.01,
+        0.02
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_price_to_sma200",
+      "path": "channel_profiles.ai_enabler.momentum_min_price_to_sma200",
+      "values": [
+        0.99,
+        1.0,
+        1.01
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_max_60d_volatility",
+      "path": "channel_profiles.ai_enabler.momentum_max_60d_volatility",
+      "values": [
+        0.82,
+        0.86,
+        0.9
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_return_20d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_return_20d",
+      "values": [
+        0.005,
+        0.015,
+        0.025
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_return_60d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_return_60d",
+      "values": [
+        -0.005,
+        0.005,
+        0.015
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_price_to_sma200",
+      "path": "channel_profiles.ai_peripheral.momentum_min_price_to_sma200",
+      "values": [
+        0.98,
+        0.99,
+        1.0
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_max_60d_volatility",
+      "path": "channel_profiles.ai_peripheral.momentum_max_60d_volatility",
+      "values": [
+        0.89,
+        0.93,
+        0.97
+      ]
+    }
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "axes": [
+    {
+      "name": "core_ai.momentum_min_return_20d",
+      "path": "channel_profiles.core_ai.momentum_min_return_20d",
+      "values": [
+        0.02,
+        0.03,
+        0.04
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_return_60d",
+      "path": "channel_profiles.core_ai.momentum_min_return_60d",
+      "values": [
+        0.0,
+        0.01,
+        0.02
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_price_to_sma200",
+      "path": "channel_profiles.core_ai.momentum_min_price_to_sma200",
+      "values": [
+        0.99,
+        1.0,
+        1.01
+      ]
+    },
+    {
+      "name": "core_ai.momentum_max_60d_volatility",
+      "path": "channel_profiles.core_ai.momentum_max_60d_volatility",
+      "values": [
+        0.74,
+        0.78,
+        0.82
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.core_ai.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        18000000.0,
+        22000000.0,
+        26000000.0
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_return_20d",
+      "path": "channel_profiles.ai_enabler.momentum_min_return_20d",
+      "values": [
+        0.0,
+        0.02,
+        0.03
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_return_60d",
+      "path": "channel_profiles.ai_enabler.momentum_min_return_60d",
+      "values": [
+        -0.005,
+        0.005,
+        0.015
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.ai_enabler.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        12000000.0,
+        16000000.0,
+        20000000.0
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_return_20d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_return_20d",
+      "values": [
+        0.0,
+        0.01,
+        0.02
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_return_60d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_return_60d",
+      "values": [
+        -0.01,
+        0.0,
+        0.01
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        9000000.0,
+        12000000.0,
+        16000000.0
+      ]
+    },
+    {
+      "name": "core_ai.min_ai_link_score",
+      "path": "channel_profiles.core_ai.min_ai_link_score",
+      "values": [
+        0.44,
+        0.46,
+        0.48
+      ]
+    },
+    {
+      "name": "ai_enabler.min_ai_link_score",
+      "path": "channel_profiles.ai_enabler.min_ai_link_score",
+      "values": [
+        0.32,
+        0.36,
+        0.4
+      ]
+    },
+    {
+      "name": "ai_peripheral.min_ai_link_score",
+      "path": "channel_profiles.ai_peripheral.min_ai_link_score",
+      "values": [
+        0.24,
+        0.27,
+        0.3
+      ]
+    },
+    {
+      "name": "core_ai.max_20d_return",
+      "path": "channel_profiles.core_ai.max_20d_return",
+      "values": [
+        0.12,
+        0.14,
+        0.16
+      ]
+    },
+    {
+      "name": "ai_enabler.max_20d_return",
+      "path": "channel_profiles.ai_enabler.max_20d_return",
+      "values": [
+        0.14,
+        0.16,
+        0.18
+      ]
+    },
+    {
+      "name": "ai_peripheral.max_20d_return",
+      "path": "channel_profiles.ai_peripheral.max_20d_return",
+      "values": [
+        0.15,
+        0.17,
+        0.2
+      ]
+    }
+  ]
+}
