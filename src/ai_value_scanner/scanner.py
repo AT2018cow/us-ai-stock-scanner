@@ -786,14 +786,15 @@ class AlpacaClient:
     def _load_bars_from_any_cache(self, symbols: list[str], start_iso: str) -> dict[str, list[dict[str, Any]]]:
         if not self.cache_enabled:
             return {}
-        remaining = set(str(s).upper() for s in symbols if s)
-        if not remaining:
+        targets = [str(s).upper() for s in symbols if s]
+        if not targets:
             return {}
-        out: dict[str, list[dict[str, Any]]] = {}
+        target_set = set(targets)
+        best_rows: dict[str, list[dict[str, Any]]] = {}
+        best_min_ts: dict[str, str] = {}
+        best_len: dict[str, int] = {}
         start_key = str(start_iso or "")
         for path in sorted(self.cache_dir.glob("bars_*.json")):
-            if not remaining:
-                break
             try:
                 payload = json.loads(path.read_text())
             except Exception:
@@ -801,28 +802,78 @@ class AlpacaClient:
             if not isinstance(payload, dict):
                 continue
             hit = False
-            for symbol in list(remaining):
+            for symbol in target_set:
                 rows = payload.get(symbol)
                 if not isinstance(rows, list):
                     continue
                 filtered: list[dict[str, Any]] = []
+                min_ts = ""
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
                     ts = str(row.get("t") or "")
+                    if ts and (not min_ts or ts < min_ts):
+                        min_ts = ts
                     if start_key and ts and ts < start_key:
                         continue
                     filtered.append(row)
-                out[symbol] = filtered if filtered else rows
-                remaining.discard(symbol)
+                candidate = filtered if filtered else rows
+                if not candidate:
+                    continue
+                cand_len = len(candidate)
+                prev_len = best_len.get(symbol, -1)
+                prev_min_ts = best_min_ts.get(symbol, "")
+                if (
+                    cand_len > prev_len
+                    or (cand_len == prev_len and min_ts and (not prev_min_ts or min_ts < prev_min_ts))
+                ):
+                    best_rows[symbol] = candidate
+                    best_len[symbol] = cand_len
+                    best_min_ts[symbol] = min_ts
                 hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
-        if out:
-            return out
+        if best_rows:
+            return best_rows
         if self.monitor:
             self.monitor.record_cache("alpaca", hit=False)
         return {}
+
+    @staticmethod
+    def _rows_min_timestamp(rows: list[dict[str, Any]]) -> str:
+        min_ts = ""
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            ts = str(row.get("t") or "")
+            if not ts:
+                continue
+            if not min_ts or ts < min_ts:
+                min_ts = ts
+        return min_ts
+
+    @classmethod
+    def _should_replace_rows(
+        cls, existing: list[dict[str, Any]] | None, candidate: list[dict[str, Any]], start_iso: str
+    ) -> bool:
+        if not isinstance(candidate, list) or not candidate:
+            return False
+        if not isinstance(existing, list) or not existing:
+            return True
+        start_key = str(start_iso or "")
+        existing_min = cls._rows_min_timestamp(existing)
+        candidate_min = cls._rows_min_timestamp(candidate)
+        existing_has_coverage = bool(existing_min and (not start_key or existing_min <= start_key))
+        candidate_has_coverage = bool(candidate_min and (not start_key or candidate_min <= start_key))
+        if candidate_has_coverage and not existing_has_coverage:
+            return True
+        if len(candidate) > len(existing):
+            return True
+        if len(candidate) == len(existing) and candidate_min and (
+            not existing_min or candidate_min < existing_min
+        ):
+            return True
+        return False
 
     def _save_cache(self, namespace: str, key_payload: dict[str, Any], payload: Any) -> None:
         if not self.cache_enabled:
@@ -944,9 +995,24 @@ class AlpacaClient:
             }
             cached = self._load_cache("bars", cache_key, self.cache_ttl_bars_sec)
             if isinstance(cached, dict):
+                needs_enrichment: list[str] = []
                 for symbol, rows in cached.items():
                     if isinstance(rows, list):
                         bars_by_symbol.setdefault(symbol, []).extend(rows)
+                for sym in batch:
+                    cached_rows = cached.get(sym)
+                    if not isinstance(cached_rows, list) or not cached_rows:
+                        needs_enrichment.append(sym)
+                        continue
+                    min_ts = self._rows_min_timestamp(cached_rows)
+                    if not min_ts or (start_iso and min_ts > str(start_iso)):
+                        needs_enrichment.append(sym)
+                if needs_enrichment:
+                    any_cache = self._load_bars_from_any_cache(needs_enrichment, start_iso)
+                    for symbol, rows in any_cache.items():
+                        existing = bars_by_symbol.get(symbol)
+                        if self._should_replace_rows(existing, rows, start_iso):
+                            bars_by_symbol[symbol] = rows
                 time.sleep(0.05)
                 continue
 
