@@ -2215,6 +2215,21 @@ def resolve_channel_profile(
 
     return {
         "name": channel_name,
+        "require_positive_revenue": bool(
+            profile.get("require_positive_revenue", config.require_positive_revenue)
+        ),
+        "require_positive_net_income": bool(
+            profile.get("require_positive_net_income", config.require_positive_net_income)
+        ),
+        "require_positive_operating_cash_flow": bool(
+            profile.get(
+                "require_positive_operating_cash_flow", config.require_positive_operating_cash_flow
+            )
+        ),
+        "require_positive_free_cash_flow": bool(
+            profile.get("require_positive_free_cash_flow", config.require_positive_free_cash_flow)
+        ),
+        "require_positive_ebit": bool(profile.get("require_positive_ebit", config.require_positive_ebit)),
         "require_channel_bucket_match": bool(
             profile.get("require_channel_bucket_match", config.require_channel_bucket_match)
         ),
@@ -2233,6 +2248,16 @@ def resolve_channel_profile(
             None
             if profile.get("min_net_margin", config.min_net_margin) is None
             else float(profile.get("min_net_margin", config.min_net_margin))
+        ),
+        "min_revenue": (
+            None
+            if profile.get("min_revenue", config.min_revenue) is None
+            else float(profile.get("min_revenue", config.min_revenue))
+        ),
+        "min_net_income": (
+            None
+            if profile.get("min_net_income", config.min_net_income) is None
+            else float(profile.get("min_net_income", config.min_net_income))
         ),
         "min_operating_cash_flow": (
             None
@@ -2253,6 +2278,16 @@ def resolve_channel_profile(
             None
             if profile.get("max_ev_to_ebit", config.max_ev_to_ebit) is None
             else float(profile.get("max_ev_to_ebit", config.max_ev_to_ebit))
+        ),
+        "max_ps": (
+            None
+            if profile.get("max_ps", config.max_ps) is None
+            else float(profile.get("max_ps", config.max_ps))
+        ),
+        "max_pe": (
+            None
+            if profile.get("max_pe", config.max_pe) is None
+            else float(profile.get("max_pe", config.max_pe))
         ),
         "min_fcf_yield": (
             None
@@ -3159,40 +3194,40 @@ def build_filter_steps(
 
     if config.max_market_cap is not None:
         steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
-    if config.require_positive_revenue:
+    if cp["require_positive_revenue"]:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
-    if config.require_positive_net_income:
+    if cp["require_positive_net_income"]:
         steps.append(
             (
                 "positive_net_income",
                 lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.min_revenue is not None:
-        steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= config.min_revenue))
-    if config.min_net_income is not None:
+    if cp["min_revenue"] is not None:
+        steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= cp["min_revenue"]))
+    if cp["min_net_income"] is not None:
         steps.append(
             (
                 "min_net_income",
                 lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(0)
-                >= config.min_net_income,
+                >= cp["min_net_income"],
             )
         )
-    if config.require_positive_operating_cash_flow:
+    if cp["require_positive_operating_cash_flow"]:
         steps.append(
             (
                 "positive_operating_cash_flow",
                 lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_free_cash_flow:
+    if cp["require_positive_free_cash_flow"]:
         steps.append(
             (
                 "positive_free_cash_flow",
                 lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_ebit:
+    if cp["require_positive_ebit"]:
         steps.append(
             (
                 "positive_ebit",
@@ -3262,10 +3297,10 @@ def build_filter_steps(
                 >= cp["min_net_margin"],
             )
         )
-    if config.max_ps is not None:
-        steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= config.max_ps))
-    if config.max_pe is not None:
-        steps.append(("max_pe", lambda frame: frame["pe"].fillna(np.inf) <= config.max_pe))
+    if cp["max_ps"] is not None:
+        steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= cp["max_ps"]))
+    if cp["max_pe"] is not None:
+        steps.append(("max_pe", lambda frame: frame["pe"].fillna(np.inf) <= cp["max_pe"]))
     if cp["min_drawdown_from_52w_high"] is not None:
         steps.append(
             (
@@ -3467,36 +3502,50 @@ def build_industry_trend_steps(
     ]
     if config.max_market_cap is not None:
         steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
-    if config.require_positive_revenue:
+    if cp["require_positive_revenue"]:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
-    if config.require_positive_net_income:
+    if cp["require_positive_net_income"]:
         steps.append(
             (
                 "positive_net_income",
                 lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_operating_cash_flow:
+    if cp["require_positive_operating_cash_flow"]:
         steps.append(
             (
                 "positive_operating_cash_flow",
                 lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_free_cash_flow:
+    if cp["require_positive_free_cash_flow"]:
         steps.append(
             (
                 "positive_free_cash_flow",
                 lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_ebit:
+    if cp["require_positive_ebit"]:
         steps.append(
             (
                 "positive_ebit",
                 lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-1) > 0,
             )
         )
+    if cp["min_revenue"] is not None:
+        steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= cp["min_revenue"]))
+    if cp["min_net_income"] is not None:
+        steps.append(
+            (
+                "min_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(0)
+                >= cp["min_net_income"],
+            )
+        )
+    if cp["max_ps"] is not None:
+        steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= cp["max_ps"]))
+    if cp["max_pe"] is not None:
+        steps.append(("max_pe", lambda frame: frame["pe"].fillna(np.inf) <= cp["max_pe"]))
     if cp["min_revenue_yoy"] is not None:
         steps.append(
             (
@@ -3707,36 +3756,50 @@ def build_momentum_steps(
             <= float(momentum_max_drawdown_from_52w_high),
         ),
     ]
-    if config.require_positive_revenue:
+    if cp["require_positive_revenue"]:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
-    if config.require_positive_net_income:
+    if cp["require_positive_net_income"]:
         steps.append(
             (
                 "positive_net_income",
                 lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_operating_cash_flow:
+    if cp["require_positive_operating_cash_flow"]:
         steps.append(
             (
                 "positive_operating_cash_flow",
                 lambda frame: pd.to_numeric(frame["operating_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_free_cash_flow:
+    if cp["require_positive_free_cash_flow"]:
         steps.append(
             (
                 "positive_free_cash_flow",
                 lambda frame: pd.to_numeric(frame["free_cash_flow"], errors="coerce").fillna(-1) > 0,
             )
         )
-    if config.require_positive_ebit:
+    if cp["require_positive_ebit"]:
         steps.append(
             (
                 "positive_ebit",
                 lambda frame: pd.to_numeric(frame[ebit_col], errors="coerce").fillna(-1) > 0,
             )
         )
+    if cp["min_revenue"] is not None:
+        steps.append(("min_revenue", lambda frame: frame["revenue"].fillna(0) >= cp["min_revenue"]))
+    if cp["min_net_income"] is not None:
+        steps.append(
+            (
+                "min_net_income",
+                lambda frame: pd.to_numeric(frame[net_income_col], errors="coerce").fillna(0)
+                >= cp["min_net_income"],
+            )
+        )
+    if cp["max_ps"] is not None:
+        steps.append(("max_ps", lambda frame: frame["ps"].fillna(np.inf) <= cp["max_ps"]))
+    if cp["max_pe"] is not None:
+        steps.append(("max_pe", lambda frame: frame["pe"].fillna(np.inf) <= cp["max_pe"]))
     if momentum_min_return_60d is not None:
         steps.append(
             (
@@ -3800,23 +3863,118 @@ def build_momentum_steps(
     return steps, momentum_weights
 
 
+def classify_filter_step_layer(step_name: str) -> str:
+    base_steps = {
+        "price_notna",
+        "min_price",
+        "min_dollar_volume",
+        "market_cap_notna",
+        "min_market_cap",
+        "max_market_cap",
+        "watchlist_membership",
+        "channel_bucket_match",
+        "sic_filter",
+        "min_watchlist_etf_count",
+        "min_avg_dollar_volume_20d",
+        "trend_min_watchlist_etf_count",
+        "trend_min_avg_dollar_volume_20d",
+        "momentum_min_watchlist_etf_count",
+        "momentum_min_avg_dollar_volume_20d",
+    }
+    valuation_steps = {
+        "min_value_discount_any",
+        "max_ps_percentile_in_sic",
+        "max_pe_percentile_in_sic",
+        "max_ps",
+        "max_pe",
+        "max_ps_hist_percentile",
+        "max_pe_hist_percentile",
+        "min_drawdown_from_52w_high",
+        "max_range_position_52w",
+        "max_price_to_sma200",
+        "min_days_below_sma200",
+        "min_drawdown_percentile",
+        "min_return_20d",
+        "min_return_60d",
+        "max_20d_return",
+        "max_60d_volatility",
+        "max_60d_volatility_percentile",
+        "trend_min_return_60d",
+        "trend_max_60d_volatility",
+        "momentum_min_return_20d",
+        "momentum_min_return_60d",
+        "momentum_min_price_to_sma200",
+        "momentum_max_drawdown_from_52w_high",
+        "momentum_max_60d_volatility",
+    }
+    if step_name in base_steps:
+        return "base_hard"
+    if step_name in valuation_steps:
+        return "valuation_hard"
+    return "quality_or_theme_hard"
+
+
+def summarize_diagnostics_by_layer(
+    diagnostics: list[dict[str, int | float | str]]
+) -> dict[str, dict[str, float | int]]:
+    out: dict[str, dict[str, float | int]] = {}
+    for row in diagnostics:
+        step = str(row.get("step", ""))
+        if step == "start":
+            continue
+        layer = str(row.get("layer", classify_filter_step_layer(step)))
+        before = int(row.get("before", 0) or 0)
+        remaining = int(row.get("remaining", 0) or 0)
+        removed = int(row.get("removed", 0) or 0)
+        if layer not in out:
+            out[layer] = {"before": before, "remaining": remaining, "removed": removed}
+        else:
+            out[layer]["remaining"] = remaining
+            out[layer]["removed"] = int(out[layer]["removed"]) + removed
+            if int(out[layer]["before"]) <= 0 and before > 0:
+                out[layer]["before"] = before
+    for layer, payload in out.items():
+        before = int(payload.get("before", 0) or 0)
+        remaining = int(payload.get("remaining", 0) or 0)
+        payload["pass_rate"] = float(remaining / before) if before > 0 else 1.0
+    return out
+
+
+def first_fail_concentration(first_fail_summary: pd.DataFrame) -> dict[str, Any]:
+    if first_fail_summary.empty:
+        return {"top_reason": "", "top_count": 0, "top_pct": 0.0}
+    filtered = first_fail_summary[first_fail_summary["reason"] != "passed"].copy()
+    if filtered.empty:
+        return {"top_reason": "passed", "top_count": 0, "top_pct": 0.0}
+    top = filtered.sort_values("count", ascending=False).iloc[0]
+    return {
+        "top_reason": str(top.get("reason", "")),
+        "top_count": int(top.get("count", 0) or 0),
+        "top_pct": float(top.get("pct", 0.0) or 0.0),
+    }
+
+
 def apply_filters_with_diagnostics(
     df: pd.DataFrame, steps: list[tuple[str, Any]]
-) -> tuple[pd.DataFrame, list[dict[str, int | str]]]:
+) -> tuple[pd.DataFrame, list[dict[str, int | float | str]]]:
     out = df.copy()
-    diagnostics: list[dict[str, int | str]] = [
-        {"step": "start", "remaining": int(len(out)), "removed": 0}
+    diagnostics: list[dict[str, int | float | str]] = [
+        {"step": "start", "before": int(len(out)), "remaining": int(len(out)), "removed": 0, "pass_rate": 1.0, "layer": "start"}
     ]
 
     for step_name, mask_fn in steps:
         before = len(out)
         out = out[mask_fn(out)]
         after = len(out)
+        pass_rate = float(after / before) if before > 0 else 1.0
         diagnostics.append(
             {
                 "step": step_name,
+                "before": int(before),
                 "remaining": int(after),
                 "removed": int(before - after),
+                "pass_rate": pass_rate,
+                "layer": classify_filter_step_layer(step_name),
             }
         )
 
@@ -4141,6 +4299,8 @@ def build_run_report_markdown(
     industry_trend_path: Path | None = None,
     momentum_count: int | None = None,
     momentum_path: Path | None = None,
+    diagnostics_layer_summary: dict[str, dict[str, dict[str, float | int]]] | None = None,
+    first_fail_concentration_summary: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
@@ -4160,6 +4320,40 @@ def build_run_report_markdown(
         lines.append(f"- post-filter {channel_name}: {filtered_counts.get(channel_name, 0)}")
     lines.append(f"- final ranked rows: {len(ranked)}")
     lines.append("")
+    if diagnostics_layer_summary:
+        lines.append("## Layer Pass Rates")
+        lines.append("")
+        for channel_name in channel_profiles.keys():
+            lines.append(f"### {channel_name}")
+            layer_map = diagnostics_layer_summary.get(channel_name, {})
+            if not layer_map:
+                lines.append("- no diagnostics")
+                lines.append("")
+                continue
+            for layer in ["base_hard", "quality_or_theme_hard", "valuation_hard"]:
+                row = layer_map.get(layer)
+                if not row:
+                    continue
+                lines.append(
+                    "- "
+                    f"{layer}: before={int(row.get('before', 0) or 0)} | "
+                    f"remaining={int(row.get('remaining', 0) or 0)} | "
+                    f"removed={int(row.get('removed', 0) or 0)} | "
+                    f"pass_rate={float(row.get('pass_rate', 0.0) or 0.0):.2%}"
+                )
+            lines.append("")
+    if first_fail_concentration_summary:
+        lines.append("## First-Fail Concentration")
+        lines.append("")
+        for channel_name in channel_profiles.keys():
+            row = first_fail_concentration_summary.get(channel_name, {})
+            reason = str(row.get("top_reason", "") or "")
+            count = int(row.get("top_count", 0) or 0)
+            pct = float(row.get("top_pct", 0.0) or 0.0)
+            lines.append(
+                f"- {channel_name}: top_reason={reason or 'n/a'} | count={count} | pct={pct:.2%}"
+            )
+        lines.append("")
     lines.append("## Triage")
     lines.append("")
     if ranked.empty:
@@ -4639,6 +4833,8 @@ def run_scan(
 
     ranked_frames: list[pd.DataFrame] = []
     filtered_counts: dict[str, int] = {}
+    diagnostics_layer_summary: dict[str, dict[str, dict[str, float | int]]] = {}
+    first_fail_concentration_summary: dict[str, dict[str, Any]] = {}
 
     for channel_name, channel_profile in channel_profiles.items():
         cp = resolve_channel_profile(config, channel_name, channel_profile)
@@ -4648,11 +4844,39 @@ def run_scan(
 
         log_status(started_at, "INFO", f"Channel={channel_name}: filter diagnostics")
         for row in diagnostics[1:]:
-            log_status(started_at, "INFO", f"  {row['step']}: -{row['removed']} => {row['remaining']}")
+            log_status(
+                started_at,
+                "INFO",
+                f"  {row['step']}: -{row['removed']} => {row['remaining']} "
+                f"(pass={float(row.get('pass_rate', 0.0)):.2%}, layer={row.get('layer', 'n/a')})",
+            )
+
+        layer_stats = summarize_diagnostics_by_layer(diagnostics)
+        diagnostics_layer_summary[channel_name] = layer_stats
+        for layer_name in ["base_hard", "quality_or_theme_hard", "valuation_hard"]:
+            row = layer_stats.get(layer_name)
+            if not row:
+                continue
+            log_status(
+                started_at,
+                "INFO",
+                f"  Layer {layer_name}: before={int(row.get('before', 0) or 0)} "
+                f"remaining={int(row.get('remaining', 0) or 0)} "
+                f"removed={int(row.get('removed', 0) or 0)} "
+                f"pass={float(row.get('pass_rate', 0.0) or 0.0):.2%}",
+            )
 
         log_status(started_at, "INFO", "  First-fail summary:")
         for row in first_fail_summary.itertuples(index=False):
             log_status(started_at, "INFO", f"  {row.reason}: {row.count} ({row.pct:.2%})")
+        concentration = first_fail_concentration(first_fail_summary)
+        first_fail_concentration_summary[channel_name] = concentration
+        log_status(
+            started_at,
+            "INFO",
+            f"  First-fail concentration: reason={concentration['top_reason']} "
+            f"count={concentration['top_count']} pct={concentration['top_pct']:.2%}",
+        )
 
         diagnostics_path = Path(diagnostics_output_path)
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -5039,6 +5263,8 @@ def run_scan(
         "low_coverage_soft_score_weights": config.low_coverage_soft_score_weights,
         "max_adv_participation": config.max_adv_participation,
         "max_estimated_slippage_bps": config.max_estimated_slippage_bps,
+        "diagnostics_layer_summary": diagnostics_layer_summary,
+        "first_fail_concentration_summary": first_fail_concentration_summary,
     }
     network_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     log_status(started_at, "INFO", f"Network report: {network_report_path}")
@@ -5075,6 +5301,8 @@ def run_scan(
         industry_trend_path=trend_out_path,
         momentum_count=len(momentum),
         momentum_path=momentum_out_path,
+        diagnostics_layer_summary=diagnostics_layer_summary,
+        first_fail_concentration_summary=first_fail_concentration_summary,
     )
     paths["report_md"].write_text(md_report)
     log_status(started_at, "INFO", f"Detailed report: {paths['report_md']}")

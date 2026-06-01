@@ -447,6 +447,7 @@ python run_scan.py --help
 包含：
 - 阶段进度（`[1/6]` ~ `[6/6]`）
 - SEC 长阶段进度
+- 分层过滤诊断（`base_hard` / `quality_or_theme_hard` / `valuation_hard`）
 - 输出文件路径
 - 结束时三张清单按通道的入选股票汇总
 
@@ -457,6 +458,18 @@ python run_scan.py --help
 - 限速等待次数/耗时
 - 缓存命中（`cache_hits`/`cache_misses`）
 - 汇总标记：`had_rate_limit_or_network_issue`
+- 扫描上下文中的分层漏斗与首因集中度：
+  - `scan_context.diagnostics_layer_summary`
+  - `scan_context.first_fail_concentration_summary`
+
+### 9.3 前置硬过滤分层
+
+- `base_hard`：交易与可执行性基础门槛（价格/成交额/市值/watchlist/sic 等）
+- `quality_or_theme_hard`：财务质量与主题关联门槛（盈利、现金流、杠杆、AI link 等）
+- `valuation_hard`：估值与价量风格门槛（估值分位、折价、位置、波动等）
+
+说明：
+- 当前代码支持在 `channel_profiles.<channel>` 中覆写更多前置门槛（如 `require_positive_*`、`min_revenue`、`min_net_income`、`max_ps`、`max_pe`），用于拉开 `risk_on / balanced / risk_off` 的分流差异。
 
 ## 10. 缓存与限速
 
