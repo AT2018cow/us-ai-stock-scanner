@@ -92,6 +92,32 @@ python run_scan.py --config configs/config.balanced.json
 
 历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
+### 3.6 定期调参（walk-forward）
+
+入口：
+
+```bash
+python scripts/tune_parameters.py \
+  --base-config configs/config.balanced.json \
+  --param-space configs/tuner.param_space.json \
+  --search-mode auto \
+  --max-candidates 36
+```
+
+默认行为：
+- 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
+- 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
+- 自动选择并覆盖三套配置：
+  - `configs/config.balanced.json`
+  - `configs/config.risk_on.json`
+  - `configs/config.risk_off.json`
+
+如果只想评估不覆盖配置：
+
+```bash
+python scripts/tune_parameters.py --no-promote
+```
+
 ## 4. Watchlist 机制
 
 ### 4.1 运行时行为
@@ -478,7 +504,27 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `*_report.md`
 - `*_report_network.json`
 
-## 12. 说明与限制
+## 12. 参数调优（自动化）
+
+调参输入：
+- `configs/tuner.param_space.json`：参数轴定义（`path` + `values`）
+
+调参输出（默认在 `outputs/`）：
+- `tuning_<UTC>_results.csv`：每个候选参数组的评分与约束结果
+- `tuning_<UTC>_report.md`：Top 候选与三配置选型说明
+- `tuning_<UTC>_summary.json`：本次调参摘要（run id / picks / 文件路径）
+
+推荐运行频率：
+- 生产扫描：可日内多次
+- watchlist 刷新：每周一次（或ETF有明显变动时）
+- 参数调优：每周一次或双周一次（与生产扫描解耦）
+
+建议上线流程：
+1. 先跑 `scripts/tune_parameters.py` 生成新参数。
+2. 审阅 `tuning_*_report.md` 与 `tuning_*_results.csv`。
+3. 使用新参数运行 `run_scan.py`，确认输出质量后再投入日常使用。
+
+## 13. 说明与限制
 
 - 本项目用于研究与筛选，不构成投资建议。
 - 历史回测为工程近似，不等价于完整 PIT 学术数据库回测。
