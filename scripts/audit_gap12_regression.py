@@ -58,7 +58,7 @@ NEW_METRIC_COVERAGE_FIELDS = [
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Audit gap-12 metrics with baseline/new regression.")
-    p.add_argument("--config", default="config.production.json")
+    p.add_argument("--config", default="configs/config.balanced.json")
     p.add_argument("--max-symbols", type=int, default=None)
     p.add_argument("--output-dir", default="outputs/audits")
     return p.parse_args()

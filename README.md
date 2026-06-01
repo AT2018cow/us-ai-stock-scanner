@@ -65,7 +65,7 @@ ALPACA_FEED=iex
 ### 3.3 刷新 watchlist（按需手工执行）
 
 ```bash
-python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv
+python scripts/refresh_ai_watchlist.py --config configs/config.balanced.json --output data/ai_watchlist.csv
 ```
 
 ### 3.4 运行扫描
@@ -73,14 +73,24 @@ python scripts/refresh_ai_watchlist.py --config config.production.json --output 
 示例（限制扫描数量）：
 
 ```bash
-python run_scan.py --config config.production.json --max-symbols 300
+python run_scan.py --config configs/config.balanced.json --max-symbols 300
 ```
 
 全量 watchlist：
 
 ```bash
-python run_scan.py --config config.production.json
+python run_scan.py --config configs/config.balanced.json
 ```
+
+### 3.5 官方配置
+
+当前维护三套正式配置：
+
+- `configs/config.risk_off.json`：质量优先，样本更少，防守属性更强。
+- `configs/config.balanced.json`：质量与覆盖率平衡，作为默认扫描配置。
+- `configs/config.risk_on.json`：覆盖率优先，适合风险偏好较高阶段。
+
+历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
 ## 4. Watchlist 机制
 
@@ -101,7 +111,7 @@ python run_scan.py --config config.production.json
 
 `updated_utc` 建议保留，但不是扫描必需列。
 
-### 4.3 默认 ETF 三池（来自 `config.production.json`）
+### 4.3 默认 ETF 三池（来自 `configs/config.balanced.json`）
 
 - `watchlist_core_etfs`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
 - `watchlist_enabler_etfs`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
@@ -149,7 +159,7 @@ python run_scan.py --config config.production.json
 
 ## 6. 配置说明
 
-默认扫描配置：`config.production.json`（`run_scan.py` 默认读取该文件）。
+默认扫描配置：`configs/config.balanced.json`（`run_scan.py` 默认读取该文件）。
 
 ### 6.1 参数生效顺序与覆盖关系
 
@@ -159,11 +169,13 @@ python run_scan.py --config config.production.json
 4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
 5. 配置中的未知字段会被忽略（不会报错，也不会生效）。
 
-### 6.2 全局参数与阈值（`config.production.json`）
+### 6.2 全局参数与阈值（`configs/config.balanced.json`）
+
+说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.balanced.json` / `config.risk_on.json`）。
 
 #### 6.2.1 运行、并发、缓存、限速
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
@@ -180,7 +192,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.2 Watchlist 与 AI 关联评分
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `watchlist_csv_path` | `data/ai_watchlist.csv` | 扫描输入 watchlist 路径。 |
 | `watchlist_fetch_timeout_sec` | `20` | watchlist 刷新脚本网络超时。 |
@@ -196,7 +208,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.3 Universe 与流动性门槛
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `enabled_exchanges` | `NYSE,NASDAQ,AMEX,ARCA,BATS` | 交易所白名单。 |
 | `min_price` | `1.0` | 最低股价。 |
@@ -207,7 +219,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.4 财务口径与正值开关
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `use_ttm_metrics` | `true` | 优先使用 TTM 指标。 |
 | `use_adjusted_quality_metrics` | `true` | 质量与盈利相关指标使用“调整后”口径。 |
@@ -220,7 +232,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.5 价值、质量与风险硬过滤阈值
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `min_fundamental_quality_score` | `0.56` | 质量综合分下限。 |
 | `min_revenue` | `10000000` | 收入下限。 |
@@ -255,7 +267,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.6 价格行为与波动阈值
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `price_lookback_days` | `420` | 价格特征计算回看天数。 |
 | `min_drawdown_from_52w_high` | `null` | 52 周高点回撤下限。 |
@@ -271,7 +283,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.7 可交易性、分散化、评分稳健性
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `assumed_position_usd` | `250000` | 估算冲击成本的单票仓位。 |
 | `max_adv_participation` | `0.05` | 交易参与度（仓位/ADV）上限。 |
@@ -285,7 +297,7 @@ python run_scan.py --config config.production.json
 
 #### 6.2.8 覆盖率模式、去重与输出数量
 
-| 参数 | 默认值（production） | 作用 |
+| 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
 | `metric_hard_filter_coverage_mode` | `balanced` | 硬过滤覆盖率模式：`high_coverage_only` / `balanced` / `all_metrics`。 |
 | `force_hard_filter_low_coverage_metrics` | `false` | 是否将低覆盖指标强制纳入硬过滤。 |
@@ -376,7 +388,7 @@ python run_scan.py --help
 ```
 
 常用参数：
-- `--config`：配置文件路径（默认 `config.production.json`）
+- `--config`：配置文件路径（默认 `configs/config.balanced.json`）
 - `--max-symbols`：样本上限（在 watchlist 内按快照成交额降序截取）
 - `--output`：主结果 CSV 路径
 - `--diagnostics-output`：过滤诊断输出基路径
@@ -439,7 +451,7 @@ python run_scan.py --help
 入口：
 
 ```bash
-python run_backtest.py --mode historical_replay --scan-config config.production.json
+python run_backtest.py --mode historical_replay --scan-config configs/config.balanced.json
 ```
 
 常用参数：

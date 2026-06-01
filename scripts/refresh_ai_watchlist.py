@@ -8,7 +8,7 @@ from ai_value_scanner.scanner import ScanConfig, load_config, refresh_watchlist_
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Refresh AI watchlist from ETF holdings.")
-    p.add_argument("--config", default="config.production.json", help="Scanner config path.")
+    p.add_argument("--config", default="configs/config.balanced.json", help="Scanner config path.")
     p.add_argument("--output", default=None, help="Optional output csv path override.")
     return p
 

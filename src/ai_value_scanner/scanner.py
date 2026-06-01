@@ -4225,7 +4225,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.production.json",
+        default="configs/config.balanced.json",
         help="JSON file path for filter configuration.",
     )
     parser.add_argument(
@@ -4291,7 +4291,7 @@ def run_scan(
     if watchlist_scores.empty:
         raise ValueError(
             "Watchlist is empty or missing. Run "
-            "`python scripts/refresh_ai_watchlist.py --config config.production.json --output data/ai_watchlist.csv` "
+            "`python scripts/refresh_ai_watchlist.py --config configs/config.balanced.json --output data/ai_watchlist.csv` "
             "or populate watchlist_csv_path manually."
         )
     watchlist_allowlist = set(watchlist_scores["symbol"].dropna().astype(str).tolist())

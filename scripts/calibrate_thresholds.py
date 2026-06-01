@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
             "generates conservative/production/aggressive config profiles."
         )
     )
-    p.add_argument("--base-config", default="config.production.json")
+    p.add_argument("--base-config", default="configs/config.balanced.json")
     p.add_argument("--outputs-dir", default="outputs")
     p.add_argument("--run-stem", default=None, help="Optional run stem, e.g. _post_relax_next_tier_full")
     p.add_argument("--target-low-min", type=int, default=8)
