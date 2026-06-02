@@ -1,0 +1,90 @@
+{
+  "axes": [
+    {
+      "name": "min_dollar_volume",
+      "path": "min_dollar_volume",
+      "values": [
+        1000000.0,
+        2000000.0
+      ]
+    },
+    {
+      "name": "core_ai.max_ps_percentile_in_sic",
+      "path": "channel_profiles.core_ai.max_ps_percentile_in_sic",
+      "values": [
+        0.5,
+        0.58,
+        0.66
+      ]
+    },
+    {
+      "name": "ai_enabler.max_ps_percentile_in_sic",
+      "path": "channel_profiles.ai_enabler.max_ps_percentile_in_sic",
+      "values": [
+        0.58,
+        0.66,
+        0.74
+      ]
+    },
+    {
+      "name": "ai_peripheral.max_ps_percentile_in_sic",
+      "path": "channel_profiles.ai_peripheral.max_ps_percentile_in_sic",
+      "values": [
+        0.66,
+        0.74,
+        0.82
+      ]
+    },
+    {
+      "name": "core_ai.min_fcf_yield",
+      "path": "channel_profiles.core_ai.min_fcf_yield",
+      "values": [
+        0.008,
+        0.012,
+        0.016
+      ]
+    },
+    {
+      "name": "ai_enabler.min_fcf_yield",
+      "path": "channel_profiles.ai_enabler.min_fcf_yield",
+      "values": [
+        0.004,
+        0.007,
+        0.01
+      ]
+    },
+    {
+      "name": "ai_peripheral.min_fcf_yield",
+      "path": "channel_profiles.ai_peripheral.min_fcf_yield",
+      "values": [
+        0.0,
+        0.004,
+        0.008
+      ]
+    },
+    {
+      "name": "core_ai.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.core_ai.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        20000000.0,
+        25000000.0
+      ]
+    },
+    {
+      "name": "ai_enabler.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.ai_enabler.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        14000000.0,
+        18000000.0
+      ]
+    },
+    {
+      "name": "ai_peripheral.momentum_min_avg_dollar_volume_20d",
+      "path": "channel_profiles.ai_peripheral.momentum_min_avg_dollar_volume_20d",
+      "values": [
+        10000000.0,
+        14000000.0
+      ]
+    }
+  ]
+}

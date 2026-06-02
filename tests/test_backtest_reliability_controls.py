@@ -9,7 +9,9 @@ from ai_value_scanner.backtest import (
     ai_disclosure_score_asof,
     build_flow_ttm_or_annual_series,
     build_cross_section_asof,
+    build_signal_diagnostics,
     close_history_from_frame_asof,
+    event_backtest,
     FundamentalPointInTime,
     forward_return,
     parse_watchlist_snapshot_date,
@@ -118,6 +120,67 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         )
         self.assertIsNotNone(ret)
         self.assertEqual(round(float(ret), 6), 0.25)
+
+    def test_event_backtest_marks_no_signal_and_unpriced_events(self) -> None:
+        signals = pd.DataFrame(
+            [
+                {
+                    "scenario": "base",
+                    "run_stem": "r1",
+                    "run_ts_utc": "2026-01-01T00:00:00+00:00",
+                    "signal_date": "2026-01-01",
+                    "list_type": "momentum",
+                    "symbols": [],
+                    "n_selected": 0,
+                },
+                {
+                    "scenario": "base",
+                    "run_stem": "r2",
+                    "run_ts_utc": "2026-01-02T00:00:00+00:00",
+                    "signal_date": "2026-01-02",
+                    "list_type": "momentum",
+                    "symbols": ["MISS"],
+                    "n_selected": 1,
+                },
+            ]
+        )
+        events, _ = event_backtest(
+            signals=signals,
+            prices_by_symbol={},
+            horizons=[20],
+            roundtrip_cost=0.0,
+            benchmark_symbols=[],
+        )
+        self.assertEqual(events.loc[0, "event_status"], "no_signal")
+        self.assertEqual(events.loc[1, "event_status"], "unpriced")
+
+    def test_build_signal_diagnostics_parses_channel_json(self) -> None:
+        signals = pd.DataFrame(
+            [
+                {
+                    "scenario": "base",
+                    "run_stem": "r1",
+                    "signal_date": "2026-01-01",
+                    "list_type": "momentum",
+                    "watchlist_source": "latest_fallback",
+                    "channel_counts": '{"core_ai": 2}',
+                    "channel_symbols": '{"core_ai": ["A", "B"]}',
+                    "filter_diagnostics": (
+                        '{"core_ai": {"n_input": 5, "n_filtered": 3, "n_ranked": 2, '
+                        '"first_fail": {"top_reason": "valuation", "top_pct": 0.4}, '
+                        '"layer_summary": {"quality": {"before": 5, "remaining": 3, '
+                        '"removed": 2, "pass_rate": 0.6}}}}'
+                    ),
+                }
+            ]
+        )
+        diagnostics, channel_summary = build_signal_diagnostics(signals)
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(len(channel_summary), 1)
+        self.assertEqual(channel_summary.loc[0, "n_selected_channel"], 2)
+        self.assertEqual(channel_summary.loc[0, "selected_symbols"], "A,B")
+        self.assertEqual(diagnostics.loc[0, "layer"], "quality")
+        self.assertAlmostEqual(float(diagnostics.loc[0, "pass_rate"]), 0.6)
 
     def test_series_up_to_asof_truncates_future_points(self) -> None:
         series = [

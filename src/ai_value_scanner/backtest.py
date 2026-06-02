@@ -52,6 +52,7 @@ from ai_value_scanner.scanner import (
     build_session,
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
+    first_fail_concentration,
     load_config,
     load_watchlist_scores,
     watchlist_rows_to_scores,
@@ -60,6 +61,8 @@ from ai_value_scanner.scanner import (
     safe_yoy,
     score_and_rank,
     fundamental_quality_score_from_metrics,
+    summarize_diagnostics_by_layer,
+    summarize_first_fail_reasons,
     theme_score_from_news,
 )
 
@@ -244,8 +247,11 @@ def parse_watchlist_snapshot_date(path: Path) -> pd.Timestamp | None:
     return None
 
 
-def watchlist_map_from_scores(scores: pd.DataFrame) -> dict[str, tuple[str, int, str]]:
-    out: dict[str, tuple[str, int, str]] = {}
+WatchlistMap = dict[str, tuple[str, int, str]]
+
+
+def watchlist_map_from_scores(scores: pd.DataFrame) -> WatchlistMap:
+    out: WatchlistMap = {}
     if scores.empty:
         return out
     for row in scores.itertuples(index=False):
@@ -263,10 +269,10 @@ def watchlist_map_from_scores(scores: pd.DataFrame) -> dict[str, tuple[str, int,
 def load_watchlist_snapshots(
     cfg: BacktestConfig,
     scan_config: ScanConfig,
-) -> tuple[list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]], dict[str, tuple[str, int, str]]]:
+) -> tuple[list[tuple[pd.Timestamp, WatchlistMap, str]], WatchlistMap]:
     latest_scores = load_watchlist_scores(scan_config)
     latest_map = watchlist_map_from_scores(latest_scores)
-    snapshots: list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]] = []
+    snapshots: list[tuple[pd.Timestamp, WatchlistMap, str]] = []
     if not cfg.use_historical_watchlist:
         return snapshots, latest_map
 
@@ -294,10 +300,10 @@ def load_watchlist_snapshots(
 
 def resolve_watchlist_asof(
     asof: pd.Timestamp,
-    snapshots: list[tuple[pd.Timestamp, dict[str, tuple[str, int, str]], str]],
-    latest_map: dict[str, tuple[str, int, str]],
+    snapshots: list[tuple[pd.Timestamp, WatchlistMap, str]],
+    latest_map: WatchlistMap,
     allow_latest_fallback: bool,
-) -> tuple[dict[str, tuple[str, int, str]], str]:
+) -> tuple[WatchlistMap, str]:
     if snapshots:
         dates = [x[0] for x in snapshots]
         idx = bisect.bisect_right(dates, asof.normalize()) - 1
@@ -1426,63 +1432,100 @@ def rank_and_pick_symbols(
     per_channel_top_n: bool,
     include_channels: list[str] | None,
 ) -> list[str]:
+    picks, _ = rank_and_pick_symbols_with_diagnostics(
+        df=df,
+        scan_config=scan_config,
+        list_type=list_type,
+        top_n=top_n,
+        per_channel_top_n=per_channel_top_n,
+        include_channels=include_channels,
+    )
+    return picks
+
+
+def build_steps_and_weights(
+    scan_config: ScanConfig,
+    channel_name: str,
+    channel_profile: dict[str, Any],
+    list_type: str,
+) -> tuple[list[tuple[str, Any]], dict[str, float]]:
+    if list_type == "low_value":
+        cp = resolve_channel_profile(scan_config, channel_name, channel_profile)
+        return build_filter_steps(scan_config, channel_name, channel_profile), cp["score_weights"]
+    if list_type == "industry_trend":
+        return build_industry_trend_steps(scan_config, channel_name, channel_profile)
+    return build_momentum_steps(scan_config, channel_name, channel_profile)
+
+
+def rank_and_pick_symbols_with_diagnostics(
+    df: pd.DataFrame,
+    scan_config: ScanConfig,
+    list_type: str,
+    top_n: int,
+    per_channel_top_n: bool,
+    include_channels: list[str] | None,
+) -> tuple[list[str], dict[str, Any]]:
     channel_profiles = scan_config.channel_profiles or {"core_ai": {}}
     ranked_frames: list[pd.DataFrame] = []
+    diagnostics: dict[str, Any] = {
+        "channels": {},
+        "channel_symbols": {},
+        "channel_counts": {},
+    }
     for channel_name, channel_profile in channel_profiles.items():
         if include_channels and channel_name not in include_channels:
             continue
-        if list_type == "low_value":
-            cp = resolve_channel_profile(scan_config, channel_name, channel_profile)
-            steps = build_filter_steps(scan_config, channel_name, channel_profile)
-            filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(
-                filtered,
-                cp["score_weights"],
-                scan_config.score_winsor_lower_q,
-                scan_config.score_winsor_upper_q,
-                scan_config.score_penalty_overvaluation,
-                scan_config.score_penalty_deterioration,
-            )
-        elif list_type == "industry_trend":
-            steps, weights = build_industry_trend_steps(scan_config, channel_name, channel_profile)
-            filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(
-                filtered,
-                weights,
-                scan_config.score_winsor_lower_q,
-                scan_config.score_winsor_upper_q,
-                scan_config.score_penalty_overvaluation,
-                scan_config.score_penalty_deterioration,
-            )
-        else:
-            steps, weights = build_momentum_steps(scan_config, channel_name, channel_profile)
-            filtered, _ = apply_filters_with_diagnostics(df, steps)
-            ranked = score_and_rank(
-                filtered,
-                weights,
-                scan_config.score_winsor_lower_q,
-                scan_config.score_winsor_upper_q,
-                scan_config.score_penalty_overvaluation,
-                scan_config.score_penalty_deterioration,
-            )
+        steps, weights = build_steps_and_weights(scan_config, channel_name, channel_profile, list_type)
+        filtered, step_diagnostics = apply_filters_with_diagnostics(df, steps)
+        first_fail_summary = summarize_first_fail_reasons(df, steps)
+        ranked = score_and_rank(
+            filtered,
+            weights,
+            scan_config.score_winsor_lower_q,
+            scan_config.score_winsor_upper_q,
+            scan_config.score_penalty_overvaluation,
+            scan_config.score_penalty_deterioration,
+        )
+        diagnostics["channels"][channel_name] = {
+            "n_input": int(len(df)),
+            "n_filtered": int(len(filtered)),
+            "n_ranked": int(len(ranked)),
+            "layer_summary": summarize_diagnostics_by_layer(step_diagnostics),
+            "first_fail": first_fail_concentration(first_fail_summary),
+        }
         if ranked.empty:
+            diagnostics["channel_symbols"][channel_name] = []
+            diagnostics["channel_counts"][channel_name] = 0
             continue
         ranked = ranked.copy()
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
 
     if not ranked_frames:
-        return []
+        diagnostics["selected_symbols"] = []
+        return [], diagnostics
 
     if per_channel_top_n:
         picks: list[str] = []
         for part in ranked_frames:
-            picks.extend(part.head(top_n)["symbol"].dropna().astype(str).tolist())
+            channel = str(part["channel"].iloc[0])
+            channel_picks = part.head(top_n)["symbol"].dropna().astype(str).tolist()
+            diagnostics["channel_symbols"][channel] = channel_picks
+            diagnostics["channel_counts"][channel] = len(channel_picks)
+            picks.extend(channel_picks)
     else:
         merged = pd.concat(ranked_frames, ignore_index=True)
         merged = merged.sort_values("composite_score", ascending=False)
-        picks = merged.head(top_n)["symbol"].dropna().astype(str).tolist()
-    return normalize_symbol_list(picks)
+        selected = merged.head(top_n).copy()
+        picks = selected["symbol"].dropna().astype(str).tolist()
+        for channel_name in diagnostics["channels"]:
+            part = selected[selected["channel"] == channel_name] if "channel" in selected.columns else pd.DataFrame()
+            channel_picks = part["symbol"].dropna().astype(str).tolist()
+            diagnostics["channel_symbols"][channel_name] = channel_picks
+            diagnostics["channel_counts"][channel_name] = len(channel_picks)
+    picks = normalize_symbol_list(picks)
+    diagnostics["selected_symbols"] = picks
+    return picks, diagnostics
 
 
 def build_cross_section_asof(
@@ -2125,7 +2168,7 @@ def build_signal_events_historical_replay(
         if df.empty:
             continue
         for list_type in (cfg.list_types or VALID_LIST_TYPES):
-            symbols_selected = rank_and_pick_symbols(
+            symbols_selected, signal_diag = rank_and_pick_symbols_with_diagnostics(
                 df=df,
                 scan_config=scan_config,
                 list_type=list_type,
@@ -2142,6 +2185,9 @@ def build_signal_events_historical_replay(
                     "list_type": list_type,
                     "symbols": symbols_selected,
                     "n_selected": len(symbols_selected),
+                    "channel_counts": json.dumps(signal_diag.get("channel_counts", {}), sort_keys=True),
+                    "channel_symbols": json.dumps(signal_diag.get("channel_symbols", {}), sort_keys=True),
+                    "filter_diagnostics": json.dumps(signal_diag.get("channels", {}), sort_keys=True),
                     "source_csv": "",
                     "watchlist_source": watchlist_source,
                 }
@@ -2294,6 +2340,14 @@ def event_backtest(
                 priced += 1
                 returns.append(float(ret))
             portfolio_return = float(np.mean(returns)) if returns else np.nan
+            if not symbols:
+                event_status = "no_signal"
+            elif priced <= 0:
+                event_status = "unpriced"
+            elif priced < len(symbols):
+                event_status = "partial_valid"
+            else:
+                event_status = "valid"
             event_rows.append(
                 {
                     "scenario": row.scenario,
@@ -2304,6 +2358,7 @@ def event_backtest(
                     "horizon_days": horizon,
                     "n_selected": int(row.n_selected),
                     "n_priced": int(priced),
+                    "event_status": event_status,
                     "portfolio_return": portfolio_return,
                 }
             )
@@ -2362,6 +2417,10 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                 "std_return",
                 "cumulative_return",
                 "avg_n_priced",
+                "avg_n_selected",
+                "n_no_signal_events",
+                "n_unpriced_events",
+                "n_partial_valid_events",
                 "avg_excess_vs_QQQ",
             ]
         )
@@ -2395,6 +2454,16 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                     "std_return": np.nan,
                     "cumulative_return": np.nan,
                     "avg_n_priced": float(part["n_priced"].mean()) if not part.empty else np.nan,
+                    "avg_n_selected": float(part["n_selected"].mean()) if not part.empty else np.nan,
+                    "n_no_signal_events": int((part.get("event_status") == "no_signal").sum())
+                    if "event_status" in part
+                    else 0,
+                    "n_unpriced_events": int((part.get("event_status") == "unpriced").sum())
+                    if "event_status" in part
+                    else 0,
+                    "n_partial_valid_events": int((part.get("event_status") == "partial_valid").sum())
+                    if "event_status" in part
+                    else 0,
                     "avg_excess_vs_QQQ": np.nan,
                 }
             )
@@ -2412,6 +2481,16 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                 "std_return": float(p.std(ddof=0)),
                 "cumulative_return": float((1.0 + p).prod() - 1.0),
                 "avg_n_priced": float(part["n_priced"].mean()),
+                "avg_n_selected": float(part["n_selected"].mean()),
+                "n_no_signal_events": int((part.get("event_status") == "no_signal").sum())
+                if "event_status" in part
+                else 0,
+                "n_unpriced_events": int((part.get("event_status") == "unpriced").sum())
+                if "event_status" in part
+                else 0,
+                "n_partial_valid_events": int((part.get("event_status") == "partial_valid").sum())
+                if "event_status" in part
+                else 0,
                 "avg_excess_vs_QQQ": float(part["excess_vs_qqq"].dropna().mean())
                 if part["excess_vs_qqq"].notna().any()
                 else np.nan,
@@ -2430,6 +2509,8 @@ def summarize_backtest_by_segment(events: pd.DataFrame, benchmarks: pd.DataFrame
                 "horizon_days",
                 "n_events_total",
                 "n_events_valid",
+                "n_no_signal_events",
+                "n_unpriced_events",
                 "avg_return",
                 "win_rate",
                 "avg_excess_vs_QQQ",
@@ -2463,6 +2544,12 @@ def summarize_backtest_by_segment(events: pd.DataFrame, benchmarks: pd.DataFrame
                 "horizon_days": int(horizon),
                 "n_events_total": int(len(part)),
                 "n_events_valid": int(len(p)),
+                "n_no_signal_events": int((part.get("event_status") == "no_signal").sum())
+                if "event_status" in part
+                else 0,
+                "n_unpriced_events": int((part.get("event_status") == "unpriced").sum())
+                if "event_status" in part
+                else 0,
                 "avg_return": float(p.mean()) if not p.empty else np.nan,
                 "win_rate": float((p > 0).mean()) if not p.empty else np.nan,
                 "avg_excess_vs_QQQ": float(part["excess_vs_qqq"].dropna().mean())
@@ -2475,15 +2562,90 @@ def summarize_backtest_by_segment(events: pd.DataFrame, benchmarks: pd.DataFrame
     ).reset_index(drop=True)
 
 
+def parse_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def build_signal_diagnostics(signals: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    diagnostic_rows: list[dict[str, Any]] = []
+    channel_rows: list[dict[str, Any]] = []
+    if signals.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    for row in signals.itertuples(index=False):
+        base = {
+            "scenario": getattr(row, "scenario", ""),
+            "run_stem": getattr(row, "run_stem", ""),
+            "signal_date": getattr(row, "signal_date", ""),
+            "list_type": getattr(row, "list_type", ""),
+            "watchlist_source": getattr(row, "watchlist_source", ""),
+        }
+        channel_counts = parse_json_object(getattr(row, "channel_counts", ""))
+        channel_symbols = parse_json_object(getattr(row, "channel_symbols", ""))
+        filter_diagnostics = parse_json_object(getattr(row, "filter_diagnostics", ""))
+        for channel, payload in filter_diagnostics.items():
+            if not isinstance(payload, dict):
+                continue
+            first_fail = payload.get("first_fail") if isinstance(payload.get("first_fail"), dict) else {}
+            channel_rows.append(
+                {
+                    **base,
+                    "channel": channel,
+                    "n_input": int(payload.get("n_input", 0) or 0),
+                    "n_filtered": int(payload.get("n_filtered", 0) or 0),
+                    "n_ranked": int(payload.get("n_ranked", 0) or 0),
+                    "n_selected_channel": int(channel_counts.get(channel, 0) or 0),
+                    "selected_symbols": ",".join(str(x) for x in channel_symbols.get(channel, []))
+                    if isinstance(channel_symbols.get(channel), list)
+                    else "",
+                    "top_first_fail": str(first_fail.get("top_reason", "")),
+                    "top_first_fail_pct": float(first_fail.get("top_pct", 0.0) or 0.0),
+                }
+            )
+            layer_summary = payload.get("layer_summary")
+            if not isinstance(layer_summary, dict):
+                continue
+            for layer, layer_payload in layer_summary.items():
+                if not isinstance(layer_payload, dict):
+                    continue
+                diagnostic_rows.append(
+                    {
+                        **base,
+                        "channel": channel,
+                        "layer": layer,
+                        "before": int(layer_payload.get("before", 0) or 0),
+                        "remaining": int(layer_payload.get("remaining", 0) or 0),
+                        "removed": int(layer_payload.get("removed", 0) or 0),
+                        "pass_rate": float(layer_payload.get("pass_rate", 0.0) or 0.0),
+                    }
+                )
+
+    diagnostics = pd.DataFrame(diagnostic_rows)
+    channel_summary = pd.DataFrame(channel_rows)
+    return diagnostics, channel_summary
+
+
 def build_markdown_report(
     cfg: BacktestConfig,
     signals: pd.DataFrame,
     summary: pd.DataFrame,
     segment_summary: pd.DataFrame,
+    signal_diagnostics: pd.DataFrame,
+    signal_channel_summary: pd.DataFrame,
     events_path: Path,
     summary_path: Path,
     benchmarks_path: Path,
     segment_path: Path,
+    signal_diagnostics_path: Path,
+    signal_channel_summary_path: Path,
 ) -> str:
     lines: list[str] = []
     lines.append("# Backtest Report")
@@ -2528,7 +2690,9 @@ def build_markdown_report(
                 "- "
                 f"{row.scenario} | {row.list_type} | H={row.horizon_days} | "
                 f"n={row.n_events_valid}/{row.n_events_total} | avg={avg_ret} | "
-                f"win={win} | excess_vs_QQQ={ex}"
+                f"win={win} | excess_vs_QQQ={ex} | "
+                f"no_signal={getattr(row, 'n_no_signal_events', 0)} | "
+                f"unpriced={getattr(row, 'n_unpriced_events', 0)}"
             )
     lines.append("")
     lines.append("## Segments")
@@ -2544,7 +2708,29 @@ def build_markdown_report(
                 "- "
                 f"{row.scenario} | {row.segment} | {row.list_type} | H={row.horizon_days} | "
                 f"n={row.n_events_valid}/{row.n_events_total} | avg={avg_ret} | "
-                f"win={win} | excess_vs_QQQ={ex}"
+                f"win={win} | excess_vs_QQQ={ex} | "
+                f"no_signal={getattr(row, 'n_no_signal_events', 0)} | "
+                f"unpriced={getattr(row, 'n_unpriced_events', 0)}"
+            )
+    lines.append("")
+    lines.append("## Signal Diagnostics")
+    lines.append("")
+    if signal_channel_summary.empty:
+        lines.append("- no signal diagnostics")
+    else:
+        grouped = signal_channel_summary.groupby(["scenario", "list_type", "channel"], dropna=False)
+        for keys, part in grouped:
+            scenario, list_type, channel = keys
+            avg_selected = pd.to_numeric(part["n_selected_channel"], errors="coerce").mean()
+            avg_ranked = pd.to_numeric(part["n_ranked"], errors="coerce").mean()
+            top_fail = ""
+            if "top_first_fail" in part and not part.empty:
+                top_fail = str(part["top_first_fail"].mode().iloc[0]) if not part["top_first_fail"].mode().empty else ""
+            lines.append(
+                "- "
+                f"{scenario} | {list_type} | {channel} | "
+                f"avg_selected={avg_selected:.2f} | avg_ranked={avg_ranked:.2f} | "
+                f"common_first_fail={top_fail}"
             )
     lines.append("")
     lines.append("## Artifacts")
@@ -2553,6 +2739,8 @@ def build_markdown_report(
     lines.append(f"- summary: {summary_path}")
     lines.append(f"- benchmarks: {benchmarks_path}")
     lines.append(f"- segment summary: {segment_path}")
+    lines.append(f"- signal diagnostics: {signal_diagnostics_path}")
+    lines.append(f"- signal channel summary: {signal_channel_summary_path}")
     lines.append("")
     lines.append("## Notes")
     lines.append("")
@@ -2685,6 +2873,8 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
         Path(cfg.outputs_dir),
         cfg.mode,
     )
+    signal_diagnostics_path = events_path.with_name(f"{events_path.stem}_signal_diagnostics.csv")
+    signal_channel_summary_path = events_path.with_name(f"{events_path.stem}_signal_channel_summary.csv")
 
     bt_log("building signals...", started_at_monotonic=backtest_start)
     signals, build_monitor = build_signals(cfg, scan_cfg)
@@ -2701,15 +2891,21 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
         empty.to_csv(summary_path, index=False)
         empty.to_csv(benchmarks_path, index=False)
         empty.to_csv(segments_path, index=False)
+        empty.to_csv(signal_diagnostics_path, index=False)
+        empty.to_csv(signal_channel_summary_path, index=False)
         md = build_markdown_report(
             cfg=cfg,
             signals=signals,
             summary=empty,
             segment_summary=empty,
+            signal_diagnostics=empty,
+            signal_channel_summary=empty,
             events_path=events_path,
             summary_path=summary_path,
             benchmarks_path=benchmarks_path,
             segment_path=segments_path,
+            signal_diagnostics_path=signal_diagnostics_path,
+            signal_channel_summary_path=signal_channel_summary_path,
         )
         report_path.write_text(md)
         bt_log(f"dry-run artifacts written: {report_path}", started_at_monotonic=backtest_start)
@@ -2718,6 +2914,8 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
             "summary_path": summary_path,
             "benchmarks_path": benchmarks_path,
             "segments_path": segments_path,
+            "signal_diagnostics_path": signal_diagnostics_path,
+            "signal_channel_summary_path": signal_channel_summary_path,
             "report_path": report_path,
         }
 
@@ -2753,6 +2951,7 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     )
     summary = summarize_backtest(events, benchmarks)
     segment_summary = summarize_backtest_by_segment(events, benchmarks)
+    signal_diagnostics, signal_channel_summary = build_signal_diagnostics(signals)
     bt_log(
         f"backtest aggregation done (events={len(events)}, summary_rows={len(summary)})",
         started_at_monotonic=backtest_start,
@@ -2762,16 +2961,22 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     summary.to_csv(summary_path, index=False)
     benchmarks.to_csv(benchmarks_path, index=False)
     segment_summary.to_csv(segments_path, index=False)
+    signal_diagnostics.to_csv(signal_diagnostics_path, index=False)
+    signal_channel_summary.to_csv(signal_channel_summary_path, index=False)
 
     report_md = build_markdown_report(
         cfg=cfg,
         signals=signals,
         summary=summary,
         segment_summary=segment_summary,
+        signal_diagnostics=signal_diagnostics,
+        signal_channel_summary=signal_channel_summary,
         events_path=events_path,
         summary_path=summary_path,
         benchmarks_path=benchmarks_path,
         segment_path=segments_path,
+        signal_diagnostics_path=signal_diagnostics_path,
+        signal_channel_summary_path=signal_channel_summary_path,
     )
     report_path.write_text(report_md)
 
@@ -2797,6 +3002,8 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     bt_log(f"summary: {summary_path}", started_at_monotonic=backtest_start)
     bt_log(f"benchmarks: {benchmarks_path}", started_at_monotonic=backtest_start)
     bt_log(f"segments: {segments_path}", started_at_monotonic=backtest_start)
+    bt_log(f"signal diagnostics: {signal_diagnostics_path}", started_at_monotonic=backtest_start)
+    bt_log(f"signal channel summary: {signal_channel_summary_path}", started_at_monotonic=backtest_start)
     bt_log(f"report: {report_path}", started_at_monotonic=backtest_start)
     bt_log(f"network: {network_path}", started_at_monotonic=backtest_start)
     if not summary.empty:
@@ -2819,6 +3026,8 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
         "summary_path": summary_path,
         "benchmarks_path": benchmarks_path,
         "segments_path": segments_path,
+        "signal_diagnostics_path": signal_diagnostics_path,
+        "signal_channel_summary_path": signal_channel_summary_path,
         "report_path": report_path,
         "network_path": network_path,
     }

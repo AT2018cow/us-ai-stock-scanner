@@ -515,6 +515,8 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `*_summary.csv`
 - `*_benchmarks.csv`
 - `*_segments.csv`
+- `*_events_signal_diagnostics.csv`：每个再平衡日、清单、通道、过滤层的输入数、剩余数、剔除数和通过率。
+- `*_events_signal_channel_summary.csv`：每个再平衡日、清单、通道的候选数、入选数、入选股票和首要失败原因。
 - `*_report.md`
 - `*_report_network.json`
 
@@ -522,6 +524,7 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 
 调参输入：
 - `configs/tuner.param_space.json`：参数轴定义（`path` + `values`）
+- `configs/tuner.param_space.3layer.json`：三层过滤专用参数轴，覆盖流动性、通道级估值分位、通道级 FCF yield 和动量成交额门槛。
 
 核心约束参数：
 - `--min-total-valid-events`：候选参数整体最少有效事件数。
@@ -532,7 +535,9 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `--min-avg-excess-vs-qqq`：平均相对 QQQ 超额收益下限，默认 `0.0`。
 - `--min-avg-win-rate`：平均胜率下限，默认 `0.52`。
 - `--min-positive-window-score-ratio`：综合得分为正的窗口比例下限，默认 `0.5`。
-- `--negative-return-penalty-weight`、`--negative-excess-penalty-weight`、`--low-win-rate-penalty-weight`、`--positive-window-penalty-weight`：未达到收益、超额、胜率、正窗口比例要求时的惩罚权重。
+- `--min-positive-excess-window-ratio`：相对 QQQ 超额收益为正的窗口比例下限，默认 `0.5`。
+- `--max-empty-window-ratio`：无有效信号窗口比例上限，默认 `0.25`。
+- `--negative-return-penalty-weight`、`--negative-excess-penalty-weight`、`--low-win-rate-penalty-weight`、`--positive-window-penalty-weight`、`--positive-excess-window-penalty-weight`、`--empty-window-penalty-weight`：未达到收益、超额、胜率、正窗口比例、正超额窗口比例、空窗口比例要求时的惩罚权重。
 
 调参输出（默认在 `outputs/`）：
 - `tuning_<UTC>_results.csv`：每个候选参数组的评分与约束结果

@@ -62,6 +62,10 @@ class CandidateScore:
     window_stability_std: float
     min_window_valid_events: int
     total_valid_events: int
+    positive_window_score_ratio: float
+    positive_excess_window_ratio: float
+    empty_window_ratio: float
+    window_failure_summary: str
     constraints_passed: bool
     failure_reason: str
     deltas_json: str
@@ -119,6 +123,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-avg-excess-vs-qqq", type=float, default=0.0)
     p.add_argument("--min-avg-win-rate", type=float, default=0.52)
     p.add_argument("--min-positive-window-score-ratio", type=float, default=0.5)
+    p.add_argument("--min-positive-excess-window-ratio", type=float, default=0.5)
+    p.add_argument("--max-empty-window-ratio", type=float, default=0.25)
     p.add_argument("--max-acceptable-drawdown", type=float, default=0.42)
     p.add_argument("--coverage-ratio-floor", type=float, default=0.35)
     p.add_argument("--stability-penalty-weight", type=float, default=0.35)
@@ -127,6 +133,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--negative-excess-penalty-weight", type=float, default=1.0)
     p.add_argument("--low-win-rate-penalty-weight", type=float, default=0.6)
     p.add_argument("--positive-window-penalty-weight", type=float, default=0.5)
+    p.add_argument("--positive-excess-window-penalty-weight", type=float, default=0.5)
+    p.add_argument("--empty-window-penalty-weight", type=float, default=0.7)
     p.add_argument("--prune-backtest-artifacts", action="store_true", default=True)
     p.add_argument("--no-prune-backtest-artifacts", action="store_true")
     return p.parse_args()
@@ -410,8 +418,36 @@ def load_backtest_frames(backtest_result: dict[str, Any]) -> tuple[pd.DataFrame,
     return summary, events
 
 
+def classify_window_failure(window_eval: dict[str, Any], events: pd.DataFrame) -> str:
+    total_valid = int(window_eval.get("total_valid_events", 0) or 0)
+    if total_valid > 0:
+        avg_ex = safe_float(window_eval.get("avg_excess_vs_qqq"))
+        avg_ret = safe_float(window_eval.get("avg_return"))
+        if not math.isnan(avg_ex) and avg_ex < 0:
+            return "negative_excess"
+        if not math.isnan(avg_ret) and avg_ret < 0:
+            return "negative_return"
+        return "passed"
+    if events.empty:
+        return "no_events"
+    if "n_selected" in events and pd.to_numeric(events["n_selected"], errors="coerce").fillna(0).sum() <= 0:
+        return "no_signal"
+    if "n_priced" in events and pd.to_numeric(events["n_priced"], errors="coerce").fillna(0).sum() <= 0:
+        return "unpriced"
+    return "no_valid_return"
+
+
 def maybe_prune_backtest_artifacts(backtest_result: dict[str, Any]) -> None:
-    for key in ("events_path", "summary_path", "benchmarks_path", "segments_path", "report_path", "network_path"):
+    for key in (
+        "events_path",
+        "summary_path",
+        "benchmarks_path",
+        "segments_path",
+        "signal_diagnostics_path",
+        "signal_channel_summary_path",
+        "report_path",
+        "network_path",
+    ):
         p = backtest_result.get(key)
         if not p:
             continue
@@ -432,6 +468,8 @@ def candidate_constraint_penalty(
     worst_dd: float,
     window_stability_std: float,
     positive_window_score_ratio: float,
+    positive_excess_window_ratio: float,
+    empty_window_ratio: float,
     avg_ret: float,
     avg_ex: float,
     avg_win: float,
@@ -478,6 +516,18 @@ def candidate_constraint_penalty(
         )
         failure_reasons.append("positive_window_score_ratio_too_low")
 
+    min_positive_excess_ratio = float(args.min_positive_excess_window_ratio)
+    if positive_excess_window_ratio < min_positive_excess_ratio:
+        penalty += (min_positive_excess_ratio - positive_excess_window_ratio) * float(
+            args.positive_excess_window_penalty_weight
+        )
+        failure_reasons.append("positive_excess_window_ratio_too_low")
+
+    max_empty_ratio = float(args.max_empty_window_ratio)
+    if empty_window_ratio > max_empty_ratio:
+        penalty += (empty_window_ratio - max_empty_ratio) * float(args.empty_window_penalty_weight)
+        failure_reasons.append("empty_window_ratio_too_high")
+
     penalty += window_stability_std * float(args.stability_penalty_weight)
     return penalty, failure_reasons
 
@@ -506,6 +556,7 @@ def run_candidate(
     excess_values: list[float] = []
     std_values: list[float] = []
     drawdowns: list[float] = []
+    window_failure_reasons: list[str] = []
 
     for window in windows:
         prefix = f"{output_stem}_{candidate.cid}_{window.label}"
@@ -544,6 +595,7 @@ def run_candidate(
             list_weights=list_weights,
             horizon_weights=horizon_weights,
         )
+        window_failure_reasons.append(classify_window_failure(window_eval, events))
         if bool(args.prune_backtest_artifacts and not args.no_prune_backtest_artifacts):
             maybe_prune_backtest_artifacts(bt_result)
 
@@ -570,6 +622,17 @@ def run_candidate(
         if finite_window_scores
         else 0.0
     )
+    finite_window_excess = [x for x in excess_values if np.isfinite(x)]
+    positive_excess_window_ratio = (
+        float(sum(1 for x in finite_window_excess if x > 0.0) / len(finite_window_excess))
+        if finite_window_excess
+        else 0.0
+    )
+    empty_window_ratio = (
+        float(sum(1 for x in window_valid_counts if x <= 0) / len(window_valid_counts))
+        if window_valid_counts
+        else 1.0
+    )
     min_window_valid = min(window_valid_counts) if window_valid_counts else 0
     total_valid = int(sum(window_valid_counts))
     coverage_ratio = finite_nanmean(coverage_values) if coverage_values else 0.0
@@ -586,6 +649,8 @@ def run_candidate(
         worst_dd=worst_dd,
         window_stability_std=window_stability_std,
         positive_window_score_ratio=positive_window_score_ratio,
+        positive_excess_window_ratio=positive_excess_window_ratio,
+        empty_window_ratio=empty_window_ratio,
         avg_ret=avg_ret,
         avg_ex=avg_ex,
         avg_win=avg_win,
@@ -625,6 +690,14 @@ def run_candidate(
         window_stability_std=float(window_stability_std),
         min_window_valid_events=int(min_window_valid),
         total_valid_events=int(total_valid),
+        positive_window_score_ratio=float(positive_window_score_ratio),
+        positive_excess_window_ratio=float(positive_excess_window_ratio),
+        empty_window_ratio=float(empty_window_ratio),
+        window_failure_summary=json.dumps(
+            {k: window_failure_reasons.count(k) for k in sorted(set(window_failure_reasons))},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         constraints_passed=bool(constraints_passed),
         failure_reason=failure_reason,
         deltas_json=json.dumps(candidate.deltas, ensure_ascii=False, sort_keys=True),
@@ -637,7 +710,6 @@ def pick_profile_candidates(scores_df: pd.DataFrame) -> dict[str, str]:
         valid = scores_df.copy()
 
     picks: dict[str, str] = {}
-    used: set[str] = set()
     order = [
         ("balanced", "balanced_rank_score"),
         ("risk_on", "risk_on_rank_score"),
@@ -645,19 +717,10 @@ def pick_profile_candidates(scores_df: pd.DataFrame) -> dict[str, str]:
     ]
     for profile, col in order:
         ranked = valid.sort_values(by=col, ascending=False).reset_index(drop=True)
-        choice = None
-        for row in ranked.itertuples(index=False):
-            cid = str(getattr(row, "cid"))
-            if cid in used:
-                continue
-            choice = cid
-            break
-        if choice is None and not ranked.empty:
-            choice = str(ranked.iloc[0]["cid"])
-        if choice is None:
+        if ranked.empty:
             continue
+        choice = str(ranked.iloc[0]["cid"])
         picks[profile] = choice
-        used.add(choice)
     return picks
 
 
@@ -684,7 +747,9 @@ def write_tuning_report(
         f"min_avg_return={args.min_avg_return}, "
         f"min_avg_excess_vs_qqq={args.min_avg_excess_vs_qqq}, "
         f"min_avg_win_rate={args.min_avg_win_rate}, "
-        f"min_positive_window_score_ratio={args.min_positive_window_score_ratio}"
+        f"min_positive_window_score_ratio={args.min_positive_window_score_ratio}, "
+        f"min_positive_excess_window_ratio={args.min_positive_excess_window_ratio}, "
+        f"max_empty_window_ratio={args.max_empty_window_ratio}"
     )
     lines.append("")
     lines.append("## Profile Picks")
@@ -697,7 +762,9 @@ def write_tuning_report(
         row = scores_df[scores_df["cid"] == cid].iloc[0]
         lines.append(
             f"- {name}: `{cid}` | objective={row['objective_score']:.4f} "
-            f"| coverage={row['coverage_ratio']:.3f} | dd={row['worst_max_drawdown']:.3f}"
+            f"| coverage={row['coverage_ratio']:.3f} | dd={row['worst_max_drawdown']:.3f} "
+            f"| pos_excess_windows={row['positive_excess_window_ratio']:.3f} "
+            f"| empty_windows={row['empty_window_ratio']:.3f}"
         )
     lines.append("")
     lines.append("## Top 10 Candidates (Balanced Rank)")
@@ -706,10 +773,15 @@ def write_tuning_report(
     for row in top.itertuples(index=False):
         lines.append(
             f"- `{row.cid}` | obj={row.objective_score:.4f} | cov={row.coverage_ratio:.3f} "
-            f"| win={row.avg_win_rate:.3f} | dd={row.worst_max_drawdown:.3f} | pass={row.constraints_passed}"
+            f"| win={row.avg_win_rate:.3f} | dd={row.worst_max_drawdown:.3f} "
+            f"| pos_score_windows={row.positive_window_score_ratio:.3f} "
+            f"| pos_excess_windows={row.positive_excess_window_ratio:.3f} "
+            f"| empty_windows={row.empty_window_ratio:.3f} | pass={row.constraints_passed}"
         )
         if str(row.failure_reason or ""):
             lines.append(f"  failure_reason: `{row.failure_reason}`")
+        if str(row.window_failure_summary or ""):
+            lines.append(f"  window_failure_summary: `{row.window_failure_summary}`")
         lines.append(f"  deltas: `{row.deltas_json}`")
     path.write_text("\n".join(lines) + "\n")
 
