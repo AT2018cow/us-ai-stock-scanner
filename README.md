@@ -92,6 +92,11 @@ python run_scan.py --config configs/config.balanced.json
 
 历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
+当前维护两套调参空间：
+
+- `configs/tuner.param_space.json`：通用参数搜索空间。
+- `configs/tuner.param_space.3layer.json`：三层过滤专用参数搜索空间。
+
 ### 3.6 定期调参（walk-forward）
 
 入口：
