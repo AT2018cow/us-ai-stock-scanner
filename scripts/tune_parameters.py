@@ -115,10 +115,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--risk-off-config-path", default="configs/config.risk_off.json")
     p.add_argument("--min-total-valid-events", type=int, default=120)
     p.add_argument("--min-window-valid-events", type=int, default=20)
+    p.add_argument("--min-avg-return", type=float, default=0.0)
+    p.add_argument("--min-avg-excess-vs-qqq", type=float, default=0.0)
+    p.add_argument("--min-avg-win-rate", type=float, default=0.52)
+    p.add_argument("--min-positive-window-score-ratio", type=float, default=0.5)
     p.add_argument("--max-acceptable-drawdown", type=float, default=0.42)
     p.add_argument("--coverage-ratio-floor", type=float, default=0.35)
     p.add_argument("--stability-penalty-weight", type=float, default=0.35)
     p.add_argument("--drawdown-penalty-weight", type=float, default=0.6)
+    p.add_argument("--negative-return-penalty-weight", type=float, default=0.8)
+    p.add_argument("--negative-excess-penalty-weight", type=float, default=1.0)
+    p.add_argument("--low-win-rate-penalty-weight", type=float, default=0.6)
+    p.add_argument("--positive-window-penalty-weight", type=float, default=0.5)
     p.add_argument("--prune-backtest-artifacts", action="store_true", default=True)
     p.add_argument("--no-prune-backtest-artifacts", action="store_true")
     return p.parse_args()
@@ -269,6 +277,11 @@ def max_drawdown_for_series(returns: pd.Series) -> float:
     return float(dd.min())
 
 
+def finite_nanmean(values: list[float]) -> float:
+    finite = [float(x) for x in values if np.isfinite(x)]
+    return float(np.mean(finite)) if finite else float("nan")
+
+
 def evaluate_window(
     summary: pd.DataFrame,
     events: pd.DataFrame,
@@ -411,6 +424,64 @@ def maybe_prune_backtest_artifacts(backtest_result: dict[str, Any]) -> None:
                 signals.unlink()
 
 
+def candidate_constraint_penalty(
+    *,
+    total_valid: int,
+    min_window_valid: int,
+    coverage_ratio: float,
+    worst_dd: float,
+    window_stability_std: float,
+    positive_window_score_ratio: float,
+    avg_ret: float,
+    avg_ex: float,
+    avg_win: float,
+    args: argparse.Namespace,
+) -> tuple[float, list[str]]:
+    penalty = 0.0
+    failure_reasons: list[str] = []
+
+    if total_valid < int(args.min_total_valid_events):
+        penalty += 0.8
+        failure_reasons.append("total_valid_events_too_low")
+    if min_window_valid < int(args.min_window_valid_events):
+        penalty += 0.7
+        failure_reasons.append("window_valid_events_too_low")
+    if coverage_ratio < float(args.coverage_ratio_floor):
+        penalty += 0.7
+        failure_reasons.append("coverage_ratio_too_low")
+    if worst_dd < -abs(float(args.max_acceptable_drawdown)):
+        penalty += abs(worst_dd) * float(args.drawdown_penalty_weight)
+        failure_reasons.append("drawdown_too_deep")
+
+    min_avg_ret = float(args.min_avg_return)
+    if not np.isfinite(avg_ret) or avg_ret < min_avg_ret:
+        gap = min_avg_ret - (avg_ret if np.isfinite(avg_ret) else -min_avg_ret)
+        penalty += max(0.0, gap) * float(args.negative_return_penalty_weight)
+        failure_reasons.append("avg_return_too_low")
+
+    min_avg_ex = float(args.min_avg_excess_vs_qqq)
+    if not np.isfinite(avg_ex) or avg_ex < min_avg_ex:
+        gap = min_avg_ex - (avg_ex if np.isfinite(avg_ex) else -min_avg_ex)
+        penalty += max(0.0, gap) * float(args.negative_excess_penalty_weight)
+        failure_reasons.append("avg_excess_vs_qqq_too_low")
+
+    min_avg_win = float(args.min_avg_win_rate)
+    if not np.isfinite(avg_win) or avg_win < min_avg_win:
+        gap = min_avg_win - (avg_win if np.isfinite(avg_win) else 0.0)
+        penalty += max(0.0, gap) * float(args.low_win_rate_penalty_weight)
+        failure_reasons.append("avg_win_rate_too_low")
+
+    min_positive_window_ratio = float(args.min_positive_window_score_ratio)
+    if positive_window_score_ratio < min_positive_window_ratio:
+        penalty += (min_positive_window_ratio - positive_window_score_ratio) * float(
+            args.positive_window_penalty_weight
+        )
+        failure_reasons.append("positive_window_score_ratio_too_low")
+
+    penalty += window_stability_std * float(args.stability_penalty_weight)
+    return penalty, failure_reasons
+
+
 def run_candidate(
     candidate: Candidate,
     windows: list[TuneWindow],
@@ -494,30 +565,32 @@ def run_candidate(
     window_stability_std = (
         float(statistics.pstdev(finite_window_scores)) if len(finite_window_scores) > 1 else 0.0
     )
+    positive_window_score_ratio = (
+        float(sum(1 for x in finite_window_scores if x > 0.0) / len(finite_window_scores))
+        if finite_window_scores
+        else 0.0
+    )
     min_window_valid = min(window_valid_counts) if window_valid_counts else 0
     total_valid = int(sum(window_valid_counts))
-    coverage_ratio = float(np.nanmean(coverage_values)) if coverage_values else 0.0
-    avg_win = float(np.nanmean(win_values)) if win_values else float("nan")
-    avg_ret = float(np.nanmean(return_values)) if return_values else float("nan")
-    avg_ex = float(np.nanmean(excess_values)) if excess_values else float("nan")
-    avg_std = float(np.nanmean(std_values)) if std_values else float("nan")
+    coverage_ratio = finite_nanmean(coverage_values) if coverage_values else 0.0
+    avg_win = finite_nanmean(win_values)
+    avg_ret = finite_nanmean(return_values)
+    avg_ex = finite_nanmean(excess_values)
+    avg_std = finite_nanmean(std_values)
     worst_dd = float(min(drawdowns)) if drawdowns else -1.0
 
-    penalty = 0.0
-    failure_reasons: list[str] = []
-    if total_valid < int(args.min_total_valid_events):
-        penalty += 0.8
-        failure_reasons.append("total_valid_events_too_low")
-    if min_window_valid < int(args.min_window_valid_events):
-        penalty += 0.7
-        failure_reasons.append("window_valid_events_too_low")
-    if coverage_ratio < float(args.coverage_ratio_floor):
-        penalty += 0.7
-        failure_reasons.append("coverage_ratio_too_low")
-    if worst_dd < -abs(float(args.max_acceptable_drawdown)):
-        penalty += abs(worst_dd) * float(args.drawdown_penalty_weight)
-        failure_reasons.append("drawdown_too_deep")
-    penalty += window_stability_std * float(args.stability_penalty_weight)
+    penalty, failure_reasons = candidate_constraint_penalty(
+        total_valid=total_valid,
+        min_window_valid=min_window_valid,
+        coverage_ratio=coverage_ratio,
+        worst_dd=worst_dd,
+        window_stability_std=window_stability_std,
+        positive_window_score_ratio=positive_window_score_ratio,
+        avg_ret=avg_ret,
+        avg_ex=avg_ex,
+        avg_win=avg_win,
+        args=args,
+    )
     objective_score = objective - penalty
 
     constraints_passed = len(failure_reasons) == 0 and np.isfinite(objective_score)
@@ -606,6 +679,13 @@ def write_tuning_report(
     lines.append(f"- windows: `{', '.join(f'{w.label}:{w.start_date}->{w.end_date}' for w in windows)}`")
     lines.append(f"- candidate_count: {len(scores_df)}")
     lines.append(f"- constraints_passed: {int((scores_df['constraints_passed'] == True).sum())}")
+    lines.append(
+        "- guardrails: "
+        f"min_avg_return={args.min_avg_return}, "
+        f"min_avg_excess_vs_qqq={args.min_avg_excess_vs_qqq}, "
+        f"min_avg_win_rate={args.min_avg_win_rate}, "
+        f"min_positive_window_score_ratio={args.min_positive_window_score_ratio}"
+    )
     lines.append("")
     lines.append("## Profile Picks")
     lines.append("")
@@ -628,6 +708,8 @@ def write_tuning_report(
             f"- `{row.cid}` | obj={row.objective_score:.4f} | cov={row.coverage_ratio:.3f} "
             f"| win={row.avg_win_rate:.3f} | dd={row.worst_max_drawdown:.3f} | pass={row.constraints_passed}"
         )
+        if str(row.failure_reason or ""):
+            lines.append(f"  failure_reason: `{row.failure_reason}`")
         lines.append(f"  deltas: `{row.deltas_json}`")
     path.write_text("\n".join(lines) + "\n")
 
@@ -707,6 +789,10 @@ def main() -> None:
         for profile, target_path in mapping.items():
             cid = picks.get(profile)
             if not cid:
+                continue
+            picked = scores_df[scores_df["cid"] == cid]
+            if picked.empty or not bool(picked.iloc[0]["constraints_passed"]):
+                log(f"skipped promotion for {profile}: {cid} did not pass constraints")
                 continue
             write_json(target_path, candidate_map[cid].config)
             log(f"promoted {profile}: {cid} -> {target_path}")

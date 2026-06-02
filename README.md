@@ -107,6 +107,7 @@ python scripts/tune_parameters.py \
 默认行为：
 - 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
+- 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正
 - 自动选择并覆盖三套配置：
   - `configs/config.balanced.json`
   - `configs/config.risk_on.json`
@@ -521,6 +522,17 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 
 调参输入：
 - `configs/tuner.param_space.json`：参数轴定义（`path` + `values`）
+
+核心约束参数：
+- `--min-total-valid-events`：候选参数整体最少有效事件数。
+- `--min-window-valid-events`：每个回测窗口最少有效事件数。
+- `--coverage-ratio-floor`：有效事件数占总事件数的下限。
+- `--max-acceptable-drawdown`：最大可接受回撤，超过后候选失败。
+- `--min-avg-return`：平均绝对收益下限，默认 `0.0`。
+- `--min-avg-excess-vs-qqq`：平均相对 QQQ 超额收益下限，默认 `0.0`。
+- `--min-avg-win-rate`：平均胜率下限，默认 `0.52`。
+- `--min-positive-window-score-ratio`：综合得分为正的窗口比例下限，默认 `0.5`。
+- `--negative-return-penalty-weight`、`--negative-excess-penalty-weight`、`--low-win-rate-penalty-weight`、`--positive-window-penalty-weight`：未达到收益、超额、胜率、正窗口比例要求时的惩罚权重。
 
 调参输出（默认在 `outputs/`）：
 - `tuning_<UTC>_results.csv`：每个候选参数组的评分与约束结果
