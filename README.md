@@ -525,6 +525,14 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `*_report.md`
 - `*_report_network.json`
 
+`*_events.csv` 中的 `event_status` 用于区分回测事件质量：
+- `valid`：入选股票均可计算 forward return。
+- `partial_valid`：部分入选股票可计算 forward return。
+- `no_signal`：该再平衡日没有任何入选股票，通常表示筛选条件过严或候选池不足。
+- `unpriced`：有入选股票，但无法取得有效 forward return，通常与价格数据缺失、窗口过短或退市处理有关。
+
+`*_summary.csv` 和 `*_segments.csv` 会统计 `n_no_signal_events`、`n_unpriced_events`、`n_partial_valid_events`，用于区分“没有选出股票”和“选出股票但无法定价”。
+
 ## 12. 参数调优（自动化）
 
 调参输入：
