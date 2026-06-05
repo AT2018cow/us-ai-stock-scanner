@@ -70,6 +70,15 @@ class CandidateScore:
     positive_window_score_ratio: float
     positive_excess_window_ratio: float
     empty_window_ratio: float
+    strict_coverage_ratio: float
+    strict_total_valid_events: int
+    strict_avg_return: float
+    strict_avg_excess_vs_qqq: float
+    research_pool_coverage_ratio: float
+    research_pool_total_valid_events: int
+    research_pool_avg_return: float
+    research_pool_avg_excess_vs_qqq: float
+    research_pool_avg_win_rate: float
     window_failure_summary: str
     constraints_passed: bool
     failure_reason: str
@@ -293,6 +302,38 @@ def max_drawdown_for_series(returns: pd.Series) -> float:
 def finite_nanmean(values: list[float]) -> float:
     finite = [float(x) for x in values if np.isfinite(x)]
     return float(np.mean(finite)) if finite else float("nan")
+
+
+def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
+    if not evals:
+        return {
+            "coverage_ratio": 0.0,
+            "avg_win_rate": float("nan"),
+            "avg_return": float("nan"),
+            "avg_excess_vs_qqq": float("nan"),
+            "avg_std_return": float("nan"),
+            "total_valid_events": 0,
+            "min_window_valid_events": 0,
+            "empty_window_ratio": 1.0,
+            "worst_max_drawdown": -1.0,
+        }
+    valid_counts = [int(e.get("total_valid_events", 0) or 0) for e in evals]
+    drawdowns = [float(e.get("max_drawdown", -1.0) or -1.0) for e in evals]
+    return {
+        "coverage_ratio": finite_nanmean([float(e.get("coverage_ratio", 0.0) or 0.0) for e in evals]),
+        "avg_win_rate": finite_nanmean([float(e.get("avg_win_rate", float("nan"))) for e in evals]),
+        "avg_return": finite_nanmean([float(e.get("avg_return", float("nan"))) for e in evals]),
+        "avg_excess_vs_qqq": finite_nanmean(
+            [float(e.get("avg_excess_vs_qqq", float("nan"))) for e in evals]
+        ),
+        "avg_std_return": finite_nanmean([float(e.get("avg_std_return", float("nan"))) for e in evals]),
+        "total_valid_events": int(sum(valid_counts)),
+        "min_window_valid_events": min(valid_counts) if valid_counts else 0,
+        "empty_window_ratio": float(sum(1 for x in valid_counts if x <= 0) / len(valid_counts))
+        if valid_counts
+        else 1.0,
+        "worst_max_drawdown": float(min(drawdowns)) if drawdowns else -1.0,
+    }
 
 
 def evaluate_window(
@@ -562,6 +603,10 @@ def run_candidate(
     std_values: list[float] = []
     drawdowns: list[float] = []
     window_failure_reasons: list[str] = []
+    strict_window_evals: list[dict[str, Any]] = []
+    research_pool_window_evals: list[dict[str, Any]] = []
+    strict_list_types = [t for t in list_types if t != "research_pool"]
+    research_pool_list_types = [t for t in list_types if t == "research_pool"]
 
     for window in windows:
         prefix = f"{output_stem}_{candidate.cid}_{window.label}"
@@ -600,6 +645,32 @@ def run_candidate(
             list_weights=list_weights,
             horizon_weights=horizon_weights,
         )
+        if strict_list_types:
+            strict_window_evals.append(
+                evaluate_window(
+                    summary=summary,
+                    events=events,
+                    list_types=strict_list_types,
+                    horizons=horizons,
+                    objective_weights=objective_weights,
+                    scenario_weights=scenario_weights,
+                    list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
+                    horizon_weights=horizon_weights,
+                )
+            )
+        if research_pool_list_types:
+            research_pool_window_evals.append(
+                evaluate_window(
+                    summary=summary,
+                    events=events,
+                    list_types=research_pool_list_types,
+                    horizons=horizons,
+                    objective_weights=objective_weights,
+                    scenario_weights=scenario_weights,
+                    list_weights={"research_pool": 1.0},
+                    horizon_weights=horizon_weights,
+                )
+            )
         window_failure_reasons.append(classify_window_failure(window_eval, events))
         if bool(args.prune_backtest_artifacts and not args.no_prune_backtest_artifacts):
             maybe_prune_backtest_artifacts(bt_result)
@@ -619,20 +690,21 @@ def run_candidate(
 
     finite_window_scores = [x for x in window_scores if np.isfinite(x)]
     objective = float(np.mean(finite_window_scores)) if finite_window_scores else float("-inf")
+    finite_research_scores = [
+        float(e.get("score", float("nan")))
+        for e in research_pool_window_evals
+        if np.isfinite(float(e.get("score", float("nan"))))
+    ]
+    if finite_research_scores:
+        research_objective = float(np.mean(finite_research_scores))
+        if np.isfinite(objective):
+            objective = (0.65 * research_objective) + (0.35 * objective)
+        else:
+            objective = research_objective
     window_stability_std = (
         float(statistics.pstdev(finite_window_scores)) if len(finite_window_scores) > 1 else 0.0
     )
-    positive_window_score_ratio = (
-        float(sum(1 for x in finite_window_scores if x > 0.0) / len(finite_window_scores))
-        if finite_window_scores
-        else 0.0
-    )
     finite_window_excess = [x for x in excess_values if np.isfinite(x)]
-    positive_excess_window_ratio = (
-        float(sum(1 for x in finite_window_excess if x > 0.0) / len(finite_window_excess))
-        if finite_window_excess
-        else 0.0
-    )
     empty_window_ratio = (
         float(sum(1 for x in window_valid_counts if x <= 0) / len(window_valid_counts))
         if window_valid_counts
@@ -646,19 +718,63 @@ def run_candidate(
     avg_ex = finite_nanmean(excess_values)
     avg_std = finite_nanmean(std_values)
     worst_dd = float(min(drawdowns)) if drawdowns else -1.0
+    strict_eval = aggregate_window_evals(strict_window_evals)
+    research_pool_eval = aggregate_window_evals(research_pool_window_evals)
+    primary_eval = research_pool_eval if research_pool_list_types else {
+        "total_valid_events": total_valid,
+        "min_window_valid_events": min_window_valid,
+        "coverage_ratio": coverage_ratio,
+        "worst_max_drawdown": worst_dd,
+        "empty_window_ratio": empty_window_ratio,
+        "avg_return": avg_ret,
+        "avg_excess_vs_qqq": avg_ex,
+        "avg_win_rate": avg_win,
+    }
+    primary_window_scores = (
+        [
+            float(e.get("score", float("nan")))
+            for e in research_pool_window_evals
+            if np.isfinite(float(e.get("score", float("nan"))))
+        ]
+        if research_pool_list_types
+        else finite_window_scores
+    )
+    primary_window_excess = (
+        [
+            float(e.get("avg_excess_vs_qqq", float("nan")))
+            for e in research_pool_window_evals
+            if np.isfinite(float(e.get("avg_excess_vs_qqq", float("nan"))))
+        ]
+        if research_pool_list_types
+        else finite_window_excess
+    )
+    constraint_window_stability_std = (
+        float(statistics.pstdev(primary_window_scores)) if len(primary_window_scores) > 1 else 0.0
+    )
+    positive_window_score_ratio = (
+        float(sum(1 for x in primary_window_scores if x > 0.0) / len(primary_window_scores))
+        if primary_window_scores
+        else 0.0
+    )
+    positive_excess_window_ratio = (
+        float(sum(1 for x in primary_window_excess if x > 0.0) / len(primary_window_excess))
+        if primary_window_excess
+        else 0.0
+    )
+    primary_worst_dd = float(primary_eval.get("worst_max_drawdown", worst_dd) or worst_dd)
 
     penalty, failure_reasons = candidate_constraint_penalty(
-        total_valid=total_valid,
-        min_window_valid=min_window_valid,
-        coverage_ratio=coverage_ratio,
-        worst_dd=worst_dd,
-        window_stability_std=window_stability_std,
+        total_valid=int(primary_eval.get("total_valid_events", total_valid) or 0),
+        min_window_valid=int(primary_eval.get("min_window_valid_events", min_window_valid) or 0),
+        coverage_ratio=float(primary_eval.get("coverage_ratio", coverage_ratio) or 0.0),
+        worst_dd=primary_worst_dd,
+        window_stability_std=constraint_window_stability_std,
         positive_window_score_ratio=positive_window_score_ratio,
         positive_excess_window_ratio=positive_excess_window_ratio,
-        empty_window_ratio=empty_window_ratio,
-        avg_ret=avg_ret,
-        avg_ex=avg_ex,
-        avg_win=avg_win,
+        empty_window_ratio=float(primary_eval.get("empty_window_ratio", empty_window_ratio) or 0.0),
+        avg_ret=float(primary_eval.get("avg_return", avg_ret)),
+        avg_ex=float(primary_eval.get("avg_excess_vs_qqq", avg_ex)),
+        avg_win=float(primary_eval.get("avg_win_rate", avg_win)),
         args=args,
     )
     objective_score = objective - penalty
@@ -666,16 +782,28 @@ def run_candidate(
     constraints_passed = len(failure_reasons) == 0 and np.isfinite(objective_score)
     failure_reason = ";".join(failure_reasons)
 
+    rank_coverage = (
+        float(research_pool_eval["coverage_ratio"]) if research_pool_list_types else float(coverage_ratio)
+    )
+    rank_avg_ret = (
+        float(research_pool_eval["avg_return"]) if research_pool_list_types else float(avg_ret)
+    )
+    rank_avg_ex = (
+        float(research_pool_eval["avg_excess_vs_qqq"]) if research_pool_list_types else float(avg_ex)
+    )
+    rank_avg_win = (
+        float(research_pool_eval["avg_win_rate"]) if research_pool_list_types else float(avg_win)
+    )
     risk_on_rank_score = (
         objective_score
-        + (0.35 * coverage_ratio)
-        + (0.45 * (avg_ret if np.isfinite(avg_ret) else 0.0))
-        + (0.20 * (avg_ex if np.isfinite(avg_ex) else 0.0))
+        + (0.35 * rank_coverage)
+        + (0.45 * (rank_avg_ret if np.isfinite(rank_avg_ret) else 0.0))
+        + (0.20 * (rank_avg_ex if np.isfinite(rank_avg_ex) else 0.0))
     )
     risk_off_rank_score = (
         objective_score
-        + (0.35 * (avg_win if np.isfinite(avg_win) else 0.0))
-        - (0.45 * abs(min(0.0, worst_dd)))
+        + (0.35 * (rank_avg_win if np.isfinite(rank_avg_win) else 0.0))
+        - (0.45 * abs(min(0.0, primary_worst_dd)))
         - (0.20 * (avg_std if np.isfinite(avg_std) else 0.0))
     )
     balanced_rank_score = objective_score
@@ -698,6 +826,15 @@ def run_candidate(
         positive_window_score_ratio=float(positive_window_score_ratio),
         positive_excess_window_ratio=float(positive_excess_window_ratio),
         empty_window_ratio=float(empty_window_ratio),
+        strict_coverage_ratio=float(strict_eval["coverage_ratio"]),
+        strict_total_valid_events=int(strict_eval["total_valid_events"]),
+        strict_avg_return=float(strict_eval["avg_return"]),
+        strict_avg_excess_vs_qqq=float(strict_eval["avg_excess_vs_qqq"]),
+        research_pool_coverage_ratio=float(research_pool_eval["coverage_ratio"]),
+        research_pool_total_valid_events=int(research_pool_eval["total_valid_events"]),
+        research_pool_avg_return=float(research_pool_eval["avg_return"]),
+        research_pool_avg_excess_vs_qqq=float(research_pool_eval["avg_excess_vs_qqq"]),
+        research_pool_avg_win_rate=float(research_pool_eval["avg_win_rate"]),
         window_failure_summary=json.dumps(
             {k: window_failure_reasons.count(k) for k in sorted(set(window_failure_reasons))},
             ensure_ascii=False,
@@ -768,6 +905,8 @@ def write_tuning_report(
         lines.append(
             f"- {name}: `{cid}` | objective={row['objective_score']:.4f} "
             f"| coverage={row['coverage_ratio']:.3f} | dd={row['worst_max_drawdown']:.3f} "
+            f"| strict_valid={int(row.get('strict_total_valid_events', 0) or 0)} "
+            f"| research_valid={int(row.get('research_pool_total_valid_events', 0) or 0)} "
             f"| pos_excess_windows={row['positive_excess_window_ratio']:.3f} "
             f"| empty_windows={row['empty_window_ratio']:.3f}"
         )
@@ -779,6 +918,9 @@ def write_tuning_report(
         lines.append(
             f"- `{row.cid}` | obj={row.objective_score:.4f} | cov={row.coverage_ratio:.3f} "
             f"| win={row.avg_win_rate:.3f} | dd={row.worst_max_drawdown:.3f} "
+            f"| strict_valid={int(getattr(row, 'strict_total_valid_events', 0) or 0)} "
+            f"| research_valid={int(getattr(row, 'research_pool_total_valid_events', 0) or 0)} "
+            f"| research_excess={float(getattr(row, 'research_pool_avg_excess_vs_qqq', float('nan'))):.4f} "
             f"| pos_score_windows={row.positive_window_score_ratio:.3f} "
             f"| pos_excess_windows={row.positive_excess_window_ratio:.3f} "
             f"| empty_windows={row.empty_window_ratio:.3f} | pass={row.constraints_passed}"

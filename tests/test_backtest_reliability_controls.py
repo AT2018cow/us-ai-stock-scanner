@@ -14,6 +14,7 @@ from ai_value_scanner.backtest import (
     event_backtest,
     FundamentalPointInTime,
     forward_return,
+    near_miss_concentration,
     pick_research_pool_symbols_with_diagnostics,
     parse_watchlist_snapshot_date,
     resolve_watchlist_asof,
@@ -50,6 +51,24 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         )
         self.assertTrue(source.startswith("snapshot:w1.csv"))
         self.assertEqual(set(mapping.keys()), {"A"})
+
+    def test_near_miss_concentration_finds_single_blocking_step(self) -> None:
+        df = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C"],
+                "quality": [1.0, 1.0, 0.0],
+                "value": [1.0, 0.0, 1.0],
+            }
+        )
+        steps = [
+            ("quality_gate", lambda frame: frame["quality"] > 0),
+            ("value_gate", lambda frame: frame["value"] > 0),
+        ]
+        result = near_miss_concentration(df, steps)
+        self.assertEqual(result["top_reason"], "quality_gate")
+        reasons = {row["reason"]: row["count"] for row in result["reasons"]}
+        self.assertEqual(reasons["quality_gate"], 1)
+        self.assertEqual(reasons["value_gate"], 1)
 
     def test_research_pool_pick_uses_priority_before_score(self) -> None:
         cfg = ScanConfig()

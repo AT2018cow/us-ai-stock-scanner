@@ -184,6 +184,35 @@ class TestTuneParameterConstraints(unittest.TestCase):
         self.assertAlmostEqual(self.tuner.finite_nanmean([0.1, float("nan"), 0.3]), 0.2)
         self.assertTrue(self.tuner.np.isnan(self.tuner.finite_nanmean([float("nan")])))
 
+    def test_aggregate_window_evals_tracks_coverage_and_empty_windows(self) -> None:
+        out = self.tuner.aggregate_window_evals(
+            [
+                {
+                    "coverage_ratio": 1.0,
+                    "avg_win_rate": 0.6,
+                    "avg_return": 0.04,
+                    "avg_excess_vs_qqq": 0.01,
+                    "avg_std_return": 0.05,
+                    "total_valid_events": 4,
+                    "max_drawdown": -0.10,
+                },
+                {
+                    "coverage_ratio": 0.0,
+                    "avg_win_rate": float("nan"),
+                    "avg_return": float("nan"),
+                    "avg_excess_vs_qqq": float("nan"),
+                    "avg_std_return": float("nan"),
+                    "total_valid_events": 0,
+                    "max_drawdown": -0.20,
+                },
+            ]
+        )
+        self.assertEqual(out["total_valid_events"], 4)
+        self.assertEqual(out["min_window_valid_events"], 0)
+        self.assertAlmostEqual(out["coverage_ratio"], 0.5)
+        self.assertAlmostEqual(out["empty_window_ratio"], 0.5)
+        self.assertAlmostEqual(out["worst_max_drawdown"], -0.20)
+
 
 if __name__ == "__main__":
     unittest.main()

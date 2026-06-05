@@ -51,6 +51,7 @@ from ai_value_scanner.scanner import (
     build_momentum_steps,
     build_research_assessment,
     build_session,
+    classify_filter_step_layer,
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
     first_fail_concentration,
@@ -1481,6 +1482,51 @@ def build_steps_and_weights(
     raise ValueError(f"Unsupported list type for hard-filter ranking: {list_type}")
 
 
+def near_miss_concentration(df: pd.DataFrame, steps: list[tuple[str, Any]], top_n: int = 5) -> dict[str, Any]:
+    if df.empty or not steps:
+        return {"top_reason": "", "top_count": 0, "top_pct": 0.0, "reasons": []}
+
+    masks: list[tuple[str, pd.Series]] = []
+    for step_name, mask_fn in steps:
+        try:
+            raw_mask = mask_fn(df)
+            mask = pd.Series(raw_mask, index=df.index).fillna(False).astype(bool)
+        except Exception:
+            mask = pd.Series(False, index=df.index)
+        masks.append((step_name, mask))
+
+    rows: list[dict[str, Any]] = []
+    total = int(len(df))
+    for idx, (step_name, mask) in enumerate(masks):
+        other = pd.Series(True, index=df.index)
+        for j, (_, other_mask) in enumerate(masks):
+            if j == idx:
+                continue
+            other &= other_mask
+        near = other & ~mask
+        count = int(near.sum())
+        if count <= 0:
+            continue
+        rows.append(
+            {
+                "reason": step_name,
+                "count": count,
+                "pct": float(count / total) if total > 0 else 0.0,
+                "layer": classify_filter_step_layer(step_name),
+            }
+        )
+    rows = sorted(rows, key=lambda item: int(item["count"]), reverse=True)[:top_n]
+    if not rows:
+        return {"top_reason": "", "top_count": 0, "top_pct": 0.0, "reasons": []}
+    top = rows[0]
+    return {
+        "top_reason": str(top["reason"]),
+        "top_count": int(top["count"]),
+        "top_pct": float(top["pct"]),
+        "reasons": rows,
+    }
+
+
 def pick_research_pool_symbols_with_diagnostics(
     df: pd.DataFrame,
     scan_config: ScanConfig,
@@ -1620,6 +1666,7 @@ def rank_and_pick_symbols_with_diagnostics(
             "n_ranked": int(len(ranked)),
             "layer_summary": summarize_diagnostics_by_layer(step_diagnostics),
             "first_fail": first_fail_concentration(first_fail_summary),
+            "near_miss": near_miss_concentration(df, steps),
         }
         if ranked.empty:
             diagnostics["channel_symbols"][channel_name] = []
@@ -2723,6 +2770,7 @@ def build_signal_diagnostics(signals: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
             if not isinstance(payload, dict):
                 continue
             first_fail = payload.get("first_fail") if isinstance(payload.get("first_fail"), dict) else {}
+            near_miss = payload.get("near_miss") if isinstance(payload.get("near_miss"), dict) else {}
             channel_rows.append(
                 {
                     **base,
@@ -2736,6 +2784,11 @@ def build_signal_diagnostics(signals: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
                     else "",
                     "top_first_fail": str(first_fail.get("top_reason", "")),
                     "top_first_fail_pct": float(first_fail.get("top_pct", 0.0) or 0.0),
+                    "top_near_miss": str(near_miss.get("top_reason", "")),
+                    "top_near_miss_pct": float(near_miss.get("top_pct", 0.0) or 0.0),
+                    "near_miss_reasons": json.dumps(
+                        near_miss.get("reasons", []), ensure_ascii=False, sort_keys=True
+                    ),
                 }
             )
             layer_summary = payload.get("layer_summary")

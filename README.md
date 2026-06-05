@@ -114,8 +114,10 @@ python scripts/tune_parameters.py \
 默认行为：
 - 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
 - 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`
+- 调参结果同时输出主清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
-- 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正
+- 当 `research_pool` 参与调参时，覆盖率、胜率和收益护栏优先基于 `research_pool` 评价，避免主清单暂时无信号时掩盖研究池表现；主清单覆盖不足仍通过 `strict_*` 字段暴露。
+- 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
 - 自动选择并覆盖三套配置：
   - `configs/config.balanced.json`
   - `configs/config.risk_on.json`
@@ -537,7 +539,7 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `*_benchmarks.csv`
 - `*_segments.csv`
 - `*_events_signal_diagnostics.csv`：每个再平衡日、清单、通道、过滤层的输入数、剩余数、剔除数和通过率。
-- `*_events_signal_channel_summary.csv`：每个再平衡日、清单、通道的候选数、入选数、入选股票和首要失败原因。
+- `*_events_signal_channel_summary.csv`：每个再平衡日、清单、通道的候选数、入选数、入选股票、首要失败原因和 near-miss 原因。
 - `*_report.md`
 - `*_report_network.json`
 
@@ -572,6 +574,16 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `tuning_<UTC>_results.csv`：每个候选参数组的评分与约束结果
 - `tuning_<UTC>_report.md`：Top 候选与三配置选型说明
 - `tuning_<UTC>_summary.json`：本次调参摘要（run id / picks / 文件路径）
+
+`results.csv` 的关键分层字段：
+- `strict_total_valid_events`、`strict_coverage_ratio`：三张主清单（`low_value`、`industry_trend`、`momentum`）的有效事件和覆盖率。
+- `research_pool_total_valid_events`、`research_pool_coverage_ratio`、`research_pool_avg_excess_vs_qqq`：研究池的有效事件、覆盖率和相对 QQQ 超额。
+- `coverage_ratio`、`avg_return`、`avg_excess_vs_qqq`：保留为全清单加权口径，用于兼容旧报告。
+
+near-miss 诊断：
+- `top_first_fail` 表示按过滤链顺序首次失败的条件。
+- `top_near_miss` 表示“如果只放开这一个条件，本来可以通过其它条件”的主要瓶颈。
+- 当 `top_first_fail` 和 `top_near_miss` 不一致时，应优先参考 `top_near_miss` 判断最值得调的阈值。
 
 推荐运行频率：
 - 生产扫描：可日内多次
