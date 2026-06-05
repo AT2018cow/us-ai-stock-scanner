@@ -4463,8 +4463,8 @@ def build_research_assessment(row: pd.Series, list_type: str = "") -> dict[str, 
     )
     has_weak_ai_risk = "weak_ai_link" in risk_set
 
-    if "possible_value_trap" in risk_set and score < 3.0:
-        priority = "avoid_for_now"
+    if "possible_value_trap" in risk_set:
+        priority = "theme_only" if has_ai else "avoid_for_now"
     elif has_weak_ai_risk and "ai_infrastructure_exposure" in tag_set:
         priority = "theme_only"
     elif has_weak_ai_risk:

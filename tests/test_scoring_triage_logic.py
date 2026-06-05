@@ -105,6 +105,34 @@ class TestScoringTriageLogic(unittest.TestCase):
         self.assertIn("high_absolute_valuation", assessment["research_risks"])
         self.assertNotIn("cheap_relative_to_history", assessment["research_tags"])
 
+    def test_research_assessment_caps_possible_value_trap_priority(self) -> None:
+        row = pd.Series(
+            {
+                "ps_hist_percentile": 0.05,
+                "pe_hist_percentile": 0.05,
+                "ps_discount": 0.30,
+                "pe_discount": 0.30,
+                "fundamental_quality_score": 0.90,
+                "ai_link_score": 0.50,
+                "fcf_yield": 0.10,
+                "ev_to_ebit": 8.0,
+                "pe": 9.0,
+                "ps": 1.0,
+                "revenue_yoy": -0.01,
+                "net_income_yoy": -0.05,
+                "return_20d": -0.08,
+                "return_60d": -0.02,
+                "drawdown_from_52w_high": 0.20,
+                "price_to_sma200": 0.90,
+                "watchlist_bucket": "ai_enabler",
+                "watchlist_etfs": "PAVE,XLI",
+                "channel": "ai_enabler",
+            }
+        )
+        assessment = build_research_assessment(row, "research_pool")
+        self.assertEqual(assessment["research_priority"], "theme_only")
+        self.assertIn("possible_value_trap", assessment["research_risks"])
+
 
 if __name__ == "__main__":
     unittest.main()
