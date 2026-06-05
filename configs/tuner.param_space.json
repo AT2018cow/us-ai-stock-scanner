@@ -69,6 +69,24 @@
         0.3,
         0.34
       ]
+    },
+    {
+      "name": "research_pool_min_score",
+      "path": "research_pool_min_score",
+      "values": [
+        1.8,
+        2.0,
+        2.4
+      ]
+    },
+    {
+      "name": "research_pool_top_n",
+      "path": "research_pool_top_n",
+      "values": [
+        35,
+        50,
+        70
+      ]
     }
   ]
 }

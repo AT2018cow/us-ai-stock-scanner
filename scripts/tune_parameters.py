@@ -20,9 +20,14 @@ from ai_value_scanner.backtest import BacktestConfig, run_backtest
 
 
 DEFAULT_HORIZONS = [20, 60, 120]
-DEFAULT_LIST_TYPES = ["low_value", "industry_trend", "momentum"]
+DEFAULT_LIST_TYPES = ["low_value", "industry_trend", "momentum", "research_pool"]
 DEFAULT_SCENARIO_WEIGHTS = {"base": 0.6, "loose": 0.2, "strict": 0.2}
-DEFAULT_LIST_WEIGHTS = {"low_value": 0.5, "industry_trend": 0.2, "momentum": 0.3}
+DEFAULT_LIST_WEIGHTS = {
+    "low_value": 0.35,
+    "industry_trend": 0.20,
+    "momentum": 0.25,
+    "research_pool": 0.20,
+}
 DEFAULT_HORIZON_WEIGHTS = {20: 0.2, 60: 0.5, 120: 0.3}
 DEFAULT_OBJECTIVE_WEIGHTS = {
     "avg_return": 1.0,
@@ -96,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--work-dir", default="outputs/tuner_work")
     p.add_argument("--windows", default=",".join(default_windows_tokens()))
     p.add_argument("--horizons", default="20,60,120")
-    p.add_argument("--list-types", default="low_value,industry_trend,momentum")
+    p.add_argument("--list-types", default="low_value,industry_trend,momentum,research_pool")
     p.add_argument("--search-mode", default="auto", choices=["auto", "grid", "random"])
     p.add_argument("--max-candidates", type=int, default=36)
     p.add_argument("--random-seed", type=int, default=42)

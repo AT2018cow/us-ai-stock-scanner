@@ -14,6 +14,7 @@ from ai_value_scanner.backtest import (
     event_backtest,
     FundamentalPointInTime,
     forward_return,
+    pick_research_pool_symbols_with_diagnostics,
     parse_watchlist_snapshot_date,
     resolve_watchlist_asof,
     series_up_to_asof,
@@ -49,6 +50,63 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         )
         self.assertTrue(source.startswith("snapshot:w1.csv"))
         self.assertEqual(set(mapping.keys()), {"A"})
+
+    def test_research_pool_pick_uses_priority_before_score(self) -> None:
+        cfg = ScanConfig()
+        cfg.research_pool_min_score = 2.0
+        cfg.research_pool_top_n = 5
+        df = pd.DataFrame(
+            [
+                {
+                    "symbol": "THEME",
+                    "watchlist_bucket": "ai_enabler",
+                    "watchlist_etfs": "PAVE",
+                    "fundamental_quality_score": 0.9,
+                    "ai_link_score": 0.5,
+                    "ps_hist_percentile": 0.05,
+                    "pe_hist_percentile": 0.05,
+                    "ps_discount": 0.3,
+                    "pe_discount": 0.3,
+                    "fcf_yield": 0.1,
+                    "ev_to_ebit": 8.0,
+                    "revenue_yoy": -0.01,
+                    "net_income_yoy": -0.05,
+                    "return_20d": -0.08,
+                    "return_60d": -0.02,
+                    "drawdown_from_52w_high": 0.2,
+                    "price_to_sma200": 0.9,
+                },
+                {
+                    "symbol": "NOW",
+                    "watchlist_bucket": "ai_enabler",
+                    "watchlist_etfs": "PAVE",
+                    "fundamental_quality_score": 0.86,
+                    "ai_link_score": 0.5,
+                    "ps_hist_percentile": 0.30,
+                    "pe_hist_percentile": 0.30,
+                    "ps_discount": 0.0,
+                    "pe_discount": 0.0,
+                    "fcf_yield": 0.07,
+                    "ev_to_ebit": 11.0,
+                    "revenue_yoy": 0.12,
+                    "net_income_yoy": 0.2,
+                    "return_20d": 0.01,
+                    "return_60d": 0.03,
+                    "drawdown_from_52w_high": 0.05,
+                    "price_to_sma200": 1.0,
+                },
+            ]
+        )
+        picks, diag = pick_research_pool_symbols_with_diagnostics(
+            df=df,
+            scan_config=cfg,
+            top_n=2,
+            per_channel_top_n=False,
+            include_channels=["ai_enabler"],
+        )
+        self.assertEqual(picks[0], "NOW")
+        self.assertEqual(diag["priority_counts"].get("research_now"), 1)
+        self.assertEqual(diag["priority_counts"].get("theme_only"), 1)
 
     def test_ai_disclosure_score_asof_excludes_future_filings(self) -> None:
         disclosure = [

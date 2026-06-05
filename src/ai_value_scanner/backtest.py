@@ -49,6 +49,7 @@ from ai_value_scanner.scanner import (
     build_filter_steps,
     build_industry_trend_steps,
     build_momentum_steps,
+    build_research_assessment,
     build_session,
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
@@ -71,6 +72,7 @@ LIST_SUFFIX = {
     "low_value": "_ranked",
     "industry_trend": "_ranked_industry_trend",
     "momentum": "_ranked_momentum",
+    "research_pool": "_ranked_research_pool",
 }
 VALID_LIST_TYPES = sorted(LIST_SUFFIX.keys())
 STANDARD_EQUITY_SYMBOL_RE = r"^[A-Z]{1,5}(\.[A-Z])?$"
@@ -586,7 +588,27 @@ def pick_symbols_from_list(
     if df.empty:
         return []
 
-    if "composite_score" in df.columns:
+    if list_type == "research_pool" and "research_priority" in df.columns:
+        df = df[df["research_priority"].astype(str) != "avoid_for_now"].copy()
+    if df.empty:
+        return []
+
+    if list_type == "research_pool" and "research_score" in df.columns:
+        priority_order = {
+            "research_now": 0,
+            "watch_for_pullback": 1,
+            "theme_only": 2,
+            "avoid_for_now": 3,
+        }
+        priority_series = (
+            df["research_priority"]
+            if "research_priority" in df.columns
+            else pd.Series("", index=df.index)
+        )
+        df["_priority_rank"] = priority_series.map(priority_order).fillna(9).astype(int)
+        df["_research_score"] = pd.to_numeric(df["research_score"], errors="coerce").fillna(-np.inf)
+        df = df.sort_values(["_priority_rank", "_research_score"], ascending=[True, False])
+    elif "composite_score" in df.columns:
         df = df.sort_values("composite_score", ascending=False)
 
     if per_channel_top_n and "channel" in df.columns:
@@ -1454,7 +1476,104 @@ def build_steps_and_weights(
         return build_filter_steps(scan_config, channel_name, channel_profile), cp["score_weights"]
     if list_type == "industry_trend":
         return build_industry_trend_steps(scan_config, channel_name, channel_profile)
-    return build_momentum_steps(scan_config, channel_name, channel_profile)
+    if list_type == "momentum":
+        return build_momentum_steps(scan_config, channel_name, channel_profile)
+    raise ValueError(f"Unsupported list type for hard-filter ranking: {list_type}")
+
+
+def pick_research_pool_symbols_with_diagnostics(
+    df: pd.DataFrame,
+    scan_config: ScanConfig,
+    top_n: int,
+    per_channel_top_n: bool,
+    include_channels: list[str] | None,
+) -> tuple[list[str], dict[str, Any]]:
+    channel_profiles = scan_config.channel_profiles or {"core_ai": {}}
+    work = df.copy()
+    diagnostics: dict[str, Any] = {
+        "channels": {},
+        "channel_symbols": {},
+        "channel_counts": {},
+        "priority_counts": {},
+    }
+    if work.empty:
+        diagnostics["selected_symbols"] = []
+        return [], diagnostics
+
+    if "channel" not in work.columns:
+        work["channel"] = ""
+
+    def infer_channel(row: pd.Series) -> str:
+        bucket = str(row.get("watchlist_bucket", "") or "")
+        for channel_name in channel_profiles.keys():
+            if channel_name in bucket:
+                return channel_name
+        return str(row.get("channel", "") or "")
+
+    work["channel"] = work.apply(infer_channel, axis=1)
+    if include_channels:
+        work = work[work["channel"].isin(include_channels)].copy()
+    if work.empty:
+        diagnostics["selected_symbols"] = []
+        return [], diagnostics
+
+    assessments = work.apply(lambda r: build_research_assessment(r, "research_pool"), axis=1)
+    for col in [
+        "research_priority",
+        "research_score",
+        "research_tags",
+        "research_risks",
+        "research_summary",
+    ]:
+        work[col] = assessments.map(lambda item: item[col])
+    work = work[
+        (pd.to_numeric(work["research_score"], errors="coerce").fillna(-np.inf) >= scan_config.research_pool_min_score)
+        & (work["research_priority"].astype(str) != "avoid_for_now")
+    ].copy()
+    if work.empty:
+        diagnostics["selected_symbols"] = []
+        return [], diagnostics
+
+    priority_order = {
+        "research_now": 0,
+        "watch_for_pullback": 1,
+        "theme_only": 2,
+        "avoid_for_now": 3,
+    }
+    work["_priority_rank"] = work["research_priority"].map(priority_order).fillna(9).astype(int)
+    work["_research_score"] = pd.to_numeric(work["research_score"], errors="coerce").fillna(-np.inf)
+    work = work.sort_values(["_priority_rank", "_research_score", "symbol"], ascending=[True, False, True])
+    cap = min(max(1, int(top_n)), max(1, int(scan_config.research_pool_top_n)))
+
+    if per_channel_top_n:
+        selected_frames: list[pd.DataFrame] = []
+        for channel in sorted(work["channel"].dropna().astype(str).unique().tolist()):
+            part = work[work["channel"] == channel].head(cap)
+            diagnostics["channel_symbols"][channel] = part["symbol"].dropna().astype(str).tolist()
+            diagnostics["channel_counts"][channel] = int(len(part))
+            selected_frames.append(part)
+        selected = pd.concat(selected_frames, ignore_index=True) if selected_frames else pd.DataFrame()
+    else:
+        selected = work.head(cap).copy()
+        for channel in sorted(work["channel"].dropna().astype(str).unique().tolist()):
+            part = selected[selected["channel"] == channel]
+            diagnostics["channel_symbols"][channel] = part["symbol"].dropna().astype(str).tolist()
+            diagnostics["channel_counts"][channel] = int(len(part))
+
+    for channel in sorted(work["channel"].dropna().astype(str).unique().tolist()):
+        part = work[work["channel"] == channel]
+        diagnostics["channels"][channel] = {
+            "n_input": int(len(df)),
+            "n_filtered": int(len(part)),
+            "n_ranked": int(len(part)),
+            "priority_counts": part["research_priority"].value_counts().to_dict(),
+        }
+    diagnostics["priority_counts"] = (
+        selected["research_priority"].value_counts().to_dict() if not selected.empty else {}
+    )
+    picks = normalize_symbol_list(selected["symbol"].dropna().astype(str).tolist()) if not selected.empty else []
+    diagnostics["selected_symbols"] = picks
+    return picks, diagnostics
 
 
 def rank_and_pick_symbols_with_diagnostics(
@@ -1465,6 +1584,15 @@ def rank_and_pick_symbols_with_diagnostics(
     per_channel_top_n: bool,
     include_channels: list[str] | None,
 ) -> tuple[list[str], dict[str, Any]]:
+    if list_type == "research_pool":
+        return pick_research_pool_symbols_with_diagnostics(
+            df=df,
+            scan_config=scan_config,
+            top_n=top_n,
+            per_channel_top_n=per_channel_top_n,
+            include_channels=include_channels,
+        )
+
     channel_profiles = scan_config.channel_profiles or {"core_ai": {}}
     ranked_frames: list[pd.DataFrame] = []
     diagnostics: dict[str, Any] = {

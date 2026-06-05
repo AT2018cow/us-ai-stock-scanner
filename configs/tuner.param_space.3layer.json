@@ -85,6 +85,15 @@
         10000000.0,
         14000000.0
       ]
+    },
+    {
+      "name": "research_pool_min_score",
+      "path": "research_pool_min_score",
+      "values": [
+        1.8,
+        2.0,
+        2.4
+      ]
     }
   ]
 }

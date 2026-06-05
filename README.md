@@ -97,6 +97,8 @@ python run_scan.py --config configs/config.balanced.json
 - `configs/tuner.param_space.json`：通用参数搜索空间。
 - `configs/tuner.param_space.3layer.json`：三层过滤专用参数搜索空间。
 
+调参空间同时覆盖主清单阈值与研究池参数，例如 `research_pool_min_score`。`research_pool_top_n` 会影响扫描输出规模；在历史回放中，回测层还会受 `--top-n` 约束。
+
 ### 3.6 定期调参（walk-forward）
 
 入口：
@@ -111,6 +113,7 @@ python scripts/tune_parameters.py \
 
 默认行为：
 - 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
+- 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
 - 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正
 - 自动选择并覆盖三套配置：
@@ -515,7 +518,7 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 常用参数：
 - `--mode historical_replay|existing_runs`
 - `--outputs-dir`
-- `--list-types low_value,industry_trend,momentum`
+- `--list-types low_value,industry_trend,momentum,research_pool`
 - `--top-n`、`--per-channel-top-n`
 - `--start-date`、`--end-date`、`--rebalance-frequency`
 - `--replay-max-symbols`、`--replay-asset-status`
