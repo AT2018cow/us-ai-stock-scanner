@@ -257,20 +257,20 @@ python scripts/tune_parameters.py --no-promote
 | `use_adjusted_quality_metrics` | `true` | 质量与盈利相关指标使用“调整后”口径。 |
 | `nonrecurring_addback_revenue_cap` | `0.25` | 非经常损益回补上限（占营收比例上限）。 |
 | `require_positive_revenue` | `true` | 收入必须为正。 |
-| `require_positive_net_income` | `false` | 净利润必须为正（当前关闭）。 |
+| `require_positive_net_income` | `true` | 净利润必须为正。 |
 | `require_positive_operating_cash_flow` | `true` | 经营现金流必须为正。 |
-| `require_positive_free_cash_flow` | `false` | 自由现金流必须为正（当前关闭）。 |
+| `require_positive_free_cash_flow` | `true` | 自由现金流必须为正。 |
 | `require_positive_ebit` | `true` | EBIT 必须为正。 |
 
 #### 6.2.5 价值、质量与风险硬过滤阈值
 
 | 参数 | 默认值（balanced） | 作用 |
 |---|---:|---|
-| `min_fundamental_quality_score` | `0.56` | 质量综合分下限。 |
+| `min_fundamental_quality_score` | `0.58` | 质量综合分下限。 |
 | `min_revenue` | `10000000` | 收入下限。 |
-| `min_net_income` | `-20000000` | 净利润下限（允许小幅亏损）。 |
+| `min_net_income` | `0` | 净利润下限。 |
 | `min_operating_cash_flow` | `0.0` | 经营现金流下限。 |
-| `min_free_cash_flow` | `-100000000` | 自由现金流下限。 |
+| `min_free_cash_flow` | `0.0` | 自由现金流下限。 |
 | `min_ebit` | `0.0` | EBIT 下限。 |
 | `min_net_margin` | `null` | 净利率下限（可选）。 |
 | `max_ps` / `max_pe` | `null` / `null` | 绝对 PS/PE 上限（可选）。 |
@@ -341,6 +341,8 @@ python scripts/tune_parameters.py --no-promote
 | `top_n_per_channel_low_value` | `10` | `low_value` 每通道输出上限。 |
 | `top_n_per_channel_trend` | `10` | `industry_trend` 每通道输出上限。 |
 | `top_n_per_channel_momentum` | `10` | `momentum` 每通道输出上限。 |
+| `research_pool_top_n` | `50` | 宽口径研究候选池输出上限。 |
+| `research_pool_min_score` | `2.0` | 宽口径研究候选池最低研究评分。 |
 
 #### 6.2.9 `triage_rules` 分层规则
 
@@ -438,10 +440,20 @@ python run_scan.py --help
 - 主清单分通道：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
 - 行业趋势：`..._ranked_industry_trend.csv` 及其分通道文件
 - 动量清单：`..._ranked_momentum.csv` 及其分通道文件
+- 宽口径研究候选池：`..._ranked_research_pool.csv`
 - 过滤诊断（按通道）：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断（按通道）：`..._ranked_diagnostics_<channel>_first_fail.csv`
 - 网络诊断：`..._ranked_network.json`
 - Markdown 报告：`..._ranked_report.md`
+
+关键研究解释字段：
+- `research_priority`：研究优先级，取值为 `research_now`、`watch_for_pullback`、`theme_only`、`avoid_for_now`。
+- `research_score`：研究评分，综合估值、质量、AI 关联、成长、动量和风险扣分。
+- `research_tags`：正向标签，例如 `cheap_relative_to_history`、`cheap_relative_to_peers`、`cash_flow_value`、`quality_compounder`、`strong_ai_link`、`ai_infrastructure_exposure`、`momentum_breakout`。
+- `research_risks`：风险标签，例如 `high_absolute_valuation`、`expensive_relative_to_peers`、`weak_growth`、`negative_momentum`、`possible_value_trap`。
+- `research_summary`：基于上述字段生成的简短解释。
+
+`..._ranked_research_pool.csv` 不经过三张主清单的完整硬过滤；它基于 watchlist、价格/流动性预筛和已计算指标生成，用于发现需要人工复核的潜在标的，不等同于买入清单。
 
 ## 9. 运行日志与诊断
 
@@ -455,7 +467,8 @@ python run_scan.py --help
 - SEC 长阶段进度
 - 分层过滤诊断（`base_hard` / `quality_or_theme_hard` / `valuation_hard`）
 - 输出文件路径
-- 结束时三张清单按通道的入选股票汇总
+- 结束时三张主清单按通道的入选股票汇总
+- 结束时宽口径研究候选池汇总
 
 ### 9.2 网络诊断 JSON
 

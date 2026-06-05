@@ -462,6 +462,8 @@ class ScanConfig:
     top_n_per_channel_low_value: int = 10
     top_n_per_channel_trend: int = 10
     top_n_per_channel_momentum: int = 10
+    research_pool_top_n: int = 50
+    research_pool_min_score: float = 2.0
     cache_dir: str = "cache"
     output_dir: str = "outputs"
 
@@ -4297,6 +4299,224 @@ def apply_triage_labels(ranked: pd.DataFrame, triage_rules: dict[str, dict[str, 
     return out
 
 
+def metric_float(row: pd.Series, col: str, default: float = np.nan) -> float:
+    try:
+        value = float(row.get(col, default))
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(value):
+        return default
+    return value
+
+
+def text_has_any(text: str, tokens: Iterable[str]) -> bool:
+    upper = str(text or "").upper()
+    return any(token in upper for token in tokens)
+
+
+def build_research_assessment(row: pd.Series, list_type: str = "") -> dict[str, Any]:
+    tags: list[str] = []
+    risks: list[str] = []
+    score = 0.0
+
+    ps_hist = metric_float(row, "ps_hist_percentile")
+    pe_hist = metric_float(row, "pe_hist_percentile")
+    ps_discount = metric_float(row, "ps_discount", 0.0)
+    pe_discount = metric_float(row, "pe_discount", 0.0)
+    ps_sic_pct = metric_float(row, "ps_percentile_in_sic")
+    pe_sic_pct = metric_float(row, "pe_percentile_in_sic")
+    quality = metric_float(row, "fundamental_quality_score", 0.0)
+    ai_link = metric_float(row, "ai_link_score", 0.0)
+    fcf_yield = metric_float(row, "fcf_yield")
+    ev_to_ebit = metric_float(row, "ev_to_ebit")
+    pe = metric_float(row, "pe")
+    ps = metric_float(row, "ps")
+    revenue_yoy = metric_float(row, "revenue_yoy")
+    net_income_yoy = metric_float(row, "net_income_yoy")
+    return_20d = metric_float(row, "return_20d", 0.0)
+    return_60d = metric_float(row, "return_60d", 0.0)
+    price_to_sma200 = metric_float(row, "price_to_sma200")
+    drawdown = metric_float(row, "drawdown_from_52w_high", 0.0)
+    watchlist_etfs = str(row.get("watchlist_etfs", "") or "")
+    bucket = str(row.get("watchlist_bucket", "") or "")
+    channel = str(row.get("channel", "") or "")
+
+    if (np.isfinite(ps_hist) and ps_hist <= 0.25) or (np.isfinite(pe_hist) and pe_hist <= 0.25):
+        tags.append("cheap_relative_to_history")
+        score += 1.8
+    if (
+        ps_discount >= 0.10
+        or pe_discount >= 0.10
+        or (np.isfinite(ps_sic_pct) and ps_sic_pct <= 0.35)
+        or (np.isfinite(pe_sic_pct) and pe_sic_pct <= 0.35)
+    ):
+        tags.append("cheap_relative_to_peers")
+        score += 1.5
+    if (np.isfinite(fcf_yield) and fcf_yield >= 0.06) or (
+        np.isfinite(ev_to_ebit) and ev_to_ebit <= 12.0
+    ):
+        tags.append("cash_flow_value")
+        score += 1.2
+    if quality >= 0.85:
+        tags.append("quality_compounder")
+        score += 1.6
+    elif quality >= 0.70:
+        tags.append("acceptable_quality")
+        score += 0.8
+    if revenue_yoy >= 0.10:
+        tags.append("sales_growth")
+        score += 0.8
+    if net_income_yoy >= 0.15:
+        tags.append("profit_growth")
+        score += 0.8
+    if ai_link >= 0.55:
+        tags.append("strong_ai_link")
+        score += 1.5
+    elif ai_link >= 0.42:
+        tags.append("medium_ai_link")
+        score += 0.8
+
+    infra_tokens = [
+        "GRID",
+        "PAVE",
+        "IFRA",
+        "XLI",
+        "XLU",
+        "NLR",
+        "URA",
+        "SRVR",
+        "SKYY",
+        "CLOU",
+        "CIBR",
+        "IHAK",
+        "ITA",
+        "IYT",
+        "VPU",
+        "XLRE",
+        "VNQ",
+    ]
+    if (
+        "ai_enabler" in bucket
+        or "ai_peripheral" in bucket
+        or "ai_enabler" in channel
+        or "ai_peripheral" in channel
+        or text_has_any(watchlist_etfs, infra_tokens)
+    ):
+        tags.append("ai_infrastructure_exposure")
+        score += 0.7
+
+    if return_20d >= 0.05 and return_60d >= 0.10 and (
+        not np.isfinite(price_to_sma200) or price_to_sma200 >= 1.0
+    ):
+        tags.append("momentum_breakout")
+        score += 1.3
+    if drawdown >= 0.10 and (not np.isfinite(price_to_sma200) or price_to_sma200 <= 1.05):
+        tags.append("pullback_value")
+        score += 0.7
+
+    if ps_discount < -0.10 or pe_discount < -0.10:
+        risks.append("expensive_relative_to_peers")
+        score -= 1.0
+    if (
+        (np.isfinite(pe) and pe > 30.0)
+        or (np.isfinite(ev_to_ebit) and ev_to_ebit > 30.0)
+        or (np.isfinite(ps) and ps > 10.0)
+    ):
+        risks.append("high_absolute_valuation")
+        score -= 1.2
+    if ai_link < 0.35:
+        risks.append("weak_ai_link")
+        score -= 0.8
+    if revenue_yoy < 0.03 or net_income_yoy < 0.0:
+        risks.append("weak_growth")
+        score -= 0.9
+    if return_20d < -0.05 and return_60d < 0.0:
+        risks.append("negative_momentum")
+        score -= 0.8
+    value_tag_count = len(
+        set(tags)
+        & {"cheap_relative_to_history", "cheap_relative_to_peers", "cash_flow_value", "pullback_value"}
+    )
+    if value_tag_count >= 2 and ("weak_growth" in risks or "negative_momentum" in risks):
+        risks.append("possible_value_trap")
+        score -= 1.2
+
+    tag_set = set(tags)
+    risk_set = set(risks)
+    major_risks = risk_set & {
+        "possible_value_trap",
+        "weak_ai_link",
+        "high_absolute_valuation",
+        "negative_momentum",
+    }
+    has_ai = bool(tag_set & {"strong_ai_link", "medium_ai_link", "ai_infrastructure_exposure"})
+    has_value = bool(
+        tag_set & {"cheap_relative_to_history", "cheap_relative_to_peers", "cash_flow_value"}
+    )
+    has_quality = quality >= 0.70 or "quality_compounder" in tag_set
+    has_growth_or_momentum = bool(
+        tag_set & {"sales_growth", "profit_growth", "momentum_breakout"}
+    )
+
+    has_overvaluation_risk = bool(
+        risk_set & {"high_absolute_valuation", "expensive_relative_to_peers"}
+    )
+    has_weak_ai_risk = "weak_ai_link" in risk_set
+
+    if "possible_value_trap" in risk_set and score < 3.0:
+        priority = "avoid_for_now"
+    elif has_weak_ai_risk and "ai_infrastructure_exposure" in tag_set:
+        priority = "theme_only"
+    elif has_weak_ai_risk:
+        priority = "avoid_for_now"
+    elif has_quality and has_ai and has_overvaluation_risk:
+        priority = "watch_for_pullback"
+    elif has_quality and has_value and has_ai and len(major_risks) <= 1:
+        priority = "research_now"
+    elif has_quality and has_ai and has_growth_or_momentum and len(major_risks) <= 1:
+        priority = "research_now"
+    elif has_ai:
+        priority = "theme_only"
+    else:
+        priority = "avoid_for_now"
+
+    if not tags:
+        tags.append("no_clear_edge")
+    if not risks:
+        risks.append("no_major_risk_flag")
+
+    summary = (
+        f"{priority}: tags={';'.join(tags[:4])}; "
+        f"risks={';'.join(risks[:3])}; score={score:.2f}; source={list_type or 'scan'}"
+    )
+    return {
+        "research_priority": priority,
+        "research_score": round(score, 3),
+        "research_tags": ",".join(tags),
+        "research_risks": ",".join(risks),
+        "research_summary": summary,
+    }
+
+
+def apply_research_assessment(frame: pd.DataFrame, list_type: str = "") -> pd.DataFrame:
+    out = frame.copy()
+    research_cols = [
+        "research_priority",
+        "research_score",
+        "research_tags",
+        "research_risks",
+        "research_summary",
+    ]
+    if out.empty:
+        for col in research_cols:
+            out[col] = pd.Series(dtype="object")
+        return out
+    assessments = out.apply(lambda r: build_research_assessment(r, list_type), axis=1)
+    for col in research_cols:
+        out[col] = assessments.map(lambda item: item[col])
+    return out
+
+
 def log_status(started_at: datetime, level: str, message: str) -> None:
     now = datetime.now(timezone.utc)
     elapsed = (now - started_at).total_seconds()
@@ -4365,6 +4585,8 @@ def build_run_report_markdown(
     industry_trend_path: Path | None = None,
     momentum_count: int | None = None,
     momentum_path: Path | None = None,
+    research_pool: pd.DataFrame | None = None,
+    research_pool_path: Path | None = None,
     diagnostics_layer_summary: dict[str, dict[str, dict[str, float | int]]] | None = None,
     first_fail_concentration_summary: dict[str, dict[str, Any]] | None = None,
 ) -> str:
@@ -4449,15 +4671,38 @@ def build_run_report_markdown(
                     lines.append(
                         "- "
                         f"{row['symbol']} | triage={row['triage_label']} | "
+                        f"research={str(row.get('research_priority', ''))} | "
                         f"score={float(row['composite_score']):.3f} | "
                         f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                         f"bucket={str(row.get('watchlist_bucket', ''))} | "
                         f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                         f"etfs={str(row.get('watchlist_etfs', ''))} | "
                         f"psd={float(row['ps_discount']):.3f} | "
-                        f"ped={float(row['pe_discount']):.3f}"
+                        f"ped={float(row['pe_discount']):.3f} | "
+                        f"risks={str(row.get('research_risks', ''))}"
                     )
             lines.append("")
+    if research_pool is not None:
+        lines.append("## Research Pool")
+        lines.append("")
+        if research_pool.empty:
+            lines.append("- no candidates")
+        else:
+            priority_counts = research_pool["research_priority"].value_counts().to_dict()
+            lines.append(f"- research_now: {priority_counts.get('research_now', 0)}")
+            lines.append(f"- watch_for_pullback: {priority_counts.get('watch_for_pullback', 0)}")
+            lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
+            top_pool = research_pool.sort_values("research_score", ascending=False).head(15)
+            for _, row in top_pool.iterrows():
+                lines.append(
+                    "- "
+                    f"{row['symbol']} | priority={str(row.get('research_priority', ''))} | "
+                    f"score={float(row.get('research_score', 0.0) or 0.0):.3f} | "
+                    f"channel={str(row.get('channel', ''))} | "
+                    f"tags={str(row.get('research_tags', ''))} | "
+                    f"risks={str(row.get('research_risks', ''))}"
+                )
+        lines.append("")
     lines.append("## Artifacts")
     lines.append("")
     lines.append(f"- ranked csv: {paths['ranked_csv']}")
@@ -4472,6 +4717,16 @@ def build_run_report_markdown(
         lines.append(f"- momentum csv: {momentum_path}")
     if momentum_count is not None:
         lines.append(f"- momentum rows: {momentum_count}")
+    if research_pool_path is not None:
+        lines.append(f"- research pool csv: {research_pool_path}")
+    if research_pool is not None:
+        lines.append(f"- research pool rows: {len(research_pool)}")
+        if not research_pool.empty and "research_priority" in research_pool.columns:
+            priority_counts = research_pool["research_priority"].value_counts().to_dict()
+            lines.append(f"- research_now: {priority_counts.get('research_now', 0)}")
+            lines.append(f"- watch_for_pullback: {priority_counts.get('watch_for_pullback', 0)}")
+            lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
+            lines.append(f"- avoid_for_now: {priority_counts.get('avoid_for_now', 0)}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
@@ -5089,6 +5344,11 @@ def run_scan(
         "watchlist_etfs",
         "news_count",
         "composite_score",
+        "research_priority",
+        "research_score",
+        "research_tags",
+        "research_risks",
+        "research_summary",
     ]
 
     def attach_channel_membership_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -5151,6 +5411,7 @@ def run_scan(
         return out
 
     ranked = apply_triage_labels(ranked, config.triage_rules)
+    ranked = apply_research_assessment(ranked, "low_value")
     ranked = attach_channel_membership_columns(ranked)
     if ranked.empty:
         ranked = pd.DataFrame(columns=cols + ["triage_label"])
@@ -5207,6 +5468,7 @@ def run_scan(
         industry_trend, removed = drop_symbols(industry_trend, low_symbols)
         log_status(started_at, "INFO", f"Industry-Trend cross-list dedupe removed: {removed}")
     industry_trend["triage_label"] = "trend"
+    industry_trend = apply_research_assessment(industry_trend, "industry_trend")
     industry_trend = attach_channel_membership_columns(industry_trend)
     if not industry_trend.empty:
         industry_trend = industry_trend.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -5265,6 +5527,7 @@ def run_scan(
         momentum, removed = drop_symbols(momentum, prior_symbols)
         log_status(started_at, "INFO", f"Momentum cross-list dedupe removed: {removed}")
     momentum["triage_label"] = "momentum"
+    momentum = apply_research_assessment(momentum, "momentum")
     momentum = attach_channel_membership_columns(momentum)
     if not momentum.empty:
         momentum = momentum.sort_values(["channel", "composite_score"], ascending=[True, False])
@@ -5286,6 +5549,59 @@ def run_scan(
         log_status(started_at, "INFO", f"Momentum output ({channel_name}): {ch_momentum_out}")
     log_status(started_at, "INFO", f"Momentum output: {momentum_out_path}")
 
+    # Build a wider research pool from the watchlist universe after price/liquidity
+    # and data enrichment. This is intentionally not a buy list.
+    research_pool = df.copy()
+    if "channel" not in research_pool.columns:
+        research_pool["channel"] = ""
+
+    def infer_research_channel(row: pd.Series) -> str:
+        bucket = str(row.get("watchlist_bucket", "") or "")
+        for channel_name in channel_profiles.keys():
+            if channel_name in bucket:
+                return channel_name
+        return str(row.get("channel", "") or "")
+
+    if not research_pool.empty:
+        research_pool["channel"] = research_pool.apply(infer_research_channel, axis=1)
+        research_pool["triage_label"] = "research_pool"
+        research_pool = apply_research_assessment(research_pool, "research_pool")
+        research_pool["composite_score"] = pd.to_numeric(
+            research_pool["research_score"], errors="coerce"
+        )
+        research_pool = research_pool[
+            (pd.to_numeric(research_pool["research_score"], errors="coerce").fillna(-np.inf) >= config.research_pool_min_score)
+            & (research_pool["research_priority"].astype(str) != "avoid_for_now")
+        ].copy()
+        research_pool = apply_group_caps(
+            research_pool,
+            config.max_per_sector_per_list,
+            config.max_per_watchlist_etf_source_per_list,
+        )
+        priority_order = {
+            "research_now": 0,
+            "watch_for_pullback": 1,
+            "theme_only": 2,
+            "avoid_for_now": 3,
+        }
+        research_pool["_research_priority_rank"] = (
+            research_pool["research_priority"].map(priority_order).fillna(9).astype(int)
+        )
+        research_pool = research_pool.sort_values(
+            ["_research_priority_rank", "research_score", "ai_link_score"],
+            ascending=[True, False, False],
+        ).head(max(1, int(config.research_pool_top_n)))
+        research_pool = research_pool.drop(columns=["_research_priority_rank"], errors="ignore")
+        research_pool = attach_channel_membership_columns(research_pool)
+    else:
+        research_pool = pd.DataFrame(columns=cols + ["triage_label"])
+    research_pool = ensure_export_columns(research_pool)
+    research_pool_out_path = out_path.with_name(
+        f"{out_path.stem}_research_pool{out_path.suffix or '.csv'}"
+    )
+    research_pool.to_csv(research_pool_out_path, index=False, columns=cols + ["triage_label"])
+    log_status(started_at, "INFO", f"Research pool output: {research_pool_out_path}")
+
     log_status(started_at, "INFO", "[6/6] Finalizing outputs.")
     log_status(started_at, "INFO", f"Total ranked rows: {len(ranked)}")
     for channel_name, count in filtered_counts.items():
@@ -5305,6 +5621,8 @@ def run_scan(
         "top_n_per_channel_low_value": top_n_low_value,
         "top_n_per_channel_trend": top_n_trend,
         "top_n_per_channel_momentum": top_n_momentum,
+        "research_pool_top_n": int(config.research_pool_top_n),
+        "research_pool_min_score": float(config.research_pool_min_score),
         "enforce_unique_symbol_per_list": bool(config.enforce_unique_symbol_per_list),
         "enforce_unique_symbol_across_lists": bool(config.enforce_unique_symbol_across_lists),
         "watchlist_csv_path": config.watchlist_csv_path,
@@ -5367,6 +5685,8 @@ def run_scan(
         industry_trend_path=trend_out_path,
         momentum_count=len(momentum),
         momentum_path=momentum_out_path,
+        research_pool=research_pool,
+        research_pool_path=research_pool_out_path,
         diagnostics_layer_summary=diagnostics_layer_summary,
         first_fail_concentration_summary=first_fail_concentration_summary,
     )
@@ -5390,10 +5710,12 @@ def run_scan(
                 print(
                     "  - "
                     f"{row['symbol']} | triage={row['triage_label']} | "
+                    f"research={row.get('research_priority', '')} | "
                     f"score={float(row['composite_score']):.3f} | "
                     f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                     f"psd={float(row['ps_discount']):.3f} | "
                     f"ped={float(row['pe_discount']):.3f} | "
+                    f"risks={str(row.get('research_risks', ''))} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
                     f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                     f"etfs={str(row.get('watchlist_etfs', ''))}"
@@ -5415,8 +5737,10 @@ def run_scan(
             for _, row in top.iterrows():
                 print(
                     "  - "
-                    f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"{row['symbol']} | research={row.get('research_priority', '')} | "
+                    f"score={float(row['composite_score']):.3f} | "
                     f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
+                    f"tags={str(row.get('research_tags', ''))} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
                     f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                     f"etfs={str(row.get('watchlist_etfs', ''))}"
@@ -5438,14 +5762,45 @@ def run_scan(
             for _, row in top.iterrows():
                 print(
                     "  - "
-                    f"{row['symbol']} | score={float(row['composite_score']):.3f} | "
+                    f"{row['symbol']} | research={row.get('research_priority', '')} | "
+                    f"score={float(row['composite_score']):.3f} | "
                     f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
                     f"r20={float(row['return_20d']):.3f} | "
+                    f"tags={str(row.get('research_tags', ''))} | "
                     f"bucket={str(row.get('watchlist_bucket', ''))} | "
                     f"etf_count={int(row.get('watchlist_etf_count', 0) or 0)} | "
                     f"etfs={str(row.get('watchlist_etfs', ''))}"
                 )
     print("=== End Momentum Shortlist ===")
+    print("")
+    print("=== Research Pool (Broader Candidates) ===")
+    if research_pool.empty:
+        print("No research pool candidates.")
+    else:
+        priority_order = {
+            "research_now": 0,
+            "watch_for_pullback": 1,
+            "theme_only": 2,
+            "avoid_for_now": 3,
+        }
+        display_pool = research_pool.copy()
+        display_pool["_priority_rank"] = (
+            display_pool["research_priority"].map(priority_order).fillna(9).astype(int)
+        )
+        display_pool = display_pool.sort_values(
+            ["_priority_rank", "research_score"], ascending=[True, False]
+        )
+        for _, row in display_pool.iterrows():
+            print(
+                "  - "
+                f"{row['symbol']} | priority={row.get('research_priority', '')} | "
+                f"score={float(row.get('research_score', 0.0) or 0.0):.3f} | "
+                f"channel={str(row.get('channel', ''))} | "
+                f"ai_link={float(row.get('ai_link_score', 0.0) or 0.0):.3f} | "
+                f"tags={str(row.get('research_tags', ''))} | "
+                f"risks={str(row.get('research_risks', ''))}"
+            )
+    print("=== End Research Pool ===")
     log_status(started_at, "INFO", "Scan completed successfully.")
     return out_path
 

@@ -351,6 +351,11 @@
   },
   "alpaca_max_requests_per_sec": 2.5,
   "sec_max_requests_per_sec": 5.0,
+  "top_n_per_channel_low_value": 10,
+  "top_n_per_channel_trend": 10,
+  "top_n_per_channel_momentum": 10,
+  "research_pool_top_n": 50,
+  "research_pool_min_score": 2.0,
   "triage_rules": {
     "keep": {
       "core_ai": {
