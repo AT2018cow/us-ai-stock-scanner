@@ -203,7 +203,7 @@ class TestTuneParameterConstraints(unittest.TestCase):
                     "avg_excess_vs_qqq": float("nan"),
                     "avg_std_return": float("nan"),
                     "total_valid_events": 0,
-                    "max_drawdown": -0.20,
+                    "max_drawdown": 0.0,
                 },
             ]
         )
@@ -211,7 +211,7 @@ class TestTuneParameterConstraints(unittest.TestCase):
         self.assertEqual(out["min_window_valid_events"], 0)
         self.assertAlmostEqual(out["coverage_ratio"], 0.5)
         self.assertAlmostEqual(out["empty_window_ratio"], 0.5)
-        self.assertAlmostEqual(out["worst_max_drawdown"], -0.20)
+        self.assertAlmostEqual(out["worst_max_drawdown"], -0.10)
 
     def test_mature_horizons_from_summary_excludes_unmatured_horizon(self) -> None:
         summary = self.tuner.pd.DataFrame(

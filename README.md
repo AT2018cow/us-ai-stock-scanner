@@ -1,9 +1,12 @@
 # AI Undervalued US Stocks Scanner (Alpaca + SEC)
 
-基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 `AI 观察清单`执行多通道筛选，输出三张候选清单：
-- `Low-Value`：估值与质量优先
-- `Industry-Trend`：产业趋势与主题联动优先
-- `Momentum`：价格动量优先
+基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 `AI 观察清单`执行多通道筛选。项目的核心生产策略是 `Low-Value`：在 AI 相关观察池中寻找估值处于低位、质量可接受、且没有明显价值陷阱特征的股票。
+
+程序同时输出辅助清单：
+- `Low-Value`：核心清单，估值与质量优先。
+- `Industry-Trend`：辅助观察清单，用于识别产业趋势和主题联动，不作为生产参数通过/失败的主目标。
+- `Momentum`：辅助观察清单，用于识别价格动量，不作为生产参数通过/失败的主目标。
+- `Research Pool`：宽口径研究池，用于人工扩展研究，不作为自动投资结论。
 
 项目默认只扫描本地 watchlist 中的股票，不执行全市场无约束遍历。
 
@@ -118,16 +121,17 @@ python scripts/tune_parameters.py \
 默认行为：
 - 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
 - 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`
+- 默认以 `low_value` 作为 `--primary-list-types`，生产参数通过/失败主要由 `Low-Value` 决定
 - 调参结果同时输出主清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
-- 当 `research_pool` 参与调参时，覆盖率、胜率和收益护栏优先基于 `research_pool` 评价，避免主清单暂时无信号时掩盖研究池表现；主清单覆盖不足仍通过 `strict_*` 字段暴露。
+- `industry_trend`、`momentum`、`research_pool` 可以参与回测输出和诊断，但默认不决定生产参数是否通过。
 - 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
 - 自动选择并覆盖三套配置：
   - `configs/config.balanced.json`
   - `configs/config.risk_on.json`
   - `configs/config.risk_off.json`
 
-若只评估三张主清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。这类运行适合产出类似 `configs/config.strict_candidate.json` 的候选主清单参数。
+若只评估三张主清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。若要改变生产评价目标，可显式设置 `--primary-list-types`。
 
 如果只想评估不覆盖配置：
 
@@ -567,6 +571,11 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 调参输入：
 - `configs/tuner.param_space.json`：参数轴定义（`path` + `values`）
 - `configs/tuner.param_space.3layer.json`：三层过滤专用参数轴，覆盖流动性、通道级估值分位、通道级 FCF yield 和动量成交额门槛。
+
+生产评价口径：
+- `--list-types` 控制回测输出哪些清单。
+- `--primary-list-types` 控制哪些清单参与候选参数评分和护栏判断，默认 `low_value`。
+- `industry_trend`、`momentum`、`research_pool` 默认只作为辅助诊断，不决定生产参数是否通过。
 
 核心约束参数：
 - `--min-total-valid-events`：候选参数整体最少有效事件数。

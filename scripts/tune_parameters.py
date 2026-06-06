@@ -21,6 +21,7 @@ from ai_value_scanner.backtest import BacktestConfig, run_backtest
 
 DEFAULT_HORIZONS = [20, 60, 120]
 DEFAULT_LIST_TYPES = ["low_value", "industry_trend", "momentum", "research_pool"]
+DEFAULT_PRIMARY_LIST_TYPES = ["low_value"]
 DEFAULT_SCENARIO_WEIGHTS = {"base": 0.6, "loose": 0.2, "strict": 0.2}
 DEFAULT_LIST_WEIGHTS = {
     "low_value": 0.35,
@@ -111,6 +112,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--windows", default=",".join(default_windows_tokens()))
     p.add_argument("--horizons", default="20,60,120")
     p.add_argument("--list-types", default="low_value,industry_trend,momentum,research_pool")
+    p.add_argument(
+        "--primary-list-types",
+        default="low_value",
+        help="Comma-separated list types that drive objective scoring and production guardrails.",
+    )
     p.add_argument("--search-mode", default="auto", choices=["auto", "grid", "random"])
     p.add_argument("--max-candidates", type=int, default=36)
     p.add_argument("--random-seed", type=int, default=42)
@@ -359,7 +365,11 @@ def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
             "worst_max_drawdown": -1.0,
         }
     valid_counts = [int(e.get("total_valid_events", 0) or 0) for e in evals]
-    drawdowns = [float(e.get("max_drawdown", -1.0) or -1.0) for e in evals]
+    drawdowns: list[float] = []
+    for e in evals:
+        raw_dd = e.get("max_drawdown", -1.0)
+        dd = safe_float(raw_dd)
+        drawdowns.append(dd if np.isfinite(dd) else -1.0)
     return {
         "coverage_ratio": finite_nanmean([float(e.get("coverage_ratio", 0.0) or 0.0) for e in evals]),
         "avg_win_rate": finite_nanmean([float(e.get("avg_win_rate", float("nan"))) for e in evals]),
@@ -626,6 +636,7 @@ def run_candidate(
     output_stem: str,
     horizons: list[int],
     list_types: list[str],
+    primary_list_types: list[str],
     objective_weights: dict[str, float],
     scenario_weights: dict[str, float],
     list_weights: dict[str, float],
@@ -646,6 +657,7 @@ def run_candidate(
     window_failure_reasons: list[str] = []
     strict_window_evals: list[dict[str, Any]] = []
     research_pool_window_evals: list[dict[str, Any]] = []
+    primary_window_evals: list[dict[str, Any]] = []
     strict_list_types = [t for t in list_types if t != "research_pool"]
     research_pool_list_types = [t for t in list_types if t == "research_pool"]
 
@@ -687,6 +699,20 @@ def run_candidate(
             list_weights=list_weights,
             horizon_weights=horizon_weights,
         )
+        primary_horizons = (
+            mature_horizons_from_summary(summary, primary_list_types, horizons) or window_horizons
+        )
+        primary_eval = evaluate_window(
+            summary=summary,
+            events=events,
+            list_types=primary_list_types,
+            horizons=primary_horizons,
+            objective_weights=objective_weights,
+            scenario_weights=scenario_weights,
+            list_weights={k: list_weights.get(k, 1.0) for k in primary_list_types},
+            horizon_weights=horizon_weights,
+        )
+        primary_window_evals.append(primary_eval)
         if strict_list_types:
             strict_horizons = (
                 mature_horizons_from_summary(summary, strict_list_types, horizons) or window_horizons
@@ -720,36 +746,25 @@ def run_candidate(
                     horizon_weights=horizon_weights,
                 )
             )
-        window_failure_reasons.append(classify_window_failure(window_eval, events))
+        window_failure_reasons.append(classify_window_failure(primary_eval, events))
         if bool(args.prune_backtest_artifacts and not args.no_prune_backtest_artifacts):
             maybe_prune_backtest_artifacts(bt_result)
 
-        window_scores.append(float(window_eval["score"]))
-        window_valid_counts.append(int(window_eval["total_valid_events"]))
-        coverage_values.append(float(window_eval["coverage_ratio"]))
-        win_values.append(float(window_eval["avg_win_rate"]))
-        return_values.append(float(window_eval["avg_return"]))
-        excess_values.append(float(window_eval["avg_excess_vs_qqq"]))
-        std_values.append(float(window_eval["avg_std_return"]))
-        drawdowns.append(float(window_eval["max_drawdown"]))
+        window_scores.append(float(primary_eval["score"]))
+        window_valid_counts.append(int(primary_eval["total_valid_events"]))
+        coverage_values.append(float(primary_eval["coverage_ratio"]))
+        win_values.append(float(primary_eval["avg_win_rate"]))
+        return_values.append(float(primary_eval["avg_return"]))
+        excess_values.append(float(primary_eval["avg_excess_vs_qqq"]))
+        std_values.append(float(primary_eval["avg_std_return"]))
+        drawdowns.append(float(primary_eval["max_drawdown"]))
         log(
-            f"{candidate.cid} | window={window.label} | score={window_eval['score']:.4f} "
-            f"valid={window_eval['total_valid_events']} dd={window_eval['max_drawdown']:.3f}"
+            f"{candidate.cid} | window={window.label} | primary_score={primary_eval['score']:.4f} "
+            f"primary_valid={primary_eval['total_valid_events']} primary_dd={primary_eval['max_drawdown']:.3f}"
         )
 
     finite_window_scores = [x for x in window_scores if np.isfinite(x)]
     objective = float(np.mean(finite_window_scores)) if finite_window_scores else float("-inf")
-    finite_research_scores = [
-        float(e.get("score", float("nan")))
-        for e in research_pool_window_evals
-        if np.isfinite(float(e.get("score", float("nan"))))
-    ]
-    if finite_research_scores:
-        research_objective = float(np.mean(finite_research_scores))
-        if np.isfinite(objective):
-            objective = (0.65 * research_objective) + (0.35 * objective)
-        else:
-            objective = research_objective
     window_stability_std = (
         float(statistics.pstdev(finite_window_scores)) if len(finite_window_scores) > 1 else 0.0
     )
@@ -769,34 +784,9 @@ def run_candidate(
     worst_dd = float(min(drawdowns)) if drawdowns else -1.0
     strict_eval = aggregate_window_evals(strict_window_evals)
     research_pool_eval = aggregate_window_evals(research_pool_window_evals)
-    primary_eval = research_pool_eval if research_pool_list_types else {
-        "total_valid_events": total_valid,
-        "min_window_valid_events": min_window_valid,
-        "coverage_ratio": coverage_ratio,
-        "worst_max_drawdown": worst_dd,
-        "empty_window_ratio": empty_window_ratio,
-        "avg_return": avg_ret,
-        "avg_excess_vs_qqq": avg_ex,
-        "avg_win_rate": avg_win,
-    }
-    primary_window_scores = (
-        [
-            float(e.get("score", float("nan")))
-            for e in research_pool_window_evals
-            if np.isfinite(float(e.get("score", float("nan"))))
-        ]
-        if research_pool_list_types
-        else finite_window_scores
-    )
-    primary_window_excess = (
-        [
-            float(e.get("avg_excess_vs_qqq", float("nan")))
-            for e in research_pool_window_evals
-            if np.isfinite(float(e.get("avg_excess_vs_qqq", float("nan"))))
-        ]
-        if research_pool_list_types
-        else finite_window_excess
-    )
+    primary_eval = aggregate_window_evals(primary_window_evals)
+    primary_window_scores = finite_window_scores
+    primary_window_excess = finite_window_excess
     constraint_window_stability_std = (
         float(statistics.pstdev(primary_window_scores)) if len(primary_window_scores) > 1 else 0.0
     )
@@ -847,18 +837,10 @@ def run_candidate(
     constraints_passed = len(failure_reasons) == 0 and np.isfinite(objective_score)
     failure_reason = ";".join(failure_reasons)
 
-    rank_coverage = (
-        float(research_pool_eval["coverage_ratio"]) if research_pool_list_types else float(coverage_ratio)
-    )
-    rank_avg_ret = (
-        float(research_pool_eval["avg_return"]) if research_pool_list_types else float(avg_ret)
-    )
-    rank_avg_ex = (
-        float(research_pool_eval["avg_excess_vs_qqq"]) if research_pool_list_types else float(avg_ex)
-    )
-    rank_avg_win = (
-        float(research_pool_eval["avg_win_rate"]) if research_pool_list_types else float(avg_win)
-    )
+    rank_coverage = float(coverage_ratio)
+    rank_avg_ret = float(avg_ret)
+    rank_avg_ex = float(avg_ex)
+    rank_avg_win = float(avg_win)
     risk_on_rank_score = (
         objective_score
         + (0.35 * rank_coverage)
@@ -946,6 +928,8 @@ def write_tuning_report(
     lines.append(f"- tuning_run_id: `{stamp}`")
     lines.append(f"- base_config: `{args.base_config}`")
     lines.append(f"- param_space: `{args.param_space}`")
+    lines.append(f"- list_types: `{args.list_types}`")
+    lines.append(f"- primary_list_types: `{args.primary_list_types}`")
     lines.append(f"- windows: `{', '.join(f'{w.label}:{w.start_date}->{w.end_date}' for w in windows)}`")
     lines.append(f"- candidate_count: {len(scores_df)}")
     lines.append(f"- constraints_passed: {int((scores_df['constraints_passed'] == True).sum())}")
@@ -1011,6 +995,15 @@ def main() -> None:
     windows = parse_windows(args.windows)
     horizons = parse_int_csv(args.horizons)
     list_types = parse_csv_list(args.list_types)
+    primary_list_types = parse_csv_list(args.primary_list_types)
+    if not primary_list_types:
+        primary_list_types = list(DEFAULT_PRIMARY_LIST_TYPES)
+    missing_primary = sorted(set(primary_list_types) - set(list_types))
+    if missing_primary:
+        raise ValueError(
+            "--primary-list-types must be a subset of --list-types; "
+            f"missing from --list-types: {','.join(missing_primary)}"
+        )
     stamp = args.output_prefix or datetime.now(timezone.utc).strftime("tuning_%Y%m%dT%H%M%SZ")
 
     base_config = read_json(base_path)
@@ -1024,6 +1017,7 @@ def main() -> None:
     )
     log(f"tuning_run_id={stamp}")
     log(f"search_mode={args.search_mode} candidates={len(candidates)}")
+    log(f"list_types={','.join(list_types)} primary_list_types={','.join(primary_list_types)}")
 
     objective_weights = dict(DEFAULT_OBJECTIVE_WEIGHTS)
     scenario_weights = dict(DEFAULT_SCENARIO_WEIGHTS)
@@ -1041,6 +1035,7 @@ def main() -> None:
             output_stem=stamp,
             horizons=horizons,
             list_types=list_types,
+            primary_list_types=primary_list_types,
             objective_weights=objective_weights,
             scenario_weights=scenario_weights,
             list_weights=list_weights,
@@ -1086,6 +1081,8 @@ def main() -> None:
         "tuning_run_id": stamp,
         "base_config": args.base_config,
         "param_space": args.param_space,
+        "list_types": list_types,
+        "primary_list_types": primary_list_types,
         "candidates": len(candidates),
         "picks": picks,
         "results_csv": str(results_csv),
