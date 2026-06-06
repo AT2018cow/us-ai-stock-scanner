@@ -354,10 +354,15 @@ python scripts/tune_parameters.py --no-promote
 | `top_n_per_channel_momentum` | `10` | `momentum` 每通道输出上限。 |
 | `research_pool_top_n` | `50` | 宽口径研究候选池输出上限。 |
 | `research_pool_min_score` | `2.0` | 宽口径研究候选池最低研究评分。 |
+| `low_value_allowed_research_priorities` | `["research_now","watch_for_pullback"]` | `low_value` 主清单允许的研究优先级。 |
+| `low_value_excluded_research_risks` | `["possible_value_trap","weak_ai_link","negative_momentum"]` | `low_value` 主清单排除的研究风险标签。 |
+| `low_value_min_research_score` | `0.0` | `low_value` 主清单最低研究评分。 |
 
 #### 6.2.9 `triage_rules` 分层规则
 
-`triage_rules` 仅作用于 `low_value` 清单，结构如下：
+`low_value` 会先经过硬过滤、打分和研究质量闸门，再应用 `triage_rules`。研究质量闸门用于避免“估值看似便宜但缺少基本面/主题确认”的股票进入低估主清单；被排除的股票仍可能出现在 `research_pool` 中。
+
+`triage_rules` 仅作用于通过研究质量闸门后的 `low_value` 清单，结构如下：
 - `keep.<channel>.min_composite_score`
 - `keep.<channel>.min_ps_discount`
 - `keep.<channel>.min_pe_discount`
@@ -567,6 +572,9 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `--min-total-valid-events`：候选参数整体最少有效事件数。
 - `--min-window-valid-events`：每个回测窗口最少有效事件数。
 - `--coverage-ratio-floor`：有效事件数占总事件数的下限。
+- `--min-strict-total-valid-events`：当同时评估 `research_pool` 时，三张主清单的最少有效事件数。
+- `--strict-coverage-ratio-floor`：当同时评估 `research_pool` 时，三张主清单覆盖率下限。
+- `--min-strict-avg-win-rate`：当同时评估 `research_pool` 时，三张主清单平均胜率下限。
 - `--max-acceptable-drawdown`：最大可接受回撤，超过后候选失败。
 - `--min-avg-return`：平均绝对收益下限，默认 `0.0`。
 - `--min-avg-excess-vs-qqq`：平均相对 QQQ 超额收益下限，默认 `0.0`。

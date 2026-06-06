@@ -141,6 +141,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-empty-window-ratio", type=float, default=0.25)
     p.add_argument("--max-acceptable-drawdown", type=float, default=0.42)
     p.add_argument("--coverage-ratio-floor", type=float, default=0.35)
+    p.add_argument(
+        "--min-strict-total-valid-events",
+        type=int,
+        default=0,
+        help="Optional guardrail for strict-list events when research_pool is also evaluated.",
+    )
+    p.add_argument(
+        "--strict-coverage-ratio-floor",
+        type=float,
+        default=0.0,
+        help="Optional guardrail for strict-list coverage when research_pool is also evaluated.",
+    )
+    p.add_argument(
+        "--min-strict-avg-win-rate",
+        type=float,
+        default=0.0,
+        help="Optional guardrail for strict-list win rate when research_pool is also evaluated.",
+    )
     p.add_argument("--stability-penalty-weight", type=float, default=0.35)
     p.add_argument("--drawdown-penalty-weight", type=float, default=0.6)
     p.add_argument("--negative-return-penalty-weight", type=float, default=0.8)
@@ -808,6 +826,22 @@ def run_candidate(
         avg_win=float(primary_eval.get("avg_win_rate", avg_win)),
         args=args,
     )
+    if strict_list_types:
+        min_strict_total = int(args.min_strict_total_valid_events)
+        if min_strict_total > 0 and int(strict_eval["total_valid_events"]) < min_strict_total:
+            penalty += 0.6
+            failure_reasons.append("strict_total_valid_events_too_low")
+
+        strict_coverage_floor = float(args.strict_coverage_ratio_floor)
+        if strict_coverage_floor > 0.0 and float(strict_eval["coverage_ratio"]) < strict_coverage_floor:
+            penalty += 0.5
+            failure_reasons.append("strict_coverage_ratio_too_low")
+
+        min_strict_win = float(args.min_strict_avg_win_rate)
+        strict_win = float(strict_eval["avg_win_rate"])
+        if min_strict_win > 0.0 and (not np.isfinite(strict_win) or strict_win < min_strict_win):
+            penalty += 0.5
+            failure_reasons.append("strict_avg_win_rate_too_low")
     objective_score = objective - penalty
 
     constraints_passed = len(failure_reasons) == 0 and np.isfinite(objective_score)

@@ -378,5 +378,15 @@
             "max_composite_score": 0.35,
             "require_both_value_premium": true
         }
-    }
+    },
+    "low_value_allowed_research_priorities": [
+        "research_now",
+        "watch_for_pullback"
+    ],
+    "low_value_excluded_research_risks": [
+        "possible_value_trap",
+        "weak_ai_link",
+        "negative_momentum"
+    ],
+    "low_value_min_research_score": 0.0
 }

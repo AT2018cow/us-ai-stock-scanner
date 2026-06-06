@@ -459,6 +459,13 @@ class ScanConfig:
     exclude_sic_codes: list[str] = field(default_factory=lambda: ["6770"])
     channel_profiles: dict[str, dict[str, Any]] = field(default_factory=default_channel_profiles)
     triage_rules: dict[str, dict[str, Any]] = field(default_factory=default_triage_rules)
+    low_value_allowed_research_priorities: list[str] = field(
+        default_factory=lambda: ["research_now", "watch_for_pullback"]
+    )
+    low_value_excluded_research_risks: list[str] = field(
+        default_factory=lambda: ["possible_value_trap", "weak_ai_link", "negative_momentum"]
+    )
+    low_value_min_research_score: float | None = 0.0
     top_n_per_channel_low_value: int = 10
     top_n_per_channel_trend: int = 10
     top_n_per_channel_momentum: int = 10
@@ -4517,6 +4524,39 @@ def apply_research_assessment(frame: pd.DataFrame, list_type: str = "") -> pd.Da
     return out
 
 
+def apply_low_value_research_gate(frame: pd.DataFrame, config: ScanConfig) -> pd.DataFrame:
+    """Keep Low-Value focused on investable value, not broad thematic cheapness."""
+    out = frame.copy()
+    if out.empty:
+        return out
+    if "research_priority" not in out.columns or "research_risks" not in out.columns:
+        out = apply_research_assessment(out, "low_value")
+
+    allowed = {
+        str(x).strip()
+        for x in (config.low_value_allowed_research_priorities or [])
+        if str(x).strip()
+    }
+    excluded_risks = {
+        str(x).strip()
+        for x in (config.low_value_excluded_research_risks or [])
+        if str(x).strip()
+    }
+
+    mask = pd.Series(True, index=out.index)
+    if allowed:
+        mask &= out["research_priority"].fillna("").astype(str).isin(allowed)
+    if excluded_risks:
+        risks = out["research_risks"].fillna("").astype(str).str.split(",")
+        mask &= ~risks.apply(lambda values: bool(set(str(x).strip() for x in values) & excluded_risks))
+    if config.low_value_min_research_score is not None:
+        mask &= (
+            pd.to_numeric(out["research_score"], errors="coerce").fillna(-np.inf)
+            >= float(config.low_value_min_research_score)
+        )
+    return out[mask].copy()
+
+
 def log_status(started_at: datetime, level: str, message: str) -> None:
     now = datetime.now(timezone.utc)
     elapsed = (now - started_at).total_seconds()
@@ -5219,6 +5259,14 @@ def run_scan(
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
         )
+        ranked = apply_research_assessment(ranked, "low_value")
+        pre_research_gate_count = len(ranked)
+        ranked = apply_low_value_research_gate(ranked, config)
+        log_status(
+            started_at,
+            "INFO",
+            f"  Low-Value research gate: {pre_research_gate_count} => {len(ranked)}",
+        )
         ranked = apply_group_caps(
             ranked,
             config.max_per_sector_per_list,
@@ -5623,6 +5671,9 @@ def run_scan(
         "top_n_per_channel_momentum": top_n_momentum,
         "research_pool_top_n": int(config.research_pool_top_n),
         "research_pool_min_score": float(config.research_pool_min_score),
+        "low_value_allowed_research_priorities": config.low_value_allowed_research_priorities,
+        "low_value_excluded_research_risks": config.low_value_excluded_research_risks,
+        "low_value_min_research_score": config.low_value_min_research_score,
         "enforce_unique_symbol_per_list": bool(config.enforce_unique_symbol_per_list),
         "enforce_unique_symbol_across_lists": bool(config.enforce_unique_symbol_across_lists),
         "watchlist_csv_path": config.watchlist_csv_path,

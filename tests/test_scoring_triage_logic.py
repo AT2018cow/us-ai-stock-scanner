@@ -5,6 +5,8 @@ import unittest
 import pandas as pd
 
 from ai_value_scanner.scanner import (
+    ScanConfig,
+    apply_low_value_research_gate,
     assign_triage_label,
     build_research_assessment,
     robust_normalize_score,
@@ -132,6 +134,33 @@ class TestScoringTriageLogic(unittest.TestCase):
         assessment = build_research_assessment(row, "research_pool")
         self.assertEqual(assessment["research_priority"], "theme_only")
         self.assertIn("possible_value_trap", assessment["research_risks"])
+
+    def test_low_value_research_gate_excludes_theme_only_and_value_traps(self) -> None:
+        cfg = ScanConfig()
+        frame = pd.DataFrame(
+            [
+                {
+                    "symbol": "KEEP",
+                    "research_priority": "research_now",
+                    "research_score": 4.0,
+                    "research_risks": "no_major_risk_flag",
+                },
+                {
+                    "symbol": "THEME",
+                    "research_priority": "theme_only",
+                    "research_score": 5.0,
+                    "research_risks": "no_major_risk_flag",
+                },
+                {
+                    "symbol": "TRAP",
+                    "research_priority": "research_now",
+                    "research_score": 6.0,
+                    "research_risks": "possible_value_trap",
+                },
+            ]
+        )
+        gated = apply_low_value_research_gate(frame, cfg)
+        self.assertEqual(gated["symbol"].tolist(), ["KEEP"])
 
 
 if __name__ == "__main__":

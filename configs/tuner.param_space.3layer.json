@@ -94,6 +94,45 @@
         2.0,
         2.4
       ]
+    },
+    {
+      "name": "low_value_min_research_score",
+      "path": "low_value_min_research_score",
+      "values": [
+        0.0,
+        2.0,
+        3.0
+      ]
+    },
+    {
+      "name": "low_value_allowed_research_priorities",
+      "path": "low_value_allowed_research_priorities",
+      "values": [
+        [
+          "research_now",
+          "watch_for_pullback"
+        ],
+        [
+          "research_now",
+          "watch_for_pullback",
+          "theme_only"
+        ]
+      ]
+    },
+    {
+      "name": "low_value_excluded_research_risks",
+      "path": "low_value_excluded_research_risks",
+      "values": [
+        [
+          "possible_value_trap",
+          "weak_ai_link",
+          "negative_momentum"
+        ],
+        [
+          "possible_value_trap",
+          "weak_ai_link"
+        ]
+      ]
     }
   ]
 }
