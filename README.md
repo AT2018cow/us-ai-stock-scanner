@@ -10,11 +10,14 @@
 
 项目默认只扫描本地 watchlist 中的股票，不执行全市场无约束遍历。
 
+定位说明：本项目是保守型 Low-Value 研究筛选器。它优先减少明显高估、现金流较弱、基本面恶化或主题关联不足的候选，而不是追求输出数量。正常市场环境下，`Low-Value` 清单可能只有少量股票，甚至为空；`Industry-Trend`、`Momentum` 和 `Research Pool` 用于辅助研究，不代表自动买入候选。
+
 ## 1. 核心能力
 
 - Watchlist-only 扫描（候选池可控，执行速度稳定）
 - 三池并行通道：`core_ai`、`ai_enabler`、`ai_peripheral`
 - 三张并行清单：`low_value`、`industry_trend`、`momentum`
+- 宽口径研究池：`research_pool`，用于人工扩展研究
 - 硬过滤 + 打分排序 + `triage` 分层（`keep/watch/drop`）
 - 网络/限流诊断、过滤诊断、Markdown 运行报告
 - Alpaca 与 SEC 本地缓存（降低重复请求）
@@ -95,7 +98,7 @@ python run_scan.py --config configs/config.balanced.json
 
 另有一套候选生产配置：
 
-- `configs/config.strict_candidate.json`：基于 strict-list 调参复核得到的候选参数，聚焦 `low_value`、`industry_trend`、`momentum` 三张主清单，不作为默认配置自动使用。
+- `configs/config.strict_candidate.json`：基于 strict-list 调参复核得到的候选参数，聚焦 `low_value`、`industry_trend`、`momentum` 三张并行扫描清单，不作为默认配置自动使用。
 
 历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
@@ -104,7 +107,7 @@ python run_scan.py --config configs/config.balanced.json
 - `configs/tuner.param_space.json`：通用参数搜索空间。
 - `configs/tuner.param_space.3layer.json`：三层过滤专用参数搜索空间。
 
-调参空间同时覆盖主清单阈值与研究池参数，例如 `research_pool_min_score`。`research_pool_top_n` 会影响扫描输出规模；在历史回放中，回测层还会受 `--top-n` 约束。
+调参空间同时覆盖并行清单阈值与研究池参数，例如 `research_pool_min_score`。`research_pool_top_n` 会影响扫描输出规模；在历史回放中，回测层还会受 `--top-n` 约束。
 
 ### 3.6 定期调参（walk-forward）
 
@@ -122,7 +125,7 @@ python scripts/tune_parameters.py \
 - 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
 - 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`
 - 默认以 `low_value` 作为 `--primary-list-types`，生产参数通过/失败主要由 `Low-Value` 决定
-- 调参结果同时输出主清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）
+- 调参结果同时输出并行清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
 - `industry_trend`、`momentum`、`research_pool` 可以参与回测输出和诊断，但默认不决定生产参数是否通过。
 - 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
@@ -131,7 +134,7 @@ python scripts/tune_parameters.py \
   - `configs/config.risk_on.json`
   - `configs/config.risk_off.json`
 
-若只评估三张主清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。若要改变生产评价目标，可显式设置 `--primary-list-types`。
+若只评估三张并行扫描清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。若要改变生产评价目标，可显式设置 `--primary-list-types`。
 
 如果只想评估不覆盖配置：
 
@@ -183,6 +186,13 @@ python scripts/tune_parameters.py --no-promote
 - `Momentum`：动量约束与动量权重打分，`triage_label=momentum`
 
 三张清单是并行结果，不是子集关系。
+
+生产使用口径：
+- `Low-Value` 是核心生产清单，适合优先人工复核。
+- `Industry-Trend` 用于观察产业趋势和主题联动，可能包含估值已经偏高的强势股。
+- `Momentum` 用于观察价格动量，可能包含并不低估的股票。
+- `Research Pool` 是宽口径研究扩展池，会保留 `theme_only` 等候选，不能作为自动投资结论。
+- 当 `Low-Value` 入选数量很少时，通常表示当前参数下没有足够多股票同时满足估值、质量、价格行为和主题关联要求，不应简单理解为程序异常。
 
 ### 5.3 AI 关联度评分
 
@@ -456,15 +466,17 @@ python run_scan.py --help
 - `<scope>` 为 `full` 或 `sample<max_symbols>`
 
 基于主文件会生成：
-- 主清单：`..._ranked.csv`
-- 主清单分通道：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
-- 行业趋势：`..._ranked_industry_trend.csv` 及其分通道文件
-- 动量清单：`..._ranked_momentum.csv` 及其分通道文件
-- 宽口径研究候选池：`..._ranked_research_pool.csv`
+- Low-Value 核心清单：`..._ranked.csv`
+- Low-Value 分通道清单：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
+- Industry-Trend 辅助清单：`..._ranked_industry_trend.csv` 及其分通道文件
+- Momentum 辅助清单：`..._ranked_momentum.csv` 及其分通道文件
+- Research Pool 宽口径研究候选池：`..._ranked_research_pool.csv`
 - 过滤诊断（按通道）：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断（按通道）：`..._ranked_diagnostics_<channel>_first_fail.csv`
 - 网络诊断：`..._ranked_network.json`
 - Markdown 报告：`..._ranked_report.md`
+
+控制台结束时会打印完整入选股票简表。`Low-Value` 简表是核心生产清单；`Industry-Trend`、`Momentum` 和 `Research Pool` 简表用于辅助人工研究。
 
 关键研究解释字段：
 - `research_priority`：研究优先级，取值为 `research_now`、`watch_for_pullback`、`theme_only`、`avoid_for_now`。
@@ -473,7 +485,7 @@ python run_scan.py --help
 - `research_risks`：风险标签，例如 `high_absolute_valuation`、`expensive_relative_to_peers`、`weak_growth`、`negative_momentum`、`possible_value_trap`。
 - `research_summary`：基于上述字段生成的简短解释。
 
-`..._ranked_research_pool.csv` 不经过三张主清单的完整硬过滤；它基于 watchlist、价格/流动性预筛和已计算指标生成，用于发现需要人工复核的潜在标的，不等同于买入清单。
+`..._ranked_research_pool.csv` 不经过三张并行扫描清单的完整硬过滤；它基于 watchlist、价格/流动性预筛和已计算指标生成，用于发现需要人工复核的潜在标的，不等同于买入清单。`theme_only` 表示主题或估值线索存在但质量、动量、AI 关联或风险标签仍不足以进入核心清单。
 
 ## 9. 运行日志与诊断
 
@@ -487,7 +499,7 @@ python run_scan.py --help
 - SEC 长阶段进度
 - 分层过滤诊断（`base_hard` / `quality_or_theme_hard` / `valuation_hard`）
 - 输出文件路径
-- 结束时三张主清单按通道的入选股票汇总
+- 结束时三张并行扫描清单按通道的入选股票汇总
 - 结束时宽口径研究候选池汇总
 
 ### 9.2 网络诊断 JSON
@@ -581,9 +593,9 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `--min-total-valid-events`：候选参数整体最少有效事件数。
 - `--min-window-valid-events`：每个回测窗口最少有效事件数。
 - `--coverage-ratio-floor`：有效事件数占总事件数的下限。
-- `--min-strict-total-valid-events`：当同时评估 `research_pool` 时，三张主清单的最少有效事件数。
-- `--strict-coverage-ratio-floor`：当同时评估 `research_pool` 时，三张主清单覆盖率下限。
-- `--min-strict-avg-win-rate`：当同时评估 `research_pool` 时，三张主清单平均胜率下限。
+- `--min-strict-total-valid-events`：当同时评估 `research_pool` 时，三张并行扫描清单的最少有效事件数。
+- `--strict-coverage-ratio-floor`：当同时评估 `research_pool` 时，三张并行扫描清单覆盖率下限。
+- `--min-strict-avg-win-rate`：当同时评估 `research_pool` 时，三张并行扫描清单平均胜率下限。
 - `--max-acceptable-drawdown`：最大可接受回撤，超过后候选失败。
 - `--min-avg-return`：平均绝对收益下限，默认 `0.0`。
 - `--min-avg-excess-vs-qqq`：平均相对 QQQ 超额收益下限，默认 `0.0`。
@@ -599,9 +611,9 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.bal
 - `tuning_<UTC>_summary.json`：本次调参摘要（run id / picks / 文件路径）
 
 `results.csv` 的关键分层字段：
-- `strict_total_valid_events`、`strict_coverage_ratio`：三张主清单（`low_value`、`industry_trend`、`momentum`）的有效事件和覆盖率。
+- `strict_total_valid_events`、`strict_coverage_ratio`：三张并行扫描清单（`low_value`、`industry_trend`、`momentum`）的有效事件和覆盖率。
 - `research_pool_total_valid_events`、`research_pool_coverage_ratio`、`research_pool_avg_excess_vs_qqq`：研究池的有效事件、覆盖率和相对 QQQ 超额。
-- `coverage_ratio`、`avg_return`、`avg_excess_vs_qqq`：保留为全清单加权口径，用于兼容旧报告。
+- `coverage_ratio`、`avg_return`、`avg_excess_vs_qqq`：默认代表 `--primary-list-types` 指定的生产评价清单；当前默认是 `low_value`。
 
 near-miss 诊断：
 - `top_first_fail` 表示按过滤链顺序首次失败的条件。
