@@ -90,6 +90,10 @@ python run_scan.py --config configs/config.balanced.json
 - `configs/config.balanced.json`：质量与覆盖率平衡，作为默认扫描配置。
 - `configs/config.risk_on.json`：覆盖率优先，适合风险偏好较高阶段。
 
+另有一套候选生产配置：
+
+- `configs/config.strict_candidate.json`：基于 strict-list 调参复核得到的候选参数，聚焦 `low_value`、`industry_trend`、`momentum` 三张主清单，不作为默认配置自动使用。
+
 历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
 当前维护两套调参空间：
@@ -122,6 +126,8 @@ python scripts/tune_parameters.py \
   - `configs/config.balanced.json`
   - `configs/config.risk_on.json`
   - `configs/config.risk_off.json`
+
+若只评估三张主清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。这类运行适合产出类似 `configs/config.strict_candidate.json` 的候选主清单参数。
 
 如果只想评估不覆盖配置：
 
@@ -208,7 +214,7 @@ python scripts/tune_parameters.py --no-promote
 
 ### 6.2 全局参数与阈值（`configs/config.balanced.json`）
 
-说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.balanced.json` / `config.risk_on.json`）。
+说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.balanced.json` / `config.risk_on.json` / `config.strict_candidate.json`）。
 
 #### 6.2.1 运行、并发、缓存、限速
 
