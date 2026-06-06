@@ -304,6 +304,29 @@ def finite_nanmean(values: list[float]) -> float:
     return float(np.mean(finite)) if finite else float("nan")
 
 
+def mature_horizons_from_summary(
+    summary: pd.DataFrame,
+    list_types: list[str],
+    horizons: list[int],
+) -> list[int]:
+    if summary.empty:
+        return []
+    rows = summary[
+        summary["list_type"].isin(list_types) & summary["horizon_days"].isin(horizons)
+    ].copy()
+    if rows.empty:
+        return []
+    valid = pd.to_numeric(rows.get("n_events_valid"), errors="coerce").fillna(0)
+    rows = rows.assign(_n_events_valid=valid)
+    mature = (
+        rows.groupby("horizon_days", dropna=False)["_n_events_valid"].sum()
+        if not rows.empty
+        else pd.Series(dtype=float)
+    )
+    out = [int(h) for h in horizons if float(mature.get(h, 0.0)) > 0.0]
+    return out
+
+
 def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
     if not evals:
         return {
@@ -635,23 +658,27 @@ def run_candidate(
         log(f"{candidate.cid} | window={window.label} | backtest start")
         bt_result = run_backtest(cfg)
         summary, events = load_backtest_frames(bt_result)
+        window_horizons = mature_horizons_from_summary(summary, list_types, horizons) or horizons
         window_eval = evaluate_window(
             summary=summary,
             events=events,
             list_types=list_types,
-            horizons=horizons,
+            horizons=window_horizons,
             objective_weights=objective_weights,
             scenario_weights=scenario_weights,
             list_weights=list_weights,
             horizon_weights=horizon_weights,
         )
         if strict_list_types:
+            strict_horizons = (
+                mature_horizons_from_summary(summary, strict_list_types, horizons) or window_horizons
+            )
             strict_window_evals.append(
                 evaluate_window(
                     summary=summary,
                     events=events,
                     list_types=strict_list_types,
-                    horizons=horizons,
+                    horizons=strict_horizons,
                     objective_weights=objective_weights,
                     scenario_weights=scenario_weights,
                     list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
@@ -659,12 +686,16 @@ def run_candidate(
                 )
             )
         if research_pool_list_types:
+            research_pool_horizons = (
+                mature_horizons_from_summary(summary, research_pool_list_types, horizons)
+                or window_horizons
+            )
             research_pool_window_evals.append(
                 evaluate_window(
                     summary=summary,
                     events=events,
                     list_types=research_pool_list_types,
-                    horizons=horizons,
+                    horizons=research_pool_horizons,
                     objective_weights=objective_weights,
                     scenario_weights=scenario_weights,
                     list_weights={"research_pool": 1.0},

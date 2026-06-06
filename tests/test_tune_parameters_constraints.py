@@ -213,6 +213,38 @@ class TestTuneParameterConstraints(unittest.TestCase):
         self.assertAlmostEqual(out["empty_window_ratio"], 0.5)
         self.assertAlmostEqual(out["worst_max_drawdown"], -0.20)
 
+    def test_mature_horizons_from_summary_excludes_unmatured_horizon(self) -> None:
+        summary = self.tuner.pd.DataFrame(
+            [
+                {
+                    "list_type": "low_value",
+                    "horizon_days": 20,
+                    "n_events_valid": 2,
+                },
+                {
+                    "list_type": "low_value",
+                    "horizon_days": 60,
+                    "n_events_valid": 1,
+                },
+                {
+                    "list_type": "low_value",
+                    "horizon_days": 120,
+                    "n_events_valid": 0,
+                },
+                {
+                    "list_type": "research_pool",
+                    "horizon_days": 120,
+                    "n_events_valid": 5,
+                },
+            ]
+        )
+        out = self.tuner.mature_horizons_from_summary(
+            summary,
+            list_types=["low_value"],
+            horizons=[20, 60, 120],
+        )
+        self.assertEqual(out, [20, 60])
+
 
 if __name__ == "__main__":
     unittest.main()
