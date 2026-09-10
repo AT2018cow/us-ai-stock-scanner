@@ -321,6 +321,49 @@ def default_channel_profiles() -> dict[str, dict[str, Any]]:
             "momentum_min_avg_dollar_volume_20d": 25000000.0,
             "momentum_min_watchlist_etf_count": 1,
         },
+        "ai_smallcap": {
+            "min_watchlist_etf_count": 0,
+            "min_ai_link_score": 0.30,
+            "min_ps_discount": 0.02,
+            "min_pe_discount": -0.10,
+            "max_ps_percentile_in_sic": 0.70,
+            "max_pe_percentile_in_sic": 0.70,
+            "max_ev_to_ebit": 36.0,
+            "min_fcf_yield": 0.005,
+            "min_revenue_yoy": -0.05,
+            "min_net_income_yoy": -0.15,
+            "min_drawdown_from_52w_high": 0.05,
+            "max_range_position_52w": 0.90,
+            "max_price_to_sma200": 1.20,
+            "min_days_below_sma200": 3,
+            "max_20d_return": 0.18,
+            "max_60d_volatility": 0.95,
+            "score_weights": {
+                "ps_discount": 0.24,
+                "pe_discount": 0.16,
+                "ps_percentile_low": 0.10,
+                "pe_percentile_low": 0.08,
+                "ev_to_ebit_low": 0.08,
+                "fcf_yield": 0.08,
+                "revenue_yoy": 0.05,
+                "net_income_yoy": 0.04,
+                "liquidity": 0.15,
+                "watchlist_etf_count": 0.0,
+                "ai_link_score": 0.15,
+                "range_position_52w_low": 0.08,
+                "days_below_sma200": 0.04,
+            },
+            "trend_min_return_60d": -0.03,
+            "trend_max_60d_volatility": 0.70,
+            "trend_min_avg_dollar_volume_20d": 10000000.0,
+            "momentum_min_return_20d": 0.06,
+            "momentum_min_return_60d": 0.05,
+            "momentum_min_price_to_sma200": 1.06,
+            "momentum_max_drawdown_from_52w_high": 0.25,
+            "momentum_max_60d_volatility": 0.75,
+            "momentum_min_avg_dollar_volume_20d": 10000000.0,
+            "momentum_min_watchlist_etf_count": 0,
+        },
     }
 
 
@@ -341,6 +384,11 @@ def default_triage_rules() -> dict[str, dict[str, Any]]:
                 "min_composite_score": 0.50,
                 "min_ps_discount": 0.05,
                 "min_pe_discount": 0.00,
+            },
+            "ai_smallcap": {
+                "min_composite_score": 0.45,
+                "min_ps_discount": 0.00,
+                "min_pe_discount": -0.10,
             },
         },
         "drop": {
@@ -2008,7 +2056,13 @@ def watchlist_rows_to_scores(raw: pd.DataFrame) -> pd.DataFrame:
                 sorted(x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x)
             )
 
-        etf_tokens = [x for x in str(rows[symbol]["watchlist_etfs"]).split(",") if x]
+        # SRC:-prefixed tokens are provenance tags (e.g. SRC:MANUAL), not ETF
+        # holdings, and must not inflate the ETF-consensus count.
+        etf_tokens = [
+            x
+            for x in str(rows[symbol]["watchlist_etfs"]).split(",")
+            if x and not x.strip().upper().startswith("SRC:")
+        ]
         rows[symbol]["watchlist_etf_count"] = len(set(etf_tokens))
 
     out = pd.DataFrame(rows.values())
@@ -4405,8 +4459,10 @@ def build_research_assessment(row: pd.Series, list_type: str = "") -> dict[str, 
     if (
         "ai_enabler" in bucket
         or "ai_peripheral" in bucket
+        or "ai_smallcap" in bucket
         or "ai_enabler" in channel
         or "ai_peripheral" in channel
+        or "ai_smallcap" in channel
         or text_has_any(watchlist_etfs, infra_tokens)
     ):
         tags.append("ai_infrastructure_exposure")

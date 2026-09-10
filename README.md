@@ -154,12 +154,28 @@ python scripts/tune_parameters.py --no-promote
 
 扫描端要求以下必填列：
 - `symbol`
-- `bucket`（`core_ai`/`ai_enabler`/`ai_peripheral`）
+- `bucket`（`core_ai`/`ai_enabler`/`ai_peripheral`/`ai_smallcap`）
 - `etf_count`
 - `etfs`
 - `enabled`
 
 `updated_utc` 建议保留，但不是扫描必需列。
+
+### 4.4 小盘研究层（`ai_smallcap` bucket）
+
+ETF 持仓页内嵌数据实际只含前 ~25 大持仓，因此 ETF 并集天然漏掉未被重仓的小盘热门股（如 AMKR）。`ai_smallcap` 层用于补足这部分候选，主要流向 `research_pool`（宽口径研究池），也可进入三张清单（有独立的通道阈值与 triage 规则）。
+
+构建入口（三源合并，已在 ETF 名单中的标的会被跳过，`SRC:` 前缀为来源标记，不计入 `etf_count`）：
+
+```bash
+python scripts/build_smallcap_universe.py --config configs/config.balanced.json
+```
+
+- `nasdaq`：Nasdaq Screener 全宇宙过滤（Technology 板块 AI 相关行业，或任意板块的 AI 电力行业 `Electric Utilities: Central`/`Power Generation`/`Electrical Products`；市值 `--market-cap-min/max` 默认 3 亿–800 亿 + 日成交量下限；公司注册地限美国及半导体盟友（爱尔兰/英国/台湾/荷兰/瑞士/德国/日韩/新加坡/以色列，中国除外），名称须过普通股过滤以剔除优先股/票据/权证），约数百只。
+- `yahoo`：Yahoo `most_actives/day_gainers/day_losers` 热门榜，但**只保留同时通过 Nasdaq 行业筛的标的**（Yahoo 热榜无行业字段，不过滤会混入零售/meme 等非 AI 热门股）。
+- `manual`：`data/ai_smallcap_manual.csv` 手工清单（`symbol,note` 两列），零依赖、可版本控制。
+
+常用参数：`--sources nasdaq,yahoo,manual`、`--max-symbols 400`（默认上限）、`--offline`（仅用手工清单）、`--dry-run`（只打印不写盘）。每次执行会先清空旧 `ai_smallcap` 行再重建（幂等）；运行顺序建议：先 `refresh_ai_watchlist.py`，再本脚本，最后 `run_scan.py`。
 
 ### 4.3 默认 ETF 三池（来自 `configs/config.balanced.json`）
 
@@ -387,7 +403,10 @@ python scripts/tune_parameters.py --no-promote
 
 ### 6.3 通道参数（`channel_profiles.<channel>`）
 
-每个通道（`core_ai`、`ai_enabler`、`ai_peripheral`）都可覆盖以下参数：
+每个通道（`core_ai`、`ai_enabler`、`ai_peripheral`、`ai_smallcap`）都可覆盖以下参数。
+`ai_smallcap` 为小盘研究层专用通道（见 4.4）：`min_watchlist_etf_count` 为 `0`（来源标记不计入 ETF 数），
+`min_ai_link_score` 较低（ETF 共识项天然为 0），趋势/动量成交额门槛为 1000 万美元；其成员自动获得
+`ai_infrastructure_exposure` 研究标签（按 bucket 主题归属，而非 ETF 持仓推断）：
 
 - 与全局同名的门槛：`min_ai_link_score`、`min_ps_discount`、`min_pe_discount`、`max_ps_percentile_in_sic`、`max_pe_percentile_in_sic`、`max_ev_to_ebit`、`min_fcf_yield`、`min_revenue_yoy`、`min_net_income_yoy`、`min_fundamental_quality_score`、`min_net_margin`、`min_avg_dollar_volume_20d`、`min_drawdown_from_52w_high`、`max_range_position_52w`、`max_price_to_sma200`、`min_days_below_sma200`、`min_return_20d`、`min_return_60d`、`max_20d_return`、`max_60d_volatility`、`min_drawdown_percentile`、`min_avg_dollar_volume_20d_percentile`、`max_60d_volatility_percentile`。
 - 专业质量过滤：`max_net_debt_to_ebitda`、`min_interest_coverage`、`max_current_debt_ratio`、`min_current_ratio`、`min_ocf_to_net_income`、`max_accrual_ratio`、`max_receivables_growth_gap`、`max_inventory_growth_gap`、`max_shares_yoy`、`max_ps_hist_percentile`、`max_pe_hist_percentile`、`min_expectation_proxy`、`min_cycle_proxy`、`max_adv_participation`、`max_estimated_slippage_bps`。
