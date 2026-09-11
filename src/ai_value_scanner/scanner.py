@@ -1294,12 +1294,12 @@ def pick_facts_with_forms(
     companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
 ) -> list[tuple[str, float, str]]:
     facts = _merged_standard_taxonomy_facts(companyfacts)
-    for tag in tags:
+    all_candidates: list[tuple[str, float, str, str, int]] = []
+    for tag_index, tag in enumerate(tags):
         if tag not in facts:
             continue
         units = facts[tag].get("units", {})
         entries = units.get(unit, [])
-        candidates: list[tuple[str, float, str, str]] = []
         for item in entries:
             form = item.get("form")
             if form not in allowed_forms:
@@ -1310,19 +1310,20 @@ def pick_facts_with_forms(
             if not end:
                 continue
             filed = item.get("filed") or ""
-            candidates.append((end, float(item["val"]), str(form), str(filed)))
-        if not candidates:
-            continue
-        # Keep one observation per fiscal period end; prefer most recently filed.
-        by_end: dict[str, tuple[float, str, str]] = {}
-        for end, val, form, filed in candidates:
-            prev = by_end.get(end)
-            if prev is None or filed > prev[2]:
-                by_end[end] = (val, form, filed)
-        collapsed = [(end, val, form) for end, (val, form, _) in by_end.items()]
-        collapsed.sort(key=lambda x: x[0], reverse=True)
-        return collapsed
-    return []
+            all_candidates.append((end, float(item["val"]), str(form), str(filed), tag_index))
+    if not all_candidates:
+        return []
+    # Keep one observation per fiscal period end, preferring the most recently
+    # filed value; ties break toward the earlier tag in `tags` (e.g. dei
+    # EntityCommonStockSharesOutstanding over a stale us-gaap fallback).
+    by_end: dict[str, tuple[float, str, str, int]] = {}
+    for end, val, form, filed, tag_index in all_candidates:
+        prev = by_end.get(end)
+        if prev is None or (filed, -tag_index) > (prev[2], -prev[3]):
+            by_end[end] = (val, form, filed, tag_index)
+    collapsed = [(end, val, form) for end, (val, form, _, _) in by_end.items()]
+    collapsed.sort(key=lambda x: x[0], reverse=True)
+    return collapsed
 
 
 def pick_latest_fact(

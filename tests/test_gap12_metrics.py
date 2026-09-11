@@ -498,6 +498,49 @@ class Gap12MetricTests(unittest.TestCase):
         self.assertEqual(picks[0][0], "2026-06-30")
         self.assertEqual(picks[0][1], 1_347_758_144.0)
 
+    def test_share_pick_prefers_latest_end_across_tags(self) -> None:
+        # Regression: pick_facts_with_forms must not short-circuit on the
+        # first tag that has any data. CMCSA/UPS/ACN report dei
+        # EntityCommonStockSharesOutstanding only in stale years, while
+        # us-gaap WeightedAverage* carries the current count; the merge must
+        # pick the newest period-end across all tags.
+        from ai_value_scanner.scanner import SHARES_TAGS, pick_facts_with_forms
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "CommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                _entry("2009-12-31", 1_381_700, "10-K", "2010-02-11"),
+                            ]
+                        }
+                    },
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2026-06-30", 3_580_000_000, "10-Q", "2026-07-23"),
+                                _entry("2026-03-31", 3_579_000_000, "10-Q", "2026-04-23"),
+                            ]
+                        }
+                    },
+                },
+                "dei": {
+                    "EntityCommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                _entry("2009-12-31", 2_063_073_161, "10-K", "2010-02-17"),
+                            ]
+                        }
+                    }
+                },
+            }
+        }
+        picks = pick_facts_with_forms(facts, SHARES_TAGS, "shares", {"10-K", "10-Q", "8-K"})
+        self.assertEqual(picks[0][0], "2026-06-30")
+        self.assertEqual(picks[0][1], 3_580_000_000.0)
+        self.assertEqual(picks[1][0], "2026-03-31")
+
 
 if __name__ == "__main__":
     unittest.main()
