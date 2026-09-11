@@ -460,6 +460,44 @@ class Gap12MetricTests(unittest.TestCase):
         signal = ai_backlog_signal_from_companyfacts(facts, revenue=300.0, cap_ratio=0.20)
         self.assertAlmostEqual(signal, 1.0, places=6)
 
+    def test_dei_share_tag_wins_over_stale_us_gaap(self) -> None:
+        # Regression: _merged_standard_taxonomy_facts must include the "dei"
+        # taxonomy, otherwise a stale us-gaap CommonStockSharesOutstanding
+        # (e.g. RTX, last reported 2009) wins and market-cap-derived metrics
+        # are distorted by orders of magnitude.
+        from ai_value_scanner.scanner import SHARES_TAGS, _merged_standard_taxonomy_facts, pick_facts_with_forms
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "CommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                _entry("2009-12-31", 1_381_700, "10-K", "2010-02-11"),
+                            ]
+                        }
+                    }
+                },
+                "dei": {
+                    "EntityCommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                _entry("2026-06-30", 1_347_758_144, "10-Q", "2026-07-23"),
+                                _entry("2026-03-31", 1_348_900_000, "10-Q", "2026-04-23"),
+                            ]
+                        }
+                    }
+                },
+            }
+        }
+        merged = _merged_standard_taxonomy_facts(facts)
+        self.assertIn("EntityCommonStockSharesOutstanding", merged)
+        picks = pick_facts_with_forms(
+            facts, SHARES_TAGS, "shares", {"10-K", "10-Q", "8-K"}
+        )
+        self.assertEqual(picks[0][0], "2026-06-30")
+        self.assertEqual(picks[0][1], 1_347_758_144.0)
+
 
 if __name__ == "__main__":
     unittest.main()

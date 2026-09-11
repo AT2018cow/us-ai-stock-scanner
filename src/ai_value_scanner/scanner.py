@@ -1276,7 +1276,11 @@ def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
 def _merged_standard_taxonomy_facts(companyfacts: dict[str, Any]) -> dict[str, Any]:
     raw_facts = companyfacts.get("facts", {})
     merged: dict[str, Any] = {}
-    for taxonomy in ("us-gaap", "ifrs-full"):
+    # Include the "dei" taxonomy (e.g. EntityCommonStockSharesOutstanding),
+    # which is the primary source for current share counts. Skipping it can
+    # fall back to a stale us-gaap share tag and distort market-cap-derived
+    # valuation metrics by orders of magnitude.
+    for taxonomy in ("us-gaap", "ifrs-full", "dei"):
         facts = raw_facts.get(taxonomy, {})
         if not isinstance(facts, dict):
             continue
