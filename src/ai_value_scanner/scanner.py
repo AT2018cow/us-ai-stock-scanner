@@ -38,6 +38,10 @@ SHARES_TAGS = [
     "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
 ]
+EPS_TAGS = [
+    "EarningsPerShareBasic",
+    "EarningsPerShareDiluted",
+]
 OPERATING_CASH_FLOW_TAGS = [
     "NetCashProvidedByUsedInOperatingActivities",
     "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
@@ -1324,6 +1328,45 @@ def pick_facts_with_forms(
     collapsed = [(end, val, form) for end, (val, form, _, _) in by_end.items()]
     collapsed.sort(key=lambda x: x[0], reverse=True)
     return collapsed
+
+
+def reconcile_share_unit_scale(
+    companyfacts: dict[str, Any], shares: float | None
+) -> tuple[float | None, str | None]:
+    """Detect thousands/millions unit misreporting in share counts.
+
+    Some filers report share counts in thousands or millions while EPS and
+    net income use full units (e.g. Tempus AI reports ~179K shares, actual
+    ~179M). Cross-check EPS for the same period end: implied shares =
+    |net_income / EPS| should match the reported count; a consistent ~1000x
+    (or ~1e6x) gap means the count carries a scaled unit.
+    """
+    if shares is None or shares <= 0:
+        return shares, None
+    share_points = pick_facts_with_forms(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
+    if not share_points:
+        return shares, None
+    shares_end = share_points[0][0]
+    eps_points = pick_facts_with_forms(companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS)
+    ni_points = pick_facts_with_forms(companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS)
+    eps_by_end = {end: val for end, val, _ in eps_points}
+    ni_by_end = {end: val for end, val, _ in ni_points}
+    eps = eps_by_end.get(shares_end)
+    ni = ni_by_end.get(shares_end)
+    if eps is None or ni is None or float(eps) == 0:
+        return shares, shares_end
+    implied = abs(float(ni) / float(eps))
+    if implied <= 0:
+        return shares, shares_end
+    ratio = implied / float(shares)
+    # reported count is in thousands (x1e3) or millions (x1e6) of shares.
+    for factor, lo, hi in (
+        (1_000_000.0, 500_000.0, 2_000_000.0),
+        (1_000.0, 500.0, 2_000.0),
+    ):
+        if lo <= ratio <= hi:
+            return float(shares) * factor, shares_end
+    return shares, shares_end
 
 
 def pick_latest_fact(
@@ -2761,6 +2804,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
 
     shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
+    shares, shares_unit_reconciled_end = reconcile_share_unit_scale(companyfacts, shares)
     revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
     shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)

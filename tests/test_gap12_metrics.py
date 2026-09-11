@@ -541,6 +541,140 @@ class Gap12MetricTests(unittest.TestCase):
         self.assertEqual(picks[0][1], 3_580_000_000.0)
         self.assertEqual(picks[1][0], "2026-03-31")
 
+    def test_share_unit_scale_reconciliation_thousands(self) -> None:
+        # Regression: some filers report share counts in thousands while EPS
+        # and net income use full units (Tempus AI: ~179K reported vs ~179M
+        # actual). EPS x shares must approximately equal net income for the
+        # same period end; a consistent ~1000x gap triggers the correction.
+        from ai_value_scanner.scanner import reconcile_share_unit_scale
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2026-06-30", 179_404.0, "10-Q", "2026-07-30"),
+                                _entry("2026-03-31", 178_880.0, "10-Q", "2026-05-05"),
+                            ]
+                        }
+                    },
+                    "EarningsPerShareBasic": {
+                        "units": {
+                            "USD/shares": [
+                                _entry("2026-06-30", -0.67, "10-Q", "2026-07-30"),
+                                _entry("2026-03-31", -0.70, "10-Q", "2026-05-05"),
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                _entry("2026-06-30", -120_300_000.0, "10-Q", "2026-07-30"),
+                                _entry("2026-03-31", -125_900_000.0, "10-Q", "2026-05-05"),
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        shares, end = reconcile_share_unit_scale(facts, 179_404.0)
+        self.assertEqual(shares, 179_404_000.0)
+        self.assertEqual(end, "2026-06-30")
+
+    def test_share_unit_scale_reconciliation_no_change(self) -> None:
+        # A normal filer (shares in full units) must not be touched.
+        from ai_value_scanner.scanner import reconcile_share_unit_scale
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2026-06-30", 293_688_378.0, "10-Q", "2026-08-26"),
+                            ]
+                        }
+                    },
+                    "EarningsPerShareBasic": {
+                        "units": {
+                            "USD/shares": [
+                                _entry("2026-06-30", 0.41, "10-Q", "2026-08-26"),
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                _entry("2026-06-30", 120_400_000.0, "10-Q", "2026-08-26"),
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        shares, end = reconcile_share_unit_scale(facts, 293_688_378.0)
+        self.assertEqual(shares, 293_688_378.0)
+        self.assertEqual(end, "2026-06-30")
+
+    def test_share_unit_scale_reconciliation_no_eps_no_change(self) -> None:
+        # No EPS data available: the heuristic must leave shares untouched.
+        from ai_value_scanner.scanner import reconcile_share_unit_scale
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2026-06-30", 1_234_567.0, "10-Q", "2026-07-30"),
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        shares, end = reconcile_share_unit_scale(facts, 1_234_567.0)
+        self.assertEqual(shares, 1_234_567.0)
+        self.assertEqual(end, "2026-06-30")
+
+    def test_share_unit_scale_reconciliation_annual_filer_untouched(self) -> None:
+        # 20-F filers (Baidu-like) with all metrics at the same (old) period
+        # end: EPS*shares already matches net income, so no rescale happens
+        # even though the cache is stale. Unit detection must not guess here.
+        from ai_value_scanner.scanner import reconcile_share_unit_scale
+
+        facts = {
+            "facts": {
+                "us-gaap": {
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2010-12-31", 34_805_362.0, "20-F", "2011-03-15"),
+                            ]
+                        }
+                    },
+                    "EarningsPerShareBasic": {
+                        "units": {
+                            "USD/shares": [
+                                _entry("2010-12-31", 15.35, "20-F", "2011-03-15"),
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                _entry("2010-12-31", 534_300_000.0, "20-F", "2011-03-15"),
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        shares, end = reconcile_share_unit_scale(facts, 34_805_362.0)
+        self.assertEqual(shares, 34_805_362.0)
+        self.assertEqual(end, "2010-12-31")
+
 
 if __name__ == "__main__":
     unittest.main()
