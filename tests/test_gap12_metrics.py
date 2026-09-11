@@ -675,6 +675,95 @@ class Gap12MetricTests(unittest.TestCase):
         self.assertEqual(shares, 34_805_362.0)
         self.assertEqual(end, "2010-12-31")
 
+    def test_stale_share_count_is_flagged(self) -> None:
+        # BIDU-like: share counts stop being reported (2010) while revenue and
+        # net income continue to 2026. load_one_fundamental must flag the
+        # share count as stale so peer medians exclude it.
+        sec = _FakeSecClient(
+            submissions={"sic": "7370", "sicDescription": "Services-Computer Programming, Data Processing, Etc."},
+            companyfacts={
+                "facts": {
+                    "us-gaap": {
+                        "Revenues": {
+                            "units": {
+                                "USD": [
+                                    _entry("2026-06-30", 7_358_500_000.0, "20-F", "2026-07-30"),
+                                ]
+                            }
+                        },
+                        "NetIncomeLoss": {
+                            "units": {
+                                "USD": [
+                                    _entry("2026-06-30", 799_000_000.0, "20-F", "2026-07-30"),
+                                ]
+                            }
+                        },
+                        "WeightedAverageNumberOfSharesOutstandingBasic": {
+                            "units": {
+                                "shares": [
+                                    _entry("2010-12-31", 34_805_362.0, "20-F", "2011-03-15"),
+                                ]
+                            }
+                        },
+                        "EarningsPerShareBasic": {
+                            "units": {
+                                "USD/shares": [
+                                    _entry("2010-12-31", 15.35, "20-F", "2011-03-15"),
+                                ]
+                            }
+                        },
+                    }
+                }
+            },
+        )
+        cfg = ScanConfig(use_ttm_metrics=True)
+        out = load_one_fundamental(sec, "BIDU", "0001329099", cfg)
+        self.assertTrue(out["shares_stale"])
+        self.assertEqual(out["shares_asof_end"], "2010-12-31")
+
+    def test_fresh_share_count_not_flagged(self) -> None:
+        sec = _FakeSecClient(
+            submissions={"sic": "7370", "sicDescription": "Services-Computer Programming, Data Processing, Etc."},
+            companyfacts={
+                "facts": {
+                    "us-gaap": {
+                        "Revenues": {
+                            "units": {
+                                "USD": [
+                                    _entry("2026-06-30", 100_000_000.0, "10-Q", "2026-07-30"),
+                                ]
+                            }
+                        },
+                        "NetIncomeLoss": {
+                            "units": {
+                                "USD": [
+                                    _entry("2026-06-30", 20_000_000.0, "10-Q", "2026-07-30"),
+                                ]
+                            }
+                        },
+                        "WeightedAverageNumberOfSharesOutstandingBasic": {
+                            "units": {
+                                "shares": [
+                                    _entry("2026-06-30", 50_000_000.0, "10-Q", "2026-07-30"),
+                                ]
+                            }
+                        },
+                        "EarningsPerShareBasic": {
+                            "units": {
+                                "USD/shares": [
+                                    _entry("2026-06-30", 0.40, "10-Q", "2026-07-30"),
+                                ]
+                            }
+                        },
+                    }
+                }
+            },
+        )
+        cfg = ScanConfig(use_ttm_metrics=True)
+        out = load_one_fundamental(sec, "FRESH", "0000000001", cfg)
+        self.assertFalse(out["shares_stale"])
+        self.assertEqual(out["shares_asof_end"], "2026-06-30")
+
 
 if __name__ == "__main__":
     unittest.main()

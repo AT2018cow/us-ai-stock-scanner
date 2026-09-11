@@ -2805,6 +2805,27 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
     shares, shares_unit_reconciled_end = reconcile_share_unit_scale(companyfacts, shares)
+    shares_asof_end = shares_unit_reconciled_end
+    shares_stale = False
+    if shares is not None and shares_asof_end:
+        # Flag share counts that lag the latest reported period by a wide
+        # margin (e.g. BIDU's 20-F stopped reporting share counts in 2010).
+        # Stale counts distort market cap and peer medians; they are excluded
+        # from peer-relative metrics downstream.
+        latest_metric_end: str | None = None
+        for tags in (REVENUE_TAGS, NET_INCOME_TAGS):
+            points = pick_facts_with_forms(companyfacts, tags, "USD", QUARTERLY_FORMS)
+            if points:
+                latest_metric_end = points[0][0]
+                break
+        if latest_metric_end:
+            try:
+                asof = pd.to_datetime(shares_asof_end, errors="coerce")
+                metric = pd.to_datetime(latest_metric_end, errors="coerce")
+                if pd.notna(asof) and pd.notna(metric) and (metric - asof).days > 400:
+                    shares_stale = True
+            except Exception:
+                shares_stale = False
     revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
     shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
@@ -2978,6 +2999,8 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "net_income": net_income,
         "net_income_form": net_income_form,
         "shares_outstanding": shares,
+        "shares_asof_end": shares_asof_end,
+        "shares_stale": shares_stale,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -5196,15 +5219,22 @@ def run_scan(
         pd.to_numeric(df["adv_participation"], errors="coerce").clip(lower=0)
     )
 
+    # Exclude names whose share count is stale or missing: their market cap /
+    # valuation multiples would otherwise distort peer medians (e.g. BIDU).
+    stale_mask = pd.Series(
+        False, index=df.index
+    )
+    if "shares_stale" in df.columns:
+        stale_mask = pd.to_numeric(df["shares_stale"], errors="coerce").fillna(0).astype(bool)
+    stale_ps = df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0) & ~stale_mask]
+    stale_pe = df.loc[np.isfinite(df["pe"]) & (df["pe"] > 0) & ~stale_mask]
     peer_ps = (
-        df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0)]
-        .groupby("sic", dropna=True)["ps"]
+        stale_ps.groupby("sic", dropna=True)["ps"]
         .median()
         .rename("peer_median_ps")
     )
     peer_pe = (
-        df.loc[np.isfinite(df["pe"]) & (df["pe"] > 0)]
-        .groupby("sic", dropna=True)["pe"]
+        stale_pe.groupby("sic", dropna=True)["pe"]
         .median()
         .rename("peer_median_pe")
     )
@@ -5215,14 +5245,14 @@ def run_scan(
 
     # SIC-relative valuation percentile (lower is cheaper); fall back to neutral 0.5 for tiny cohorts.
     df["ps_percentile_in_sic"] = 0.5
-    ps_valid = np.isfinite(df["ps"]) & (df["ps"] > 0) & df["sic"].notna()
+    ps_valid = np.isfinite(df["ps"]) & (df["ps"] > 0) & df["sic"].notna() & ~stale_mask
     ps_sizes = df.loc[ps_valid].groupby("sic")["ps"].transform("size")
     ps_rank = df.loc[ps_valid].groupby("sic")["ps"].rank(method="average", pct=True)
     ps_eligible_idx = ps_sizes[ps_sizes >= 5].index
     df.loc[ps_eligible_idx, "ps_percentile_in_sic"] = ps_rank.loc[ps_eligible_idx]
 
     df["pe_percentile_in_sic"] = 0.5
-    pe_valid = np.isfinite(df["pe"]) & (df["pe"] > 0) & df["sic"].notna()
+    pe_valid = np.isfinite(df["pe"]) & (df["pe"] > 0) & df["sic"].notna() & ~stale_mask
     pe_sizes = df.loc[pe_valid].groupby("sic")["pe"].transform("size")
     pe_rank = df.loc[pe_valid].groupby("sic")["pe"].rank(method="average", pct=True)
     pe_eligible_idx = pe_sizes[pe_sizes >= 5].index
