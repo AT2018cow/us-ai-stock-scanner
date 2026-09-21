@@ -162,6 +162,87 @@ class TestScoringTriageLogic(unittest.TestCase):
         gated = apply_low_value_research_gate(frame, cfg)
         self.assertEqual(gated["symbol"].tolist(), ["KEEP"])
 
+    def test_left_side_watch_for_quality_value_in_downtrend(self) -> None:
+        # META-like (2026-08-15): cheap with strong quality and positive
+        # growth, but in a downtrend. It must stay visible as a left-side
+        # watch candidate instead of being buried as theme_only.
+        row = pd.Series(
+            {
+                "ps_hist_percentile": 0.05,
+                "pe_hist_percentile": 0.05,
+                "ps_discount": 0.30,
+                "pe_discount": 0.10,
+                "fundamental_quality_score": 0.79,
+                "ai_link_score": 0.50,
+                "fcf_yield": 0.07,
+                "ev_to_ebit": 8.0,
+                "pe": 8.9,
+                "ps": 2.9,
+                "revenue_yoy": 0.25,
+                "net_income_yoy": 0.08,
+                "return_20d": -0.087,
+                "return_60d": -0.021,
+                "drawdown_from_52w_high": 0.25,
+                "price_to_sma200": 0.94,
+                "watchlist_bucket": "core_ai",
+                "watchlist_etfs": "AIQ,ARKQ",
+                "channel": "core_ai",
+            }
+        )
+        assessment = build_research_assessment(row, "research_pool")
+        self.assertEqual(assessment["research_priority"], "left_side_watch")
+        self.assertIn("negative_momentum", assessment["research_risks"])
+        self.assertIn("possible_value_trap", assessment["research_risks"])
+
+    def test_left_side_watch_requires_positive_growth(self) -> None:
+        # Same profile but shrinking business -> still a plain trap/theme.
+        row = pd.Series(
+            {
+                "ps_hist_percentile": 0.05,
+                "pe_hist_percentile": 0.05,
+                "ps_discount": 0.30,
+                "pe_discount": 0.10,
+                "fundamental_quality_score": 0.79,
+                "ai_link_score": 0.50,
+                "fcf_yield": 0.07,
+                "ev_to_ebit": 8.0,
+                "pe": 8.9,
+                "ps": 2.9,
+                "revenue_yoy": -0.01,
+                "net_income_yoy": -0.05,
+                "return_20d": -0.087,
+                "return_60d": -0.021,
+                "drawdown_from_52w_high": 0.25,
+                "price_to_sma200": 0.94,
+                "watchlist_bucket": "core_ai",
+                "watchlist_etfs": "AIQ,ARKQ",
+                "channel": "core_ai",
+            }
+        )
+        assessment = build_research_assessment(row, "research_pool")
+        self.assertNotEqual(assessment["research_priority"], "left_side_watch")
+
+    def test_accrual_filter_allows_negative_accrual_cash_cow(self) -> None:
+        # Regression: max_accrual_ratio must only penalize high POSITIVE
+        # accruals (profit not backed by cash). A large negative accrual
+        # (OCF >> net income, e.g. META) is a quality signal and must pass.
+        from ai_value_scanner.scanner import build_filter_steps, resolve_channel_profile
+
+        cfg = ScanConfig()
+        profile = cfg.channel_profiles["core_ai"]
+        steps = dict(build_filter_steps(cfg, "core_ai", profile))
+        self.assertIn("max_accrual_ratio", steps)
+        frame = pd.DataFrame(
+            [
+                {"symbol": "CASHCOW", "accrual_ratio": -0.989},
+                {"symbol": "TRAPPY", "accrual_ratio": 0.989},
+                {"symbol": "NORMAL", "accrual_ratio": 0.10},
+                {"symbol": "MISSING", "accrual_ratio": None},
+            ]
+        )
+        kept = steps["max_accrual_ratio"](frame)
+        self.assertEqual(frame.loc[kept, "symbol"].tolist(), ["CASHCOW", "NORMAL", "MISSING"])
+
 
 if __name__ == "__main__":
     unittest.main()

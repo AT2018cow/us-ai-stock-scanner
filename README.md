@@ -498,13 +498,17 @@ python run_scan.py --help
 控制台结束时会打印完整入选股票简表。`Low-Value` 简表是核心生产清单；`Industry-Trend`、`Momentum` 和 `Research Pool` 简表用于辅助人工研究。
 
 关键研究解释字段：
-- `research_priority`：研究优先级，取值为 `research_now`、`watch_for_pullback`、`theme_only`、`avoid_for_now`。
+- `research_priority`：研究优先级，取值为 `research_now`、`watch_for_pullback`、`left_side_watch`、`theme_only`、`avoid_for_now`。
 - `research_score`：研究评分，综合估值、质量、AI 关联、成长、动量和风险扣分。
 - `research_tags`：正向标签，例如 `cheap_relative_to_history`、`cheap_relative_to_peers`、`cash_flow_value`、`quality_compounder`、`strong_ai_link`、`ai_infrastructure_exposure`、`momentum_breakout`。
 - `research_risks`：风险标签，例如 `high_absolute_valuation`、`expensive_relative_to_peers`、`weak_growth`、`negative_momentum`、`possible_value_trap`。
 - `research_summary`：基于上述字段生成的简短解释。
 
 `..._ranked_research_pool.csv` 不经过三张并行扫描清单的完整硬过滤；它基于 watchlist、价格/流动性预筛和已计算指标生成，用于发现需要人工复核的潜在标的，不等同于买入清单。`theme_only` 表示主题或估值线索存在但质量、动量、AI 关联或风险标签仍不足以进入核心清单。
+
+`left_side_watch`（左侧观察）：标的满足"便宜 + 高质量（quality ≥ 0.70）+ 营收/净利正增长 + AI 关联"但处于下跌趋势（`negative_momentum`）时不降级为 `theme_only`，而是在研究池中保留更高可见性并附带 `negative_momentum`、`possible_value_trap` 风险标签，供人工判断左侧介入时机。`negative_momentum` 仍在 `low_value_excluded_research_risks` 中，因此左侧观察标的不会进入 `low_value` 主清单（不自动买入）。
+
+`max_accrual_ratio` 过滤只惩罚高正值应计（利润未转化为现金）；负应计（经营现金流显著超过净利润）是盈利质量好的信号，不会被剔除。
 
 ## 9. 运行日志与诊断
 

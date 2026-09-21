@@ -3238,7 +3238,7 @@ def append_professional_filter_steps(
                 lambda frame: (
                     pd.to_numeric(frame["accrual_ratio"], errors="coerce").isna()
                     | (
-                        pd.to_numeric(frame["accrual_ratio"], errors="coerce").abs()
+                        pd.to_numeric(frame["accrual_ratio"], errors="coerce")
                         <= cp["max_accrual_ratio"]
                     )
                 ),
@@ -4599,7 +4599,23 @@ def build_research_assessment(row: pd.Series, list_type: str = "") -> dict[str, 
     has_weak_ai_risk = "weak_ai_link" in risk_set
 
     if "possible_value_trap" in risk_set:
-        priority = "theme_only" if has_ai else "avoid_for_now"
+        # High-quality cheap names that are merely in a downtrend (negative
+        # momentum) are not automatic traps. Keep them visible as left-side
+        # watch candidates: strong quality, positive growth, clear value
+        # tags, and AI linkage — flagged for manual timing, never auto-buy.
+        left_side = (
+            "negative_momentum" in risk_set
+            and has_quality
+            and has_value
+            and np.isfinite(revenue_yoy)
+            and revenue_yoy >= 0.03
+            and np.isfinite(net_income_yoy)
+            and net_income_yoy >= 0.0
+        )
+        if left_side and has_ai:
+            priority = "left_side_watch"
+        else:
+            priority = "theme_only" if has_ai else "avoid_for_now"
     elif has_weak_ai_risk and "ai_infrastructure_exposure" in tag_set:
         priority = "theme_only"
     elif has_weak_ai_risk:
@@ -4859,6 +4875,7 @@ def build_run_report_markdown(
             priority_counts = research_pool["research_priority"].value_counts().to_dict()
             lines.append(f"- research_now: {priority_counts.get('research_now', 0)}")
             lines.append(f"- watch_for_pullback: {priority_counts.get('watch_for_pullback', 0)}")
+            lines.append(f"- left_side_watch: {priority_counts.get('left_side_watch', 0)}")
             lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
             top_pool = research_pool.sort_values("research_score", ascending=False).head(15)
             for _, row in top_pool.iterrows():
@@ -4893,6 +4910,7 @@ def build_run_report_markdown(
             priority_counts = research_pool["research_priority"].value_counts().to_dict()
             lines.append(f"- research_now: {priority_counts.get('research_now', 0)}")
             lines.append(f"- watch_for_pullback: {priority_counts.get('watch_for_pullback', 0)}")
+            lines.append(f"- left_side_watch: {priority_counts.get('left_side_watch', 0)}")
             lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
             lines.append(f"- avoid_for_now: {priority_counts.get('avoid_for_now', 0)}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
@@ -5764,8 +5782,9 @@ def run_scan(
         priority_order = {
             "research_now": 0,
             "watch_for_pullback": 1,
-            "theme_only": 2,
-            "avoid_for_now": 3,
+            "left_side_watch": 2,
+            "theme_only": 3,
+            "avoid_for_now": 4,
         }
         research_pool["_research_priority_rank"] = (
             research_pool["research_priority"].map(priority_order).fillna(9).astype(int)
@@ -5966,8 +5985,9 @@ def run_scan(
         priority_order = {
             "research_now": 0,
             "watch_for_pullback": 1,
-            "theme_only": 2,
-            "avoid_for_now": 3,
+            "left_side_watch": 2,
+            "theme_only": 3,
+            "avoid_for_now": 4,
         }
         display_pool = research_pool.copy()
         display_pool["_priority_rank"] = (

@@ -598,8 +598,9 @@ def pick_symbols_from_list(
         priority_order = {
             "research_now": 0,
             "watch_for_pullback": 1,
-            "theme_only": 2,
-            "avoid_for_now": 3,
+            "left_side_watch": 2,
+            "theme_only": 3,
+            "avoid_for_now": 4,
         }
         priority_series = (
             df["research_priority"]
@@ -1583,8 +1584,9 @@ def pick_research_pool_symbols_with_diagnostics(
     priority_order = {
         "research_now": 0,
         "watch_for_pullback": 1,
-        "theme_only": 2,
-        "avoid_for_now": 3,
+        "left_side_watch": 2,
+        "theme_only": 3,
+        "avoid_for_now": 4,
     }
     work["_priority_rank"] = work["research_priority"].map(priority_order).fillna(9).astype(int)
     work["_research_score"] = pd.to_numeric(work["research_score"], errors="coerce").fillna(-np.inf)
