@@ -720,6 +720,10 @@ class Gap12MetricTests(unittest.TestCase):
         out = load_one_fundamental(sec, "BIDU", "0001329099", cfg)
         self.assertTrue(out["shares_stale"])
         self.assertEqual(out["shares_asof_end"], "2010-12-31")
+        # 宁缺毋滥: the untrustworthy count must be nulled so no market-cap
+        # derived signal (ps/pe/fcf/discount) can be fabricated from it.
+        self.assertIsNone(out["shares_outstanding"])
+        self.assertIsNone(out["shares_yoy"])
 
     def test_fresh_share_count_not_flagged(self) -> None:
         sec = _FakeSecClient(

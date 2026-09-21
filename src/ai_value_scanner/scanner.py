@@ -2824,6 +2824,12 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                 metric = pd.to_datetime(latest_metric_end, errors="coerce")
                 if pd.notna(asof) and pd.notna(metric) and (metric - asof).days > 400:
                     shares_stale = True
+                    # 宁缺毋滥: a stale count produces an untrustworthy market
+                    # cap, and every signal derived from it (ps/pe/fcf/discount)
+                    # would be fiction. Null the count so the symbol drops out
+                    # of all market-cap-dependent metrics and filters, while
+                    # the as-of date and stale flag stay for diagnostics.
+                    shares = None
             except Exception:
                 shares_stale = False
     revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
