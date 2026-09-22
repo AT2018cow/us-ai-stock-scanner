@@ -32,6 +32,20 @@
 
 **D1 判定（B 路线）**：以架构依据 + 方向性证据通过；D1-B 数值验证回测（risk_on 启用 breaker 后 momentum 清单 2023-2026 重放）结果记录见下。
 
+**D1-B 验证结果（2026-09-22，monthly × 4 窗口，base 场景，60 天超额 vs QQQ）**：
+
+| 年度 | risk_on momentum（B 路线 primary） | risk_on low_value（A 路线，退居辅助） | 判读 |
+|---|---|---|---|
+| 2023 | −3.1% | −2.8% | 均微负 |
+| 2024 | +1.2% | −3.1% | B 略优 |
+| **2025** | **+4.1%**（9 信号） | **−11.8%**（2 信号） | B 显著优 |
+| **2026YTD** | **+3.9%**（3 信号） | **−9.3%**（2 信号） | B 显著优 |
+
+- momentum primary 在 2025/2026 动量段正超额且信号密度健康（8-9 事件/年 vs A 路线 low_value 的 2-6）；
+- QQQ breaker 在 2023-2026 窗口内未触发（QQQ 基本处于 200 日线上方），属正确行为——其对 2022 型熊市的保护作用需等窗口扩展或快照积累后验证；
+- risk_on momentum（+4.1%）弱于 balanced momentum（+11.4%，含 AMAT 噪音）——确认 risk_on 的基本面宽容度稀释了动量池质量，**Phase 3 动量轴调参应向更严门槛探索**（借鉴 risk_off momentum 的门槛模式）；
+- 同样适用小样本/重叠窗口的统计限制——本表作为路线对比依据（B vs A 同口径），不作为收益预期。
+
 
 **已完成**：
 - 引擎新增 `min_price_to_sma200`、`min_range_position_52w` 过滤步骤（趋势确认对称参数）与 `benchmark_trend_filter_symbol`（QQQ 绝对动量熔断，scanner + backtest PIT 双端）。
