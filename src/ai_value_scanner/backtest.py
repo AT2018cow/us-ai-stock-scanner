@@ -1710,6 +1710,7 @@ def build_cross_section_asof(
     benchmark_return_60d: float | None,
     disclosure_lookback_days: int,
     scan_config: ScanConfig,
+    benchmark_trend_ok: bool | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for row in universe.itertuples(index=False):
@@ -2144,6 +2145,9 @@ def build_cross_section_asof(
     )
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
     df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
+    if benchmark_trend_ok is not None:
+        df["benchmark_trend_ok"] = bool(benchmark_trend_ok)
+
     return df
 
 
@@ -2198,7 +2202,10 @@ def build_signal_events_historical_replay(
 
     symbols = prefetch_universe["symbol"].dropna().astype(str).tolist()
     benchmark_etfs = normalize_symbol_list([str(x).upper() for x in (scan_config.ai_link_benchmark_etfs or [])])
-    bars_symbols = normalize_symbol_list(symbols + benchmark_etfs)
+    trend_filter_symbol = str(scan_config.benchmark_trend_filter_symbol or "").upper().strip()
+    bars_symbols = normalize_symbol_list(
+        symbols + benchmark_etfs + ([trend_filter_symbol] if trend_filter_symbol else [])
+    )
 
     bt_log(
         f"universe symbols: {len(symbols)}",
@@ -2335,6 +2342,16 @@ def build_signal_events_historical_replay(
             benchmark_return_60d=benchmark_median_return_60d,
             disclosure_lookback_days=cfg.disclosure_lookback_days,
             scan_config=scan_config,
+            benchmark_trend_ok=(
+                benchmark_trend_ok_asof(
+                    bar_db,
+                    trend_filter_symbol,
+                    asof,
+                    scan_config.benchmark_trend_filter_sma_days,
+                )
+                if trend_filter_symbol
+                else None
+            ),
         )
         if df.empty:
             continue
@@ -2387,6 +2404,30 @@ def build_signal_events_historical_replay(
             ]
         )
     return pd.DataFrame(rows)
+
+
+def benchmark_trend_ok_asof(
+    bar_db: dict[str, pd.DataFrame],
+    trend_symbol: str,
+    asof: pd.Timestamp,
+    sma_days: int,
+) -> bool | None:
+    """Benchmark trend state at a replay point: close vs its own long SMA.
+
+    Returns None when the filter cannot be evaluated (missing symbol or not
+    enough history); callers treat None as fail-open.
+    """
+    frame = bar_db.get(trend_symbol.upper())
+    if frame is None or frame.empty:
+        return None
+    closes = close_history_from_frame_asof(frame, asof)
+    if not closes or sma_days <= 0:
+        return None
+    values = [float(v) for _, v in closes]
+    if len(values) < sma_days:
+        return None
+    window = values[-int(sma_days):]
+    return bool(values[-1] >= float(np.mean(window)))
 
 
 def build_price_frame_map(bars_map: dict[str, list[dict[str, Any]]]) -> dict[str, pd.DataFrame]:

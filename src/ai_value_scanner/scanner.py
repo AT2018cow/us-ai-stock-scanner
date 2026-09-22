@@ -492,7 +492,9 @@ class ScanConfig:
     price_lookback_days: int = 420
     min_drawdown_from_52w_high: float | None = None
     max_range_position_52w: float | None = None
+    min_range_position_52w: float | None = None
     max_price_to_sma200: float | None = None
+    min_price_to_sma200: float | None = None
     min_days_below_sma200: int | None = 5
     min_return_20d: float | None = None
     min_return_60d: float | None = None
@@ -503,6 +505,8 @@ class ScanConfig:
     max_60d_volatility_percentile: float | None = None
     score_winsor_lower_q: float = 0.05
     score_winsor_upper_q: float = 0.95
+    benchmark_trend_filter_symbol: str | None = None
+    benchmark_trend_filter_sma_days: int = 200
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
@@ -1941,6 +1945,35 @@ def bars_return_from_lookback(bars: list[dict[str, Any]], lookback_days: int) ->
     return (latest / base) - 1.0
 
 
+def bars_closes(bars: list[dict[str, Any]]) -> list[float]:
+    """Chronological list of valid close prices from daily bars."""
+    closes: list[float] = []
+    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
+    for row in sorted_bars:
+        try:
+            close = float(row.get("c")) if row.get("c") is not None else None
+        except (TypeError, ValueError):
+            close = None
+        if close is not None and np.isfinite(close) and close > 0:
+            closes.append(close)
+    return closes
+
+
+def bars_close_from_lookback(bars: list[dict[str, Any]], lookback_days: int) -> float | None:
+    closes = bars_closes(bars)
+    if len(closes) < lookback_days:
+        return None
+    return float(closes[-1])
+
+
+def bars_sma_from_lookback(bars: list[dict[str, Any]], sma_days: int) -> float | None:
+    closes = bars_closes(bars)
+    if sma_days <= 0 or len(closes) < sma_days:
+        return None
+    window = closes[-int(sma_days):]
+    return float(np.mean(window))
+
+
 def ai_market_link_score(
     symbol_return_20d: float | None,
     symbol_return_60d: float | None,
@@ -2611,10 +2644,20 @@ def resolve_channel_profile(
             if profile.get("max_range_position_52w", config.max_range_position_52w) is None
             else float(profile.get("max_range_position_52w", config.max_range_position_52w))
         ),
+        "min_range_position_52w": (
+            None
+            if profile.get("min_range_position_52w", config.min_range_position_52w) is None
+            else float(profile.get("min_range_position_52w", config.min_range_position_52w))
+        ),
         "max_price_to_sma200": (
             None
             if profile.get("max_price_to_sma200", config.max_price_to_sma200) is None
             else float(profile.get("max_price_to_sma200", config.max_price_to_sma200))
+        ),
+        "min_price_to_sma200": (
+            None
+            if profile.get("min_price_to_sma200", config.min_price_to_sma200) is None
+            else float(profile.get("min_price_to_sma200", config.min_price_to_sma200))
         ),
         "min_days_below_sma200": (
             None
@@ -3544,6 +3587,13 @@ def build_filter_steps(
                 lambda frame: frame["range_position_52w"].fillna(np.inf) <= cp["max_range_position_52w"],
             )
         )
+    if cp["min_range_position_52w"] is not None:
+        steps.append(
+            (
+                "min_range_position_52w",
+                lambda frame: frame["range_position_52w"].fillna(-np.inf) >= cp["min_range_position_52w"],
+            )
+        )
     if cp["max_price_to_sma200"] is not None:
         steps.append(
             (
@@ -3551,6 +3601,22 @@ def build_filter_steps(
                 lambda frame: frame["price_to_sma200"].fillna(np.inf) <= cp["max_price_to_sma200"],
             )
         )
+    if cp["min_price_to_sma200"] is not None:
+        steps.append(
+            (
+                "min_price_to_sma200",
+                lambda frame: frame["price_to_sma200"].fillna(-np.inf) >= cp["min_price_to_sma200"],
+            )
+        )
+    if config.benchmark_trend_filter_symbol:
+        def _benchmark_trend_mask(frame: pd.DataFrame) -> pd.Series:
+            # Absolute-momentum circuit breaker (risk_off): when the benchmark
+            # trades below its own long-term trend, no signals are produced.
+            if "benchmark_trend_ok" not in frame.columns:
+                return pd.Series(True, index=frame.index)
+            return frame["benchmark_trend_ok"].fillna(True).astype(bool)
+
+        steps.append(("benchmark_trend_filter", _benchmark_trend_mask))
     if cp["min_days_below_sma200"] is not None:
         steps.append(
             (
@@ -4120,7 +4186,9 @@ def classify_filter_step_layer(step_name: str) -> str:
         "max_pe_hist_percentile",
         "min_drawdown_from_52w_high",
         "max_range_position_52w",
+        "min_range_position_52w",
         "max_price_to_sma200",
+        "min_price_to_sma200",
         "min_days_below_sma200",
         "min_drawdown_percentile",
         "min_return_20d",
@@ -5059,6 +5127,9 @@ def run_scan(
         }
     )
     bars_symbols = sorted(set(symbols_for_bars).union(set(benchmark_symbols)))
+    trend_filter_symbol = normalize_equity_symbol(config.benchmark_trend_filter_symbol or "")
+    if trend_filter_symbol and trend_filter_symbol not in bars_symbols:
+        bars_symbols = sorted(set(bars_symbols).union({trend_filter_symbol}))
     bars_map = alpaca.get_daily_bars(bars_symbols, bars_start_iso, config.chunk_size)
     benchmark_returns_20d: list[float] = []
     benchmark_returns_60d: list[float] = []
@@ -5080,6 +5151,24 @@ def run_scan(
         if benchmark_returns_60d
         else None
     )
+    benchmark_trend_ok: bool | None = None
+    if trend_filter_symbol:
+        trend_bars = bars_map.get(trend_filter_symbol, [])
+        trend_close = bars_close_from_lookback(
+            trend_bars, config.benchmark_trend_filter_sma_days
+        )
+        trend_sma = bars_sma_from_lookback(
+            trend_bars, config.benchmark_trend_filter_sma_days
+        )
+        if trend_close is not None and trend_sma is not None:
+            benchmark_trend_ok = bool(np.isfinite(trend_close) and np.isfinite(trend_sma) and trend_close >= trend_sma)
+            log_status(
+                started_at,
+                "INFO",
+                f"Benchmark trend filter ({trend_filter_symbol}): "
+                f"close={trend_close:.2f} sma{config.benchmark_trend_filter_sma_days}={trend_sma:.2f} "
+                f"trend_ok={benchmark_trend_ok}",
+            )
     price_feature_rows: list[dict[str, Any]] = []
     for row in df.itertuples(index=False):
         symbol_bars = bars_map.get(row.symbol, [])
@@ -5087,6 +5176,10 @@ def run_scan(
         price_feature_rows.append({"symbol": row.symbol, **features})
     df_price_features = pd.DataFrame(price_feature_rows)
     df = df.merge(df_price_features, on="symbol", how="left")
+    if trend_filter_symbol:
+        # Missing/unresolvable trend state fails open (True): a data gap must
+        # not silently flip the defensive profile into full silence.
+        df["benchmark_trend_ok"] = True if benchmark_trend_ok is None else bool(benchmark_trend_ok)
 
     log_status(started_at, "INFO", "[3/6] Fetching SEC fundamentals (cached locally).")
     fundamentals = collect_fundamentals(df, sec, config)

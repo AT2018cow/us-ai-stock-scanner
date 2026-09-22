@@ -135,7 +135,7 @@
   "min_days_below_sma200": 5,
   "min_return_20d": null,
   "min_return_60d": null,
-  "max_20d_return": 0.12,
+  "max_20d_return": null,
   "max_60d_volatility": 0.75,
   "min_drawdown_percentile": null,
   "min_avg_dollar_volume_20d_percentile": null,
@@ -161,8 +161,8 @@
       "min_avg_dollar_volume_20d_percentile": 0.2,
       "max_60d_volatility_percentile": 0.8,
       "min_avg_dollar_volume_20d": 25000000.0,
-      "min_return_20d": -0.1,
-      "min_return_60d": -0.12,
+      "min_return_20d": 0.03,
+      "min_return_60d": 0.05,
       "trend_min_return_60d": -0.02,
       "trend_max_60d_volatility": 0.6,
       "trend_min_avg_dollar_volume_20d": 22400000.0,
@@ -188,11 +188,11 @@
       "min_fcf_yield": 0.012,
       "min_revenue_yoy": -0.02,
       "min_net_income_yoy": -0.08,
-      "min_drawdown_from_52w_high": 0.05,
-      "max_range_position_52w": 0.82,
-      "max_price_to_sma200": 1.08,
+      "min_drawdown_from_52w_high": null,
+      "max_range_position_52w": null,
+      "max_price_to_sma200": 1.3,
       "min_days_below_sma200": 0,
-      "max_20d_return": 0.12,
+      "max_20d_return": 0.35,
       "max_60d_volatility": 0.68,
       "score_weights": {
         "ps_discount": 0.25,
@@ -216,7 +216,9 @@
         "ai_link_score": 0.22,
         "return_20d": 0.28,
         "drawdown_from_52w_high": -0.1
-      }
+      },
+      "min_price_to_sma200": 1.02,
+      "min_range_position_52w": 0.7
     },
     "ai_enabler": {
       "require_channel_bucket_match": false,
@@ -227,8 +229,8 @@
       "min_avg_dollar_volume_20d_percentile": 0.15,
       "max_60d_volatility_percentile": 0.85,
       "min_avg_dollar_volume_20d": 15000000.0,
-      "min_return_20d": -0.1,
-      "min_return_60d": -0.12,
+      "min_return_20d": 0.02,
+      "min_return_60d": 0.04,
       "trend_min_return_60d": -0.05,
       "trend_max_60d_volatility": 0.72,
       "trend_min_avg_dollar_volume_20d": 14400000.0,
@@ -254,11 +256,11 @@
       "min_fcf_yield": 0.004,
       "min_revenue_yoy": -0.03,
       "min_net_income_yoy": -0.12,
-      "min_drawdown_from_52w_high": 0.0,
-      "max_range_position_52w": 0.92,
-      "max_price_to_sma200": 1.15,
+      "min_drawdown_from_52w_high": null,
+      "max_range_position_52w": null,
+      "max_price_to_sma200": 1.32,
       "min_days_below_sma200": 0,
-      "max_20d_return": 0.14,
+      "max_20d_return": 0.38,
       "max_60d_volatility": 0.75,
       "score_weights": {
         "ps_discount": 0.22,
@@ -282,7 +284,9 @@
         "ai_link_score": 0.22,
         "return_20d": 0.3,
         "drawdown_from_52w_high": -0.1
-      }
+      },
+      "min_price_to_sma200": 1.02,
+      "min_range_position_52w": 0.65
     },
     "ai_peripheral": {
       "min_watchlist_etf_count": 1,
@@ -292,8 +296,8 @@
       "min_avg_dollar_volume_20d_percentile": 0.1,
       "max_60d_volatility_percentile": 0.9,
       "min_avg_dollar_volume_20d": 12000000.0,
-      "min_return_20d": -0.1,
-      "min_return_60d": -0.12,
+      "min_return_20d": 0.02,
+      "min_return_60d": 0.03,
       "trend_min_return_60d": -0.06,
       "trend_max_60d_volatility": 0.8,
       "trend_min_avg_dollar_volume_20d": 9600000.0,
@@ -319,11 +323,11 @@
       "min_fcf_yield": 0.0,
       "min_revenue_yoy": -0.04,
       "min_net_income_yoy": -0.12,
-      "min_drawdown_from_52w_high": 0.0,
-      "max_range_position_52w": 0.95,
-      "max_price_to_sma200": 1.18,
+      "min_drawdown_from_52w_high": null,
+      "max_range_position_52w": null,
+      "max_price_to_sma200": 1.35,
       "min_days_below_sma200": 0,
-      "max_20d_return": 0.15,
+      "max_20d_return": 0.4,
       "max_60d_volatility": 0.82,
       "score_weights": {
         "ps_discount": 0.22,
@@ -346,7 +350,9 @@
         "ai_link_score": 0.22,
         "return_20d": 0.3,
         "drawdown_from_52w_high": -0.1
-      }
+      },
+      "min_price_to_sma200": 1.02,
+      "min_range_position_52w": 0.6
     },
     "ai_smallcap": {
       "min_watchlist_etf_count": 0,
@@ -359,11 +365,11 @@
       "min_fcf_yield": 0.005,
       "min_revenue_yoy": -0.05,
       "min_net_income_yoy": -0.15,
-      "min_drawdown_from_52w_high": 0.05,
-      "max_range_position_52w": 0.9,
-      "max_price_to_sma200": 1.2,
-      "min_days_below_sma200": 3,
-      "max_20d_return": 0.18,
+      "min_drawdown_from_52w_high": null,
+      "max_range_position_52w": null,
+      "max_price_to_sma200": 1.3,
+      "min_days_below_sma200": 0,
+      "max_20d_return": 0.4,
       "max_60d_volatility": 0.95,
       "score_weights": {
         "ps_discount": 0.24,
@@ -389,7 +395,11 @@
       "momentum_max_drawdown_from_52w_high": 0.25,
       "momentum_max_60d_volatility": 0.75,
       "momentum_min_avg_dollar_volume_20d": 10000000.0,
-      "momentum_min_watchlist_etf_count": 0
+      "momentum_min_watchlist_etf_count": 0,
+      "min_price_to_sma200": 1.02,
+      "min_range_position_52w": 0.55,
+      "min_return_20d": 0.03,
+      "min_return_60d": 0.05
     }
   },
   "alpaca_max_requests_per_sec": 2.5,
