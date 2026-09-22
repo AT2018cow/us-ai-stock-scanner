@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import shutil
 import time
 import threading
 import traceback
@@ -2123,6 +2124,27 @@ def load_watchlist_scores(config: ScanConfig) -> pd.DataFrame:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
     raw = pd.read_csv(path)
     return watchlist_rows_to_scores(raw)
+
+
+def archive_watchlist_snapshot(config: ScanConfig, started_at: datetime) -> Path | None:
+    """Archive the watchlist for point-in-time backtests.
+
+    historical_replay needs to know what the watchlist looked like on each
+    replay date; these snapshots cannot be reconstructed retroactively, so
+    one is archived on every scan. File names carry a UTC timestamp that
+    parse_watchlist_snapshot_date understands.
+    """
+    src = Path(config.watchlist_csv_path)
+    if not src.exists():
+        return None
+    history_dir = Path("data/watchlist_history")
+    history_dir.mkdir(parents=True, exist_ok=True)
+    stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+    dst = history_dir / f"ai_watchlist_{stamp}.csv"
+    if dst.exists():
+        return dst
+    shutil.copy2(src, dst)
+    return dst
 
 
 def percentile_floor_mask(series: pd.Series, q: float) -> pd.Series:
@@ -6025,6 +6047,7 @@ def main() -> None:
     if args.max_symbols is not None:
         config.max_symbols = args.max_symbols
 
+    started_at = datetime.now(timezone.utc)
     try:
         run_scan(
             config,
@@ -6033,6 +6056,9 @@ def main() -> None:
             args.network_report_output,
             args.report_output,
         )
+        snapshot_path = archive_watchlist_snapshot(config, started_at)
+        if snapshot_path is not None:
+            print(f"[snapshot] watchlist archived for PIT backtests: {snapshot_path}")
     except Exception as exc:
         print("")
         print("[ERROR] Scan failed.")

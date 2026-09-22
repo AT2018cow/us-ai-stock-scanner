@@ -9,9 +9,11 @@ from ai_value_scanner.backtest import (
     ai_disclosure_score_asof,
     build_flow_ttm_or_annual_series,
     build_cross_section_asof,
+    build_level_series,
     build_signal_diagnostics,
     close_history_from_frame_asof,
     event_backtest,
+    extract_metric_points,
     FundamentalPointInTime,
     forward_return,
     near_miss_concentration,
@@ -20,7 +22,7 @@ from ai_value_scanner.backtest import (
     resolve_watchlist_asof,
     series_up_to_asof,
 )
-from ai_value_scanner.scanner import ScanConfig
+from ai_value_scanner.scanner import ScanConfig, SHARES_TAGS, QUARTERLY_FORMS, archive_watchlist_snapshot
 
 
 class TestBacktestReliabilityControls(unittest.TestCase):
@@ -51,6 +53,81 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         )
         self.assertTrue(source.startswith("snapshot:w1.csv"))
         self.assertEqual(set(mapping.keys()), {"A"})
+
+    def test_extract_metric_points_merges_across_tags_pit(self) -> None:
+        # Regression (PIT replay of the RTX bug): with the old first-tag-wins
+        # loop, a stale us-gaap CommonStockSharesOutstanding (2009) hid the
+        # current dei count. Points must merge across all tags, and at equal
+        # visibility dates the earlier tag in SHARES_TAGS (dei) wins.
+        companyfacts = {
+            "facts": {
+                "us-gaap": {
+                    "CommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                {"end": "2009-12-31", "val": 1_381_700, "form": "10-K", "filed": "2010-02-11"},
+                            ]
+                        }
+                    },
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                {"end": "2026-06-30", "val": 1_350_700_000, "form": "10-Q", "filed": "2026-07-23"},
+                            ]
+                        }
+                    },
+                },
+                "dei": {
+                    "EntityCommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                {"end": "2026-06-30", "val": 1_347_758_144, "form": "10-Q", "filed": "2026-07-23"},
+                            ]
+                        }
+                    },
+                },
+            }
+        }
+        points = extract_metric_points(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
+        self.assertTrue(len(points) >= 3)
+        series = build_level_series(points)
+        at_filing = [v for t, v in series if t == pd.Timestamp("2026-07-23", tz="UTC")]
+        self.assertEqual(at_filing, [1_347_758_144.0])
+        # PIT at 2026-08-01 sees the fresh count, not the 2009 value.
+        asof = pd.Timestamp("2026-08-01", tz="UTC")
+        visible_up_to = [v for t, v in series if t <= asof]
+        self.assertEqual(visible_up_to[-1], 1_347_758_144.0)
+
+    def test_archive_watchlist_snapshot_writes_history_copy(self) -> None:
+        import tempfile
+        from datetime import datetime, timezone
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            src = tmp_path / "ai_watchlist.csv"
+            src.write_text("symbol,bucket,etf_count,etfs,enabled\nTEST,core_ai,1,AIQ,1\n")
+            (tmp_path / "history").mkdir()
+            # Point the archive helper at the temp tree by chdir.
+            cwd = Path.cwd()
+            (tmp_path / "data").mkdir(exist_ok=True)
+            cfg = ScanConfig(watchlist_csv_path=str(src))
+            try:
+                import os
+
+                os.chdir(tmp_path)
+                started = datetime(2026, 9, 22, 12, 0, 0, tzinfo=timezone.utc)
+                out = archive_watchlist_snapshot(cfg, started)
+                self.assertIsNotNone(out)
+                self.assertTrue(out.exists())
+                self.assertEqual(out.name, "ai_watchlist_20260922T120000Z.csv")
+                self.assertEqual(
+                    parse_watchlist_snapshot_date(out),
+                    pd.Timestamp("2026-09-22", tz="UTC"),
+                )
+                # Idempotent: second call returns the same path without error.
+                self.assertEqual(archive_watchlist_snapshot(cfg, started), out)
+            finally:
+                os.chdir(cwd)
 
     def test_near_miss_concentration_finds_single_blocking_step(self) -> None:
         df = pd.DataFrame(

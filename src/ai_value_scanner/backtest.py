@@ -37,6 +37,7 @@ from ai_value_scanner.scanner import (
     RECEIVABLES_CURRENT_TAGS,
     REVENUE_TAGS,
     SHARES_TAGS,
+    _merged_standard_taxonomy_facts,
     AlpacaClient,
     NetworkMonitor,
     RequestRateLimiter,
@@ -318,19 +319,6 @@ def resolve_watchlist_asof(
     return {}, "none"
 
 
-def _merged_standard_taxonomy_facts(companyfacts: dict[str, Any]) -> dict[str, Any]:
-    raw_facts = companyfacts.get("facts", {})
-    merged: dict[str, Any] = {}
-    for taxonomy in ("us-gaap", "ifrs-full"):
-        facts = raw_facts.get(taxonomy, {})
-        if not isinstance(facts, dict):
-            continue
-        for key, value in facts.items():
-            if key not in merged:
-                merged[key] = value
-    return merged
-
-
 def form_matches_allowed(form: Any, allowed_forms: set[str]) -> bool:
     token = str(form or "").strip().upper()
     if not token:
@@ -364,12 +352,17 @@ def extract_metric_points(
     unit: str,
     allowed_forms: set[str],
 ) -> list[dict[str, Any]]:
+    # Collect points from ALL tags (dei + us-gaap merged upstream); the
+    # caller collapses duplicates per period end (latest visible wins, tag
+    # order breaks ties). Returning the first tag with data would replay the
+    # stale-share-count bug (e.g. RTX picking a 2009 us-gaap value while
+    # dei carries the current count).
     facts = _merged_standard_taxonomy_facts(companyfacts)
+    points: list[dict[str, Any]] = []
     for tag in tags:
         tag_obj = facts.get(tag, {})
         units = tag_obj.get("units", {})
         entries = units.get(unit, [])
-        points: list[dict[str, Any]] = []
         for item in entries:
             if not form_matches_allowed(item.get("form"), allowed_forms):
                 continue
@@ -395,9 +388,7 @@ def extract_metric_points(
                     "form": str(item.get("form") or "").upper(),
                 }
             )
-        if points:
-            return points
-    return []
+    return points
 
 
 def collapse_points_by_end(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -420,7 +411,10 @@ def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp,
     by_visible: dict[pd.Timestamp, float] = {}
     for point in points:
         vis = point["visible"]
-        by_visible[vis] = float(point["value"])
+        # First tag in the caller's tag list wins for identical visibility
+        # dates (matches the scanner's tag-priority tie-break semantics).
+        if vis not in by_visible:
+            by_visible[vis] = float(point["value"])
     out = sorted(by_visible.items(), key=lambda x: x[0])
     return out
 
