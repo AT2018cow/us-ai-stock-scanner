@@ -446,5 +446,7 @@
     "weak_ai_link",
     "negative_momentum"
   ],
-  "low_value_min_research_score": 0.0
+  "low_value_min_research_score": 0.0,
+  "benchmark_trend_filter_symbol": "QQQ",
+  "benchmark_trend_filter_sma_days": 200
 }

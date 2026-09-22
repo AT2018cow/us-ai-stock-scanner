@@ -153,9 +153,14 @@ class TestStyleMirror(unittest.TestCase):
         self.assertEqual(frame2.loc[kept].shape[0], 2)
 
     def test_risk_off_allows_trend_filter_only_for_itself(self) -> None:
-        for cfg_path in ["configs/config.balanced.json", "configs/config.risk_on.json"]:
+        # balanced stays unconditional (no breaker); risk_on and risk_off both
+        # carry the QQQ absolute-momentum breaker — risk_on as a dual-momentum
+        # tail guard, risk_off as its defensive core.
+        cfg = load_config("configs/config.balanced.json")
+        self.assertIsNone(cfg.benchmark_trend_filter_symbol)
+        for cfg_path in ["configs/config.risk_on.json", "configs/config.risk_off.json"]:
             cfg = load_config(cfg_path)
-            self.assertIsNone(cfg.benchmark_trend_filter_symbol)
+            self.assertEqual(cfg.benchmark_trend_filter_symbol, "QQQ")
 
 
 if __name__ == "__main__":
