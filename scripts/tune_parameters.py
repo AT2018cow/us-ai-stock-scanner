@@ -1185,7 +1185,9 @@ def main() -> None:
             if not res.get("ok"):
                 log(f"[{idx}] {res.get('cid')} FAILED on Modal: {res.get('error')}")
                 continue
-            cid = res.pop("cid", None)
+            cid = res.get("cid")
+            res.pop("ok", None)
+            res.pop("traceback", None)
             log(f"[{idx}] {cid} objective={res.get('objective_score'):.4f} risk_on={res.get('risk_on_rank_score'):.4f} risk_off={res.get('risk_off_rank_score'):.4f}")
             rows.append(res)
     else:
