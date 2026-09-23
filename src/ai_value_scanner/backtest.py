@@ -2157,6 +2157,7 @@ def build_signal_events_historical_replay(
     sec: SecClient,
     cfg: BacktestConfig,
     scenario: str,
+    shared_cache: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     replay_start = time.monotonic()
     start_dt = parse_date_utc(cfg.start_date)
@@ -2213,9 +2214,15 @@ def build_signal_events_historical_replay(
         started_at_monotonic=replay_start,
     )
     bars_start = (start_dt - timedelta(days=max(420, scan_config.price_lookback_days))).isoformat()
-    bar_db = build_bar_db(client, bars_symbols, bars_start, scan_config.chunk_size)
+    _bar_db_shared = shared_cache is not None and "bar_db" in shared_cache
+    if _bar_db_shared:
+        bar_db = shared_cache["bar_db"]
+    else:
+        bar_db = build_bar_db(client, bars_symbols, bars_start, scan_config.chunk_size)
+        if shared_cache is not None:
+            shared_cache["bar_db"] = bar_db
     bt_log(
-        f"symbols with bars: {len(bar_db)}",
+        f"symbols with bars: {len(bar_db)}" + (" (shared)" if _bar_db_shared else ""),
         scope=f"replay:{scenario}",
         started_at_monotonic=replay_start,
     )
@@ -2224,9 +2231,16 @@ def build_signal_events_historical_replay(
     universe = universe.dropna(subset=["cik"]).copy()
     if cfg.replay_max_symbols and cfg.replay_max_symbols > 0:
         universe = universe.head(cfg.replay_max_symbols).copy()
-    fundamentals = build_fundamental_pti_db(universe, sec, max_workers=scan_config.max_workers)
+    _fund_shared = shared_cache is not None and "fundamentals" in shared_cache
+    if _fund_shared:
+        fundamentals = shared_cache["fundamentals"]
+    else:
+        fundamentals = build_fundamental_pti_db(universe, sec, max_workers=scan_config.max_workers)
+        if shared_cache is not None:
+            shared_cache["fundamentals"] = fundamentals
     bt_log(
-        f"fundamentals loaded: {len(fundamentals)}",
+        f"fundamentals loaded: {len(fundamentals)}"
+        + (" (shared across scenarios)" if _fund_shared else ""),
         scope=f"replay:{scenario}",
         started_at_monotonic=replay_start,
     )
@@ -2272,6 +2286,7 @@ def build_signal_events_historical_replay(
     rows: list[dict[str, Any]] = []
     watchlist_source_counts: dict[str, int] = {}
     last_heartbeat = 0.0
+    regime_symbol = str(scan_config.benchmark_trend_filter_symbol or "QQQ").upper()
     for i, asof in enumerate(dates, start=1):
         now_tick = time.monotonic()
         if i == 1 or i == len(dates) or (now_tick - last_heartbeat) >= 30.0:
@@ -2281,6 +2296,12 @@ def build_signal_events_historical_replay(
                 started_at_monotonic=replay_start,
             )
             last_heartbeat = now_tick
+        benchmark_trailing_60d = benchmark_trailing_return_asof(
+            bar_db, regime_symbol, asof, 60
+        )
+        regime = "unknown"
+        if benchmark_trailing_60d is not None:
+            regime = "up" if benchmark_trailing_60d >= 0 else "down"
         watchlist_by_symbol, watchlist_source = resolve_watchlist_asof(
             asof=asof,
             snapshots=snapshots,
@@ -2373,6 +2394,8 @@ def build_signal_events_historical_replay(
                     "list_type": list_type,
                     "symbols": symbols_selected,
                     "n_selected": len(symbols_selected),
+                    "benchmark_trailing_60d": benchmark_trailing_60d,
+                    "regime": regime,
                     "channel_counts": json.dumps(signal_diag.get("channel_counts", {}), sort_keys=True),
                     "channel_symbols": json.dumps(signal_diag.get("channel_symbols", {}), sort_keys=True),
                     "filter_diagnostics": json.dumps(signal_diag.get("channels", {}), sort_keys=True),
@@ -2399,11 +2422,39 @@ def build_signal_events_historical_replay(
                 "list_type",
                 "symbols",
                 "n_selected",
+                "benchmark_trailing_60d",
+                "regime",
                 "source_csv",
                 "watchlist_source",
             ]
         )
     return pd.DataFrame(rows)
+
+
+def benchmark_trailing_return_asof(
+    bar_db: dict[str, pd.DataFrame],
+    symbol: str,
+    asof: pd.Timestamp,
+    lookback_days: int,
+) -> float | None:
+    """PIT trailing return of the benchmark at a replay point.
+
+    Uses only data up to `asof` (no lookahead): this marks the market regime
+    for each signal so regime-conditional scoring can filter on it.
+    """
+    frame = bar_db.get(symbol.upper())
+    if frame is None or frame.empty:
+        return None
+    closes = close_history_from_frame_asof(frame, asof)
+    if not closes or lookback_days <= 0:
+        return None
+    values = [float(v) for _, v in closes]
+    if len(values) <= lookback_days:
+        return None
+    base = values[-(lookback_days + 1)]
+    if base <= 0:
+        return None
+    return (values[-1] / base) - 1.0
 
 
 def benchmark_trend_ok_asof(
@@ -2572,6 +2623,8 @@ def event_backtest(
                     "n_priced": int(priced),
                     "event_status": event_status,
                     "portfolio_return": portfolio_return,
+                    "benchmark_trailing_60d": getattr(row, "benchmark_trailing_60d", None),
+                    "regime": getattr(row, "regime", "unknown"),
                 }
             )
             for bench in benchmark_symbols:
@@ -3068,6 +3121,7 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
     sec = load_sec_client(scan_cfg, monitor)
     scenarios = ["base", "loose", "strict"] if cfg.enable_perturbation else ["base"]
     frames: list[pd.DataFrame] = []
+    scenario_cache: dict[str, Any] = {}
     for scenario in scenarios:
         scenario_cfg = perturb_scan_config(scan_cfg, scenario)
         scenario_cfg.max_symbols = cfg.replay_max_symbols
@@ -3077,6 +3131,7 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
             sec=sec,
             cfg=cfg,
             scenario=scenario,
+            shared_cache=scenario_cache,
         )
         frames.append(df)
     signals = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

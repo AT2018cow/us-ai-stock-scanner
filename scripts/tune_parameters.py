@@ -507,12 +507,111 @@ def evaluate_window(
     }
 
 
-def load_backtest_frames(backtest_result: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_backtest_frames(
+    backtest_result: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     summary_path = Path(backtest_result["summary_path"])
     events_path = Path(backtest_result["events_path"])
+    benchmarks_path = Path(backtest_result.get("benchmarks_path", ""))
     summary = pd.read_csv(summary_path) if summary_path.exists() else pd.DataFrame()
     events = pd.read_csv(events_path) if events_path.exists() else pd.DataFrame()
-    return summary, events
+    benchmarks = (
+        pd.read_csv(benchmarks_path) if benchmarks_path and Path(benchmarks_path).exists() else pd.DataFrame()
+    )
+    return summary, events, benchmarks
+
+
+def non_overlapping_rows(df: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
+    """Greedy non-overlapping event subsample.
+
+    Monthly sampling with 60d holding overlaps adjacent windows; the raw
+    event mean double-counts one market move up to three times. This picks
+    a chronological subsample whose entries do not share holding days.
+    """
+    if df.empty:
+        return df
+    gap = max(1, int(horizon_days * 1.5))
+    order = pd.to_datetime(df["signal_date"]).sort_values()
+    keep_positions: list[int] = []
+    last_date: pd.Timestamp | None = None
+    for pos, dt in zip(order.index, order.tolist(), strict=False):
+        if last_date is None or (dt - last_date).days >= gap:
+            keep_positions.append(pos)
+            last_date = dt
+    return df.loc[sorted(keep_positions)]
+
+
+def regime_stats(
+    events: pd.DataFrame,
+    benchmarks: pd.DataFrame,
+    regime: str,
+    list_types: list[str],
+    horizons: list[int],
+) -> dict[str, Any]:
+    """Regime-conditional, overlap-corrected stats from raw events.
+
+    regime: "up" (benchmark 60d trailing return >= 0 at the signal date),
+    "down" (< 0), or "all". Missing regime column yields empty stats so the
+    caller falls back to the unconditional formula.
+    """
+    empty = {
+        "n_valid": 0,
+        "n_periods": 0,
+        "participation": 0.0,
+        "avg_ret": math.nan,
+        "avg_ex": math.nan,
+        "win_rate": math.nan,
+        "series_std": math.nan,
+        "worst_dd": -1.0,
+    }
+    if events.empty or "regime" not in events.columns:
+        return empty
+    ev = events[events["regime"] == regime].copy()
+    if ev.empty:
+        return empty
+    ev = ev[ev["list_type"].isin(list_types) & ev["horizon_days"].isin(horizons)]
+    if ev.empty:
+        return empty
+    n_periods = len(ev)
+    valid = ev[ev["event_status"].isin(["valid", "partial_valid"])].copy()
+    if valid.empty:
+        return {**empty, "n_periods": n_periods}
+    if not benchmarks.empty and "benchmark" in benchmarks.columns:
+        q = benchmarks[benchmarks["benchmark"] == "QQQ"][
+            ["scenario", "signal_date", "horizon_days", "benchmark_return"]
+        ]
+        valid = valid.merge(
+            q,
+            on=["scenario", "signal_date", "horizon_days"],
+            how="left",
+        )
+        valid["excess"] = valid["portfolio_return"] - valid["benchmark_return"]
+        avg_ex = float(valid["excess"].mean()) if valid["excess"].notna().any() else math.nan
+    else:
+        avg_ex = math.nan
+    avg_ret = float(valid["portfolio_return"].mean())
+    win = float((valid["portfolio_return"] > 0).mean())
+    series: list[float] = []
+    dds: list[float] = []
+    for _, part in valid.groupby(["scenario", "list_type", "horizon_days"], dropna=False):
+        horizon = int(part["horizon_days"].iloc[0])
+        no = non_overlapping_rows(part, horizon)
+        if no.empty:
+            continue
+        series.extend(float(x) for x in no["portfolio_return"].tolist())
+        dds.append(max_drawdown_for_series(no["portfolio_return"]))
+    series_std = float(np.std(series)) if len(series) >= 2 else math.nan
+    worst_dd = float(min(dds)) if dds else -1.0
+    return {
+        "n_valid": int(len(valid)),
+        "n_periods": int(n_periods),
+        "participation": len(valid) / n_periods if n_periods else 0.0,
+        "avg_ret": avg_ret,
+        "avg_ex": avg_ex,
+        "win_rate": win,
+        "series_std": series_std,
+        "worst_dd": worst_dd,
+    }
 
 
 def classify_window_failure(window_eval: dict[str, Any], events: pd.DataFrame) -> str:
@@ -647,6 +746,7 @@ def run_candidate(
     write_json(candidate_config_path, candidate.config)
 
     window_scores: list[float] = []
+    regime_events_pool: list[tuple[pd.DataFrame, pd.DataFrame]] = []
     window_valid_counts: list[int] = []
     coverage_values: list[float] = []
     win_values: list[float] = []
@@ -687,7 +787,8 @@ def run_candidate(
         )
         log(f"{candidate.cid} | window={window.label} | backtest start")
         bt_result = run_backtest(cfg)
-        summary, events = load_backtest_frames(bt_result)
+        summary, events, window_benchmarks = load_backtest_frames(bt_result)
+        regime_events_pool.append((events, window_benchmarks))
         window_horizons = mature_horizons_from_summary(summary, list_types, horizons) or horizons
         window_eval = evaluate_window(
             summary=summary,
@@ -841,18 +942,52 @@ def run_candidate(
     rank_avg_ret = float(avg_ret)
     rank_avg_ex = float(avg_ex)
     rank_avg_win = float(avg_win)
-    risk_on_rank_score = (
-        objective_score
-        + (0.35 * rank_coverage)
-        + (0.45 * (rank_avg_ret if np.isfinite(rank_avg_ret) else 0.0))
-        + (0.20 * (rank_avg_ex if np.isfinite(rank_avg_ex) else 0.0))
-    )
-    risk_off_rank_score = (
-        objective_score
-        + (0.35 * (rank_avg_win if np.isfinite(rank_avg_win) else 0.0))
-        - (0.45 * abs(min(0.0, primary_worst_dd)))
-        - (0.20 * (avg_std if np.isfinite(avg_std) else 0.0))
-    )
+
+    # Regime-conditional rank scores (Phase 2): each style is graded only on
+    # the market regime it is built for, using overlap-corrected statistics.
+    # risk_on -> up-regime: excess-first with participation (idle periods in a
+    # rising benchmark are opportunity cost). risk_off -> down-regime: excess
+    # + win rate, penalizing drawdown beyond 15%. Falls back to the legacy
+    # unconditional formula when the replay lacked regime tags.
+    regime_list_types = list(list_types)
+    regime_horizons = list(horizons)
+    pooled_events = pd.concat(
+        [ev for ev, _ in regime_events_pool if not ev.empty], ignore_index=True
+    ) if regime_events_pool else pd.DataFrame()
+    pooled_benchmarks = pd.concat(
+        [b for _, b in regime_events_pool if not b.empty], ignore_index=True
+    ) if regime_events_pool else pd.DataFrame()
+
+    up_stats = regime_stats(pooled_events, pooled_benchmarks, "up", regime_list_types, regime_horizons)
+    down_stats = regime_stats(pooled_events, pooled_benchmarks, "down", regime_list_types, regime_horizons)
+
+    if up_stats["n_valid"] > 0 and "regime" in pooled_events.columns:
+        risk_on_rank_score = (
+            0.45 * (up_stats["avg_ex"] if np.isfinite(up_stats["avg_ex"]) else 0.0)
+            + 0.25 * (up_stats["win_rate"] - 0.5)
+            + 0.15 * up_stats["participation"]
+            - 0.15 * (up_stats["series_std"] if np.isfinite(up_stats["series_std"]) else 0.0)
+        )
+    else:
+        risk_on_rank_score = (
+            objective_score
+            + (0.35 * rank_coverage)
+            + (0.45 * (rank_avg_ret if np.isfinite(rank_avg_ret) else 0.0))
+            + (0.20 * (rank_avg_ex if np.isfinite(rank_avg_ex) else 0.0))
+        )
+    if down_stats["n_valid"] > 0 and "regime" in pooled_events.columns:
+        risk_off_rank_score = (
+            0.45 * (down_stats["avg_ex"] if np.isfinite(down_stats["avg_ex"]) else 0.0)
+            + 0.35 * (down_stats["win_rate"] - 0.5)
+            - 0.20 * max(0.0, abs(down_stats["worst_dd"]) - 0.15)
+        )
+    else:
+        risk_off_rank_score = (
+            objective_score
+            + (0.35 * (rank_avg_win if np.isfinite(rank_avg_win) else 0.0))
+            - (0.45 * abs(min(0.0, primary_worst_dd)))
+            - (0.20 * (avg_std if np.isfinite(avg_std) else 0.0))
+        )
     balanced_rank_score = objective_score
 
     return CandidateScore(
