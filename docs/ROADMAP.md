@@ -1,8 +1,25 @@
 # 三风格体系完善与调参 Roadmap
 
-> 状态：Phase 1 完成（含进入 Phase 2 前的复查修复），下一步 Phase 2
+> 状态：Phase 2 完成（Modal 执行器代码就绪，云端联调受当晚网络波动阻塞，本地路径为默认 fallback），下一步 Phase 3
 > 最后更新：2026-09-23
 > 本文档是 risk_on / risk_off / balanced 三风格体系改造与调参的权威计划。
+
+## Phase 2 完成记录（2026-09-23）
+
+**1. Regime 条件评分（`9a62c57`）**：backtest 每个 replay 时点打 PIT 基准动量标签（QQQ 60 日 trailing，无未来函数），写入 signals/events；`risk_on_rank_score` 只按上涨段事件评分（超额 0.45 + 胜率 0.25 + 参与度 0.15 − 波动 0.15），`risk_off_rank_score` 只按下跌段（超额 0.45 + 胜率 0.35 − 回撤超 15% 罚 0.20）；无 regime 标签时回退旧公式。Smoke 验证三 rank score 首次真正分离（risk_on +0.48 / risk_off +0.07 / balanced −3.22）。
+
+**2. 窗口重叠修复**：风险统计（series_std / worst_dd）改用贪心非重叠事件子序列（gap = horizon×1.5 日历日），月度采样 + 60 天持有不再三连计同一行情；单元验证通过。
+
+**3. 引擎复用优化**：fundamentals + bar_db 跨 base/loose/strict 场景共享——实测 loose/strict 场景加载时间从 ~2.5 分钟降到 +0s，每候选（4 窗口）省约 10 分钟。
+
+**4. 动量参数空间**：`configs/tuner.param_space.momentum.json`（11 轴：per-channel momentum 门槛/SMA 距离/回撤/波动 + 全局结构参数），risk_on 的 Phase 3 调参空间就绪。
+
+**5. Modal 执行器（`3135fe9`，代码就绪、联调受阻）**：
+- 就绪项：`scripts/modal_executor.py`（候选级并行：每候选一个容器内完整 4 窗口 × 3 场景重放，镜像 pin 本地同版 pandas/numpy/requests，Volume `ai-scanner-cache` 已上传核对 680+680+83 文件，`.env` 密钥经 Modal Secret 注入）；`tune_parameters --executor modal` 已接线，评分/promote 全留本地，`run_candidate` 远端零改动复用。
+- Bring-up 修复：`Volume.from_name(create_if_missing=False)` 是阻塞性存在检查（改用 True）；modal 1.5.5 无 `max_retries`；stdin 入口不可被 mount（真实脚本无此问题）。
+- **阻塞项**：当晚本地到 Modal 的 Python API 通道（gRPC 长连接）整体不稳定——plain probe（无镜像/卷/密钥）曾 2 秒成功、随后挂起 >35 分钟，而 CLI 通道（volume create/put/ls）始终正常。与我们的代码复杂度无关。
+- **处置**：按风险表预案，本地串行为默认路径；Modal 在网络环境正常时以 `--executor modal` 一键接入（对 Phase 3 是加速器而非阻塞项）。重试清单：白昼网络环境、代理设置（MODAL_* 相关环境变量）、或锁定 modal 客户端更早版本对照。
+
 
 ## Phase 1 复查记录（2026-09-23，进入 Phase 2 前的质量关卡）
 
