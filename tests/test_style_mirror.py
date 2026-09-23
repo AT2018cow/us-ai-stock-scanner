@@ -162,6 +162,41 @@ class TestStyleMirror(unittest.TestCase):
             cfg = load_config(cfg_path)
             self.assertEqual(cfg.benchmark_trend_filter_symbol, "QQQ")
 
+    def test_benchmark_breaker_mounts_on_all_list_types(self) -> None:
+        # Regression: the breaker used to be wired only into the low_value
+        # steps, leaving the momentum list (risk_on's PRIMARY) unprotected —
+        # e.g. an ED signal fired on 2025-04-30 while QQQ sat below its own
+        # 200d SMA. When enabled it must gate every list of the config.
+        from ai_value_scanner.scanner import (
+            build_industry_trend_steps,
+            build_momentum_steps,
+        )
+
+        for cfg_path in ["configs/config.risk_on.json", "configs/config.risk_off.json"]:
+            cfg = load_config(cfg_path)
+            channel = "core_ai"
+            profile = cfg.channel_profiles[channel]
+            for name, steps in [
+                ("low_value", build_filter_steps(cfg, channel, profile)),
+                ("trend", build_industry_trend_steps(cfg, channel, profile)[0]),
+                ("momentum", build_momentum_steps(cfg, channel, profile)[0]),
+            ]:
+                names = [s for s, _ in steps]
+                self.assertIn(
+                    "benchmark_trend_filter",
+                    names,
+                    f"{cfg_path}:{name} list missing the benchmark breaker",
+                )
+        cfg = load_config("configs/config.balanced.json")
+        profile = cfg.channel_profiles["core_ai"]
+        for name, steps in [
+            ("low_value", build_filter_steps(cfg, "core_ai", profile)),
+            ("trend", build_industry_trend_steps(cfg, "core_ai", profile)[0]),
+            ("momentum", build_momentum_steps(cfg, "core_ai", profile)[0]),
+        ]:
+            names = [s for s, _ in steps]
+            self.assertNotIn("benchmark_trend_filter", names, "balanced must stay unconditional")
+
 
 if __name__ == "__main__":
     unittest.main()

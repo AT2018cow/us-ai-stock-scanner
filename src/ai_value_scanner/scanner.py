@@ -3443,6 +3443,25 @@ def append_professional_filter_steps(
     return steps
 
 
+def build_benchmark_trend_step(config: ScanConfig) -> tuple[str, Any] | None:
+    """Absolute-momentum circuit breaker shared by ALL list builders.
+
+    When enabled (benchmark_trend_filter_symbol) and the benchmark trades
+    below its own long-term trend, every list (low_value / industry_trend /
+    momentum) of that config goes dark. Missing trend state fails open so a
+    data gap cannot silently silence the defensive profile.
+    """
+    if not config.benchmark_trend_filter_symbol:
+        return None
+
+    def _benchmark_trend_mask(frame: pd.DataFrame) -> pd.Series:
+        if "benchmark_trend_ok" not in frame.columns:
+            return pd.Series(True, index=frame.index)
+        return frame["benchmark_trend_ok"].fillna(True).astype(bool)
+
+    return ("benchmark_trend_filter", _benchmark_trend_mask)
+
+
 def build_filter_steps(
     config: ScanConfig, channel_name: str, channel_profile: dict[str, Any]
 ) -> list[tuple[str, Any]]:
@@ -3608,15 +3627,9 @@ def build_filter_steps(
                 lambda frame: frame["price_to_sma200"].fillna(-np.inf) >= cp["min_price_to_sma200"],
             )
         )
-    if config.benchmark_trend_filter_symbol:
-        def _benchmark_trend_mask(frame: pd.DataFrame) -> pd.Series:
-            # Absolute-momentum circuit breaker (risk_off): when the benchmark
-            # trades below its own long-term trend, no signals are produced.
-            if "benchmark_trend_ok" not in frame.columns:
-                return pd.Series(True, index=frame.index)
-            return frame["benchmark_trend_ok"].fillna(True).astype(bool)
-
-        steps.append(("benchmark_trend_filter", _benchmark_trend_mask))
+    breaker_step = build_benchmark_trend_step(config)
+    if breaker_step is not None:
+        steps.append(breaker_step)
     if cp["min_days_below_sma200"] is not None:
         steps.append(
             (
@@ -3949,6 +3962,9 @@ def build_industry_trend_steps(
             ),
         )
     )
+    breaker_step = build_benchmark_trend_step(config)
+    if breaker_step is not None:
+        steps.append(breaker_step)
     return steps, trend_weights
 
 
@@ -4155,6 +4171,9 @@ def build_momentum_steps(
             ),
         )
     )
+    breaker_step = build_benchmark_trend_step(config)
+    if breaker_step is not None:
+        steps.append(breaker_step)
     return steps, momentum_weights
 
 
