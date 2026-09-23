@@ -712,7 +712,11 @@ def load_alpaca_client(scan_config: ScanConfig) -> tuple[AlpacaClient, NetworkMo
         cache_enabled=scan_config.alpaca_cache_enabled,
         cache_ttl_assets_sec=scan_config.alpaca_cache_ttl_assets_sec,
         cache_ttl_snapshots_sec=scan_config.alpaca_cache_ttl_snapshots_sec,
-        cache_ttl_bars_sec=scan_config.alpaca_cache_ttl_bars_sec,
+        # Historical daily bars barely change within a tuning session; the
+        # default 6h TTL (mtime-based) would mark Volume-hosted cache files
+        # stale and make every cloud container re-fetch and concurrently
+        # rewrite the same bars files. Use a 30-day TTL for replay.
+        cache_ttl_bars_sec=2_592_000,
         monitor=monitor,
     )
     return client, monitor

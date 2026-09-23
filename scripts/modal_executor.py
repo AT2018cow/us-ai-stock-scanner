@@ -39,6 +39,10 @@ cache_volume = modal.Volume.from_name("ai-scanner-cache", create_if_missing=True
     volumes={"/root/cache": cache_volume},
     secrets=[modal.Secret.from_dotenv(".env")],
     timeout=6 * 3600,
+    # The replay is single-core pandas/JSON work (json.load holds the GIL),
+    # so more cores per container only increase billing, not speed.
+    cpu=1.0,
+    memory=4096,
 )
 def run_candidate_remote(
     candidate_json: str,
@@ -207,9 +211,30 @@ def main() -> None:
         )
         for c in candidates_payload
     ]
-    # local_entrypoint already runs the app; starmap takes a list of
-    # positional-argument tuples (map() expects one iterable per parameter).
-    raw_results = list(run_candidate_remote.starmap(payloads))
+    # modal 1.5.5 functions have no max_concurrency knob, so concurrency is
+    # capped locally: at most N tasks are in flight (spawned + awaited) at
+    # any time, limiting the number of simultaneously running containers.
+    import concurrent.futures
+
+    concurrency = int(os.environ.get("MODAL_TUNER_CONCURRENCY", "12"))
+
+    def _run_one(payload: tuple) -> str:
+        call = run_candidate_remote.spawn(*payload)
+        return call.get()
+
+    raw_results: list[Any] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futs = {pool.submit(_run_one, p): i for i, p in enumerate(payloads)}
+        ordered: dict[int, str] = {}
+        for fut in concurrent.futures.as_completed(futs):
+            i = futs[fut]
+            try:
+                ordered[i] = fut.result()
+            except Exception as exc:  # keep one bad candidate from killing the batch
+                ordered[i] = json.dumps(
+                    {"ok": False, "cid": candidates_payload[i]["cid"], "error": f"{type(exc).__name__}: {exc}"}
+                )
+        raw_results = [ordered[i] for i in range(len(payloads))]
     results = [json.loads(r) for r in raw_results]
     out_path.write_text(json.dumps(results))
 
