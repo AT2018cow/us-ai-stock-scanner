@@ -1,8 +1,23 @@
 # 三风格体系完善与调参 Roadmap
 
-> 状态：Phase 1 完成（B 路线落地，D1 以架构依据 + 方向性证据通过），下一步 Phase 2
-> 最后更新：2026-09-22
+> 状态：Phase 1 完成（含进入 Phase 2 前的复查修复），下一步 Phase 2
+> 最后更新：2026-09-23
 > 本文档是 risk_on / risk_off / balanced 三风格体系改造与调参的权威计划。
+
+## Phase 1 复查记录（2026-09-23，进入 Phase 2 前的质量关卡）
+
+| 复查项 | 结果 |
+|---|---|
+| 新参数 channel 解析链路（min_price_to_sma200 / min_range_position_52w） | ✓ risk_on 通道取到 1.02/0.70，balanced 保持 None 不受影响 |
+| bars helpers 数学（scanner 端 close/SMA200） | ✓ 与手工逐位一致 |
+| backtest 端 `benchmark_trend_ok_asof` 的 PIT asof 截断 | ✓ 与 QQQ 真实日线状态逐点一致（2025-03/04、2026-03 破线均正确识别） |
+| `price_dimension_from_bars` 底层语义 | ✓（52w 区间用日内 high/low；days_below 为 trailing 连续天数；price_to_sma200 = 当前价/近 200 收盘均） |
+| **breaker 挂载覆盖** | ✗ **发现真 bug**：QQQ 熔断只挂在 low_value 步骤，momentum 清单（risk_on 的 primary）与 trend 清单裸奔——2025-04-30 ED 信号在 QQQ 破线下发出 |
+
+**bug 修复（81fe378）**：提取 `build_benchmark_trend_step` 公共步骤，挂载到 low_value / industry_trend / momentum 三个清单构建器；回归测试断言三清单的挂载/缺席。修复后重放验证：2025-04-30 momentum 信号被正确熔断（该笔为负超额交易，2025 年 momentum 超额 +4.1% → **+8.1%**）；2025-03、2026-03 破线月末亦无信号。
+
+**教训**：D1-B 首次汇报中"QQQ breaker 正确休眠"的说法当时无法成立——primary 清单根本没挂载 breaker，无从触发。用户要求复查的决定再次避免了把缺陷带入 Phase 2/3。
+
 
 ## Phase 1 数据复核结论（2026-09-22，决策前验证）
 
