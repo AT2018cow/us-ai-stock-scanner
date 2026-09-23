@@ -118,6 +118,12 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated list types that drive objective scoring and production guardrails.",
     )
     p.add_argument("--search-mode", default="auto", choices=["auto", "grid", "random"])
+    p.add_argument(
+        "--executor",
+        default="local",
+        choices=["local", "modal"],
+        help="local: run backtests in-process; modal: one cloud container per candidate.",
+    )
     p.add_argument("--max-candidates", type=int, default=36)
     p.add_argument("--random-seed", type=int, default=42)
     p.add_argument("--top-n", type=int, default=10)
@@ -1161,23 +1167,45 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     candidate_map = {c.cid: c for c in candidates}
-    for idx, candidate in enumerate(candidates, start=1):
-        log(f"[{idx}/{len(candidates)}] evaluating {candidate.cid}")
-        score = run_candidate(
-            candidate=candidate,
+
+    if getattr(args, "executor", "local") == "modal":
+        # Candidate-level cloud parallelism: each candidate's full replay
+        # runs inside its own Modal container; scoring logic is reused
+        # verbatim on the remote side via run_candidate.
+        from modal_executor import dispatch
+
+        log("executor=modal: dispatching candidates to Modal (parallel)")
+        remote_results = dispatch(
+            candidates=candidates,
             windows=windows,
             args=args,
             output_stem=stamp,
-            horizons=horizons,
-            list_types=list_types,
-            primary_list_types=primary_list_types,
-            objective_weights=objective_weights,
-            scenario_weights=scenario_weights,
-            list_weights=list_weights,
-            horizon_weights=horizon_weights,
-            work_dir=work_dir,
         )
-        rows.append(score.__dict__)
+        for idx, res in enumerate(remote_results, start=1):
+            if not res.get("ok"):
+                log(f"[{idx}] {res.get('cid')} FAILED on Modal: {res.get('error')}")
+                continue
+            cid = res.pop("cid", None)
+            log(f"[{idx}] {cid} objective={res.get('objective_score'):.4f} risk_on={res.get('risk_on_rank_score'):.4f} risk_off={res.get('risk_off_rank_score'):.4f}")
+            rows.append(res)
+    else:
+        for idx, candidate in enumerate(candidates, start=1):
+            log(f"[{idx}/{len(candidates)}] evaluating {candidate.cid}")
+            score = run_candidate(
+                candidate=candidate,
+                windows=windows,
+                args=args,
+                output_stem=stamp,
+                horizons=horizons,
+                list_types=list_types,
+                primary_list_types=primary_list_types,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights=list_weights,
+                horizon_weights=horizon_weights,
+                work_dir=work_dir,
+            )
+            rows.append(score.__dict__)
 
     scores_df = pd.DataFrame(rows)
     results_csv = outputs_dir / f"{stamp}_results.csv"

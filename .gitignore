@@ -10,3 +10,4 @@ __pycache__/
 outputs/
 cache/
 *.egg-info/
+.debug_logs/
