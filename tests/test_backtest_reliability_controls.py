@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from ai_value_scanner.backtest import (
@@ -39,6 +40,24 @@ class TestBacktestReliabilityControls(unittest.TestCase):
             parse_watchlist_snapshot_date(Path("watch_20260529T120000Z.csv")),
             pd.Timestamp("2026-05-29", tz="UTC"),
         )
+
+    def test_benchmark_trailing_return_asof_is_pit(self) -> None:
+        # Regression (Phase 4 audit): the regime symbol's bars must be fetched
+        # even when the config has no benchmark trend filter — balanced ran
+        # with regime="unknown" on all 1584 events because QQQ never entered
+        # the bar-fetch list.
+        from ai_value_scanner.backtest import benchmark_trailing_return_asof
+
+        frame = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=130, freq="D", tz="UTC"),
+                "close": np.linspace(100, 160, 130),
+            }
+        ).set_index("date")
+        db = {"QQQ": frame}
+        r = benchmark_trailing_return_asof(db, "QQQ", pd.Timestamp("2024-05-01", tz="UTC"), 60)
+        self.assertIsNotNone(r)
+        self.assertGreater(r, 0.0)  # rising series -> positive trailing return
 
     def test_resolve_watchlist_asof_prefers_latest_snapshot_before_asof(self) -> None:
         snapshots = [

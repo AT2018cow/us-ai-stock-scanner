@@ -2208,8 +2208,15 @@ def build_signal_events_historical_replay(
     symbols = prefetch_universe["symbol"].dropna().astype(str).tolist()
     benchmark_etfs = normalize_symbol_list([str(x).upper() for x in (scan_config.ai_link_benchmark_etfs or [])])
     trend_filter_symbol = str(scan_config.benchmark_trend_filter_symbol or "").upper().strip()
+    # Regime tagging always needs the regime symbol's bars (defaults to QQQ),
+    # even when the config has no benchmark trend filter enabled — otherwise
+    # every signal silently falls to regime="unknown" (observed for balanced
+    # in Phase 4: 1584/1584 unknown because QQQ never entered the bar fetch).
+    regime_symbol = str(scan_config.benchmark_trend_filter_symbol or "QQQ").upper()
     bars_symbols = normalize_symbol_list(
-        symbols + benchmark_etfs + ([trend_filter_symbol] if trend_filter_symbol else [])
+        symbols
+        + benchmark_etfs
+        + [s for s in (trend_filter_symbol, regime_symbol) if s]
     )
 
     bt_log(
@@ -2290,7 +2297,6 @@ def build_signal_events_historical_replay(
     rows: list[dict[str, Any]] = []
     watchlist_source_counts: dict[str, int] = {}
     last_heartbeat = 0.0
-    regime_symbol = str(scan_config.benchmark_trend_filter_symbol or "QQQ").upper()
     for i, asof in enumerate(dates, start=1):
         now_tick = time.monotonic()
         if i == 1 or i == len(dates) or (now_tick - last_heartbeat) >= 30.0:
