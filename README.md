@@ -249,7 +249,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.1 运行、并发、缓存、限速
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
@@ -266,7 +266,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.2 Watchlist 与 AI 关联评分
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `watchlist_csv_path` | `data/ai_watchlist.csv` | 扫描输入 watchlist 路径。 |
 | `watchlist_fetch_timeout_sec` | `20` | watchlist 刷新脚本网络超时。 |
@@ -282,7 +282,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.3 Universe 与流动性门槛
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `enabled_exchanges` | `NYSE,NASDAQ,AMEX,ARCA,BATS` | 交易所白名单。 |
 | `min_price` | `1.0` | 最低股价。 |
@@ -293,7 +293,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.4 财务口径与正值开关
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `use_ttm_metrics` | `true` | 优先使用 TTM 指标。 |
 | `use_adjusted_quality_metrics` | `true` | 质量与盈利相关指标使用“调整后”口径。 |
@@ -306,7 +306,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.5 价值、质量与风险硬过滤阈值
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `min_fundamental_quality_score` | `0.58` | 质量综合分下限。 |
 | `min_revenue` | `10000000` | 收入下限。 |
@@ -341,7 +341,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.6 价格行为与波动阈值
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `price_lookback_days` | `420` | 价格特征计算回看天数。 |
 | `min_drawdown_from_52w_high` | `null` | 52 周高点回撤下限。 |
@@ -357,7 +357,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.7 可交易性、分散化、评分稳健性
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `assumed_position_usd` | `250000` | 估算冲击成本的单票仓位。 |
 | `max_adv_participation` | `0.05` | 交易参与度（仓位/ADV）上限。 |
@@ -371,7 +371,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.8 覆盖率模式、去重与输出数量
 
-| 参数 | 默认值（balanced） | 作用 |
+| 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
 | `metric_hard_filter_coverage_mode` | `balanced` | 硬过滤覆盖率模式：`high_coverage_only` / `balanced` / `all_metrics`。 |
 | `force_hard_filter_low_coverage_metrics` | `false` | 是否将低覆盖指标强制纳入硬过滤。 |
@@ -544,7 +544,7 @@ python run_scan.py --help
 - `valuation_hard`：估值与价量风格门槛（估值分位、折价、位置、波动等）
 
 说明：
-- 当前代码支持在 `channel_profiles.<channel>` 中覆写更多前置门槛（如 `require_positive_*`、`min_revenue`、`min_net_income`、`max_ps`、`max_pe`），用于拉开 `risk_on / balanced / risk_off` 的分流差异。
+- 当前代码支持在 `channel_profiles.<channel>` 中覆写更多前置门槛（如 `require_positive_*`、`min_revenue`、`min_net_income`、`max_ps`、`max_pe`），用于拉开 `risk_on / risk_off` 的分流差异。
 
 ## 10. 缓存与限速
 

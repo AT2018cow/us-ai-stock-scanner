@@ -176,9 +176,9 @@ class TestTuneParameterConstraints(unittest.TestCase):
             ]
         )
         picks = self.tuner.pick_profile_candidates(scores)
-        self.assertEqual(picks["balanced"], "cand_a")
         self.assertEqual(picks["risk_on"], "cand_a")
         self.assertEqual(picks["risk_off"], "cand_a")
+        self.assertNotIn("balanced", picks)  # archived, no longer a promote target
 
     def test_finite_nanmean_ignores_nan_and_handles_empty(self) -> None:
         self.assertAlmostEqual(self.tuner.finite_nanmean([0.1, float("nan"), 0.3]), 0.2)

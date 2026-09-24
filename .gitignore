@@ -11,3 +11,4 @@ outputs/
 cache/
 *.egg-info/
 .debug_logs/
+data/watchlist_history/

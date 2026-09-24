@@ -1040,8 +1040,9 @@ def pick_profile_candidates(scores_df: pd.DataFrame) -> dict[str, str]:
         valid = scores_df.copy()
 
     picks: dict[str, str] = {}
+    # Two-style: balanced_rank_score is kept in the DataFrame for ranking
+    # context, but balanced is no longer a promote target (archived).
     order = [
-        ("balanced", "balanced_rank_score"),
         ("risk_on", "risk_on_rank_score"),
         ("risk_off", "risk_off_rank_score"),
     ]
@@ -1086,7 +1087,7 @@ def write_tuning_report(
     lines.append("")
     lines.append("## Profile Picks")
     lines.append("")
-    for name in ("balanced", "risk_on", "risk_off"):
+    for name in ("risk_on", "risk_off"):  # balanced archived
         cid = picks.get(name)
         if not cid:
             lines.append(f"- {name}: none")
@@ -1226,7 +1227,8 @@ def main() -> None:
 
     if bool(args.promote and not args.no_promote):
         mapping = {
-            "balanced": Path(args.balanced_config_path),
+            # Two-style architecture: balanced is archived and never promoted.
+            # The key is kept for backward compatibility with older reports.
             "risk_on": Path(args.risk_on_config_path),
             "risk_off": Path(args.risk_off_config_path),
         }
