@@ -507,7 +507,7 @@ class ScanConfig:
     score_winsor_upper_q: float = 0.95
     benchmark_trend_filter_symbol: str | None = None
     benchmark_trend_filter_sma_days: int = 200
-    sec_cache_ttl_submissions_sec: int = 604800
+    sec_cache_ttl_submissions_sec: int = 0
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
