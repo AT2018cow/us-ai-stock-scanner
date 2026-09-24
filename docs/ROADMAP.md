@@ -1,8 +1,13 @@
 # 三风格体系完善与调参 Roadmap
 
-> 状态：Phase 3 完成（144 候选全部成功 + 准确性双重验证通过），待用户确认最小 promote，下一步 Phase 4
+> 状态：Phase 3 完成并闭门（含唯一档位级 promote 已执行），下一步 Phase 4
 > 最后更新：2026-09-24
 > 本文档是 risk_on / risk_off / balanced 三风格体系改造与调参的权威计划。
+
+## Phase 3 promote 执行记录（2026-09-24，人工审阅通过）
+
+按 D3 审阅结论执行唯一档位级改动：`config.risk_on.json` 三通道 `momentum_min_return_60d` 0.005~0.015 → **0.10**（ai_smallcap 保持 0.05 不动——tuning 空间未覆盖该通道，无证据不变动）。依据：Phase 3 的 80 候选 Top-8 全体收敛 + Phase 0 与 D1 的独立证据（三重收敛，档位级差异 ~7 倍，远超噪声）。balanced / risk_off 无改动（区分度不足以支持微调 promote）。75 回归测试全绿。
+
 
 ## Phase 3 完成记录（2026-09-24）
 
