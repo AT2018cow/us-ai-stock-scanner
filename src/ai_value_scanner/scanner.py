@@ -507,6 +507,7 @@ class ScanConfig:
     score_winsor_upper_q: float = 0.95
     benchmark_trend_filter_symbol: str | None = None
     benchmark_trend_filter_sma_days: int = 200
+    sec_cache_ttl_submissions_sec: int = 604800
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
@@ -1137,6 +1138,7 @@ class SecClient:
         timeout_sec: int,
         cache_dir: Path,
         request_limiter: RequestRateLimiter,
+        submissions_ttl_sec: int = 604800,
         monitor: NetworkMonitor | None = None,
     ) -> None:
         self.session = session
@@ -1144,6 +1146,7 @@ class SecClient:
         self.timeout_sec = timeout_sec
         self.cache_dir = cache_dir
         self.request_limiter = request_limiter
+        self.submissions_ttl_sec = max(0, int(submissions_ttl_sec))
         self.monitor = monitor
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1245,10 +1248,15 @@ class SecClient:
     def get_submissions(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"submissions_{cik}.json"
         if cache_path.exists():
-            if self.monitor:
-                self.monitor.record_cache("sec", hit=True)
-            return json.loads(cache_path.read_text())
-        if self.monitor:
+            # TTL-based refresh: submissions are cheap (~176 KB each) and
+            # serve as the change detector for companyfacts staleness.
+            age_sec = time.time() - cache_path.stat().st_mtime
+            if age_sec <= self.submissions_ttl_sec:
+                if self.monitor:
+                    self.monitor.record_cache("sec", hit=True)
+                return json.loads(cache_path.read_text())
+            # TTL expired — fall through to refetch below.
+        if self.monitor and cache_path.exists():
             self.monitor.record_cache("sec", hit=False)
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         resp = self._get(url)
@@ -1262,19 +1270,35 @@ class SecClient:
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"facts_{cik}.json"
         if cache_path.exists():
+            # Incremental: only refetch when the (freshly-pulled) submissions
+            # show a filing newer than when the facts cache was written.
+            # For companies with no new filings, the 4 MB companyfacts
+            # payload is identical — skip the download entirely.
+            subs_path = self.cache_dir / f"submissions_{cik}.json"
+            if subs_path.exists():
+                try:
+                    subs = json.loads(subs_path.read_text())
+                    recent = subs.get("filings", {}).get("recent", {})
+                    filing_dates = recent.get("filingDate", [])
+                    if filing_dates:
+                        latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
+                        facts_mtime = cache_path.stat().st_mtime
+                        if latest_filing > facts_mtime:
+                            if self.monitor:
+                                self.monitor.record_cache("sec", hit=False)
+                            url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+                            resp = self._get(url)
+                            if resp.status_code == 404:
+                                return {}
+                            resp.raise_for_status()
+                            payload = resp.json()
+                            cache_path.write_text(json.dumps(payload))
+                            return payload
+                except Exception:
+                    pass  # fall back to cached facts on any parse error
             if self.monitor:
                 self.monitor.record_cache("sec", hit=True)
             return json.loads(cache_path.read_text())
-        if self.monitor:
-            self.monitor.record_cache("sec", hit=False)
-        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        resp = self._get(url)
-        if resp.status_code == 404:
-            return {}
-        resp.raise_for_status()
-        payload = resp.json()
-        cache_path.write_text(json.dumps(payload))
-        return payload
 
 
 def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
@@ -2764,6 +2788,7 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
         timeout_sec=config.request_timeout_sec,
         cache_dir=Path(config.cache_dir),
         request_limiter=sec_limiter,
+        submissions_ttl_sec=config.sec_cache_ttl_submissions_sec,
         monitor=monitor,
     )
     return alpaca, sec, monitor
