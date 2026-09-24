@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Programmatic parameter tuning via walk-forward backtest and multi-objective scoring."
     )
-    p.add_argument("--base-config", default="configs/config.balanced.json")
+    p.add_argument("--base-config", default="configs/config.risk_off.json")
     p.add_argument("--param-space", default="configs/tuner.param_space.json")
     p.add_argument("--outputs-dir", default="outputs")
     p.add_argument("--output-prefix", default=None, help="Optional fixed prefix for tuning artifacts.")
@@ -141,7 +141,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--promote", action="store_true", default=True)
     p.add_argument("--no-promote", action="store_true")
     p.add_argument("--risk-on-config-path", default="configs/config.risk_on.json")
-    p.add_argument("--balanced-config-path", default="configs/config.balanced.json")
+    p.add_argument("--balanced-config-path", default="configs/archive/config.balanced.json")  # archived; two-style promote uses risk_on/risk_off
     p.add_argument("--risk-off-config-path", default="configs/config.risk_off.json")
     p.add_argument("--min-total-valid-events", type=int, default=120)
     p.add_argument("--min-window-valid-events", type=int, default=20)

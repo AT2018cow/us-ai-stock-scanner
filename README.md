@@ -71,7 +71,7 @@ ALPACA_FEED=iex
 ### 3.3 刷新 watchlist（按需手工执行）
 
 ```bash
-python scripts/refresh_ai_watchlist.py --config configs/config.balanced.json --output data/ai_watchlist.csv
+python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv
 ```
 
 ### 3.4 运行扫描
@@ -79,22 +79,24 @@ python scripts/refresh_ai_watchlist.py --config configs/config.balanced.json --o
 示例（限制扫描数量）：
 
 ```bash
-python run_scan.py --config configs/config.balanced.json --max-symbols 300
+python run_scan.py --config configs/config.risk_off.json --max-symbols 300
 ```
 
 全量 watchlist：
 
 ```bash
-python run_scan.py --config configs/config.balanced.json
+python run_scan.py --config configs/config.risk_off.json
 ```
 
 ### 3.5 官方配置
 
-当前维护三套正式配置：
+自 2026-09-24 起采用**两风格架构**（原 balanced 与 risk_off 收益相关性 0.999，已归档）：
 
-- `configs/config.risk_off.json`：质量优先，样本更少，防守属性更强。
-- `configs/config.balanced.json`：质量与覆盖率平衡，作为默认扫描配置。
-- `configs/config.risk_on.json`：覆盖率优先，适合风险偏好较高阶段。
+- `configs/config.risk_off.json`（默认配置，防守腿）：低吸回调 + 质量 + QQQ 深度熊市熔断（SMA200 破线熄火）。
+- `configs/config.risk_on.json`（进攻腿）：双动量结构——QQQ 绝对动量开关 + momentum 清单相对选择（`momentum_min_return_60d=0.10`）。
+- 观察期协议见 `docs/OBSERVATION_PROTOCOL.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
+
+两风格各自的验证证据与历史沿革见 `docs/ROADMAP.md`（Phase 0-4 完整记录）。
 
 另有一套候选生产配置：
 
@@ -115,7 +117,7 @@ python run_scan.py --config configs/config.balanced.json
 
 ```bash
 python scripts/tune_parameters.py \
-  --base-config configs/config.balanced.json \
+  --base-config configs/config.risk_off.json \
   --param-space configs/tuner.param_space.json \
   --search-mode auto \
   --max-candidates 36
@@ -129,8 +131,7 @@ python scripts/tune_parameters.py \
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
 - `industry_trend`、`momentum`、`research_pool` 可以参与回测输出和诊断，但默认不决定生产参数是否通过。
 - 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
-- 自动选择并覆盖三套配置：
-  - `configs/config.balanced.json`
+- 自动选择并覆盖两套生产配置（balanced 路径仅为归档参考）：
   - `configs/config.risk_on.json`
   - `configs/config.risk_off.json`
 
@@ -168,7 +169,7 @@ ETF 持仓页内嵌数据实际只含前 ~25 大持仓，因此 ETF 并集天然
 构建入口（三源合并，已在 ETF 名单中的标的会被跳过，`SRC:` 前缀为来源标记，不计入 `etf_count`）：
 
 ```bash
-python scripts/build_smallcap_universe.py --config configs/config.balanced.json
+python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 ```
 
 - `nasdaq`：Nasdaq Screener 全宇宙过滤（Technology 板块 AI 相关行业，或任意板块的 AI 电力行业 `Electric Utilities: Central`/`Power Generation`/`Electrical Products`；市值 `--market-cap-min/max` 默认 3 亿–800 亿 + 日成交量下限；公司注册地限美国及半导体盟友（爱尔兰/英国/台湾/荷兰/瑞士/德国/日韩/新加坡/以色列，中国除外），名称须过普通股过滤以剔除优先股/票据/权证），约数百只。
@@ -177,7 +178,7 @@ python scripts/build_smallcap_universe.py --config configs/config.balanced.json
 
 常用参数：`--sources nasdaq,yahoo,manual`、`--max-symbols 400`（默认上限）、`--offline`（仅用手工清单）、`--dry-run`（只打印不写盘）。每次执行会先清空旧 `ai_smallcap` 行再重建（幂等）；运行顺序建议：先 `refresh_ai_watchlist.py`，再本脚本，最后 `run_scan.py`。
 
-### 4.3 默认 ETF 三池（来自 `configs/config.balanced.json`）
+### 4.3 默认 ETF 三池（来自 `configs/config.risk_off.json`，三配置共享该清单）
 
 - `watchlist_core_etfs`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
 - `watchlist_enabler_etfs`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
@@ -232,7 +233,7 @@ python scripts/build_smallcap_universe.py --config configs/config.balanced.json
 
 ## 6. 配置说明
 
-默认扫描配置：`configs/config.balanced.json`（`run_scan.py` 默认读取该文件）。
+默认扫描配置：`configs/config.risk_off.json`（`run_scan.py` 默认读取该文件；balanced 已归档）。
 
 ### 6.1 参数生效顺序与覆盖关系
 
@@ -242,9 +243,9 @@ python scripts/build_smallcap_universe.py --config configs/config.balanced.json
 4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
 5. 配置中的未知字段会被忽略（不会报错，也不会生效）。
 
-### 6.2 全局参数与阈值（`configs/config.balanced.json`）
+### 6.2 全局参数与阈值（以 `configs/config.risk_off.json` 为基准参考）
 
-说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.balanced.json` / `config.risk_on.json` / `config.strict_candidate.json`）。
+说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.risk_on.json` / `config.strict_candidate.json`；balanced 已归档）。
 
 #### 6.2.1 运行、并发、缓存、限速
 
@@ -471,7 +472,7 @@ python run_scan.py --help
 ```
 
 常用参数：
-- `--config`：配置文件路径（默认 `configs/config.balanced.json`）
+- `--config`：配置文件路径（默认 `configs/config.risk_off.json`）
 - `--max-symbols`：样本上限（在 watchlist 内按快照成交额降序截取）
 - `--output`：主结果 CSV 路径
 - `--diagnostics-output`：过滤诊断输出基路径
@@ -564,7 +565,7 @@ python run_scan.py --help
 入口：
 
 ```bash
-python run_backtest.py --mode historical_replay --scan-config configs/config.balanced.json
+python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json
 ```
 
 常用参数：

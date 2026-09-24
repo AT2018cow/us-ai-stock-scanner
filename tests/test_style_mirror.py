@@ -123,11 +123,14 @@ class TestStyleMirror(unittest.TestCase):
             frame = frame[mask_fn(frame)]
         return {"trend": "TREND" in set(frame["symbol"]), "pullback": "PULL" in set(frame["symbol"])}
 
-    def test_balanced_rejects_trend_stock_keeps_pullback(self) -> None:
-        cfg = load_config("configs/config.balanced.json")
+    def test_risk_off_rejects_trend_stock_keeps_pullback(self) -> None:
+        # Two-style architecture: risk_off is the defensive leg (pullback +
+        # quality + deep-bear breaker); it must keep the mirror behavior
+        # previously asserted for the archived balanced profile.
+        cfg = load_config("configs/config.risk_off.json")
         survived = self._structural_only(cfg)
-        self.assertFalse(survived["trend"], "balanced must reject an extended trend stock")
-        self.assertTrue(survived["pullback"], "balanced must keep the deep-pullback stock")
+        self.assertFalse(survived["trend"], "risk_off must reject an extended trend stock")
+        self.assertTrue(survived["pullback"], "risk_off must keep the deep-pullback stock")
 
     def test_risk_on_rejects_pullback_keeps_trend(self) -> None:
         cfg = load_config("configs/config.risk_on.json")
@@ -152,15 +155,15 @@ class TestStyleMirror(unittest.TestCase):
         kept = steps["benchmark_trend_filter"](frame2)
         self.assertEqual(frame2.loc[kept].shape[0], 2)
 
-    def test_risk_off_allows_trend_filter_only_for_itself(self) -> None:
-        # balanced stays unconditional (no breaker); risk_on and risk_off both
-        # carry the QQQ absolute-momentum breaker — risk_on as a dual-momentum
-        # tail guard, risk_off as its defensive core.
-        cfg = load_config("configs/config.balanced.json")
-        self.assertIsNone(cfg.benchmark_trend_filter_symbol)
+    def test_both_styles_carry_trend_filter(self) -> None:
+        # Two-style architecture: risk_on (dual-momentum tail guard) and
+        # risk_off (defensive core) both carry the QQQ breaker; the archived
+        # balanced profile stays unconditional.
         for cfg_path in ["configs/config.risk_on.json", "configs/config.risk_off.json"]:
             cfg = load_config(cfg_path)
             self.assertEqual(cfg.benchmark_trend_filter_symbol, "QQQ")
+        archived = load_config("configs/archive/config.balanced.json")
+        self.assertIsNone(archived.benchmark_trend_filter_symbol)
 
     def test_benchmark_breaker_mounts_on_all_list_types(self) -> None:
         # Regression: the breaker used to be wired only into the low_value
@@ -187,7 +190,9 @@ class TestStyleMirror(unittest.TestCase):
                     names,
                     f"{cfg_path}:{name} list missing the benchmark breaker",
                 )
-        cfg = load_config("configs/config.balanced.json")
+        # The archived balanced profile stays unconditional (historical
+        # reference; two-style promote targets are risk_on/risk_off).
+        cfg = load_config("configs/archive/config.balanced.json")
         profile = cfg.channel_profiles["core_ai"]
         for name, steps in [
             ("low_value", build_filter_steps(cfg, "core_ai", profile)),
@@ -195,7 +200,7 @@ class TestStyleMirror(unittest.TestCase):
             ("momentum", build_momentum_steps(cfg, "core_ai", profile)[0]),
         ]:
             names = [s for s, _ in steps]
-            self.assertNotIn("benchmark_trend_filter", names, "balanced must stay unconditional")
+            self.assertNotIn("benchmark_trend_filter", names, "archived balanced must stay unconditional")
 
 
 if __name__ == "__main__":

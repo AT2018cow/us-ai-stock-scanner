@@ -278,7 +278,7 @@ def merge_universe(
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Build ai_smallcap watchlist universe (Nasdaq screen + Yahoo hot lists + manual CSV).")
-    p.add_argument("--config", default="configs/config.balanced.json", help="Scanner config path (for watchlist_csv_path).")
+    p.add_argument("--config", default="configs/config.risk_off.json", help="Scanner config path (for watchlist_csv_path).")
     p.add_argument("--output", default=None, help="Optional output csv path override.")
     p.add_argument("--sources", default="nasdaq,yahoo,manual", help="Comma list of: nasdaq,yahoo,manual.")
     p.add_argument("--manual-csv", default="data/ai_smallcap_manual.csv", help="Manual symbol list path.")
