@@ -8,7 +8,9 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Refresh watchlist: `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
 - Build smallcap layer: `python scripts/build_smallcap_universe.py --config configs/config.risk_off.json` (merges Nasdaq screen + Yahoo hot + `data/ai_smallcap_manual.csv` into `ai_smallcap` bucket; idempotent rebuild). Run order: refresh ETF watchlist → smallcap builder → scan.
 - Backtest: `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`
-- Tune params: `python scripts/tune_parameters.py --base-config configs/config.risk_off.json --param-space configs/tuner.param_space.json`
+- Tune params: `python scripts/tune_parameters.py --base-config configs/config.risk_off.json --param-space configs/tuner.param_space.json` (add `--executor modal` for cloud parallelism)
+- Calibrate output volume: `python scripts/calibrate_thresholds.py --base-config configs/config.risk_off.json` (reads latest diagnostics, no backtest needed)
+- Smoke test pipeline: `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
 - Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest. 56 tests, fully offline/fast, no env needed.
 - No lint/format/typecheck tooling or CI exists. Tests are the only verification.
 
@@ -29,3 +31,5 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Log format: scan `[HH:MM:SS][LEVEL][+elapsed]`, backtest `[scope HH:MM:SS +elapsed]`.
 - Outputs: scan → `outputs/ai_value_scan_<UTC>_<scope>_ranked.*`, backtest → `outputs/backtest_<mode>_<UTC>_*`, tuner → `outputs/tuning_<UTC>_*`.
 - To add a config parameter: add the field to `ScanConfig`, wire channel override in `resolve_channel_profile`, use it in the filter/scoring step, then update the README tables. README.md (Chinese) is the authoritative reference for all filter/threshold semantics.
+
+All tool scripts are documented with usage examples in README.md §13 (工具脚本参考).

@@ -552,6 +552,11 @@ python run_scan.py --help
 - Alpaca：assets/snapshots/bars（TTL 可配置）
 - SEC：ticker mapping、submissions、companyfacts
 
+SEC 缓存采用**增量更新**机制：
+- **submissions**（每个 ~176 KB）：每次扫描都重新拉取（`sec_cache_ttl_submissions_sec`，默认 0 = 始终刷新），作为变更检测器。全量 ~680 个公司约需 2.3 分钟。
+- **companyfacts**（每个 ~4 MB，全量 1.9 GB）：只在 submissions 显示有新 filing 且 filing 日期晚于缓存写入时间时才重拉。对于无新 filing 的公司（通常 95%+），4 MB 的 facts 缓存直接命中，不产生网络请求。
+- 无需手动删除 `cache/` 即可获取最新基本面数据。
+
 相关参数：
 - `alpaca_cache_enabled`
 - `alpaca_cache_ttl_assets_sec`
@@ -559,6 +564,7 @@ python run_scan.py --help
 - `alpaca_cache_ttl_bars_sec`
 - `alpaca_max_requests_per_sec`
 - `sec_max_requests_per_sec`
+- `sec_cache_ttl_submissions_sec`（默认 0 = 每次刷新）
 
 ## 11. 回测（可选）
 
@@ -654,7 +660,104 @@ near-miss 诊断：
 2. 审阅 `tuning_*_report.md` 与 `tuning_*_results.csv`。
 3. 使用新参数运行 `run_scan.py`，确认输出质量后再投入日常使用。
 
-## 13. 说明与限制
+## 13. 工具脚本参考
+
+### 13.1 `scripts/observation_scan.py` —— 双风格观察扫描
+
+观察期的标准入口：依次运行 risk_off 和 risk_on 两个配置的完整扫描，并输出对照摘要。
+
+```bash
+# 标准（两风格全量扫描）
+.venv/bin/python scripts/observation_scan.py
+
+# 限制标的数（快速试验）
+.venv/bin/python scripts/observation_scan.py --max-symbols 100
+
+# 仅打印最近一次扫描的观察摘要（不重跑）
+.venv/bin/python scripts/observation_scan.py --skip-scan
+```
+
+每次扫描自动归档 watchlist 快照到 `data/watchlist_history/`（用于 PIT 回测）。观察指标与审查触发条件见 `docs/two_style_observation_protocol.md`。
+
+### 13.2 `scripts/refresh_ai_watchlist.py` —— 刷新 ETF 持仓 watchlist
+
+```bash
+python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv
+```
+
+从 ETF 持仓页面抓取标的并集，重建 `data/ai_watchlist.csv`。建议每周运行一次。
+
+### 13.3 `scripts/build_smallcap_universe.py` —— 构建小盘研究层
+
+```bash
+python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
+```
+
+合并 Nasdaq 筛选、Yahoo 热榜和 `data/ai_smallcap_manual.csv` 到 `ai_smallcap` bucket。幂等重建。运行顺序：refresh watchlist → smallcap builder → scan。
+
+### 13.4 `scripts/tune_parameters.py` —— 参数调优
+
+```bash
+# 本地执行
+python scripts/tune_parameters.py \
+  --base-config configs/config.risk_off.json \
+  --param-space configs/tuner.param_space.json \
+  --max-candidates 36 --no-promote
+
+# Modal 云并行执行（每候选一个容器，--executor modal）
+python scripts/tune_parameters.py \
+  --base-config configs/config.risk_on.json \
+  --param-space configs/tuner.param_space.momentum.json \
+  --max-candidates 80 --executor modal --no-promote
+```
+
+详见 §12（参数调优）。`--executor modal` 需要已配置 Modal（见 `scripts/modal_executor.py`）。
+
+### 13.5 `scripts/calibrate_thresholds.py` —— 产出量校准
+
+```bash
+python scripts/calibrate_thresholds.py --base-config configs/config.risk_off.json
+```
+
+读取最近一次扫描的诊断文件，检查三张清单的行数是否落在目标区间（默认 8-15 行），生成 `conservative` / `production` / `aggressive` 三档配置文件。纯本地操作，不跑回测。
+
+### 13.6 `scripts/modal_executor.py` —— Modal 云执行器
+
+tune_parameters 的 `--executor modal` 选项的后端。每个候选在独立 Modal 容器内执行完整回测，评分逻辑在本地。需要 Modal Volume `ai-scanner-cache`（包含 SEC 缓存）和 `.env` 中的 API 密钥。
+
+### 13.7 `scripts/phase4_validation.py` —— 体系级验证
+
+```bash
+.venv/bin/modal run scripts/phase4_validation.py
+```
+
+将全部生产配置在 Modal 三容器并行回放（`--executor` 的体系级版本），拉回 events/benchmarks/segments 用于组合分析。主要用于架构级验证（如两风格对比）。
+
+### 13.8 `scripts/audit_gap12_regression.py` —— 财务口径回归审计
+
+```bash
+python scripts/audit_gap12_regression.py --config configs/config.risk_off.json
+```
+
+对比 baseline 与新版本的 gap-12 财务指标计算结果，用于验证数据管道变更后是否引入回归。
+
+### 13.9 `scripts/build_due_diligence_cards.py` —— 尽调卡片
+
+从最新扫描结果生成每只入选股票的尽调卡片（含风险标签、估值指标、AI 关联度等），输出为结构化格式。
+
+### 13.10 `scripts/build_investment_list.py` —— 投资清单
+
+从最新扫描结果生成最终投资清单（含综合风险标签），基于 Low-Value + Research Pool 合并输出。
+
+### 13.11 `scripts/validate_small_scale.py` —— 小规模验证
+
+```bash
+python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100
+```
+
+用少量标的快速验证扫描管线（引擎/配置/数据/输出列）是否正常，适合部署前冒烟。
+
+## 14. 说明与限制
 
 - 本项目用于研究与筛选，不构成投资建议。
 - 历史回测为工程近似，不等价于完整 PIT 学术数据库回测。
