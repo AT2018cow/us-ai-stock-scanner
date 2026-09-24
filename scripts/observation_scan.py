@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,40 +39,51 @@ def main() -> None:
                 print(f"[{label}] scan FAILED (exit {result.returncode})", flush=True)
                 sys.exit(result.returncode)
 
-    # Observation summary from the latest outputs of each style
+    # Observation summary — interleaved with scan so each style reads its own report.
     print(f"\n{'='*70}\n[observation summary]\n{'='*70}", flush=True)
-    import json
     import glob
+    import re
+    from pathlib import Path as _P
 
-    import pandas as pd
+    if args.skip_scan:
+        # No new scan: use the two most recent reports (risk_off ran first → mtime order).
+        reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
+                         key=lambda p: _P(p).stat().st_mtime)
+        if len(reports) < 2:
+            print("[skip-scan] fewer than 2 reports found; run a full observation scan first.", flush=True)
+            return
+        # [-2] = risk_off (earlier), [-1] = risk_on (later)
+        for label, latest in zip([s[0] for s in STYLES], reports[-2:]):
+            _print_summary(label, latest)
+    else:
+        # We just ran the scans: interleave and grab each style's report.
+        style_reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
+                              key=lambda p: _P(p).stat().st_mtime)
+        if len(style_reports) < len(STYLES):
+            print("[warning] fewer reports than styles; scan may have failed.", flush=True)
+        for label, latest in zip([s[0] for s in STYLES], style_reports[-len(STYLES):]):
+            _print_summary(label, latest)
 
-    for label, _ in STYLES:
-        reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"))
-        candidates = [
-            (p, Path(p).name.split("_")[2])
-            for p in reports
-            if Path(p).name.startswith("ai_value_scan_")
-        ]
-        # latest report with that config's style signature: use triage section
-        latest = reports[-1] if reports else None
-        if not latest:
-            print(f"[{label}] no scan report found", flush=True)
-            continue
-        text = Path(latest).read_text()
-        import re
-        triage = re.search(r"## Triage\n(.*?)\n## Shortlist", text, re.S)
-        shortlist = re.search(r"## Shortlist\n(.*?)\n## Research Pool", text, re.S)
-        print(f"\n[{label}] latest report: {Path(latest).name}")
-        if triage:
-            print(triage.group(1).strip())
-        if shortlist:
-            lines = [l for l in shortlist.group(1).strip().splitlines() if l.strip()][:20]
-            print("\n".join(lines))
     print(
         "\nObservation reminder: record signal counts, style feature mirror stats, "
         "and regime tags per two_style_observation_protocol.md.",
         flush=True,
     )
+
+
+def _print_summary(label: str, report_path: str) -> None:
+    """Print triage + shortlist from a single style's report."""
+    from pathlib import Path
+
+    text = Path(report_path).read_text()
+    triage = re.search(r"## Triage\n(.*?)\n## Shortlist", text, re.S)
+    shortlist = re.search(r"## Shortlist\n(.*?)\n## Research Pool", text, re.S)
+    print(f"\n[{label}] report: {Path(report_path).name}")
+    if triage:
+        print(triage.group(1).strip())
+    if shortlist:
+        lines = [l for l in shortlist.group(1).strip().splitlines() if l.strip()][:20]
+        print("\n".join(lines))
 
 
 if __name__ == "__main__":
