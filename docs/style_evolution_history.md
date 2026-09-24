@@ -1,8 +1,8 @@
 # 三风格体系完善与调参 Roadmap
 
-> 状态：**架构演进为两风格**（risk_on + risk_off，balanced 归档），观察期生效（见 docs/OBSERVATION_PROTOCOL.md）
+> 状态：**架构演进为两风格**（risk_on + risk_off，balanced 归档），观察期生效（见 docs/two_style_observation_protocol.md）
 > 最后更新：2026-09-24
-> 本文档是三风格体系改造的完整历史记录；当前架构以 docs/OBSERVATION_PROTOCOL.md 为准。
+> 本文档是三风格体系改造的完整历史记录；当前架构以 docs/two_style_observation_protocol.md 为准。
 
 ## 架构决策（2026-09-24，用户拍板：两风格 + 无权重并行观察）
 
@@ -12,7 +12,7 @@ Phase 4 数据揭示 balanced 与 risk_off 收益相关性 0.87（月度）/0.99
 2. balanced 归档到 `configs/archive/`（不删除，历史参考）；
 3. 观察期：每期双风格并行输出（`scripts/observation_scan.py`），**不做权重、不做轮动、不做组合**——推迟到观察数据积累后决定；
 4. **risk_off 保持原版熔断**（SMA200）：模拟证明 60 日动量熔断会把 down 期 +24%/+22% 的低吸收益砍成 0（risk_off 从 +90.1% 跌至 +22.6%）——防守的正确语义是"下跌后修复期赚钱"，深度熊市熔断才是对的；
-5. 观察期预注册协议（防确认偏误）：见 `docs/OBSERVATION_PROTOCOL.md`（特征镜像性、信号数、regime 标记、60d 纸面收益、风格重叠度；6 个月最短观察期；预声明审查触发条件）。
+5. 观察期预注册协议（防确认偏误）：见 `docs/two_style_observation_protocol.md`（特征镜像性、信号数、regime 标记、60d 纸面收益、风格重叠度；6 个月最短观察期；预声明审查触发条件）。
 
 工程落地：引擎零改动；run_scan 与所有脚本默认配置改为 risk_off；76 测试全绿；观察第 1 期于 2026-09-24 执行。
 

@@ -84,7 +84,7 @@ STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(STANDARD_EQUITY_SYMBOL_RE)
 @dataclass
 class BacktestConfig:
     mode: str = "historical_replay"
-    scan_config_path: str = "configs/config.balanced.json"
+    scan_config_path: str = "configs/config.risk_off.json"
     outputs_dir: str = "outputs"
     output_prefix: str | None = None
     list_types: list[str] | None = None
@@ -3038,7 +3038,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Backtest AI lists via existing scans or historical replay."
     )
     p.add_argument("--mode", default="historical_replay", choices=["existing_runs", "historical_replay"])
-    p.add_argument("--scan-config", default="configs/config.balanced.json")
+    p.add_argument("--scan-config", default="configs/config.risk_off.json")
     p.add_argument("--outputs-dir", default="outputs")
     p.add_argument("--output-prefix", default=None)
     p.add_argument("--list-types", default="low_value,industry_trend,momentum")

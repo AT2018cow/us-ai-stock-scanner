@@ -1,7 +1,7 @@
 # 观察期预注册协议（Observation Protocol）
 
 > 状态：生效（两风格架构，观察起始日 2026-09-24）
-> 依据：ROADMAP Phase 4 判定 + 用户决策（两风格并行观察、不做权重、推迟组合决策）
+> 依据：style_evolution_history.md Phase 4 判定 + 用户决策（两风格并行观察、不做权重、推迟组合决策）
 
 ## 1. 架构与原则
 

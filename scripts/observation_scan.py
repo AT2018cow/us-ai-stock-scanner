@@ -1,6 +1,6 @@
 """Observation-period scanner: run both styles (risk_off, risk_on) back to back.
 
-Two-style architecture (see docs/OBSERVATION_PROTOCOL.md): every observation
+Two-style architecture (see docs/two_style_observation_protocol.md): every observation
 cycle runs both production configs and prints a side-by-side summary. No
 combined weight, no rotation — the styles are observed independently.
 
@@ -69,7 +69,7 @@ def main() -> None:
             print("\n".join(lines))
     print(
         "\nObservation reminder: record signal counts, style feature mirror stats, "
-        "and regime tags per OBSERVATION_PROTOCOL.md.",
+        "and regime tags per two_style_observation_protocol.md.",
         flush=True,
     )
 

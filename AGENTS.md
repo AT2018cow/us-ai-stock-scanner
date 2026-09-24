@@ -4,7 +4,7 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 
 ## Commands
 - Install: `.venv/bin/pip install -e .` (py>=3.10; venv is 3.12). `requirements.txt` mirrors pyproject deps.
-- Scan: `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]` (`--config` defaults to risk_off). Observation period: `python scripts/observation_scan.py` runs both styles (risk_off then risk_on); see docs/OBSERVATION_PROTOCOL.md.
+- Scan: `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]` (`--config` defaults to risk_off). Observation period: `python scripts/observation_scan.py` runs both styles (risk_off then risk_on); see docs/two_style_observation_protocol.md.
 - Refresh watchlist: `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
 - Build smallcap layer: `python scripts/build_smallcap_universe.py --config configs/config.risk_off.json` (merges Nasdaq screen + Yahoo hot + `data/ai_smallcap_manual.csv` into `ai_smallcap` bucket; idempotent rebuild). Run order: refresh ETF watchlist → smallcap builder → scan.
 - Backtest: `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`

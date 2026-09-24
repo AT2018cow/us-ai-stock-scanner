@@ -94,9 +94,9 @@ python run_scan.py --config configs/config.risk_off.json
 
 - `configs/config.risk_off.json`（默认配置，防守腿）：低吸回调 + 质量 + QQQ 深度熊市熔断（SMA200 破线熄火）。
 - `configs/config.risk_on.json`（进攻腿）：双动量结构——QQQ 绝对动量开关 + momentum 清单相对选择（`momentum_min_return_60d=0.10`）。
-- 观察期协议见 `docs/OBSERVATION_PROTOCOL.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
+- 观察期协议见 `docs/two_style_observation_protocol.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
 
-两风格各自的验证证据与历史沿革见 `docs/ROADMAP.md`（Phase 0-4 完整记录）。
+两风格各自的验证证据与历史沿革见 `docs/style_evolution_history.md`（Phase 0-4 完整记录）。
 
 另有一套候选生产配置：
 

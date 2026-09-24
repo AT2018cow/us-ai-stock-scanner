@@ -1138,7 +1138,7 @@ class SecClient:
         timeout_sec: int,
         cache_dir: Path,
         request_limiter: RequestRateLimiter,
-        submissions_ttl_sec: int = 604800,
+        submissions_ttl_sec: int = 0,
         monitor: NetworkMonitor | None = None,
     ) -> None:
         self.session = session

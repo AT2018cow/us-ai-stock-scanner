@@ -37,7 +37,7 @@ class RunArtifacts:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run small-scale validation for scanner logic.")
-    p.add_argument("--config", default="configs/config.balanced.json")
+    p.add_argument("--config", default="configs/config.risk_off.json")
     p.add_argument("--max-symbols", type=int, default=300)
     p.add_argument("--top-n", type=int, default=20)
     p.add_argument("--workdir", default="outputs/validation")
