@@ -380,9 +380,19 @@ def extract_metric_points(
                 continue
             if not np.isfinite(fv):
                 continue
+            start_raw = item.get("start")
+            try:
+                start_dt = (
+                    pd.Timestamp(start_raw, tz="UTC").normalize()
+                    if start_raw
+                    else None
+                )
+            except Exception:
+                start_dt = None
             points.append(
                 {
                     "end": end_dt,
+                    "start": start_dt,
                     "visible": vis_dt,
                     "value": fv,
                     "form": str(item.get("form") or "").upper(),
@@ -419,26 +429,264 @@ def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp,
     return out
 
 
+def _point_duration_days(point: dict[str, Any]) -> int:
+    start = point.get("start")
+    if start is None:
+        return 0
+    try:
+        return int((point["end"] - start).days)
+    except Exception:
+        return 0
+
+
 def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
+    """PIT flow series built from single-quarter periods.
+
+    Mirrors the scanner's quarter reconstruction: single-quarter entries are
+    preferred, missing Q4s are derived from annual minus YTD (or annual minus
+    the year's other quarters), and rolling 4-quarter windows carry a span
+    guard. Each window is keyed by the latest visibility date of its parts so
+    a TTM value only becomes available once its last input filing is visible.
+    Legacy points without a `start` are treated as single quarters.
+    """
     if not points:
         return []
-    quarterly = [p for p in points if normalize_form_token(p.get("form")) not in ANNUAL_FORMS]
     annual = [p for p in points if normalize_form_token(p.get("form")) in ANNUAL_FORMS]
-    quarterly = collapse_points_by_end(quarterly)
-    ttm_pairs: list[tuple[pd.Timestamp, float]] = []
-    if len(quarterly) >= 4:
-        for idx in range(3, len(quarterly)):
-            window = quarterly[idx - 3 : idx + 1]
-            visible = max(p["visible"] for p in window)
-            ttm = float(sum(float(p["value"]) for p in window))
-            ttm_pairs.append((visible, ttm))
-        by_visible: dict[pd.Timestamp, float] = {}
-        for vis, value in ttm_pairs:
-            by_visible[vis] = value
-        return sorted(by_visible.items(), key=lambda x: x[0])
+    quarterly = [p for p in points if normalize_form_token(p.get("form")) not in ANNUAL_FORMS]
 
-    annual = collapse_points_by_end(annual)
-    return build_level_series(annual)
+    def period_key(point: dict[str, Any]) -> tuple[str, pd.Timestamp]:
+        start = point.get("start")
+        return (str(start) if start is not None else "", point["end"])
+
+    def collapse(plist: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        best: dict[tuple[str, pd.Timestamp], dict[str, Any]] = {}
+        for point in plist:
+            prev = best.get(period_key(point))
+            # PIT: earliest visible wins — the first time a period was
+            # reported is when it becomes available for replay.
+            if prev is None or point["visible"] < prev["visible"]:
+                best[period_key(point)] = point
+        return list(best.values())
+
+    annual = collapse(annual)
+
+    # Group the raw quarterly points by end: quarter candidates keep the
+    # restatement semantics (latest visible wins), while YTD candidates keep
+    # the earliest visible copy, because the first time a cumulative period
+    # was reported drives the availability of any quarter derived from it.
+    by_end: dict[pd.Timestamp, list[dict[str, Any]]] = {}
+    for point in quarterly:
+        by_end.setdefault(point["end"], []).append(point)
+    quarters: dict[pd.Timestamp, dict[str, Any]] = {}
+    ytd_9m: dict[pd.Timestamp, dict[str, Any]] = {}
+    ytd_by_end: dict[pd.Timestamp, dict[str, Any]] = {}
+    ytds_by_start: dict[pd.Timestamp, list[dict[str, Any]]] = {}
+    for end, plist in by_end.items():
+        best_q: dict[str, Any] | None = None
+        for point in plist:
+            dur = _point_duration_days(point)
+            if point.get("start") is None or 40 <= dur <= 120:
+                # PIT: keep the FIRST visible copy — that is when the data
+                # first became available. Restated comparatives filed in later
+                # 10-Qs share the same period-end but carry a later visible
+                # date; keeping them would create phantom gaps where the
+                # quarter is "not yet visible" between its original filing
+                # and the restatement.
+                if best_q is None or point["visible"] < best_q["visible"]:
+                    best_q = point
+            elif 150 <= dur <= 290:
+                cur_y = ytd_by_end.get(end)
+                if cur_y is None or _point_duration_days(point) > _point_duration_days(cur_y):
+                    ytd_by_end[end] = point
+                if point.get("start") is not None:
+                    ytds_by_start.setdefault(point["start"], []).append(point)
+                if 200 <= dur <= 290:
+                    cur_9 = ytd_9m.get(end)
+                    if cur_9 is None or point["visible"] < cur_9["visible"]:
+                        ytd_9m[end] = point
+        if best_q is not None:
+            quarters[end] = best_q
+
+    # Mis-tagged annual guard (mirrors the scanner): some 10-Ks tag the FY
+    # value into a Q4-ish duration. A fiscal-year-end "quarter" that is >= 85%
+    # of the preceding 9M YTD (same sign, matching fiscal geometry) is
+    # replaced by the internally consistent annual - 9M derivation.
+    for q_end in sorted(quarters):
+        q_point = quarters[q_end]
+        ytd = None
+        for y_end, y_point in ytd_9m.items():
+            y_start = y_point.get("start")
+            if y_start is None:
+                continue
+            if (
+                80 <= int((q_end - y_end).days) <= 100
+                and 300 <= int((q_end - y_start).days) <= 380
+            ):
+                ytd = y_point
+                break
+        if ytd is None:
+            continue
+        y_val = float(ytd["value"])
+        q_val = float(q_point["value"])
+        if y_val == 0 or q_val * y_val <= 0 or abs(q_val) < 0.85 * abs(y_val):
+            continue
+        annual_at_end = next(
+            (
+                a
+                for a in annual
+                if a["end"] == q_end
+                and a.get("start") is not None
+                and _point_duration_days(a) >= 300
+            ),
+            None,
+        )
+        derived = dict(q_point)
+        if annual_at_end is not None:
+            derived["value"] = float(annual_at_end["value"]) - y_val
+            derived["visible"] = max(q_point["visible"], ytd["visible"])
+        else:
+            derived["value"] = q_val - y_val
+            derived["visible"] = max(q_point["visible"], ytd["visible"])
+            reclassified = dict(q_point)
+            reclassified["value"] = q_val
+            reclassified["start"] = ytd.get("start")
+            annual.append(reclassified)
+        quarters[q_end] = derived
+
+    # Same guard for mis-tagged entries that landed in the annual list (form
+    # 10-K but quarter-length duration): they can never be fiscal-year values
+    # as-is. When the magnitude test says the value IS the annual, derive the
+    # true Q4 from it and register it as the fiscal-year point.
+    for point in list(annual):
+        start = point.get("start")
+        if start is None:
+            continue
+        dur = _point_duration_days(point)
+        if not (40 <= dur <= 120):
+            continue
+        q_end = point["end"]
+        if q_end in quarters:
+            continue
+        ytd = None
+        for y_end, y_point in ytd_9m.items():
+            y_start = y_point.get("start")
+            if y_start is None:
+                continue
+            if (
+                80 <= int((q_end - y_end).days) <= 100
+                and 300 <= int((q_end - y_start).days) <= 380
+            ):
+                ytd = y_point
+                break
+        if ytd is None:
+            continue
+        y_val = float(ytd["value"])
+        q_val = float(point["value"])
+        if y_val == 0 or q_val * y_val <= 0 or abs(q_val) < 0.85 * abs(y_val):
+            continue
+        derived = dict(point)
+        derived["value"] = q_val - y_val
+        derived["visible"] = max(point["visible"], ytd["visible"])
+        quarters[q_end] = derived
+        reclassified = dict(point)
+        reclassified["start"] = ytd.get("start")
+        annual.append(reclassified)
+
+    # Derive missing quarters from cumulative columns (PIT availability =
+    # once all inputs are visible).
+    # (a) same end: H1 - Q2 implies the earlier quarter (ends at Q2.start - 1).
+    for end, y_point in ytd_by_end.items():
+        q_point = quarters.get(end)
+        if q_point is None or q_point.get("start") is None or y_point.get("start") is None:
+            continue
+        if not (60 <= _point_duration_days(y_point) - _point_duration_days(q_point) <= 120):
+            continue
+        implied_end = q_point["start"] - pd.Timedelta(days=1)
+        if implied_end not in quarters:
+            derived = dict(q_point)
+            derived["value"] = float(y_point["value"]) - float(q_point["value"])
+            derived["visible"] = max(q_point["visible"], y_point["visible"])
+            quarters[implied_end] = derived
+    # (b) same fiscal start: 9M - H1 implies the quarter ending at the 9M end.
+    for start, ytds in ytds_by_start.items():
+        ytds = sorted(ytds, key=lambda p: _point_duration_days(p))
+        for i in range(1, len(ytds)):
+            long_p, short_p = ytds[i], ytds[i - 1]
+            if not (
+                60 <= _point_duration_days(long_p) - _point_duration_days(short_p) <= 120
+            ):
+                continue
+            if long_p["end"] not in quarters:
+                derived = dict(long_p)
+                derived["value"] = float(long_p["value"]) - float(short_p["value"])
+                derived["visible"] = max(long_p["visible"], short_p["visible"])
+                quarters[long_p["end"]] = derived
+
+    for point in annual:
+        start = point.get("start")
+        if start is None:
+            continue
+        if _point_duration_days(point) < 300:
+            continue
+        end = point["end"]
+        if end in quarters:
+            continue
+        y9_end = None
+        for y_end, y_point in ytd_9m.items():
+            if y_point.get("start") == start and y_end < end:
+                if y9_end is None or y_end > y9_end:
+                    y9_end = y_end
+        if y9_end is not None:
+            derived = dict(point)
+            derived["value"] = float(point["value"]) - float(ytd_9m[y9_end]["value"])
+            derived["visible"] = max(point["visible"], ytd_9m[y9_end]["visible"])
+            quarters[end] = derived
+            continue
+        within = sorted(e for e in quarters if start < e < end)
+        if len(within) == 3:
+            derived = dict(point)
+            derived["value"] = float(point["value"]) - sum(
+                float(quarters[e]["value"]) for e in within
+            )
+            quarters[end] = derived
+
+    if len(quarters) < 4:
+        return build_level_series(collapse_points_by_end(annual))
+
+    ends = sorted(quarters)
+    by_visible: dict[pd.Timestamp, float] = {}
+    for idx in range(3, len(ends)):
+        e0, e3 = ends[idx - 3], ends[idx]
+        span = int((e3 - e0).days)
+        if not (240 <= span <= 310):
+            continue
+        window = [quarters[e] for e in ends[idx - 3 : idx + 1]]
+        visible = max(p["visible"] for p in window)
+        value = float(sum(float(p["value"]) for p in window))
+        by_visible[visible] = value
+
+    # A fresher 10-K annual supersedes stale quarter windows: the fiscal year
+    # IS the trailing twelve months at its own end date (recent 10-Q data
+    # missing from facts, or mid-gap filers). Keyed by the filing's
+    # visibility date for PIT replay.
+    annual_candidates = [
+        a
+        for a in annual
+        if a.get("start") is not None and _point_duration_days(a) >= 300
+    ]
+    annual_candidates.sort(key=lambda p: p["end"])
+    if annual_candidates and (
+        not ends or annual_candidates[-1]["end"] > ends[-1]
+    ):
+        latest_a = annual_candidates[-1]
+        by_visible[latest_a["visible"]] = float(latest_a["value"])
+        if len(annual_candidates) >= 2:
+            prev_a = annual_candidates[-2]
+            # Restated comparatives often share the latest 10-K's visibility
+            # date; never let the prior year overwrite the latest annual.
+            if prev_a["visible"] < latest_a["visible"]:
+                by_visible[prev_a["visible"]] = float(prev_a["value"])
+    return sorted(by_visible.items(), key=lambda x: x[0])
 
 
 def build_disclosure_series_from_submissions(submissions: dict[str, Any]) -> list[tuple[pd.Timestamp, str]]:
