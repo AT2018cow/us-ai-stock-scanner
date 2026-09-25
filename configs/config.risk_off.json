@@ -208,7 +208,8 @@
         "watchlist_etf_count": 0.05,
         "ai_link_score": 0.14,
         "range_position_52w_low": 0.06,
-        "days_below_sma200": 0.04
+        "days_below_sma200": 0.04,
+        "soft_pass_rate": 0.3
       },
       "trend_score_weights": {
         "liquidity": 0.26,
@@ -274,7 +275,8 @@
         "watchlist_etf_count": 0.04,
         "ai_link_score": 0.12,
         "range_position_52w_low": 0.04,
-        "days_below_sma200": 0.04
+        "days_below_sma200": 0.04,
+        "soft_pass_rate": 0.3
       },
       "trend_score_weights": {
         "liquidity": 0.24,
@@ -338,7 +340,8 @@
         "watchlist_etf_count": 0.03,
         "ai_link_score": 0.14,
         "range_position_52w_low": 0.06,
-        "days_below_sma200": 0.04
+        "days_below_sma200": 0.04,
+        "soft_pass_rate": 0.3
       },
       "trend_score_weights": {
         "liquidity": 0.24,
@@ -378,7 +381,8 @@
         "watchlist_etf_count": 0.0,
         "ai_link_score": 0.15,
         "range_position_52w_low": 0.08,
-        "days_below_sma200": 0.04
+        "days_below_sma200": 0.04,
+        "soft_pass_rate": 0.3
       },
       "trend_min_return_60d": -0.03,
       "trend_max_60d_volatility": 0.7,
@@ -439,5 +443,7 @@
   "low_value_min_research_score": 0.0,
   "benchmark_trend_filter_symbol": "QQQ",
   "benchmark_trend_filter_sma_days": 200,
-  "sec_cache_ttl_submissions_sec": 0
+  "sec_cache_ttl_submissions_sec": 0,
+  "filter_mode": "scored",
+  "soft_filter_weight": 0.3
 }

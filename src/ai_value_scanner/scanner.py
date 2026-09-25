@@ -39,6 +39,39 @@ SHARES_TAGS = [
     "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
 ]
+
+# Two-layer filter architecture: core hard gates + soft scoring dimensions.
+# Core gates are one-vote vetoes shared by both styles; style-structural gates
+# define each style's identity. Everything else becomes a soft pass/fail that
+# contributes to composite_score instead of eliminating the stock.
+CORE_FILTER_STEP_NAMES = frozenset({
+    "price_notna",
+    "min_price",
+    "min_dollar_volume",
+    "market_cap_notna",
+    "min_market_cap",
+    "watchlist_membership",
+    "channel_bucket_match",
+    "benchmark_trend_filter",
+    "sic_filter",
+    "max_adv_participation",
+    "max_estimated_slippage_bps",
+})
+
+STYLE_STRUCTURAL_STEP_NAMES = {
+    "risk_off": frozenset({
+        "min_drawdown_from_52w_high",
+        "max_price_to_sma200",
+        "max_range_position_52w",
+    }),
+    "risk_on": frozenset({
+        "min_price_to_sma200",
+        "min_return_20d",
+        "min_return_60d",
+        "min_range_position_52w",
+    }),
+}
+
 EPS_TAGS = [
     "EarningsPerShareBasic",
     "EarningsPerShareDiluted",
@@ -508,6 +541,8 @@ class ScanConfig:
     benchmark_trend_filter_symbol: str | None = None
     benchmark_trend_filter_sma_days: int = 200
     sec_cache_ttl_submissions_sec: int = 0
+    filter_mode: str = "scored"  # "hard" = legacy all-hard; "scored" = core + soft scoring
+    soft_filter_weight: float = 0.30  # contribution of soft pass_rate to composite_score
     enabled_exchanges: list[str] = field(
         default_factory=lambda: ["NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"]
     )
@@ -4596,6 +4631,32 @@ def summarize_first_fail_reasons(
     return summary
 
 
+def partition_filter_steps(
+    steps: list[tuple[str, Any]], channel_name: str
+) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
+    """Split filter steps into hard gates (core + style-structural) and soft.
+
+    In scored mode the hard gates are the only pass/fail elimination;
+    soft steps are evaluated on survivors and contribute to composite_score
+    via the soft_pass_rate scoring dimension.
+    """
+    # Determine style from config path convention (risk_off vs risk_on).
+    # For now use a simple heuristic: the presence of min_price_to_sma200
+    # in the step list indicates risk_on structural gates.
+    style = "risk_on" if any(
+        name == "min_price_to_sma200" for name, _ in steps
+    ) else "risk_off"
+    structural = STYLE_STRUCTURAL_STEP_NAMES.get(style, frozenset())
+    hard: list[tuple[str, Any]] = []
+    soft: list[tuple[str, Any]] = []
+    for name, fn in steps:
+        if name in CORE_FILTER_STEP_NAMES or name in structural:
+            hard.append((name, fn))
+        else:
+            soft.append((name, fn))
+    return hard, soft
+
+
 def score_and_rank(
     df: pd.DataFrame,
     weights: dict[str, float],
@@ -4725,6 +4786,14 @@ def score_and_rank(
         else:
             weight = float(weights.get(key, 0.0))
         out["composite_score"] += weight * out[norm_col]
+
+    # Two-layer scored mode: soft filter pass rate contributes to composite score.
+    if "soft_pass_count" in out.columns and pd.to_numeric(out["soft_pass_count"], errors="coerce").notna().any():
+        soft_total = pd.to_numeric(out["soft_total"], errors="coerce").fillna(1).clip(lower=1)
+        soft_count = pd.to_numeric(out["soft_pass_count"], errors="coerce").fillna(0)
+        out["soft_pass_rate"] = (soft_count / soft_total).clip(lower=0.0, upper=1.0)
+        soft_weight = float(weights.get("soft_pass_rate", 0.30)) if isinstance(weights, dict) else 0.30
+        out["composite_score"] += soft_weight * out["soft_pass_rate"]
 
     ps_pct = pd.to_numeric(out["ps_percentile_in_sic"], errors="coerce").fillna(1.0)
     pe_pct = pd.to_numeric(out["pe_percentile_in_sic"], errors="coerce").fillna(1.0)
@@ -5738,7 +5807,26 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         cp = resolve_channel_profile(config, channel_name, channel_profile)
         steps = build_filter_steps(config, channel_name, channel_profile)
-        filtered, diagnostics = apply_filters_with_diagnostics(df, steps)
+
+        if str(getattr(config, "filter_mode", "scored")).lower() == "scored":
+            hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+            filtered, diagnostics = apply_filters_with_diagnostics(df, hard_steps)
+            # Evaluate soft steps on survivors and attach pass rate for scoring.
+            if not filtered.empty and soft_steps:
+                soft_matrix = pd.DataFrame(
+                    {name: mask_fn(filtered) for name, mask_fn in soft_steps},
+                    index=filtered.index,
+                )
+                filtered["soft_pass_count"] = soft_matrix.sum(axis=1)
+                filtered["soft_total"] = len(soft_steps)
+            else:
+                filtered["soft_pass_count"] = 0
+                filtered["soft_total"] = len(soft_steps) if soft_steps else 1
+        else:
+            filtered, diagnostics = apply_filters_with_diagnostics(df, steps)
+            filtered["soft_pass_count"] = np.nan
+            filtered["soft_total"] = np.nan
+
         first_fail_summary = summarize_first_fail_reasons(df, steps)
 
         log_status(started_at, "INFO", f"Channel={channel_name}: filter diagnostics")
