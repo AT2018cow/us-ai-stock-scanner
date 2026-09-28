@@ -221,10 +221,28 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 ### 5.3 AI 关联度评分
 
 `ai_link_score`（0~1）由四部分组成：
-- `ai_etf_consensus_score`（权重 0.40）
-- `ai_disclosure_score`（权重 0.35）
-- `ai_market_link_score`（权重 0.15）
-- `ai_backlog_signal`（权重 0.10）
+- `ai_etf_consensus_score`（权重 0.40）：`min(持有该股的主题 ETF 数 / 4, 1)`——机构共识度
+- `ai_disclosure_score`（权重 0.35）：SEC submissions 文本（公司描述 + 最近 20 个申报的
+  表格/描述/items）命中 5 组关键词（ai_compute / data_center / semiconductor /
+  **power_grid（含 nuclear——电力/核能副主题由此得分）** / commercial_signal）的
+  覆盖度与密度：`0.7 × 组覆盖率 + 0.3 × 词密度`
+- `ai_market_link_score`（权重 0.15）：与 8 只基准 ETF（AIQ/BOTZ/SMH/SOXX/XLK/
+  XLI/XLU/PAVE——刻意混合半导体/工业/公用/基建）收益中位数的**对称跟随度**：
+  `1 − |个股收益 − 基准收益| / 容忍度`（20d 容忍 0.25、60d 容忍 0.40，权重 0.4/0.6）
+- `ai_backlog_signal`（权重 0.10）：`min(最新季度 backlog / TTM 营收 / 0.2, 1)`
+
+**market_link 的对称语义是设计意图而非缺陷**（2026-09-28 审计确认）：
+引入于 `312a657`（2026-05-29，"联动强度"），此后未改动。它测的是"与 AI 复合体的
+**相关性**"——方向归动量维度管（return_20d/60d 门槛与权重），深熊保护归 QQQ 熔断管
+（2022 全年空仓已实证）。**分 regime 实证（2021-2026）**：market_link 的 IC 在
+下跌市为 +0.04~+0.01（不显著为负）、全期 120d +0.046~+0.069（t=2.5~3.1）——
+"奖励跟随下跌"未造成实际伤害；composite ai_link_score 在下跌市 IC +0.10~+0.13
+（t=4.5~7.1）依然强正。**多主题引擎（docs/multi_theme_expansion.md）继承此对称语义。**
+
+组件级 IC（v2 数据集，2021-2026）：etf_consensus 最强（120d +0.13~+0.15，t=11~13）；
+backlog 弱正；**disclosure_score 60d IC ≈ -0.02（t=-1.85）**——申报文本里堆砌 AI 关键词
+（"AI washing"）的公司轻微跑输。此观察仅记录，不据此改权重（权重扫描的教训：样本内
+IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 ### 5.4 低估与质量口径（关键点）
 
