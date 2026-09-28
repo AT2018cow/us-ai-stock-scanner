@@ -50,6 +50,11 @@ CORE_FILTER_STEP_NAMES = frozenset({
     "min_dollar_volume",
     "market_cap_notna",
     "min_market_cap",
+    # Venture sleeve (docs/multi_theme_expansion.md §6.3): the $100M-$3B
+    # window is definitional — a name outside it is not a venture candidate
+    # and must be ELIMINATED, not merely penalized. Production AI configs
+    # keep max_market_cap=null (no step created), so this is a no-op there.
+    "max_market_cap",
     "watchlist_membership",
     "channel_bucket_match",
     "benchmark_trend_filter",
@@ -2964,8 +2969,16 @@ def resolve_channel_profile(
         "hard_filter_inventory_growth_gap": bool(
             profile.get("hard_filter_inventory_growth_gap", config.force_hard_filter_low_coverage_metrics)
         ),
-        "min_ps_discount": float(profile.get("min_ps_discount", config.min_ps_discount)),
-        "min_pe_discount": float(profile.get("min_pe_discount", config.min_pe_discount)),
+        "min_ps_discount": (
+            None
+            if profile.get("min_ps_discount", config.min_ps_discount) is None
+            else float(profile.get("min_ps_discount", config.min_ps_discount))
+        ),
+        "min_pe_discount": (
+            None
+            if profile.get("min_pe_discount", config.min_pe_discount) is None
+            else float(profile.get("min_pe_discount", config.min_pe_discount))
+        ),
         "min_drawdown_from_52w_high": (
             None
             if profile.get("min_drawdown_from_52w_high", config.min_drawdown_from_52w_high) is None

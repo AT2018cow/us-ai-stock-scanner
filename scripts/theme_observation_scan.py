@@ -33,7 +33,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 THEMES = ["nuclear", "quantum", "biotech", "rare_earth", "critical_minerals"]
-COHORT_CSV = Path("data/theme_cohorts.csv")
+COHORT_CSV = Path("data/theme_cohorts.csv")  # set per sleeve in main()
 HOLD_TRADING_DAYS = 120
 
 
@@ -42,22 +42,22 @@ def log(msg: str) -> None:
     print(f"[theme-obs {stamp}] {msg}", flush=True)
 
 
-def newest_report_for(theme: str) -> Path | None:
-    """Newest scan report whose Config header matches the theme config."""
+def newest_report_for(theme: str, prefix: str = "config.theme") -> Path | None:
+    """Newest scan report whose Config header matches the config prefix."""
     candidates = []
     for p in glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"):
         try:
             head = open(p, encoding="utf-8").read()[:400]
         except OSError:
             continue
-        if f"Config: configs/config.theme.{theme}.json" in head:
+        if f"Config: configs/{prefix}.{theme}.json" in head:
             candidates.append(Path(p))
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def extract_shortlist(theme: str, report: Path) -> pd.DataFrame:
+def extract_shortlist(theme: str, report: Path, prefix: str = "config.theme") -> pd.DataFrame:
     """Low-value keep/watch + momentum picks of one theme scan as cohort rows."""
     ts = re.search(r"ranked csv: outputs/(ai_value_scan_\d+T\d+Z)", report.read_text()).group(1)
     started = re.search(r"Started UTC: ([\dT:\.\-+]+)", report.read_text())
@@ -90,7 +90,7 @@ def extract_shortlist(theme: str, report: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def archive_cohort(theme: str, cohort: pd.DataFrame) -> None:
+def archive_cohort(theme: str, cohort: pd.DataFrame, cohort_csv: Path = COHORT_CSV) -> None:
     """Append one cohort; dedupe on (theme, list_type, entry_date, symbol)."""
     if cohort.empty:
         log(f"{theme}: 无可归档的 shortlist（空清单主题也按协议记录为 no-signal）")
@@ -100,14 +100,14 @@ def archive_cohort(theme: str, cohort: pd.DataFrame) -> None:
             "entry_date": datetime.now(timezone.utc).date().isoformat(),
             "entry_price": "", "status": "no_signal", "exit_date": "", "return_120d": "",
         }])
-        combined = pd.concat([pd.read_csv(COHORT_CSV) if COHORT_CSV.exists() else row, row], ignore_index=True)
-        combined.to_csv(COHORT_CSV, index=False)
+        combined = pd.concat([pd.read_csv(cohort_csv) if cohort_csv.exists() else row, row], ignore_index=True)
+        combined.to_csv(cohort_csv, index=False)
         return
-    existing = pd.read_csv(COHORT_CSV) if COHORT_CSV.exists() else cohort.head(0)
+    existing = pd.read_csv(cohort_csv) if cohort_csv.exists() else cohort.head(0)
     key = ["theme", "list_type", "entry_date", "symbol"]
     merged = pd.concat([existing, cohort], ignore_index=True)
     merged = merged.drop_duplicates(subset=key, keep="first")
-    merged.to_csv(COHORT_CSV, index=False)
+    merged.to_csv(cohort_csv, index=False)
     log(f"{theme}: 归档 cohort {len(cohort)} 行（entry_date={cohort['entry_date'].iloc[0]}）")
 
 
@@ -122,9 +122,9 @@ def print_summary(theme: str, report: Path) -> None:
     print(f"momentum picks: {len(mo)}")
 
 
-def evaluate_matured() -> None:
+def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
     """Score cohorts whose 120 trading days have elapsed (paper exit)."""
-    if not COHORT_CSV.exists():
+    if not cohort_csv.exists():
         log("无 cohort 归档")
         return
     from ai_value_scanner.scanner import load_config
@@ -133,7 +133,7 @@ def evaluate_matured() -> None:
 
     cfg = load_config("configs/config.risk_off.json")
     client, _ = load_alpaca_client(cfg)
-    d = pd.read_csv(COHORT_CSV)
+    d = pd.read_csv(cohort_csv)
     open_rows = d[(d["status"] == "open") & d["symbol"].notna() & (d["symbol"] != "")]
     if open_rows.empty:
         log("无待结算 cohort")
@@ -162,7 +162,7 @@ def evaluate_matured() -> None:
         d.loc[idx, "exit_date"] = str(frame.index[x_idx].date())
         d.loc[idx, "return_120d"] = round(exit_px / entry - 1.0, 6)
         n_matured += 1
-    d.to_csv(COHORT_CSV, index=False)
+    d.to_csv(cohort_csv, index=False)
     log(f"结算 {n_matured} 行；未到期行保持 open")
     # 汇总已结算 cohort
     matured = d[(d["status"] == "matured") & pd.to_numeric(d["return_120d"], errors="coerce").notna()]
@@ -179,25 +179,30 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--skip-scan", action="store_true", help="Reuse latest reports")
     p.add_argument("--evaluate", action="store_true", help="Only score matured cohorts")
+    p.add_argument("--sleeve", choices=["theme", "venture"], default="theme",
+                   help="theme = config.theme.* (five-theme P0); venture = config.venture.* (venture sleeve P0)")
     args = p.parse_args()
 
+    prefix = f"config.{args.sleeve}"
+    cohort_csv = Path(f"data/{args.sleeve}_cohorts.csv")
+
     if args.evaluate:
-        evaluate_matured()
+        evaluate_matured(cohort_csv)
         return
 
     for theme in THEMES:
         if not args.skip_scan:
             log(f"[{theme}] scan start")
-            result = subprocess.run([sys.executable, "run_scan.py", "--config", f"configs/config.theme.{theme}.json"])
+            result = subprocess.run([sys.executable, "run_scan.py", "--config", f"configs/{prefix}.{theme}.json"])
             if result.returncode != 0:
                 print(f"[{theme}] scan FAILED (exit {result.returncode})", flush=True)
                 continue
-        report = newest_report_for(theme)
+        report = newest_report_for(theme, prefix)
         if report is None:
             print(f"[{theme}] 无扫描报告", flush=True)
             continue
-        cohort = extract_shortlist(theme, report)
-        archive_cohort(theme, cohort)
+        cohort = extract_shortlist(theme, report, prefix)
+        archive_cohort(theme, cohort, cohort_csv)
         print_summary(theme, report)
 
     print(

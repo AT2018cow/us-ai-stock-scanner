@@ -201,6 +201,29 @@ def main() -> None:
     )
     out.to_csv("data/venture_universe.csv", index=False)
 
+    # ---------- 每主题 venture watchlist（L1 篮子 + L3 FTS 名单合并）----------
+    # Venture 扫描配置 (configs/config.venture.<theme>.json) 的输入。
+    # L3 名单 etf_count=0、etfs=SRC:SEC_FTS（来源标签不计入 ETF 计数）。
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for theme in THEMES:
+        src = Path(f"data/theme_watchlist_{theme}.csv")
+        if not src.exists():
+            continue
+        basket = pd.read_csv(src)
+        basket["symbol"] = basket["symbol"].astype(str).str.upper()
+        extra_syms = set(l3_syms.get(theme, []))
+        have = set(basket["symbol"])
+        l3_rows = pd.DataFrame([
+            {"symbol": s, "bucket": theme, "etf_count": 0,
+             "etfs": "SRC:SEC_FTS", "enabled": 1, "updated_utc": now_iso}
+            for s in sorted(extra_syms - have)
+        ])
+        merged = pd.concat([basket, l3_rows], ignore_index=True) if not l3_rows.empty else basket
+        merged = merged.drop_duplicates(subset=["symbol"], keep="first")
+        vpath = Path(f"data/venture_watchlist_{theme}.csv")
+        merged.to_csv(vpath, index=False)
+        log(f"venture watchlist {theme}: {len(merged)} 只（篮子 {len(basket)} + L3 新增 {len(merged)-len(basket)}）→ {vpath}")
+
     report = [
         f"# Venture Sleeve Universe — {now_stamp}",
         "",
