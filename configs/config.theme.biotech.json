@@ -12,9 +12,10 @@
   "ai_link_benchmark_etfs": [
     "XBI",
     "IBB",
-    "XLV"
+    "XLV",
+    "ARKG"
   ],
-  "ai_link_etf_count_saturation": 3,
+  "ai_link_etf_count_saturation": 4,
   "ai_link_disclosure_keyword_cap": 6,
   "ai_link_market_return_tolerance_20d": 0.25,
   "ai_link_market_return_tolerance_60d": 0.4,
@@ -271,12 +272,14 @@
     "source_etfs": [
       "XBI",
       "IBB",
-      "PPH"
+      "PPH",
+      "ARKG"
     ],
     "benchmark_etfs": [
       "XBI",
       "IBB",
-      "XLV"
+      "XLV",
+      "ARKG"
     ],
     "disclosure_keywords_pre_registered": [
       "clinical trial",
@@ -292,7 +295,7 @@
       "gene therapy",
       "mrna"
     ],
-    "generated_utc": "2026-09-28T12:53:55.778175+00:00",
+    "generated_utc": "2026-09-28T13:46:13.998449+00:00",
     "path": "Path 1 — disclosure weight 0 (submissions text has no business description; see README §5.3)"
   }
 }
