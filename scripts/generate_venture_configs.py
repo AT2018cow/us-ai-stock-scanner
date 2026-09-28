@@ -79,6 +79,13 @@ def venture_overrides(base: dict) -> dict:
     cfg["min_market_cap"] = 1e8
     cfg["max_market_cap"] = 3e9
     cfg["min_dollar_volume"] = 5e5
+    # Venture positions are tiny (0.25-0.5% of a portfolio, not 25% like the
+    # AI pilot), so the assumed position for tradability gates must shrink
+    # accordingly — otherwise thin early-stage names die at
+    # max_adv_participation (observed 2026-09-28: QNT 8.7% / QUBT 9.4%
+    # against the 5% cap sized for $250k positions). At 0.5% of a $100k
+    # book the position is $500, which is 0.02% of QNT's ADV.
+    cfg["assumed_position_usd"] = 2500.0
     # ---- No profitability gates ----
     cfg["require_positive_revenue"] = True
     cfg["require_positive_net_income"] = False

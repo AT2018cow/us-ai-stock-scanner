@@ -3827,10 +3827,17 @@ def build_filter_steps(
         ),
         ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
         ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
+        # Venture sleeve: max_market_cap is a definitional window gate and must
+        # be a hard gate in the momentum/trend lists too (it already is in
+        # build_filter_steps). Without it the quantum venture list filled with
+        # mega-caps (AMD $992B vs the $3B window, 2026-09-28).
+        *(
+            [("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap)]
+            if config.max_market_cap is not None
+            else []
+        ),
     ]
 
-    if config.max_market_cap is not None:
-        steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
     if cp["require_positive_revenue"]:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
     if cp["require_positive_net_income"]:
@@ -4153,9 +4160,16 @@ def build_industry_trend_steps(
         ("min_dollar_volume", lambda frame: frame["dollar_volume"].fillna(0) >= config.min_dollar_volume),
         ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
         ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
+        # Venture sleeve: max_market_cap is a definitional window gate and must
+        # be a hard gate in the momentum/trend lists too (it already is in
+        # build_filter_steps). Without it the quantum venture list filled with
+        # mega-caps (AMD $992B vs the $3B window, 2026-09-28).
+        *(
+            [("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap)]
+            if config.max_market_cap is not None
+            else []
+        ),
     ]
-    if config.max_market_cap is not None:
-        steps.append(("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap))
     if cp["require_positive_revenue"]:
         steps.append(("positive_revenue", lambda frame: frame["revenue"].fillna(-1) > 0))
     if cp["require_positive_net_income"]:
@@ -4357,6 +4371,15 @@ def build_momentum_steps(
         ("min_dollar_volume", lambda frame: frame["dollar_volume"].fillna(0) >= config.min_dollar_volume),
         ("market_cap_notna", lambda frame: frame["market_cap"].notna()),
         ("min_market_cap", lambda frame: frame["market_cap"] >= config.min_market_cap),
+        # Venture sleeve: max_market_cap is a definitional window gate and must
+        # be a hard gate in the momentum/trend lists too (it already is in
+        # build_filter_steps). Without it the quantum venture list filled with
+        # mega-caps (AMD $992B vs the $3B window, 2026-09-28).
+        *(
+            [("max_market_cap", lambda frame: frame["market_cap"] <= config.max_market_cap)]
+            if config.max_market_cap is not None
+            else []
+        ),
         (
             "min_fcf_yield",
             lambda frame: pd.to_numeric(frame["fcf_yield"], errors="coerce").fillna(-np.inf)
