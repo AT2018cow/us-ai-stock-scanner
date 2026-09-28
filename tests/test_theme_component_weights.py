@@ -68,7 +68,7 @@ class ComponentWeightDefaultsTest(unittest.TestCase):
         nuclear = load_config("configs/config.theme.nuclear.json")
         self.assertEqual(nuclear.ai_link_etf_count_saturation, 3)  # NLR/URA/URNM
         biotech = load_config("configs/config.theme.biotech.json")
-        self.assertEqual(biotech.ai_link_etf_count_saturation, 3)  # XBI/IBB/PPH
+        self.assertEqual(biotech.ai_link_etf_count_saturation, 4)  # XBI/IBB/PPH/ARKG
         rare = load_config("configs/config.theme.rare_earth.json")
         self.assertEqual(rare.ai_link_etf_count_saturation, 1)  # REMX only
 
