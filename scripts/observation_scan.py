@@ -46,23 +46,47 @@ def main() -> None:
     from pathlib import Path as _P
 
     if args.skip_scan:
-        # No new scan: use the two most recent reports (risk_off ran first → mtime order).
+        # No new scan: pick the newest AI-style report per style via the
+        # Config header (theme scans write reports with config.theme.*.json —
+        # mtime-order pairing would mislabel a theme report as a style).
+        import os
         reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
                          key=lambda p: _P(p).stat().st_mtime)
-        if len(reports) < 2:
-            print("[skip-scan] fewer than 2 reports found; run a full observation scan first.", flush=True)
+        by_style: dict[str, str] = {}
+        for path in reversed(reports):
+            try:
+                head = _P(path).read_text()[:400]
+            except OSError:
+                continue
+            for label, cfg_name in STYLES:
+                if f"Config: {cfg_name}" in head and label not in by_style:
+                    by_style[label] = path
+        if len(by_style) < len(STYLES):
+            print("[skip-scan] fewer style reports than styles; run a full observation scan first.", flush=True)
             return
-        # [-2] = risk_off (earlier), [-1] = risk_on (later)
-        for label, latest in zip([s[0] for s in STYLES], reports[-2:]):
-            _print_summary(label, latest)
+        for label, _cfg in STYLES:
+            _print_summary(label, by_style[label])
     else:
-        # We just ran the scans: interleave and grab each style's report.
+        # We just ran the scans: the two reports this process wrote are the
+        # newest two of their styles (glob returns them last); verify via
+        # Config headers to stay theme-scan-proof.
+        import os
         style_reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
-                              key=lambda p: _P(p).stat().st_mtime)
-        if len(style_reports) < len(STYLES):
+                               key=lambda p: _P(p).stat().st_mtime)
+        picked: dict[str, str] = {}
+        for path in reversed(style_reports):
+            try:
+                head = _P(path).read_text()[:400]
+            except OSError:
+                continue
+            for label, cfg_name in STYLES:
+                if f"Config: {cfg_name}" in head and label not in picked:
+                    picked[label] = path
+        if len(picked) < len(STYLES):
             print("[warning] fewer reports than styles; scan may have failed.", flush=True)
-        for label, latest in zip([s[0] for s in STYLES], style_reports[-len(STYLES):]):
-            _print_summary(label, latest)
+        for label, _cfg in STYLES:
+            if label in picked:
+                _print_summary(label, picked[label])
 
     print(
         "\nObservation reminder: record signal counts, style feature mirror stats, "
