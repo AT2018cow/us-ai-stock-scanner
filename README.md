@@ -2,6 +2,10 @@
 
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 `AI 观察清单`执行多通道筛选。项目的核心生产策略是 `Low-Value`：在 AI 相关观察池中寻找估值处于低位、质量可接受、且没有明显价值陷阱特征的股票。
 
+**架构**（2026-09-24 起）：双风格并行——`risk_off`（低吸防守 + QQQ SMA200 深熊熔断）与
+`risk_on`（双动量进攻），两套配置独立扫描、独立观察，不合并权重。每周用
+`observation_scan.py` 同时跑两个风格。
+
 程序同时输出辅助清单：
 - `Low-Value`：核心清单，估值与质量优先。
 - `Industry-Trend`：辅助观察清单，用于识别产业趋势和主题联动，不作为生产参数通过/失败的主目标。
@@ -11,6 +15,9 @@
 项目默认只扫描本地 watchlist 中的股票，不执行全市场无约束遍历。
 
 定位说明：本项目是保守型 Low-Value 研究筛选器。它优先减少明显高估、现金流较弱、基本面恶化或主题关联不足的候选，而不是追求输出数量。正常市场环境下，`Low-Value` 清单可能只有少量股票，甚至为空；`Industry-Trend`、`Momentum` 和 `Research Pool` 用于辅助研究，不代表自动买入候选。
+
+**实盘试点**：见 §15 与 `docs/live_pilot_protocol.md`——分层权重（keep/watch/drop +
+momentum 五层）的实盘语义与 2021-2026 实证依据。
 
 ## 1. 核心能力
 
@@ -224,12 +231,42 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 - 估值：`ps`、`pe`、`ev_to_ebit`、`fcf_yield`
 - 行业相对估值：`ps_percentile_in_sic`、`pe_percentile_in_sic`
 - 个股历史估值分位：`ps_hist_percentile`、`pe_hist_percentile`
-  - 基于“历史价格 + 历史 TTM 分母 + 历史股本”重建估值序列计算
+  - 基于"历史价格 + 历史 TTM 分母 + 历史股本"重建估值序列计算
   - 来源字段：`*_hist_percentile_source`、`*_hist_observation_count`
 - 质量与稳健性：
   - 盈利/现金流（可切换 `use_adjusted_quality_metrics`、`use_ttm_metrics`）
   - 资产负债与现金化（如 `interest_coverage`、`net_debt_to_ebitda`、`ocf_to_net_income`）
   - 营运与稀释（如 `receivables_growth_gap`、`inventory_growth_gap`、`shares_yoy`）
+
+### 5.5 指标清单与验证状态（2026-09-27）
+
+全部指标的验证覆盖矩阵见 `outputs/metrics_coverage_matrix.md`。按计算路径分五类：
+
+| 类别 | 指标 | 验证方式与结果 |
+|---|---|---|
+| SEC 流量（TTM 重建） | revenue、net_income、adjusted_net_income、operating_cash_flow、free_cash_flow、ebit、adjusted_ebit、interest_expense、depreciation_and_amortization、capex | 7 家族全总体不变量（680 公司）：I2（推导 vs 申报方自报离散值）**零不匹配**；运作窗口年度闭合违反率 0.19%（7 条，逐条归因为申报方自身数据现实）。覆盖率 65.7%~88.8%，其余公司按设计回退年报值（名单见 `ttm_population_validation_*_coverage.csv`） |
+| SEC 存量（资产负债表） | shares_outstanding、total_debt、cash、receivables、inventory、current_assets/liabilities、net_debt | 总体自洽：market_cap=shares×price 中位比率 1.000 零偏离；net_debt=total_debt−cash 零偏差；股本另有专门修复（dei 合并/单位检测/陈旧置空） |
+| 衍生比率 | net_margin、current_ratio、ocf_to_net_income、interest_coverage、net_debt_to_ebitda、ps/pe、fcf_yield、accrual_ratio、current_debt_ratio、SIC/历史分位 ×4、adv_participation、slippage、YoY ×5、growth_gap ×2 | 边界检查 + 越界抽样复算：越界行全部复算一致（合法极值公司，如疫情年 LUV OCF/NI=739） |
+| 价格特征（Alpaca） | price、dollar_volume、return_20d/60d、volatility_60d、avg_dollar_volume_20d、drawdown_from_52w_high、range_position_52w、price_to_sma200、days_below_sma200 | 跨源逐位一致（26,116 对前向收益两次独立提取）、bars 完整性核查通过 |
+| AI/主题启发式 | ai_link_score（=ETF 共识 0.40 + 披露 0.35 + 市场联动 0.15 + backlog 0.10）、watchlist_etf_count、expectation_proxy、cycle_proxy、fundamental_quality_score | 无会计恒等式；经验验证有最强排名力（IC t=5.7~6.0）。"有用性"已验证，无"记账对错"概念 |
+
+### 5.6 两层 scored 过滤架构（2026-09-24 起，全部清单生效）
+
+`filter_mode=scored`（默认）下，每张清单的过滤步骤分为两层：
+
+- **硬门**：核心可交易性（价格/成交额/市值/watchlist/通道/SIC）+ 风格结构门槛
+  （risk_off 的回撤/区间位置/价格相对 SMA200；risk_on 的站上 SMA200/正动量；
+  QQQ SMA200 熔断对所有清单生效）——未过即出局。
+- **软评分**：其余全部阈值（估值/质量/动量细项）不再直接淘汰，改为对幸存者
+  逐项判定通过/不通过，以 `soft_pass_rate` 计入 `composite_score`（权重见
+  各通道 `score_weights.soft_pass_rate`）。
+
+三张清单（low_value / industry_trend / momentum）与回测引擎使用同一
+`partition_filter_steps` 分层（`apply_scored_or_hard_filters`），生产与回测口径一致。
+
+`composite_score` = Σ(维度权重 × 横截面归一化分) + soft_pass_rate × 权重
+− 0.2 × 高估惩罚 − 0.2 × 恶化惩罚。维度权重见各通道 `score_weights` /
+`momentum_score_weights`（配置文件为权威值）。
 
 ## 6. 配置说明
 
@@ -306,54 +343,60 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 #### 6.2.5 价值、质量与风险硬过滤阈值
 
-| 参数 | 默认值（risk_off） | 作用 |
+下表为**全局值**（risk_off 基准）；通道可覆盖同名阈值（如 risk_off 的 `core_ai`
+覆盖 `min_ps_discount=0.05`、`min_drawdown_from_52w_high=0.05`、`max_range_position_52w=0.82`、
+`max_price_to_sma200=1.12` 等，精确值以配置文件为准）。scored 模式下除核心硬门与风格
+结构门外，这些阈值作为软维度判定（通过/不通过计入 soft_pass_rate）。
+
+| 参数 | 全局值（risk_off） | 作用 |
 |---|---:|---|
-| `min_fundamental_quality_score` | `0.58` | 质量综合分下限。 |
+| `min_fundamental_quality_score` | `0.64` | 质量综合分下限。 |
 | `min_revenue` | `10000000` | 收入下限。 |
-| `min_net_income` | `0` | 净利润下限。 |
+| `min_net_income` | `10000000` | 净利润下限。 |
 | `min_operating_cash_flow` | `0.0` | 经营现金流下限。 |
-| `min_free_cash_flow` | `0.0` | 自由现金流下限。 |
+| `min_free_cash_flow` | `20000000` | 自由现金流下限。 |
 | `min_ebit` | `0.0` | EBIT 下限。 |
-| `min_net_margin` | `null` | 净利率下限（可选）。 |
+| `min_net_margin` | `null` | 净利率下限（可选；core_ai 覆盖为 0.05）。 |
 | `max_ps` / `max_pe` | `null` / `null` | 绝对 PS/PE 上限（可选）。 |
-| `max_ev_to_ebit` | `38.0` | EV/EBIT 上限。 |
+| `max_ev_to_ebit` | `32.0` | EV/EBIT 上限。 |
 | `min_fcf_yield` | `0.005` | FCF Yield 下限。 |
-| `min_ps_discount` | `0.15` | 相对行业 PS 折价下限。 |
-| `min_pe_discount` | `0.10` | 相对行业 PE 折价下限。 |
+| `min_ps_discount` | 全局无；core_ai `0.05`、ai_enabler `0.05`、ai_peripheral `0.01`、ai_smallcap `0.02` | 相对行业 PS 折价下限。 |
+| `min_pe_discount` | 全局无；core_ai `0.02`、ai_enabler `0.02`、ai_peripheral `-0.05` | 相对行业 PE 折价下限。 |
 | `max_ps_percentile_in_sic` | `0.6` | SIC 内 PS 分位上限。 |
 | `max_pe_percentile_in_sic` | `0.6` | SIC 内 PE 分位上限。 |
 | `own_history_valuation_window_days` | `720` | 历史估值分位回看窗口（天）。 |
-| `max_ps_hist_percentile` | `0.7` | 个股历史 PS 分位上限。 |
-| `max_pe_hist_percentile` | `0.7` | 个股历史 PE 分位上限。 |
+| `max_ps_hist_percentile` | `0.6` | 个股历史 PS 分位上限。 |
+| `max_pe_hist_percentile` | `0.6` | 个股历史 PE 分位上限。 |
 | `min_revenue_yoy` | `-0.1` | 营收同比下限。 |
 | `min_net_income_yoy` | `-0.25` | 净利润同比下限。 |
-| `max_net_debt_to_ebitda` | `4.0` | 杠杆上限。 |
-| `min_interest_coverage` | `2.0` | 利息覆盖倍数下限。 |
+| `max_net_debt_to_ebitda` | `2.2` | 杠杆上限。 |
+| `min_interest_coverage` | `4.5` | 利息覆盖倍数下限。 |
 | `max_current_debt_ratio` | `0.75` | 流动负债占流动资产比上限。 |
 | `min_current_ratio` | `1.0` | 流动比率下限。 |
 | `min_ocf_to_net_income` | `0.7` | 现金利润匹配度下限。 |
-| `max_accrual_ratio` | `0.3` | 应计比率上限。 |
-| `max_receivables_growth_gap` | `0.55` | 应收增速相对营收增速的偏离上限。 |
-| `max_inventory_growth_gap` | `0.9` | 存货增速相对营收增速的偏离上限。 |
-| `max_shares_yoy` | `0.08` | 股本同比稀释上限。 |
+| `max_accrual_ratio` | `0.22` | 应计比率上限。 |
+| `max_receivables_growth_gap` | `0.4` | 应收增速相对营收增速的偏离上限。 |
+| `max_inventory_growth_gap` | `0.65` | 存货增速相对营收增速的偏离上限。 |
+| `max_shares_yoy` | `0.05` | 股本同比稀释上限。 |
 | `min_expectation_proxy` | `-0.2` | 预期代理指标下限。 |
 | `min_cycle_proxy` | `null` | 周期代理指标下限（可选）。 |
 
 #### 6.2.6 价格行为与波动阈值
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 全局值（risk_off） | 作用 |
 |---|---:|---|
 | `price_lookback_days` | `420` | 价格特征计算回看天数。 |
-| `min_drawdown_from_52w_high` | `null` | 52 周高点回撤下限。 |
-| `max_range_position_52w` | `null` | 52 周区间位置上限。 |
-| `max_price_to_sma200` | `null` | 价格/SMA200 上限。 |
-| `min_days_below_sma200` | `5` | 连续低于 SMA200 的最少天数。 |
-| `min_return_20d` / `min_return_60d` | `null` / `null` | 20/60 日收益下限。 |
-| `max_20d_return` | `0.18` | 20 日收益上限（防短期过热）。 |
-| `max_60d_volatility` | `0.85` | 60 日波动率上限。 |
-| `min_drawdown_percentile` | `null` | 回撤分位下限（横截面）。 |
-| `min_avg_dollar_volume_20d_percentile` | `null` | 流动性分位下限（横截面）。 |
-| `max_60d_volatility_percentile` | `null` | 波动率分位上限（横截面）。 |
+| `min_drawdown_from_52w_high` | 全局无；core_ai `0.05`、ai_smallcap `0.05`（风格结构硬门） | 52 周高点回撤下限。 |
+| `max_range_position_52w` | 全局无；core_ai `0.82`、ai_peripheral `0.95`（风格结构硬门） | 52 周区间位置上限。 |
+| `max_price_to_sma200` | 全局无；core_ai `1.12`、ai_enabler `1.15`（风格结构硬门） | 价格/SMA200 上限。 |
+| `min_days_below_sma200` | `5`（core_ai 等 `0`） | 连续低于 SMA200 的最少天数。 |
+| `min_return_20d` / `min_return_60d` | `null` / `null`（core_ai `-0.1`/`-0.12`） | 20/60 日收益下限。 |
+| `max_20d_return` | `0.12` | 20 日收益上限（防短期过热）。 |
+| `max_60d_volatility` | `0.75`（core_ai `0.68`） | 60 日波动率上限。 |
+| `min_drawdown_percentile` | 全局无；core_ai `0.2` | 回撤分位下限（横截面）。 |
+| `min_avg_dollar_volume_20d_percentile` | 全局无；core_ai `0.2` | 流动性分位下限（横截面）。 |
+| `max_60d_volatility_percentile` | 全局无；core_ai `0.8` | 波动率分位上限（横截面）。 |
+| `benchmark_trend_filter_symbol` / `_sma_days` | `QQQ` / `200` | **主熔断**：QQQ 低于 SMA200 时全部清单无信号（2022 实证全年空仓）。 |
 
 #### 6.2.7 可交易性、分散化、评分稳健性
 
@@ -389,18 +432,28 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 | `low_value_excluded_research_risks` | `["possible_value_trap","weak_ai_link","negative_momentum"]` | `low_value` 主清单排除的研究风险标签。 |
 | `low_value_min_research_score` | `0.0` | `low_value` 主清单最低研究评分。 |
 
-#### 6.2.9 `triage_rules` 分层规则
+#### 6.2.9 `triage_rules` 分层规则（实盘权重的实证依据）
 
-`low_value` 会先经过硬过滤、打分和研究质量闸门，再应用 `triage_rules`。研究质量闸门用于避免“估值看似便宜但缺少基本面/主题确认”的股票进入低估主清单；被排除的股票仍可能出现在 `research_pool` 中。
+`low_value` 通过硬过滤与打分后应用 `triage_rules`，标记为 `keep/watch/drop`；
+`momentum` 清单不打 triage，改用 `research_priority` 五层。实盘权重倍数
+（依据 2021-2026 幸存者数据集的 120d 前向收益实证，详见
+`docs/live_pilot_protocol.md` §3.1）：
 
-`triage_rules` 仅作用于通过研究质量闸门后的 `low_value` 清单，结构如下：
-- `keep.<channel>.min_composite_score`
-- `keep.<channel>.min_ps_discount`
-- `keep.<channel>.min_pe_discount`
-- `drop.max_composite_score`
-- `drop.require_both_value_premium`
+| 来源 | 标签 | 判定语义 | 实盘权重 | 120d 实证（组合口径） |
+|---|---|---|---|---|
+| low_value | keep | composite ≥ 0.45~0.58 且 ps/pe 折价 ≥ 阈值（按通道） | 1.0x | risk_off +6.06%（胜率 73.5%）；risk_on +17.70% |
+| low_value | watch | 仅一项达标 | 0.5x | risk_off +3.32%；risk_on +9.74% |
+| low_value | drop | 双项均不达标（scored 架构下实际不触发，已记录为死层） | 0x | — |
+| momentum | research_now | 动量+AI+估值全达标 | 1.0x | +13.08%（胜率 63.5%） |
+| momentum | watch_for_pullback | 动量强但有追高风险 | 1.0x | +9.29%（胜率 75.5%） |
+| momentum | theme_only | 仅有 AI 主题（最弱可买层） | 0.5x | +6.25%（胜率 73.6%） |
+| momentum | avoid_for_now | AI 关联弱（research pool 语义） | 0.5x | +8.76% |
+| momentum | left_side_watch | 左侧下跌接刀 | **0x 排除** | +1.05%（胜率 43.8%） |
 
-作用：在通过硬过滤后，将 `low_value` 进一步标记为 `keep/watch/drop`，用于人工复核优先级。
+注意：两风格共用同一 triage 阈值与 momentum 机器；风格分化由 low_value 的
+硬门结构（risk_off 要求回撤深度，risk_on 要求站上 SMA200）与评分权重承担。
+`research_now`/`watch_for_pullback` 是最可信的两层；当前实证下
+`avoid_for_now` 的"回避"语义面向 research pool，momentum 语境中表现中游。
 
 ### 6.3 通道参数（`channel_profiles.<channel>`）
 
@@ -494,7 +547,13 @@ python run_scan.py --help
 - 过滤诊断（按通道）：`..._ranked_diagnostics_<channel>.csv`
 - 首因诊断（按通道）：`..._ranked_diagnostics_<channel>_first_fail.csv`
 - 网络诊断：`..._ranked_network.json`
-- Markdown 报告：`..._ranked_report.md`
+- Markdown 报告：`..._ranked_report.md`（报告头部含 `Config:` 行，下游工具据此识别风格）
+
+实盘试点相关输出：
+- 交易计划：`outputs/trade_plan_<UTC>.md` + `.csv`（由 `generate_trade_plan.py` 生成，
+  含分层→权重图例、持仓明细、熔断器状态、基线预期）
+- 数据质量周检：`outputs/ttm_population_validation*.md` + `*_coverage.csv`
+  （680 家公司逐项覆盖矩阵）
 
 控制台结束时会打印完整入选股票简表。`Low-Value` 简表是核心生产清单；`Industry-Trend`、`Momentum` 和 `Research Pool` 简表用于辅助人工研究。
 
@@ -757,6 +816,67 @@ python scripts/validate_small_scale.py --config configs/config.risk_off.json --m
 
 用少量标的快速验证扫描管线（引擎/配置/数据/输出列）是否正常，适合部署前冒烟。
 
+### 13.12 `scripts/validate_ttm_population.py` —— 全总体数据质量门槛（周检）
+
+```bash
+.venv/bin/python scripts/validate_ttm_population.py
+```
+
+对 watchlist 全部 ~680 家公司验证 7 个流量家族（revenue/NI/OCF/capex/EBIT/D&A/利息）
+的 TTM 重建：I1（4 季度之和=年报）+ I2（推导值 vs 申报方自报离散值）。PASS 条件：
+I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.csv`，4,760 行）。
+**实盘试点协议的周检门槛：连续 2 周 FAIL 暂停新开仓。**
+
+### 13.13 `scripts/generate_trade_plan.py` —— 生成实盘交易计划
+
+```bash
+.venv/bin/python scripts/generate_trade_plan.py --capital 100000
+# 可选：--risk-on-alloc / --risk-off-alloc（观察镜头，非资金分割）
+#       --max-position-pct 0.10 --max-positions-per-sleeve 10 --cash-buffer-pct 0.10
+```
+
+从最新两风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）：
+分层→权重图例、双风格合并仓（置信度累加，单仓 ≤10% 总资金）、QQQ 熔断器实时状态、
+基线预期（诚实数字含 t 值）。风格识别以报告头 `Config:` 行为准。
+
+### 13.14 `scripts/ic_analysis.py` —— 截面 IC 分析
+
+```bash
+.venv/bin/python scripts/ic_analysis.py \
+  --dataset outputs/weight_dataset_risk_off_v2.csv \
+  --scan-config configs/config.risk_off.json
+```
+
+对幸存者数据集计算 composite 与各维度对前向收益的 Spearman IC（按日期聚合、t 检验、
+分年/分状态/分维度）。用于诊断哪些维度有排名力。
+
+### 13.15 `scripts/extract_weight_dataset.py` —— 幸存者数据集提取
+
+```bash
+.venv/bin/python scripts/extract_weight_dataset.py \
+  --scan-config configs/config.risk_off.json --start-date 2021-01-01 \
+  --output outputs/weight_dataset_risk_off_v2.csv
+```
+
+复用回测 PIT 基础设施，把每个再平衡日的全部硬门幸存者 + 完整指标 + 20/60/120d
+前向收益落盘（约 5 万行）。是权重扫描与 IC 分析的输入。零 Modal 成本。
+
+### 13.16 `scripts/sweep_score_weights.py` —— score_weights 离线扫描
+
+```bash
+.venv/bin/python scripts/sweep_score_weights.py \
+  --dataset outputs/weight_dataset_risk_off_v2.csv \
+  --scan-config configs/config.risk_off.json --n-candidates 1000
+```
+
+预计算归一化矩阵后对权重候选做纯线代评分（train/valid 分割防过拟合）。
+2026-09-26 结论为阴性（保留基线权重），脚本保留用于复验。
+
+### 13.17 `scripts/apply_consensus_weights.py` / `watch_tuning_results.py`
+
+- `apply_consensus_weights.py`：把权重扫描结论写入生产配置（含生效值验证）。
+- `watch_tuning_results.py`：Modal 调参任务的结果看护（进程退出即备份产物，防丢失）。
+
 ## 14. 说明与限制
 
 - 本项目用于研究与筛选，不构成投资建议。
@@ -767,3 +887,48 @@ python scripts/validate_small_scale.py --config configs/config.risk_off.json --m
   2. 在 `resolve_channel_profile` 接入通道覆盖
   3. 在过滤步骤或打分逻辑中显式使用
   4. 同步更新本 README
+
+## 15. 实盘试点操作流程（Live Pilot）
+
+完整规则见 `docs/live_pilot_protocol.md`（预注册，含资金分级 P0 纸面→P1 25%→
+P2 50%→P3 100% 与降级条件）。日常操作只有四条命令：
+
+```bash
+# ① 每周：双风格观察扫描（信号源，自动归档 PIT 快照）
+.venv/bin/python scripts/observation_scan.py
+
+# ② 每周：数据质量门槛（必须 PASS；连续 FAIL 暂停开仓）
+.venv/bin/python scripts/validate_ttm_population.py
+
+# ③ 每月（或每周）：生成交易计划
+.venv/bin/python scripts/generate_trade_plan.py --capital 100000
+
+# ④ 按计划执行：次日开盘市价单买入新 cohort（跳空 >5% 放弃该标的），
+#    120 个交易日后到期卖出；期间只看两条线：单仓 -25% 止损、QQQ<SMA200 停止新开仓
+```
+
+输出示例（`trade_plan_*.md` 核心段）：
+
+```
+- 熔断器: QQQ close=744.44 vs SMA200=665.55 → trend_ok=True
+- 总资金: $100,000 | 可部署 90%（现金缓冲 10%）| 单仓上限 10%
+- 持有期: 120 个交易日（分批滚动，每月一个新 cohort）
+
+## 双风格合并仓（两风格同时选中，置信度最高）（7 个仓位）
+| MU | ...momentum(watch_for_pullback)... | 9.0% | 9,000 |
+| QCOM | ...momentum(research_now)... | 9.0% | 9,000 |
+...
+### risk_off 独有（3 个仓位）
+| CHKP | low_value | keep | 4.5% | 4,500 |   ← 20-F 年报申报者，数据滞后 ~9 个月（已知）
+```
+
+关键纪律（预注册，禁止临场修改）：
+- 不买 drop/left_side_watch；watch/theme_only 半仓
+- 不加仓摊平、不追跳空、熔断期不"抄底"
+- 每月新 cohort + 到期结算（记录 120d 超额 vs QQQ、超额胜率）
+- 每季度按协议 §2 条件做阶段晋级/降级评估
+
+历史基线（Phase 4R v2，2023-2026，诚实数字）：risk_on low_value 120d 超额
++4.94pp/期（t=1.82 未达显著）、momentum +1.16pp（t=0.53）；risk_off 持仓期
+-3.89pp（t=-2.86，职责=熔断保护+绝对收益）。截面排名 IC t=3~7（已验证）。
+完整语义见 `outputs/performance_final_verified.md`。

@@ -30,7 +30,6 @@ image = (
 cache_volume = modal.Volume.from_name("ai-scanner-cache", create_if_missing=True)
 
 CONFIGS = {
-    "balanced": "configs/archive/config.balanced.json",  # archived: reference only
     "risk_on": "configs/config.risk_on.json",
     "risk_off": "configs/config.risk_off.json",
 }

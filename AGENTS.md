@@ -11,8 +11,11 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Tune params: `python scripts/tune_parameters.py --base-config configs/config.risk_off.json --param-space configs/tuner.param_space.json` (add `--executor modal` for cloud parallelism)
 - Calibrate output volume: `python scripts/calibrate_thresholds.py --base-config configs/config.risk_off.json` (reads latest diagnostics, no backtest needed)
 - Smoke test pipeline: `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
-- Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest. 56 tests, fully offline/fast, no env needed.
+- Population TTM validation (weekly gate for live use): `python scripts/validate_ttm_population.py` — all-watchlist invariants (I1 annual closure, I2 discrete-ground-truth match); PASS requires I2=0 and operative-window violation rate <1%.
+- Live trade plan: `python scripts/generate_trade_plan.py --capital N` — builds the two-style 120d-hold cohort plan from the latest observation scans (see docs/live_pilot_protocol.md; cross-sleeve symbols merged, 10% per-name cap, QQQ breaker rule).
+- Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest. 105 tests, fully offline/fast, no env needed.
 - No lint/format/typecheck tooling or CI exists. Tests are the only verification.
+- Live pilot: rules in docs/live_pilot_protocol.md (staged capital P0→P3, tier→weight table, weekly population-validation gate). Scan reports carry a `Config:` header line used by generate_trade_plan.py for style identification.
 
 ## Environment
 - `.env` (gitignored) must set `ALPACA_API_ENDPOINT`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `SEC_USER_AGENT`. Missing values fail at runtime (API client construction), not at import.

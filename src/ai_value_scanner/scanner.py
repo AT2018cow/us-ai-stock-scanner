@@ -82,6 +82,11 @@ OPERATING_CASH_FLOW_TAGS = [
 ]
 CAPEX_TAGS = [
     "PaymentsToAcquirePropertyPlantAndEquipment",
+    # Fallback tags for filers that do not use the PP&E line (e.g. QCOM and
+    # GEV tag capex as generic "productive assets" purchases). Same-period
+    # collisions resolve by tag order, so these only fill gaps.
+    "PaymentsToAcquireProductiveAssets",
+    "PaymentsToAcquireOtherProductiveAssets",
     "CapitalExpendituresIncurredButNotYetPaid",
     "CapitalExpenditures",
 ]
@@ -121,6 +126,12 @@ INTEREST_EXPENSE_TAGS = [
 DA_TAGS = [
     "DepreciationAndAmortization",
     "DepreciationDepletionAndAmortization",
+    # Fallback tags for filers that do not use the two standards above
+    # (e.g. GOOGL tags its cash-flow line as plain "Depreciation"). When the
+    # same (start,end) period exists under an earlier tag, that tag wins —
+    # these only fill periods the primary tags do not cover.
+    "DepreciationAmortizationAndAccretionNet",
+    "Depreciation",
 ]
 ASSETS_CURRENT_TAGS = ["AssetsCurrent"]
 LIABILITIES_CURRENT_TAGS = ["LiabilitiesCurrent"]
@@ -1589,6 +1600,24 @@ def _reconstruct_flow_periods(
                 continue
             if long_end not in quarters:
                 quarters[long_end] = (long_val - short_val, long_filed, None)
+    # (b2) same fiscal start: H1 - Q1(discrete) implies the quarter ending at
+    # the H1 end. Cash-flow statements are cumulative-only for many filers
+    # (AAPL, GOOGL, AMD, MU, ...): no discrete Q2 entry exists, rule (a)
+    # cannot fire, and the missing Q2 breaks the rolling TTM window for
+    # OCF/capex/D&A. Q1 shares the fiscal start with the H1 entry, so the
+    # diff yields Q2 directly. The duration gate (60..120 days vs Q1) keeps
+    # 9M-vs-Q1 blobs (6-month spans) out.
+    for end, (y_start, y_val, y_dur, _) in ytd_by_end.items():
+        if end in quarters or not y_start:
+            continue
+        for q_end, (q_val, q_filed, q_start) in quarters.items():
+            if not q_start or q_start != y_start or q_end >= end:
+                continue
+            q_dur = _duration_days(q_start, q_end)
+            if not (60 <= y_dur - q_dur <= 120):
+                continue
+            quarters[end] = (y_val - q_val, q_filed, None)
+            break
 
     # Missing Q4 at fiscal-year ends: annual minus the 9M YTD (or the year's
     # other three quarters).
@@ -4631,6 +4660,43 @@ def summarize_first_fail_reasons(
     return summary
 
 
+def apply_scored_or_hard_filters(
+    df: pd.DataFrame,
+    steps: list[tuple[str, Any]],
+    channel_name: str,
+    config: "ScanConfig",
+) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    """Two-layer scored filtering for any list (low_value/trend/momentum).
+
+    In scored mode only core + style-structural steps eliminate; the rest
+    are evaluated as soft dimensions and attached as soft_pass_count /
+    soft_total for score_and_rank. In hard mode every step eliminates.
+
+    Bug class fixed here (2026-09-27): the momentum and industry_trend
+    OUTPUT paths in the scanner still applied the full step list as hard
+    gates after the scored refactor, while the backtest used the partition —
+    production momentum lists were empty despite hundreds of backtest picks.
+    """
+    if str(getattr(config, "filter_mode", "scored")).lower() == "scored":
+        hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+        filtered, diagnostics = apply_filters_with_diagnostics(df, hard_steps)
+        if not filtered.empty and soft_steps:
+            soft_matrix = pd.DataFrame(
+                {name: mask_fn(filtered) for name, mask_fn in soft_steps},
+                index=filtered.index,
+            )
+            filtered["soft_pass_count"] = soft_matrix.sum(axis=1)
+            filtered["soft_total"] = len(soft_steps)
+        else:
+            filtered["soft_pass_count"] = 0
+            filtered["soft_total"] = len(soft_steps) if soft_steps else 1
+        return filtered, diagnostics
+    filtered, diagnostics = apply_filters_with_diagnostics(df, steps)
+    filtered["soft_pass_count"] = np.nan
+    filtered["soft_total"] = np.nan
+    return filtered, diagnostics
+
+
 def partition_filter_steps(
     steps: list[tuple[str, Any]], channel_name: str
 ) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
@@ -5194,6 +5260,7 @@ def build_run_report_markdown(
     paths: dict[str, Path],
     network_issue_flag: bool,
     sec_cache_summary: str | None,
+    scan_config_path: str | None = None,
     industry_trend_count: int | None = None,
     industry_trend_path: Path | None = None,
     momentum_count: int | None = None,
@@ -5206,6 +5273,11 @@ def build_run_report_markdown(
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
     lines.append("")
+    # Config path in the header: downstream tooling (trade plan generator)
+    # MUST identify the style from the report itself — mtime-order pairing
+    # across runs mislabels styles when the number of reports is odd.
+    if scan_config_path is not None:
+        lines.append(f"- Config: {scan_config_path}")
     lines.append(f"- Started UTC: {started_at.isoformat()}")
     lines.append(f"- Finished UTC: {finished_at.isoformat()}")
     lines.append(f"- Elapsed seconds: {(finished_at - started_at).total_seconds():.2f}")
@@ -5393,6 +5465,7 @@ def run_scan(
     diagnostics_output_path: str | None,
     network_report_output_path: str | None = None,
     report_output_path: str | None = None,
+    scan_config_path: str | None = None,
 ) -> Path:
     def resolve_top_n(value: Any, fallback: int) -> int:
         try:
@@ -5807,25 +5880,7 @@ def run_scan(
     for channel_name, channel_profile in channel_profiles.items():
         cp = resolve_channel_profile(config, channel_name, channel_profile)
         steps = build_filter_steps(config, channel_name, channel_profile)
-
-        if str(getattr(config, "filter_mode", "scored")).lower() == "scored":
-            hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
-            filtered, diagnostics = apply_filters_with_diagnostics(df, hard_steps)
-            # Evaluate soft steps on survivors and attach pass rate for scoring.
-            if not filtered.empty and soft_steps:
-                soft_matrix = pd.DataFrame(
-                    {name: mask_fn(filtered) for name, mask_fn in soft_steps},
-                    index=filtered.index,
-                )
-                filtered["soft_pass_count"] = soft_matrix.sum(axis=1)
-                filtered["soft_total"] = len(soft_steps)
-            else:
-                filtered["soft_pass_count"] = 0
-                filtered["soft_total"] = len(soft_steps) if soft_steps else 1
-        else:
-            filtered, diagnostics = apply_filters_with_diagnostics(df, steps)
-            filtered["soft_pass_count"] = np.nan
-            filtered["soft_total"] = np.nan
+        filtered, diagnostics = apply_scored_or_hard_filters(df, steps, channel_name, config)
 
         first_fail_summary = summarize_first_fail_reasons(df, steps)
 
@@ -6111,7 +6166,7 @@ def run_scan(
     trend_frames: list[pd.DataFrame] = []
     for channel_name, channel_profile in channel_profiles.items():
         trend_steps, trend_weights = build_industry_trend_steps(config, channel_name, channel_profile)
-        trend_filtered, _ = apply_filters_with_diagnostics(df, trend_steps)
+        trend_filtered, _ = apply_scored_or_hard_filters(df, trend_steps, channel_name, config)
         trend_ranked = score_and_rank(
             trend_filtered,
             trend_weights,
@@ -6168,7 +6223,7 @@ def run_scan(
     momentum_frames: list[pd.DataFrame] = []
     for channel_name, channel_profile in channel_profiles.items():
         momentum_steps, momentum_weights = build_momentum_steps(config, channel_name, channel_profile)
-        momentum_filtered, _ = apply_filters_with_diagnostics(df, momentum_steps)
+        momentum_filtered, _ = apply_scored_or_hard_filters(df, momentum_steps, channel_name, config)
         momentum_ranked = score_and_rank(
             momentum_filtered,
             momentum_weights,
@@ -6359,6 +6414,7 @@ def run_scan(
         paths=paths,
         network_issue_flag=bool(report.get("had_rate_limit_or_network_issue")),
         sec_cache_summary=sec_cache_summary,
+        scan_config_path=scan_config_path,
         industry_trend_count=len(industry_trend),
         industry_trend_path=trend_out_path,
         momentum_count=len(momentum),
@@ -6500,6 +6556,7 @@ def main() -> None:
             args.diagnostics_output,
             args.network_report_output,
             args.report_output,
+            scan_config_path=str(args.config),
         )
         snapshot_path = archive_watchlist_snapshot(config, started_at)
         if snapshot_path is not None:

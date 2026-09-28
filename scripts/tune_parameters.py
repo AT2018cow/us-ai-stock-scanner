@@ -585,7 +585,7 @@ def regime_stats(
     if not benchmarks.empty and "benchmark" in benchmarks.columns:
         q = benchmarks[benchmarks["benchmark"] == "QQQ"][
             ["scenario", "signal_date", "horizon_days", "benchmark_return"]
-        ]
+        ].drop_duplicates(subset=["scenario", "signal_date", "horizon_days"], keep="last")
         valid = valid.merge(
             q,
             on=["scenario", "signal_date", "horizon_days"],
