@@ -465,10 +465,31 @@ class ScanConfig:
     alpaca_cache_ttl_snapshots_sec: int = 120
     alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
+    # Multi-theme engine: theme scans (configs/config.theme.*.json) read a
+    # per-theme watchlist and MUST NOT archive it into
+    # data/watchlist_history — those snapshots are the PIT record of the AI
+    # watchlist for historical_replay, and a theme file there would be
+    # resolved as "the AI watchlist as of <date>" by the next backtest
+    # (pollution observed 2026-09-28 with the first nuclear scan).
+    archive_watchlist_snapshots: bool = True
     watchlist_fetch_timeout_sec: int = 20
     ai_link_benchmark_etfs: list[str] = field(default_factory=default_ai_link_benchmark_etfs)
     ai_link_etf_count_saturation: int = 4
     ai_link_disclosure_keyword_cap: int = 6
+    # Component weights of the theme/link composite (multi-theme engine,
+    # docs/multi_theme_expansion.md Path 1, 2026-09-28): disclosure weight
+    # is configurable per config because the SEC submissions JSON carries no
+    # business description text — the production disclosure component has
+    # been constant-zero since introduction. AI configs keep the historical
+    # defaults (0.40/0.35/0.15/0.10, composite max 0.65); theme configs set
+    # disclosure to 0 and scale etf-consensus saturation to the theme's
+    # source-basket size so consensus measures "fraction of the theme's
+    # ETFs holding the name". No renormalization anywhere: thresholds
+    # (min_ai_link_score) are calibrated against the 0.65-max scale.
+    ai_link_weight_etf_consensus: float = 0.40
+    ai_link_weight_disclosure: float = 0.35
+    ai_link_weight_market_link: float = 0.15
+    ai_link_weight_backlog: float = 0.10
     ai_link_market_return_tolerance_20d: float = 0.25
     ai_link_market_return_tolerance_60d: float = 0.40
     ai_link_backlog_ratio_cap: float = 0.20
@@ -5848,10 +5869,10 @@ def run_scan(
     df["ai_disclosure_score"] = pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
     df["ai_backlog_signal"] = pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
     df["ai_link_score"] = (
-        0.40 * pd.to_numeric(df["ai_etf_consensus_score"], errors="coerce").fillna(0.0)
-        + 0.35 * pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
-        + 0.15 * pd.to_numeric(df["ai_market_link_score"], errors="coerce").fillna(0.0)
-        + 0.10 * pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
+        float(config.ai_link_weight_etf_consensus) * pd.to_numeric(df["ai_etf_consensus_score"], errors="coerce").fillna(0.0)
+        + float(config.ai_link_weight_disclosure) * pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
+        + float(config.ai_link_weight_market_link) * pd.to_numeric(df["ai_market_link_score"], errors="coerce").fillna(0.0)
+        + float(config.ai_link_weight_backlog) * pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
     ).clip(lower=0.0, upper=1.0)
     df["news_count"] = 0
 
@@ -6558,9 +6579,10 @@ def main() -> None:
             args.report_output,
             scan_config_path=str(args.config),
         )
-        snapshot_path = archive_watchlist_snapshot(config, started_at)
-        if snapshot_path is not None:
-            print(f"[snapshot] watchlist archived for PIT backtests: {snapshot_path}")
+        if config.archive_watchlist_snapshots:
+            snapshot_path = archive_watchlist_snapshot(config, started_at)
+            if snapshot_path is not None:
+                print(f"[snapshot] watchlist archived for PIT backtests: {snapshot_path}")
     except Exception as exc:
         print("")
         print("[ERROR] Scan failed.")
