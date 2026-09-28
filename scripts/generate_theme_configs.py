@@ -79,6 +79,18 @@ def main() -> None:
             "research_now", "watch_for_pullback", "theme_only",
         ]
         cfg["low_value_min_research_score"] = 3.0
+        # Sector-concentration cap: single-sector themes (biotech ≈ all SIC
+        # 2836, rare_earth ≈ all mining) were strangled by the AI-universe
+        # default of 3 (observed 2026-09-28: biotech 53 gate survivors -> 2
+        # listed). Final concentration stays with top_n_per_channel=10;
+        # the sector cap must not cut below it.
+        cfg["max_per_sector_per_list"] = 10
+        # Research-pool floor: theme names systematically miss AI-tag bonuses
+        # (ai_infrastructure_exposure +0.7, strong/medium_ai_link etc.),
+        # measured 2026-09-28: biotech 2.2-2.5, rare_earth 2.0, minerals
+        # -1.5~2.4 — all below the AI-calibrated 2.6. 1.0 admits the
+        # theme-scale distribution; re-verify pool sizes after re-scan.
+        cfg["research_pool_min_score"] = 1.0
         # Single-bucket channel profile.
         prof = deepcopy(profile_template)
         prof["min_ai_link_score"] = float(spec.get("min_theme_link_score", 0.3))

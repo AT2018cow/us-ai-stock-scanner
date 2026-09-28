@@ -114,7 +114,7 @@
   "assumed_position_usd": 250000.0,
   "max_adv_participation": 0.05,
   "max_estimated_slippage_bps": 45.0,
-  "max_per_sector_per_list": 3,
+  "max_per_sector_per_list": 10,
   "max_per_watchlist_etf_source_per_list": null,
   "metric_hard_filter_coverage_mode": "balanced",
   "force_hard_filter_low_coverage_metrics": false,
@@ -221,7 +221,7 @@
   "top_n_per_channel_trend": 10,
   "top_n_per_channel_momentum": 10,
   "research_pool_top_n": 35,
-  "research_pool_min_score": 2.6,
+  "research_pool_min_score": 1.0,
   "triage_rules": {
     "keep": {
       "core_ai": {
@@ -295,7 +295,7 @@
       "battery metals",
       "critical minerals"
     ],
-    "generated_utc": "2026-09-28T11:47:10.696826+00:00",
+    "generated_utc": "2026-09-28T12:53:55.783691+00:00",
     "path": "Path 1 — disclosure weight 0 (submissions text has no business description; see README §5.3)"
   }
 }

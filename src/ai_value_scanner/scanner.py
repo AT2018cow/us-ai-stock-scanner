@@ -1336,6 +1336,7 @@ class SecClient:
 
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"facts_{cik}.json"
+        need_fetch = not cache_path.exists()
         if cache_path.exists():
             # Incremental: only refetch when the (freshly-pulled) submissions
             # show a filing newer than when the facts cache was written.
@@ -1351,21 +1352,23 @@ class SecClient:
                         latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
                         facts_mtime = cache_path.stat().st_mtime
                         if latest_filing > facts_mtime:
-                            if self.monitor:
-                                self.monitor.record_cache("sec", hit=False)
-                            url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-                            resp = self._get(url)
-                            if resp.status_code == 404:
-                                return {}
-                            resp.raise_for_status()
-                            payload = resp.json()
-                            cache_path.write_text(json.dumps(payload))
-                            return payload
+                            need_fetch = True
                 except Exception:
                     pass  # fall back to cached facts on any parse error
-            if self.monitor:
-                self.monitor.record_cache("sec", hit=True)
-            return json.loads(cache_path.read_text())
+            if not need_fetch:
+                if self.monitor:
+                    self.monitor.record_cache("sec", hit=True)
+                return json.loads(cache_path.read_text())
+        if self.monitor:
+            self.monitor.record_cache("sec", hit=False)
+        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+        resp = self._get(url)
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        payload = resp.json()
+        cache_path.write_text(json.dumps(payload))
+        return payload
 
 
 def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
