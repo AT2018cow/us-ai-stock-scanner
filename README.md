@@ -895,6 +895,27 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 - `apply_consensus_weights.py`：把权重扫描结论写入生产配置（含生效值验证）。
 - `watch_tuning_results.py`：Modal 调参任务的结果看护（进程退出即备份产物，防丢失）。
 
+### 13.18 多主题工具链（docs/multi_theme_expansion.md）
+
+```bash
+# ① 主题底单：抓取主题 ETF 持仓 + 影子体检（漏斗 autopsy，不动生产）
+.venv/bin/python scripts/build_theme_universe.py            # 全部主题
+.venv/bin/python scripts/build_theme_universe.py --theme nuclear
+
+# ② 生成/重新生成主题扫描配置（configs/config.theme.<name>.json ×5）
+.venv/bin/python scripts/generate_theme_configs.py
+
+# ③ 运行主题扫描（与 AI 扫描完全同构：scored 架构、三清单、QQQ 熔断）
+.venv/bin/python run_scan.py --config configs/config.theme.nuclear.json
+```
+
+主题注册表：`configs/theme_universe.json`（源 ETF/基准篮/关键词组/主题分门槛）。
+当前主题：nuclear / quantum / biotech / rare_earth / critical_minerals。
+theme_link = 0.40×主题ETF共识 + 0.15×主题基准联动 + 0.10×backlog（披露组件
+权重 0——SEC submissions 无业务描述文本，见 §5.3；文本源修复后重验证）。
+主题扫描**不归档** watchlist 快照（`archive_watchlist_snapshots=false`），不进入
+AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档。
+
 ## 14. 说明与限制
 
 - 本项目用于研究与筛选，不构成投资建议。
