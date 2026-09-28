@@ -24,7 +24,7 @@
       "bucket": "biotech",
       "source_etfs": ["XBI", "IBB", "PPH", "ARKG"],
       "benchmark_etfs": ["XBI", "IBB", "XLV", "ARKG"],
-      "disclosure_keywords": ["clinical trial", "phase iii", "phase ii", "nda", "bla", "fda approval", "biologics", "pipeline", "ind application", "orphan drug", "gene therapy", "mrna"],
+      "disclosure_keywords": ["clinical trial", "phase iii", "new drug application", "bla", "fda approval", "biologics", "pipeline", "ind application", "orphan drug", "gene therapy", "mrna"],
       "min_theme_link_score": 0.3,
       "notes": "盈利型药企（PPH）与研发型 biotech（XBI/IBB）混合。Phase 2 需要行业专化质量维度（管线阶段替代部分财务质量）——临床前公司会被现行质量门槛排斥"
     },
