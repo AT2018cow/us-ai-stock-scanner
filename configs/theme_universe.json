@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "purpose": "Multi-theme universe registry (docs/multi_theme_expansion.md Phase 1). Each theme defines its ETF holdings sources, bucket name, benchmark ETF basket (for the future theme_link engine's market-link component) and disclosure keyword groups (for the disclosure component). Phase 1 uses sources + bucket only; keywords/benchmarks are pre-registered for Phase 2.",
+    "note_on_overlap": "nuclear and copper/metals ETFs (URA/NLR/COPX/PICK) are ALREADY watchlist sources via the ai_enabler/ai_peripheral AI-adjacent lens; the theme buckets give them first-class identity instead of AI-narrative leakage."
+  },
+  "themes": {
+    "nuclear": {
+      "bucket": "nuclear",
+      "source_etfs": ["NLR", "URA", "URNM"],
+      "benchmark_etfs": ["NLR", "URA", "XLU", "QQQ"],
+      "disclosure_keywords": ["nuclear", "smr", "small modular reactor", "enriched uranium", "yellowcake", "reactor", "nuclear fuel", "nuclear power plant", "nuclear services", "isotope"],
+      "min_theme_link_score": 0.3,
+      "notes": "核电/铀矿/核服务。已有 AI 副叙事泄漏（CEG/BWXT/CCJ），主题化后主题分将高于 ai_link 分"
+    },
+    "quantum": {
+      "bucket": "quantum",
+      "source_etfs": ["QTUM"],
+      "benchmark_etfs": ["QTUM", "ARKQ", "QQQ"],
+      "disclosure_keywords": ["quantum computing", "qubit", "quantum annealing", "quantum supremacy", "quantum error correction", "trapped ion", "photonic quantum", "quantum sensor", "quantum network", "quantum key distribution"],
+      "min_theme_link_score": 0.3,
+      "notes": "QTUM 是唯一成熟纯量子 ETF；ARKQ 已在 AI core 篮子中提供量子泄漏"
+    },
+    "biotech": {
+      "bucket": "biotech",
+      "source_etfs": ["XBI", "IBB", "PPH"],
+      "benchmark_etfs": ["XBI", "IBB", "XLV"],
+      "disclosure_keywords": ["clinical trial", "phase iii", "phase ii", "nda", "bla", "fda approval", "biologics", "pipeline", "ind application", "orphan drug", "gene therapy", "mrna"],
+      "min_theme_link_score": 0.3,
+      "notes": "盈利型药企（PPH）与研发型 biotech（XBI/IBB）混合。Phase 2 需要行业专化质量维度（管线阶段替代部分财务质量）——临床前公司会被现行质量门槛排斥"
+    },
+    "rare_earth": {
+      "bucket": "rare_earth",
+      "source_etfs": ["REMX"],
+      "benchmark_etfs": ["REMX", "PICK", "XLB"],
+      "disclosure_keywords": ["rare earth", "neodymium", "dysprosium", "heavy rare earth", "magnetic materials", "processing facility", "separation", "monazite", "bastnaesite"],
+      "min_theme_link_score": 0.3,
+      "notes": "稀土磁材链（永磁体=机器人/风电/军工的关键瓶颈）"
+    },
+    "critical_minerals": {
+      "bucket": "critical_minerals",
+      "source_etfs": ["LIT", "REMX", "COPX", "PICK", "URA"],
+      "benchmark_etfs": ["COPX", "LIT", "PICK", "XLB"],
+      "disclosure_keywords": ["lithium", "copper", "nickel", "cobalt", "graphite", "manganese", "mineral resource", "ore reserve", "processing plant", "battery metals", "critical minerals"],
+      "min_theme_link_score": 0.3,
+      "notes": "电池金属+铜。COPX/PICK 已在 AI peripheral 篮子里（铜=AI 电网）——主题化后按自有叙事打分"
+    }
+  }
+}
