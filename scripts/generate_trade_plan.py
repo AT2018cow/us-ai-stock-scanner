@@ -37,7 +37,74 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.scanner import load_config  # noqa: E402
-from ai_value_scanner.backtest import build_bar_db, load_alpaca_client, build_session  # noqa: E402
+from ai_value_scanner.backtest import build_bar_db, load_alpaca_client, load_sec_client, NetworkMonitor  # noqa: E402
+
+
+def earnings_window(symbol: str, sec_client, buffer_days: int = 7) -> dict:
+    """Data-driven earnings-window detection from SEC submissions history.
+
+    Infers the NEXT expected report from the latest filed 10-Q/10-K/20-F
+    period (+ fiscal cadence) and the filer's own historical filing lag
+    (filed - period median). No external earnings calendar needed.
+
+    status:
+      imminent  - the next report is unfiled and today (or the entry date)
+                  sits inside/within buffer_days of the expected window →
+                  entering now is a binary-event gamble.
+      filed     - a report newer than the previously known latest exists
+                  (data already digested by the market).
+      clear     - next expected window is > buffer_days away.
+      unknown   - insufficient filing history.
+    """
+    try:
+        cfg0 = load_config("configs/config.risk_off.json")
+        mapping = sec_client.ticker_mapping()
+        row = mapping[mapping["symbol"] == symbol.upper()]
+        if row.empty:
+            return {"status": "unknown"}
+        cik = row.iloc[0]["cik"]
+        subs = sec_client.get_submissions(cik)
+        rec = subs.get("filings", {}).get("recent", {})
+        df = pd.DataFrame({
+            "form": rec.get("form", []),
+            "filed": rec.get("filingDate", []),
+            "period": rec.get("reportDate", []),
+        }).dropna(subset=["period", "filed"])
+        reports = df[df["form"].isin(["10-Q", "10-K", "20-F", "40-F"])].copy()
+        if reports.empty:
+            return {"status": "unknown"}
+        reports["filed"] = pd.to_datetime(reports["filed"])
+        reports["period"] = pd.to_datetime(reports["period"])
+        reports = reports.sort_values("period", ascending=False)
+        latest = reports.iloc[0]
+        lags = reports.head(8).copy()
+        lags["lag"] = (lags["filed"] - lags["period"]).dt.days
+        med_lag = int(lags["lag"].median())
+        # Fiscal cadence: annual filers (20-F/40-F) use 365d, else quarterly.
+        cadence = 365 if latest["form"] in ("20-F", "40-F") else 91
+        next_period = latest["period"] + pd.Timedelta(days=cadence)
+        win_start = next_period + pd.Timedelta(days=max(med_lag - 10, 0))
+        win_end = next_period + pd.Timedelta(days=med_lag + 14)
+        today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+        if today < next_period:
+            return {"status": "clear",
+                    "next_period": str(next_period.date()),
+                    "window": f"{win_start.date()}~{win_end.date()}", "lag_days": med_lag}
+        # Next period has ended but not yet filed: imminent only when today
+        # falls within buffer_days BEFORE the expected window through its end
+        # (+buffer). Between period-end and window-start-7d the report is
+        # still weeks away — entering then is fine (e.g. QCOM period ends
+        # late Sep, reports late Oct: early-Oct entries are allowed).
+        if win_start - pd.Timedelta(days=buffer_days) <= today <= win_end + pd.Timedelta(days=buffer_days):
+            return {"status": "imminent",
+                    "next_period": str(next_period.date()),
+                    "window": f"{win_start.date()}~{win_end.date()}",
+                    "lag_days": med_lag,
+                    "note": f"报告期 {next_period.date()} 已过但未申报，预期窗口 {win_start.date()}~{win_end.date()}"}
+        return {"status": "clear", "next_period": str(next_period.date()),
+                "window": f"{win_start.date()}~{win_end.date()}", "lag_days": med_lag}
+    except Exception:
+        return {"status": "unknown"}
 
 
 def _report_style(report_path: str) -> str | None:
@@ -179,12 +246,15 @@ def main() -> None:
     p.add_argument("--cash-buffer-pct", type=float, default=0.10, help="Unallocated cash per sleeve")
     p.add_argument("--max-positions-per-sleeve", type=int, default=10,
                    help="Concentrate the sleeve: keeps first, then momentum picks, then watches (half weight), by composite score")
+    p.add_argument("--earnings-buffer-days", type=int, default=7,
+                   help="No new entry within this many days of an expected earnings report (SEC-submissions-inferred window)")
     args = p.parse_args()
 
     off_ts, on_ts = latest_scan_pair()
     breaker = qqq_breaker_state()
     now = datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    sec_client = load_sec_client(load_config("configs/config.risk_off.json"), NetworkMonitor())
 
     sleeves = {
         "risk_on": (on_ts, args.risk_on_alloc),
@@ -269,6 +339,23 @@ def main() -> None:
     # the remaining buffer sits in cash). notional = weight x total capital.
     plan["weight_pct_of_total"] = (w * (1.0 - args.cash_buffer_pct) * 100).round(2)
     plan["notional_usd"] = (plan["weight_pct_of_total"] / 100.0 * args.capital).round(0)
+
+    # Stage 4: earnings-window gate (pre-registered pilot rule, added
+    # 2026-09-28 after the MU gap: no new entry inside/within buffer_days of
+    # the SEC-inferred expected report window). Delayed names keep their
+    # planned weight as RESERVED CASH — executed after the report lands and
+    # the name still passes the next scan; never canceled, never reweighted
+    # ad hoc.
+    earnings_status: dict[str, dict] = {}
+    plan["execution"] = "execute_now"
+    for idx, r in plan.iterrows():
+        info = earnings_window(str(r["symbol"]), sec_client, args.earnings_buffer_days)
+        earnings_status[str(r["symbol"])] = info
+        if info.get("status") == "imminent":
+            plan.loc[idx, "execution"] = "delayed_earnings"
+            plan.loc[idx, "entry_rule"] = (
+                f"延迟至财报发布后（{info.get('note', '')}）；财报落地且下次扫描仍入选后按原权重执行"
+            )
     plan = plan.reset_index(drop=True)
     out_csv = Path(f"outputs/trade_plan_{stamp}.csv")
     out_md = Path(f"outputs/trade_plan_{stamp}.md")
@@ -290,7 +377,8 @@ def main() -> None:
         "## 生效规则（见 docs/live_pilot_protocol.md）",
         "",
         "1. **熔断**: QQQ < SMA200 → 停止一切新开仓（现有 cohort 按止损/到期处理）",
-        "2. **入场**: 次日开盘；watch 分级半仓，keep/momentum 全仓",
+        "2. **入场**: 次日开盘；watch 分级半仓，keep/momentum 全仓；**财报闸门**：预期财报窗口",
+        f"   内/前 {args.earnings_buffer_days} 天内不开新仓（SEC 申报历史推算，见延迟仓段）",
         "3. **止损**: 单仓位 -25%；组合自启动 -15% → 暂停新开仓 + 人工复盘",
         "4. **验证**: 每周 `validate_ttm_population.py` 必须 PASS，连续 FAIL 暂停开仓",
         "",
@@ -314,8 +402,10 @@ def main() -> None:
     if plan.empty:
         lines.append("- （无持仓——检查扫描产物）")
     else:
+        exec_now = plan[plan["execution"] == "execute_now"]
+        delayed = plan[plan["execution"] == "delayed_earnings"]
         for style in ("both_styles", "risk_on", "risk_off"):
-            part = plan[plan["style_leg"] == style]
+            part = exec_now[exec_now["style_leg"] == style]
             if part.empty:
                 continue
             label = {
@@ -331,6 +421,18 @@ def main() -> None:
                 lines.append(
                     f"| {r['symbol']} | {r['lists']} | {r['channel']} | {r['composite_score']:.3f} "
                     f"| {r['triage']} | {r['weight_pct_of_total']:.1f}% | {r['notional_usd']:,.0f} |"
+                )
+            lines.append("")
+        if not delayed.empty:
+            lines.append("### ⚠ 延迟执行仓（财报窗口，本批不买入，权重保留为现金）")
+            lines.append("")
+            lines.append("| symbol | 权重% | 预留$ | 财报窗口（SEC 推算） | 执行条件 |")
+            lines.append("|---|---|---|---|---|")
+            for _, r in delayed.iterrows():
+                info = earnings_status.get(str(r["symbol"]), {})
+                lines.append(
+                    f"| {r['symbol']} | {r['weight_pct_of_total']:.1f}% | {r['notional_usd']:,.0f} "
+                    f"| {info.get('window', '?')} | 财报发布后重跑扫描，仍入选则按此权重补买 |"
                 )
             lines.append("")
     lines += [
