@@ -15,6 +15,8 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Live trade plan: `python scripts/generate_trade_plan.py --capital N` — builds the two-style 120d-hold cohort plan from the latest observation scans (see docs/live_pilot_protocol.md; cross-sleeve symbols merged, 10% per-name cap, QQQ breaker rule).
 - Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest. 105 tests, fully offline/fast, no env needed.
 - No lint/format/typecheck tooling or CI exists. Tests are the only verification.
+- Theme observation (P0 paper, five themes): `python scripts/theme_observation_scan.py` — runs all theme scans + archives 120d paper cohorts to data/theme_cohorts.csv; `--evaluate` settles matured rows; see docs/theme_observation_protocol.md.
+- Venture sleeve universe: `python scripts/build_venture_universe.py --fts` — three-layer discovery funnel (ETF baskets in $100M-$3B window, basket new-membership events via data/theme_history/, SEC full-text-search pre-ETF names).
 - Live pilot: rules in docs/live_pilot_protocol.md (staged capital P0→P3, tier→weight table, weekly population-validation gate). Scan reports carry a `Config:` header line used by generate_trade_plan.py for style identification.
 
 ## Environment
