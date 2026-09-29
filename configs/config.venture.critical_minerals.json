@@ -111,7 +111,7 @@
   "max_pe_hist_percentile": null,
   "min_expectation_proxy": null,
   "min_cycle_proxy": null,
-  "assumed_position_usd": 250000.0,
+  "assumed_position_usd": 2500.0,
   "max_adv_participation": 0.05,
   "max_estimated_slippage_bps": 45.0,
   "max_per_sector_per_list": 10,
@@ -324,7 +324,7 @@
   "_venture_meta": {
     "sleeve": "venture",
     "theme": "critical_minerals",
-    "generated_utc": "2026-09-28T16:37:55.295388+00:00",
+    "generated_utc": "2026-09-28T17:21:58.191808+00:00",
     "design": "docs/multi_theme_expansion.md §6.3",
     "risk_model": "P0 paper only — 0.25-0.5% per name, 20-40 names, no -25% stops, expect 60-80% of names to lose 50%+; capital gated on matured cohorts"
   }
