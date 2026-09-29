@@ -90,14 +90,14 @@ def extract_shortlist(theme: str, report: Path, prefix: str = "config.theme") ->
     return pd.DataFrame(rows)
 
 
-def archive_cohort(theme: str, cohort: pd.DataFrame, cohort_csv: Path = COHORT_CSV) -> None:
+def archive_cohort(theme: str, cohort: pd.DataFrame, cohort_csv: Path = COHORT_CSV, report: Path | None = None) -> None:
     """Append one cohort; dedupe on (theme, list_type, entry_date, symbol)."""
     if cohort.empty:
         log(f"{theme}: 无可归档的 shortlist（空清单主题也按协议记录为 no-signal）")
         row = pd.DataFrame([{
             "theme": theme, "list_type": "none", "symbol": "", "triage": "",
             "research_priority": "", "composite_score": "",
-            "entry_date": datetime.now(timezone.utc).date().isoformat(),
+            "entry_date": (re.search(r"Started UTC: ([\dT:.\-+]+)", report.read_text()).group(1)[:10] if report else datetime.now(timezone.utc).date().isoformat()),
             "entry_price": "", "status": "no_signal", "exit_date": "", "return_120d": "",
         }])
         combined = pd.concat([pd.read_csv(cohort_csv) if cohort_csv.exists() else row, row], ignore_index=True)
@@ -171,7 +171,6 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
         m["ret"] = pd.to_numeric(m["return_120d"])
         print("\n===== 已结算 cohort 汇总（120d 纸面收益）=====")
         for (theme, lt), part in m.groupby(["theme", "list_type"]):
-            qqq = part["symbol"].apply(lambda s: 0.0)  # QQQ excess 在主题基准对照中更合适，此处给绝对收益
             print(f"{theme}/{lt}: n={len(part)} mean={part['ret'].mean()*100:+.1f}% win={(part['ret']>0).mean()*100:.0f}%")
 
 
@@ -202,7 +201,7 @@ def main() -> None:
             print(f"[{theme}] 无扫描报告", flush=True)
             continue
         cohort = extract_shortlist(theme, report, prefix)
-        archive_cohort(theme, cohort, cohort_csv)
+        archive_cohort(theme, cohort, cohort_csv, report)
         print_summary(theme, report)
 
     print(
