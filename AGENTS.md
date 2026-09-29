@@ -16,6 +16,7 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest. 105 tests, fully offline/fast, no env needed.
 - No lint/format/typecheck tooling or CI exists. Tests are the only verification.
 - Theme observation (P0 paper, five themes): `python scripts/theme_observation_scan.py` — runs all theme scans + archives 120d paper cohorts to data/theme_cohorts.csv; `--evaluate` settles matured rows; see docs/theme_observation_protocol.md.
+- Daily runner (RECOMMENDED entry point): `python scripts/daily_run.py` — weekday: AI two-style + five-theme + venture scans + cohort archive; Monday adds: population validation + theme basket refresh + venture universe rebuild; Friday adds: cohort settlement. Optional `--capital N` (AI trade plan), `--evaluate` (settle only), `--skip-scan`. Logs to `.debug_logs/daily_YYYYMMDD.log`. See README §15.
 - Venture sleeve universe: `python scripts/build_venture_universe.py --fts` — three-layer discovery funnel (ETF baskets in $100M-$3B window, basket new-membership events via data/theme_history/, SEC full-text-search pre-ETF names).
 - Live pilot: rules in docs/live_pilot_protocol.md (staged capital P0→P3, tier→weight table, weekly population-validation gate). Scan reports carry a `Config:` header line used by generate_trade_plan.py for style identification.
 

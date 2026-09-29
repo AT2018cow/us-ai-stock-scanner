@@ -916,6 +916,21 @@ theme_link = 0.40×主题ETF共识 + 0.15×主题基准联动 + 0.10×backlog（
 主题扫描**不归档** watchlist 快照（`archive_watchlist_snapshots=false`），不进入
 AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档。
 
+### 13.19 `scripts/daily_run.py` —— 每日运行入口（推荐）
+
+```bash
+.venv/bin/python scripts/daily_run.py             # 工作日：三套观察流 + 归档
+.venv/bin/python scripts/daily_run.py --capital N # 加生成 AI trade plan
+.venv/bin/python scripts/daily_run.py --skip-scan --evaluate  # 只跑 cohort 结算
+```
+
+按星期自动调度（详见 §15 与 `docs/theme_observation_protocol.md`）：
+- **工作日**：AI 双风格扫描 + 五主题扫描 + Venture sleeve 扫描 + cohort 归档
+- **周一额外**：数据质量门槛（validate_ttm_population）+ 主题篮子刷新 + Venture 底单重建
+- **周五额外**：全量 cohort 结算（--evaluate 传播到各观察脚本）
+- 周末仅 `--evaluate` 可用（市场关闭）
+- 日志：`.debug_logs/daily_YYYYMMDD.log`
+
 ## 14. 说明与限制
 
 - 本项目用于研究与筛选，不构成投资建议。
