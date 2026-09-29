@@ -930,7 +930,18 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 ## 15. 实盘试点操作流程（Live Pilot）
 
 完整规则见 `docs/live_pilot_protocol.md`（预注册，含资金分级 P0 纸面→P1 25%→
-P2 50%→P3 100% 与降级条件）。日常操作只有四条命令：
+P2 50%→P3 100% 与降级条件）。**日常操作只有一条命令**：
+
+```bash
+.venv/bin/python scripts/daily_run.py
+```
+
+按星期自动执行：工作日跑 AI 双风格 + 五主题 + Venture 三套观察扫描 + cohort 归档；
+周一额外跑数据质量门槛 + 主题篮子刷新 + venture 三层底单重建；周五额外跑 cohort 结算。
+可选参数：`--capital N`（生成 AI trade plan）、`--evaluate`（非周五强制结算）、
+`--skip-scan`（跳过扫描只跑维护）。
+
+手动分步命令（与 daily_run.py 等价）：
 
 ```bash
 # ① 每周：双风格观察扫描（信号源，自动归档 PIT 快照）
@@ -946,6 +957,11 @@ P2 50%→P3 100% 与降级条件）。日常操作只有四条命令：
 #    财报窗口内/前 7 天的仓位自动标记 delayed_earnings——本批不买、权重留现金，
 #    财报落地后重跑扫描，仍入选按原权重补买（详见协议 §3 第 3 条），
 #    120 个交易日后到期卖出；期间只看两条线：单仓 -25% 止损、QQQ<SMA200 停止新开仓
+
+# ⑤ 五主题 + Venture sleeve（P0 纸面观察，互不阻塞）
+.venv/bin/python scripts/theme_observation_scan.py                  # 五主题
+.venv/bin/python scripts/theme_observation_scan.py --sleeve venture # Venture
+.venv/bin/python scripts/theme_observation_scan.py --evaluate       # 周五结算到期 cohort
 ```
 
 输出示例（`trade_plan_*.md` 核心段）：
