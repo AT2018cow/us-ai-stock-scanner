@@ -285,11 +285,14 @@ def main() -> None:
         for h in horizons:
             qqq_ret = None
             if qqq_frame is not None:
+                # Same roundtrip cost as the per-symbol legs: sweep/IC excess
+                # math (fwd_ret - qqq_return) must compare cost-loaded returns
+                # on both sides (same convention as event_backtest benchmarks).
                 qqq_ret = forward_return(
                     qqq_frame,
                     asof.date().isoformat(),
                     h,
-                    0.0,
+                    roundtrip_cost,
                     entry_price_mode=args.entry_price_mode,
                     exit_price_mode=args.exit_price_mode,
                     global_end_date=global_end_date,
