@@ -221,3 +221,24 @@ class TestPredictEarningsWindow(unittest.TestCase):
             pd.DataFrame(columns=["form", "filed", "period"]), pd.Timestamp("2026-06-01"), 7
         )
         self.assertEqual(out["status"], "unknown")
+
+
+class TestEarningsAdvisoryRows(unittest.TestCase):
+    def test_imminent_included_others_excluded(self) -> None:
+        import pandas as pd
+
+        plan = pd.DataFrame([{"symbol": "MU"}, {"symbol": "CRM"}, {"symbol": "TXN"}])
+        status = {
+            "MU": {"status": "imminent", "window": "2026-09-22~2026-10-16", "note": "n"},
+            "CRM": {"status": "clear", "window": "2026-11-11~2026-12-05"},
+            "TXN": {"status": "unknown"},
+        }
+        rows = plan_mod.earnings_advisory_rows(plan, status)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "MU")
+        self.assertEqual(rows[0]["window"], "2026-09-22~2026-10-16")
+
+    def test_empty_plan_no_rows(self) -> None:
+        import pandas as pd
+
+        self.assertEqual(plan_mod.earnings_advisory_rows(pd.DataFrame(columns=["symbol"]), {}), [])

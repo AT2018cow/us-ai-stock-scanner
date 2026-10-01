@@ -318,6 +318,21 @@ def check_breaker_state(breaker: dict, today, max_stale_days: int = BREAKER_MAX_
     return True, "bull" if ok else "bear"
 
 
+def earnings_advisory_rows(plan: "pd.DataFrame", earnings_status: dict[str, dict]) -> list[dict]:
+    """Rows for the earnings advisory section: candidates whose expected
+    report window is imminent. Advisory only — never blocks or delays."""
+    rows = []
+    for _, r in plan.iterrows():
+        info = earnings_status.get(str(r["symbol"]), {})
+        if info.get("status") == "imminent":
+            rows.append({
+                "symbol": str(r["symbol"]),
+                "window": info.get("window", "?"),
+                "note": info.get("note", ""),
+            })
+    return rows
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--capital", type=float, required=True, help="Total pilot capital in USD")
@@ -328,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-positions-per-sleeve", type=int, default=10,
                    help="Concentrate the sleeve: keeps first, then momentum picks, then watches (half weight), by composite score")
     p.add_argument("--earnings-buffer-days", type=int, default=7,
-                   help="No new entry within this many days of an expected earnings report (SEC-submissions-inferred window)")
+                   help="Days around the expected report window counted as earnings-imminent for the advisory note")
     p.add_argument("--allow-no-breaker", action="store_true", default=False,
                    help="Bypass a failed/stale QQQ breaker check (logged loudly and stamped on the report)")
     return p
@@ -439,22 +454,23 @@ def main() -> None:
     plan["weight_pct_of_total"] = (w * (1.0 - args.cash_buffer_pct) * 100).round(2)
     plan["notional_usd"] = (plan["weight_pct_of_total"] / 100.0 * args.capital).round(0)
 
-    # Stage 4: earnings-window gate (pre-registered pilot rule, added
-    # 2026-09-28 after the MU gap: no new entry inside/within buffer_days of
-    # the SEC-inferred expected report window). Delayed names keep their
-    # planned weight as RESERVED CASH — executed after the report lands and
-    # the name still passes the next scan; never canceled, never reweighted
-    # ad hoc.
+    # Stage 4: earnings advisory (pre-registered pilot rule, added
+    # 2026-09-28 after the MU gap, simplified 2026-10-01: expected windows
+    # are computed from SEC filing history and shown as an advisory note —
+    # no auto-delay, no reserved cash, no re-entry machinery. Whether to sit
+    # out an imminent report is an explicit operator decision.
     earnings_status: dict[str, dict] = {}
     plan["execution"] = "execute_now"
     for idx, r in plan.iterrows():
         info = earnings_window(str(r["symbol"]), sec_client, args.earnings_buffer_days)
         earnings_status[str(r["symbol"])] = info
-        if info.get("status") == "imminent":
-            plan.loc[idx, "execution"] = "delayed_earnings"
-            plan.loc[idx, "entry_rule"] = (
-                f"延迟至财报发布后（{info.get('note', '')}）；财报落地且下次扫描仍入选后按原权重执行"
-            )
+    advisory = earnings_advisory_rows(plan, earnings_status)
+    if advisory:
+        print(
+            "财报临近提示 "
+            f"{len(advisory)} 个（仅提示，不延迟执行）: "
+            + ", ".join(f"{a['symbol']}({a['window']})" for a in advisory)
+        )
     plan = plan.reset_index(drop=True)
     out_csv = Path(f"outputs/trade_plan_{stamp}.csv")
     out_md = Path(f"outputs/trade_plan_{stamp}.md")
@@ -478,8 +494,8 @@ def main() -> None:
         "## 生效规则（见 docs/live_pilot_protocol.md）",
         "",
         "1. **熔断**: QQQ < SMA200 → 停止一切新开仓（现有 cohort 按止损/到期处理）",
-        "2. **入场**: 次日开盘；watch 分级半仓，keep/momentum 全仓；**财报闸门**：预期财报窗口",
-        f"   内/前 {args.earnings_buffer_days} 天内不开新仓（SEC 申报历史推算，见延迟仓段）",
+        "2. **入场**: 次日开盘；watch 分级半仓，keep/momentum 全仓；**财报提示**：报告下方",
+        f"   “财报临近提示”段所列标的预期财报临近（SEC 申报历史推算，窗口前后各 {args.earnings_buffer_days} 天），是否避开由操作人决定，本计划不做自动延迟",
         "3. **止损**: 单仓位 -25%；组合自启动 -15% → 暂停新开仓 + 人工复盘",
         "4. **验证**: 每周 `validate_ttm_population.py` 必须 PASS，连续 FAIL 暂停开仓",
         "",
@@ -503,10 +519,8 @@ def main() -> None:
     if plan.empty:
         lines.append("- （无持仓——检查扫描产物）")
     else:
-        exec_now = plan[plan["execution"] == "execute_now"]
-        delayed = plan[plan["execution"] == "delayed_earnings"]
         for style in ("both_styles", "risk_on", "risk_off"):
-            part = exec_now[exec_now["style_leg"] == style]
+            part = plan[plan["style_leg"] == style]
             if part.empty:
                 continue
             label = {
@@ -524,17 +538,15 @@ def main() -> None:
                     f"| {r['triage']} | {r['weight_pct_of_total']:.1f}% | {r['notional_usd']:,.0f} |"
                 )
             lines.append("")
-        if not delayed.empty:
-            lines.append("### ⚠ 延迟执行仓（财报窗口，本批不买入，权重保留为现金）")
+        if advisory:
+            lines.append("### ⚠ 财报临近提示（仅提示，不延迟执行）")
             lines.append("")
-            lines.append("| symbol | 权重% | 预留$ | 财报窗口（SEC 推算） | 执行条件 |")
-            lines.append("|---|---|---|---|---|")
-            for _, r in delayed.iterrows():
-                info = earnings_status.get(str(r["symbol"]), {})
-                lines.append(
-                    f"| {r['symbol']} | {r['weight_pct_of_total']:.1f}% | {r['notional_usd']:,.0f} "
-                    f"| {info.get('window', '?')} | 财报发布后重跑扫描，仍入选则按此权重补买 |"
-                )
+            lines.append("| symbol | 预期财报窗口 | 说明 |")
+            lines.append("|---|---|---|")
+            for a in advisory:
+                lines.append(f"| {a['symbol']} | {a['window']} | {a['note']} |")
+            lines.append("")
+            lines.append("- 上表标的预期财报临近，是否避开由操作人决定；本计划不做自动延迟、不预留现金。")
             lines.append("")
     if unallocated_frac > 0.005:
         lines += [
