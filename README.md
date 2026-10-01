@@ -171,7 +171,7 @@ python scripts/tune_parameters.py --no-promote
 
 ### 4.4 小盘研究层（`ai_smallcap` bucket）
 
-ETF 持仓页内嵌数据实际只含前 ~25 大持仓，因此 ETF 并集天然漏掉未被重仓的小盘热门股（如 AMKR）。`ai_smallcap` 层用于补足这部分候选，主要流向 `research_pool`（宽口径研究池），也可进入三张清单（有独立的通道阈值与 triage 规则）。
+ETF 持仓页内嵌数据实际只含前 ~25 大持仓，因此 ETF 并集天然漏掉未被重仓的小盘热门股（如 AMKR）。`ai_smallcap` 层用于补足这部分候选，主要流向 `research_pool`（宽口径研究池），也可进入三张清单（有独立的通道阈值与 triage 规则）。该通道为**辅线观察层**：扫描与研究池保留，但默认不进入交易计划候选（`--include-smallcap` 可恢复）。
 
 构建入口（三源合并，已在 ETF 名单中的标的会被跳过，`SRC:` 前缀为来源标记，不计入 `etf_count`）：
 
@@ -852,6 +852,7 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 .venv/bin/python scripts/generate_trade_plan.py --capital 100000
 # 可选：--risk-on-alloc / --risk-off-alloc（观察镜头，非资金分割）
 #       --max-position-pct 0.10 --max-positions-per-sleeve 10 --cash-buffer-pct 0.10
+#       --include-smallcap（默认关闭：ai_smallcap 为辅线观察层，不进交易计划）
 ```
 
 从最新两风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）：

@@ -112,6 +112,7 @@ class BacktestConfig:
     use_historical_watchlist: bool = True
     watchlist_history_dir: str = "data/watchlist_history"
     allow_latest_watchlist_fallback: bool = False
+    pre_snapshot_universe: str = "union"
     disclosure_lookback_days: int = 720
     entry_price_mode: str = "next_open"
     exit_price_mode: str = "close"
@@ -303,11 +304,45 @@ def load_watchlist_snapshots(
     return snapshots, latest_map
 
 
+def union_watchlist_allowlist(
+    snapshots: list[tuple[pd.Timestamp, WatchlistMap, str]],
+    latest_map: WatchlistMap,
+) -> set[str]:
+    """Every symbol ever seen: all snapshot mappings plus the current list."""
+    out: set[str] = set()
+    for _, mapping, _ in snapshots or []:
+        out.update(mapping.keys())
+    out.update((latest_map or {}).keys())
+    return out
+
+
+def build_union_watchlist_map(
+    snapshots: list[tuple[pd.Timestamp, WatchlistMap, str]],
+    latest_map: WatchlistMap,
+) -> WatchlistMap:
+    """Union map for pre-snapshot replay dates: per-symbol metadata comes from
+    the earliest snapshot containing the symbol (closest to a PIT view),
+    falling back to the current list for names only seen there. PIT data
+    availability (bars/filings as of each replay date) does the actual time
+    filtering downstream. Residual bias: names that died before the first
+    snapshot and never appear in any list stay excluded (documented upward).
+    """
+    merged: WatchlistMap = {}
+    for _, mapping, _ in sorted(snapshots or [], key=lambda x: x[0]):
+        for sym, val in mapping.items():
+            merged.setdefault(sym, val)
+    for sym, val in (latest_map or {}).items():
+        merged.setdefault(sym, val)
+    return merged
+
+
 def resolve_watchlist_asof(
     asof: pd.Timestamp,
     snapshots: list[tuple[pd.Timestamp, WatchlistMap, str]],
     latest_map: WatchlistMap,
     allow_latest_fallback: bool,
+    pre_snapshot_mode: str = "union",
+    union_map: WatchlistMap | None = None,
 ) -> tuple[WatchlistMap, str]:
     if snapshots:
         dates = [x[0] for x in snapshots]
@@ -315,6 +350,8 @@ def resolve_watchlist_asof(
         if idx >= 0:
             dt, mapping, name = snapshots[idx]
             return mapping, f"snapshot:{name}@{dt.date().isoformat()}"
+    if pre_snapshot_mode == "union" and union_map:
+        return union_map, "union_superset_approx"
     if allow_latest_fallback and latest_map:
         return latest_map, "latest_fallback"
     return {}, "none"
@@ -2498,12 +2535,13 @@ def build_signal_events_historical_replay(
         raise ValueError("end_date must be greater than start_date.")
 
     snapshots, latest_watchlist_map = load_watchlist_snapshots(cfg, scan_config)
-    if snapshots:
-        watchlist_allowlist = set()
-        for _, mapping, _ in snapshots:
-            watchlist_allowlist.update(mapping.keys())
-    else:
-        watchlist_allowlist = set(latest_watchlist_map.keys())
+    # Union allowlist: every symbol ever seen (all snapshots + current list).
+    # PIT data availability per replay date does the actual time filtering
+    # downstream, so this needs no ETF history and never blocks on snapshot
+    # coverage. Neutral (status, symbol) ordering is preserved for any
+    # downstream truncation.
+    watchlist_allowlist = union_watchlist_allowlist(snapshots, latest_watchlist_map)
+    union_map = build_union_watchlist_map(snapshots, latest_watchlist_map)
     if not watchlist_allowlist:
         raise ValueError(
             "No watchlist symbols available for replay. Provide current watchlist or historical snapshots."
@@ -2527,6 +2565,9 @@ def build_signal_events_historical_replay(
             prefetch_n = min(len(prefetch_universe), max(cfg.replay_max_symbols * 25, cfg.replay_max_symbols))
         else:
             prefetch_n = min(len(prefetch_universe), cfg.replay_max_symbols)
+        # Truncation order inherits (status, symbol) from build_universe_for_replay:
+        # performance-neutral by construction. Do NOT sort by liquidity/volume
+        # here — that would tilt historical replay toward present winners.
         prefetch_universe = prefetch_universe.head(prefetch_n)
 
     symbols = prefetch_universe["symbol"].dropna().astype(str).tolist()
@@ -2670,6 +2711,8 @@ def build_signal_events_historical_replay(
             snapshots=snapshots,
             latest_map=latest_watchlist_map,
             allow_latest_fallback=cfg.allow_latest_watchlist_fallback,
+            pre_snapshot_mode=cfg.pre_snapshot_universe,
+            union_map=union_map,
         )
         watchlist_source_counts[watchlist_source] = watchlist_source_counts.get(watchlist_source, 0) + 1
         if not watchlist_by_symbol:
@@ -3044,11 +3087,13 @@ def event_backtest(
                 price_frame = prices_by_symbol.get(bench.upper())
                 ret = None
                 if price_frame is not None:
+                    # Benchmarks pay the same roundtrip cost: excess_vs_QQQ
+                    # must compare cost-loaded returns on both sides.
                     ret = forward_return(
                         price_frame,
                         row.signal_date,
                         horizon,
-                        0.0,
+                        roundtrip_cost,
                         entry_price_mode=entry_price_mode,
                         exit_price_mode=exit_price_mode,
                         global_end_date=global_end_date,
@@ -3080,6 +3125,39 @@ def infer_segment_label(signal_date: str) -> str:
     return str(y)
 
 
+def non_overlapping_cumulative(part: pd.DataFrame, horizon: int) -> tuple[float, int]:
+    """Compound event returns over non-overlapping signal dates only.
+
+    Weekly/monthly signal grids with multi-month holds overlap heavily, so
+    compounding every event's mean return as if sequential misstates wealth.
+    Greedy earliest-first selection with a calendar gap covering the holding
+    window keeps disjoint holds. Returns (cumulative_return, n_events_used).
+    """
+    sub = part.dropna(subset=["portfolio_return"]).copy()
+    if sub.empty:
+        return float("nan"), 0
+    try:
+        sub["_sig_dt"] = pd.to_datetime(sub["signal_date"], utc=True)
+    except (TypeError, ValueError):
+        return float("nan"), 0
+    sub = sub.sort_values("_sig_dt")
+    gap = pd.Timedelta(days=int(horizon * 7 / 5) + 2)
+    acc = 1.0
+    n = 0
+    last = None
+    for _, r in sub.iterrows():
+        d = r["_sig_dt"]
+        if pd.isna(d):
+            continue
+        if last is None or (d - last) >= gap:
+            acc *= 1.0 + float(r["portfolio_return"])
+            last = d
+            n += 1
+    if not n:
+        return float("nan"), 0
+    return float(acc - 1.0), n
+
+
 def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.DataFrame:
     if events.empty:
         return pd.DataFrame(
@@ -3094,6 +3172,7 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                 "win_rate",
                 "std_return",
                 "cumulative_return",
+                "n_cumulative_events",
                 "avg_n_priced",
                 "avg_n_selected",
                 "n_no_signal_events",
@@ -3118,6 +3197,7 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
         p = part["portfolio_return"].dropna()
         total_events = int(len(part))
         valid_events = int(len(p))
+        cum_ret, n_cum = non_overlapping_cumulative(part, int(horizon))
         if p.empty:
             rows.append(
                 {
@@ -3131,6 +3211,7 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                     "win_rate": np.nan,
                     "std_return": np.nan,
                     "cumulative_return": np.nan,
+                    "n_cumulative_events": 0,
                     "avg_n_priced": float(part["n_priced"].mean()) if not part.empty else np.nan,
                     "avg_n_selected": float(part["n_selected"].mean()) if not part.empty else np.nan,
                     "n_no_signal_events": int((part.get("event_status") == "no_signal").sum())
@@ -3157,7 +3238,8 @@ def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.Dat
                 "median_return": float(p.median()),
                 "win_rate": float((p > 0).mean()),
                 "std_return": float(p.std(ddof=0)),
-                "cumulative_return": float((1.0 + p).prod() - 1.0),
+                "cumulative_return": float(cum_ret),
+                "n_cumulative_events": int(n_cum),
                 "avg_n_priced": float(part["n_priced"].mean()),
                 "avg_n_selected": float(part["n_selected"].mean()),
                 "n_no_signal_events": int((part.get("event_status") == "no_signal").sum())
@@ -3466,6 +3548,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-historical-watchlist", action="store_true")
     p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
     p.add_argument("--no-latest-watchlist-fallback", action="store_true")
+    p.add_argument("--pre-snapshot-universe", default="union", choices=["union", "strict"],
+                   help="Universe for replay dates before the first PIT snapshot: "
+                        "union (all snapshots + current list, PIT data availability filters; default) "
+                        "or strict (legacy empty universe).")
     p.add_argument("--disclosure-lookback-days", type=int, default=720)
     p.add_argument(
         "--theme-source",
@@ -3763,6 +3849,7 @@ def main() -> None:
         use_historical_watchlist=use_historical_watchlist,
         watchlist_history_dir=args.watchlist_history_dir,
         allow_latest_watchlist_fallback=allow_latest_watchlist_fallback,
+        pre_snapshot_universe=args.pre_snapshot_universe,
         disclosure_lookback_days=args.disclosure_lookback_days,
         theme_source=args.theme_source,
         allow_lookahead_theme_source=bool(args.allow_lookahead_theme_source),

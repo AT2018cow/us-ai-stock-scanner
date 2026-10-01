@@ -162,3 +162,177 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _wlmap(*pairs: tuple) -> dict:
+    return {s: (b, c, e) for s, b, c, e in pairs}
+
+
+class TestUnionWatchlist(unittest.TestCase):
+    def test_earliest_snapshot_wins(self) -> None:
+        from ai_value_scanner.backtest import build_union_watchlist_map
+        import pandas as pd
+
+        snaps = [
+            (pd.Timestamp("2026-09-22", tz="UTC"), _wlmap(("AAA", "core_ai", 5, "X"), ("BBB", "core_ai", 1, "Y")), "a.csv"),
+            (pd.Timestamp("2026-09-25", tz="UTC"), _wlmap(("AAA", "core_ai", 9, "X,Z"), ("CCC", "core_ai", 2, "W")), "b.csv"),
+        ]
+        latest = _wlmap(("AAA", "core_ai", 9, "X,Z"), ("DDD", "core_ai", 1, "V"))
+        m = build_union_watchlist_map(snaps, latest)
+        self.assertEqual(set(m), {"AAA", "BBB", "CCC", "DDD"})
+        self.assertEqual(m["AAA"], ("core_ai", 5, "X"))  # earliest, not latest
+        self.assertEqual(m["DDD"], ("core_ai", 1, "V"))  # current-only fallback
+
+    def test_empty_inputs(self) -> None:
+        from ai_value_scanner.backtest import build_union_watchlist_map, union_watchlist_allowlist
+
+        self.assertEqual(build_union_watchlist_map([], {}), {})
+        self.assertEqual(union_watchlist_allowlist([], {}), set())
+        latest = _wlmap(("AAA", "core_ai", 1, "X"))
+        self.assertEqual(union_watchlist_allowlist([], latest), {"AAA"})
+
+
+class TestResolveWatchlistModes(unittest.TestCase):
+    def setUp(self) -> None:
+        from ai_value_scanner.backtest import resolve_watchlist_asof
+        import pandas as pd
+
+        self.resolve = resolve_watchlist_asof
+        self.pd = pd
+        self.snaps = [
+            (pd.Timestamp("2026-09-22", tz="UTC"), _wlmap(("AAA", "core_ai", 5, "X")), "a.csv"),
+        ]
+        self.latest = _wlmap(("AAA", "core_ai", 9, "X,Z"), ("NEW", "core_ai", 1, "W"))
+        self.union = _wlmap(("AAA", "core_ai", 5, "X"), ("NEW", "core_ai", 1, "W"))
+
+    def _asof(self, s: str):
+        return self.pd.Timestamp(s, tz="UTC")
+
+    def test_snapshot_hit_ignores_modes(self) -> None:
+        m, src = self.resolve(self._asof("2026-09-25"), self.snaps, self.latest, False, "union", self.union)
+        self.assertEqual(m, self.snaps[0][1])
+        self.assertTrue(src.startswith("snapshot:"))
+
+    def test_pre_snapshot_union_default(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), self.snaps, self.latest, False, "union", self.union)
+        self.assertEqual(m, self.union)
+        self.assertEqual(src, "union_superset_approx")
+
+    def test_pre_snapshot_strict_empty(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), self.snaps, self.latest, False, "strict", self.union)
+        self.assertEqual(m, {})
+        self.assertEqual(src, "none")
+
+    def test_pre_snapshot_strict_with_flag_falls_back(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), self.snaps, self.latest, True, "strict", self.union)
+        self.assertEqual(m, self.latest)
+        self.assertEqual(src, "latest_fallback")
+
+    def test_union_wins_over_fallback_flag(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), self.snaps, self.latest, True, "union", self.union)
+        self.assertEqual(src, "union_superset_approx")
+
+    def test_no_snapshots_no_union_falls_back(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), [], self.latest, True, "union", {})
+        self.assertEqual(m, self.latest)
+        self.assertEqual(src, "latest_fallback")
+
+    def test_no_snapshots_no_fallback_empty(self) -> None:
+        m, src = self.resolve(self._asof("2024-01-05"), [], self.latest, False, "union", {})
+        self.assertEqual(m, {})
+        self.assertEqual(src, "none")
+
+
+def _summary_events(dates: list[str], returns: list[float]):
+    import pandas as pd
+
+    return pd.DataFrame([{
+        "scenario": "s", "run_stem": "r", "run_ts_utc": "t",
+        "signal_date": d, "list_type": "low_value", "horizon_days": 120,
+        "n_selected": 1, "n_priced": 1, "event_status": "valid",
+        "portfolio_return": r, "benchmark_trailing_60d": 0.0, "regime": "up",
+    } for d, r in zip(dates, returns)])
+
+
+def _summary_bench(dates: list[str]):
+    import pandas as pd
+
+    return pd.DataFrame([{
+        "scenario": "s", "run_stem": "r", "horizon_days": 120,
+        "benchmark": "QQQ", "benchmark_return": 0.0, "signal_date": d,
+    } for d in dates])
+
+
+class TestNonOverlappingCumulative(unittest.TestCase):
+    def test_overlapping_events_not_compounded(self) -> None:
+        from ai_value_scanner.backtest import summarize_backtest
+
+        dates = [(pd.Timestamp("2026-01-05", tz="UTC") + pd.Timedelta(days=7 * i)).strftime("%Y-%m-%d")
+                 for i in range(6)]
+        ev = _summary_events(dates, [0.10] * 6)
+        s = summarize_backtest(ev, _summary_bench(dates))
+        row = s.iloc[0]
+        # gap for h=120 is 170d: only the first weekly event qualifies
+        self.assertEqual(int(row["n_cumulative_events"]), 1)
+        self.assertAlmostEqual(float(row["cumulative_return"]), 0.10, places=9)
+        # naive prod(1.1^6)-1 = 0.7716 would be the old (wrong) value
+        self.assertLess(float(row["cumulative_return"]), 0.5)
+
+    def test_spaced_events_all_count(self) -> None:
+        from ai_value_scanner.backtest import summarize_backtest
+
+        dates = ["2024-01-05", "2024-07-05", "2025-01-05"]
+        ev = _summary_events(dates, [0.10, 0.10, 0.10])
+        s = summarize_backtest(ev, _summary_bench(dates))
+        row = s.iloc[0]
+        self.assertEqual(int(row["n_cumulative_events"]), 3)
+        self.assertAlmostEqual(float(row["cumulative_return"]), 1.1 ** 3 - 1.0, places=9)
+
+    def test_empty_part_nan(self) -> None:
+        from ai_value_scanner.backtest import non_overlapping_cumulative
+        import pandas as pd
+
+        val, n = non_overlapping_cumulative(
+            pd.DataFrame({"signal_date": [], "portfolio_return": []}), 120
+        )
+        self.assertEqual(n, 0)
+        self.assertTrue(pd.isna(val))
+
+
+class TestBenchmarkSymmetricCost(unittest.TestCase):
+    def test_benchmark_return_net_of_cost(self) -> None:
+        dates = _daily_dates("2025-06-01", 300)
+        frame = _frame(dates, [100.0] * 300)
+        sig = _signals([], "2026-01-05")
+        _, benchmarks = event_backtest(
+            signals=sig, prices_by_symbol={"QQQ": frame}, horizons=[20],
+            roundtrip_cost=0.003, benchmark_symbols=["QQQ"],
+            entry_price_mode="next_open", exit_price_mode="close",
+            delist_return_assumption=None, delist_detection_buffer_days=7,
+        )
+        ret = float(benchmarks.iloc[0]["benchmark_return"])
+        self.assertAlmostEqual(ret, -0.003, places=9)
+
+
+class TestPreSnapshotFlagDefaults(unittest.TestCase):
+    def test_backtest_tune_extract_default_union(self) -> None:
+        import ai_value_scanner.backtest as btmod
+        import importlib.util
+        import sys
+        from pathlib import Path as _P
+
+        def load(name, rel):
+            spec = importlib.util.spec_from_file_location(
+                name, _P(__file__).resolve().parents[1] / rel)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+
+        self.assertEqual(btmod.build_parser().parse_args([]).pre_snapshot_universe, "union")
+        tune = load("tuneparser", "scripts/tune_parameters.py")
+        import unittest.mock as mock
+        with mock.patch.object(__import__("sys"), "argv", ["tune_parameters.py"]):
+            self.assertEqual(tune.parse_args().pre_snapshot_universe, "union")
+        extract = load("extractparser", "scripts/extract_weight_dataset.py")
+        self.assertEqual(extract.build_parser().parse_args([]).pre_snapshot_universe, "union")

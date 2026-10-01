@@ -36,6 +36,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.backtest import (
+    apply_split_adjustment_to_frame,
     benchmark_trailing_return_asof,
     benchmark_trend_ok_asof,
     build_bar_db,
@@ -45,6 +46,7 @@ from ai_value_scanner.backtest import (
     build_steps_and_weights,
     build_theme_scores_rules_proxy,
     build_universe_for_replay,
+    build_union_watchlist_map,
     compute_price_features_asof,
     forward_return,
     load_alpaca_client,
@@ -53,6 +55,8 @@ from ai_value_scanner.backtest import (
     normalize_symbol_list,
     parse_date_utc,
     resolve_watchlist_asof,
+    union_watchlist_allowlist,
+    _hold_window_mature,
 )
 from ai_value_scanner.scanner import (
     apply_filters_with_diagnostics,
@@ -84,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--watchlist-history-dir", default="data/watchlist_history")
     p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
     p.add_argument("--no-latest-watchlist-fallback", action="store_true")
+    p.add_argument("--pre-snapshot-universe", default="union", choices=["union", "strict"],
+                   help="Universe for replay dates before the first PIT snapshot: "
+                        "union (all snapshots + current list, PIT data availability filters; default) "
+                        "or strict (legacy empty universe).")
     p.add_argument("--disclosure-lookback-days", type=int, default=720)
     p.add_argument("--theme-source", default="rules_proxy", choices=["rules_proxy", "zero"])
     p.add_argument("--delist-return-assumption", type=float, default=-0.55)
@@ -122,16 +130,16 @@ def main() -> None:
         type("Cfg", (), {
             "use_historical_watchlist": True,
             "watchlist_history_dir": args.watchlist_history_dir,
-            "allow_latest_watchlist_fallback": allow_fallback,
+        "allow_latest_watchlist_fallback": allow_fallback,
+        "pre_snapshot_universe": args.pre_snapshot_universe,
         })(),
         scan_config,
     )
-    watchlist_allowlist = set()
-    if snapshots:
-        for _, mapping, _ in snapshots:
-            watchlist_allowlist.update(mapping.keys())
-    else:
-        watchlist_allowlist.update(latest_watchlist_map.keys())
+    # Union allowlist: every symbol ever seen (all snapshots + current list).
+    # PIT data availability per signal date does the actual time filtering
+    # downstream; ordering stays neutral (see prefetch comment below).
+    watchlist_allowlist = union_watchlist_allowlist(snapshots, latest_watchlist_map)
+    union_map = build_union_watchlist_map(snapshots, latest_watchlist_map)
     if not watchlist_allowlist:
         raise ValueError("No watchlist symbols available for replay.")
 
@@ -154,6 +162,9 @@ def main() -> None:
             prefetch_n = min(len(prefetch_universe), max(args.replay_max_symbols * 25, args.replay_max_symbols))
         else:
             prefetch_n = min(len(prefetch_universe), args.replay_max_symbols)
+        # Truncation order inherits (status, symbol) from build_universe_for_replay:
+        # performance-neutral by construction. Do NOT sort by liquidity/volume
+        # here — that would tilt historical replay toward present winners.
         prefetch_universe = prefetch_universe.head(prefetch_n)
 
     symbols = prefetch_universe["symbol"].dropna().astype(str).tolist()
@@ -171,6 +182,20 @@ def main() -> None:
     log(f"universe symbols={len(symbols)} | fetching bars from {bars_start[:10]}", started)
     bar_db = build_bar_db(client, bars_symbols, bars_start, scan_config.chunk_size)
     log(f"symbols with bars={len(bar_db)}", started)
+    # Authoritative splits for the replay window (same discipline as the live
+    # scan and the backtest replay): price features, benchmark returns and
+    # forward returns use split-adjusted series; valuation multiples keep raw
+    # closes x raw filed shares. Fail open.
+    split_events: dict[str, list[tuple[str, float]]] = {}
+    try:
+        split_events = client.get_corporate_action_splits(
+            bars_symbols, bars_start,
+            (end_dt or datetime.now(timezone.utc)).date().isoformat(),
+        )
+        if split_events:
+            log(f"split events: {len(split_events)} symbols", started)
+    except Exception as exc:
+        log(f"corporate-actions split fetch failed ({exc.__class__.__name__}); replay unadjusted", started)
 
     universe = prefetch_universe[prefetch_universe["symbol"].isin(set(bar_db.keys()))].copy()
     universe = universe.dropna(subset=["cik"]).copy()
@@ -215,7 +240,9 @@ def main() -> None:
             log(f"progress {i}/{len(dates)} asof={asof.date().isoformat()}", started)
             last_heartbeat = now_tick
 
-        benchmark_trailing_60d = benchmark_trailing_return_asof(bar_db, regime_symbol, asof, 60)
+        benchmark_trailing_60d = benchmark_trailing_return_asof(
+            bar_db, regime_symbol, asof, 60, split_events.get(regime_symbol)
+        )
         regime = "unknown"
         if benchmark_trailing_60d is not None:
             regime = "up" if benchmark_trailing_60d >= 0 else "down"
@@ -225,6 +252,8 @@ def main() -> None:
             snapshots=snapshots,
             latest_map=latest_watchlist_map,
             allow_latest_fallback=allow_fallback,
+            pre_snapshot_mode=args.pre_snapshot_universe,
+            union_map=union_map,
         )
         if not watchlist_by_symbol:
             continue
@@ -235,7 +264,10 @@ def main() -> None:
             etf_bars = bar_db.get(etf)
             if etf_bars is None:
                 continue
-            etf_feat = compute_price_features_asof(etf_bars, asof=asof, lookback_days=scan_config.price_lookback_days)
+            etf_feat = compute_price_features_asof(
+                etf_bars, asof=asof, lookback_days=scan_config.price_lookback_days,
+                split_events=split_events.get(etf),
+            )
             if not etf_feat:
                 continue
             r20 = etf_feat.get("return_20d")
@@ -247,7 +279,9 @@ def main() -> None:
         benchmark_median_return_20d = float(np.median(benchmark_returns_20d)) if benchmark_returns_20d else None
         benchmark_median_return_60d = float(np.median(benchmark_returns_60d)) if benchmark_returns_60d else None
 
-        qqq_frame = bar_db.get("QQQ")
+        qqq_frame = apply_split_adjustment_to_frame(
+            bar_db.get("QQQ"), split_events.get("QQQ")
+        )
         for h in horizons:
             qqq_ret = None
             if qqq_frame is not None:
@@ -281,11 +315,13 @@ def main() -> None:
             scan_config=scan_config,
             benchmark_trend_ok=(
                 benchmark_trend_ok_asof(
-                    bar_db, trend_filter_symbol, asof, scan_config.benchmark_trend_filter_sma_days
+                    bar_db, trend_filter_symbol, asof, scan_config.benchmark_trend_filter_sma_days,
+                    split_events.get(trend_filter_symbol),
                 )
                 if trend_filter_symbol
                 else None
             ),
+            split_events=split_events,
         )
         if df.empty:
             continue
@@ -314,7 +350,9 @@ def main() -> None:
 
                 for idx, row in survivors.iterrows():
                     symbol = str(row.get("symbol", "")).upper()
-                    frame = bar_db.get(symbol)
+                    frame = apply_split_adjustment_to_frame(
+                        bar_db.get(symbol), split_events.get(symbol)
+                    )
                     rec = {
                         "signal_date": asof.date().isoformat(),
                         "channel": channel_name,
@@ -330,8 +368,8 @@ def main() -> None:
                             continue
                         rec[col] = row.get(col)
                     for h in horizons:
-                        rec[f"fwd_ret_{h}"] = (
-                            forward_return(
+                        if frame is not None and not frame.empty:
+                            fwd = forward_return(
                                 frame,
                                 asof.date().isoformat(),
                                 h,
@@ -342,9 +380,19 @@ def main() -> None:
                                 delist_return_assumption=args.delist_return_assumption,
                                 delist_detection_buffer_days=args.delist_detection_buffer_days,
                             )
-                            if frame is not None and not frame.empty
-                            else None
-                        )
+                        elif (
+                            args.delist_return_assumption is not None
+                            and _hold_window_mature(
+                                asof.date().isoformat(), h,
+                                args.delist_detection_buffer_days, global_end_date,
+                            )
+                        ):
+                            # Scored name with no price data on a mature hold
+                            # window: delist-like disappearance, not a data gap.
+                            fwd = float(args.delist_return_assumption) - roundtrip_cost
+                        else:
+                            fwd = None
+                        rec[f"fwd_ret_{h}"] = fwd
                     rows.append(rec)
 
     dataset = pd.DataFrame(rows)
