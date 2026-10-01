@@ -4,15 +4,17 @@
   1. AI 双风格观察扫描（risk_off + risk_on）
   2. 五主题扫描 + cohort 归档
   3. Venture sleeve 扫描 + cohort 归档
+  4. 左侧名单资金流统计（scripts/flow_tracker.py，8 交易日大单流回填；
+     可 --skip-flow 跳过，--flow-days N 调窗口，--flow-extra-symbols 附加自选）
 
 周一额外：
-  4. 数据质量门槛（validate_ttm_population）
-  5. 主题篮子刷新 + 新成员 diff
-  6. Venture 三层底单重建（--fts）
+  5. 数据质量门槛（validate_ttm_population）
+  6. 主题篮子刷新 + 新成员 diff
+  7. Venture 三层底单重建（--fts）
 
 周五额外：
-  7. 所有到期 cohort 结算（--evaluate，120 交易日到期才真正结算）
-  8. AI trade plan 生成（可选，仅 P0 阶段标记纸面）
+  8. 所有到期 cohort 结算（--evaluate，120 交易日到期才真正结算）
+  9. AI trade plan 生成（可选，仅 P0 阶段标记纸面）
 
 所有日志写入 .debug_logs/daily_YYYYMMDD.log。可用 --skip-scan 跳过扫描只跑结算。
 """
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -124,16 +127,39 @@ def run(cmd: list[str], label: str) -> bool:
     return ok
 
 
+def collect_left_side_symbols(since_ts: float, today_tag: str) -> tuple[set[str], list[str]]:
+    import csv as _csv
+    import glob
+
+    pools = sorted(glob.glob(f"outputs/ai_value_scan_{today_tag}*_full_ranked_research_pool.csv"))
+    fresh = [p for p in pools if Path(p).stat().st_mtime >= since_ts]
+    used = fresh if fresh else pools
+    syms: set[str] = set()
+    for p in used:
+        try:
+            with open(p) as f:
+                for r in _csv.DictReader(f):
+                    if r.get("research_priority") == "left_side_watch" and r.get("symbol"):
+                        syms.add(str(r["symbol"]).upper())
+        except OSError:
+            continue
+    return syms, used
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Daily runner for all observation loops.")
     p.add_argument("--skip-scan", action="store_true", help="Skip scans, only run evaluate/maintenance")
     p.add_argument("--evaluate", action="store_true", help="Run cohort settlement even on non-Friday")
     p.add_argument("--capital", type=float, default=100000, help="Default capital for trade plan generation")
+    p.add_argument("--skip-flow", action="store_true", help="Skip left-side block-flow statistics")
+    p.add_argument("--flow-days", type=int, default=8, help="Lookback trading days for block-flow stats")
+    p.add_argument("--flow-extra-symbols", default="", help="Extra symbols appended to the left-side flow run")
     args = p.parse_args()
 
     now = datetime.now(timezone.utc)
     dow = now.weekday()  # 0=Mon ... 4=Fri, 5=Sat, 6=Sun
     date_tag = now.strftime("%Y%m%d")
+    run_started_ts = time.time()
     log_file = Path(f".debug_logs/daily_{date_tag}.log")
 
     if dow >= 5 and not args.evaluate:
@@ -168,6 +194,18 @@ def main() -> None:
         ok &= run([python, "-u", "scripts/theme_observation_scan.py", "--evaluate"], "⑦ 五主题 cohort 结算")
         ok &= run([python, "-u", "scripts/theme_observation_scan.py", "--sleeve", "venture", "--evaluate"],
                   "⑧ Venture cohort 结算")
+
+    # ---- 每日：左侧名单资金流（注释层，失败不阻塞） ----
+    if not args.skip_flow:
+        syms, used = collect_left_side_symbols(run_started_ts, date_tag)
+        if syms:
+            cmd = [python, "-u", "scripts/flow_tracker.py", "--days", str(args.flow_days),
+                   "--symbols", ",".join(sorted(syms))]
+            if args.flow_extra_symbols:
+                cmd += ["--extra-symbols", args.flow_extra_symbols]
+            run(cmd, f"左侧资金流（{len(syms)} 只 × {args.flow_days} 交易日，池来源 {len(used)} 个）")
+        else:
+            log("✓ 左侧资金流: 今日无 left_side_watch 名单，跳过")
 
     # ---- 每日：trade plan + 操作指导 ----
     ok &= run([python, "-u", "scripts/generate_trade_plan.py", "--capital", str(args.capital)],
