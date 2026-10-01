@@ -32,8 +32,8 @@ class TestApplySplitAdjustment(unittest.TestCase):
         closes = [b["c"] for b in out]
         self.assertTrue(all(abs(c - 100.0) < 1e-9 for c in closes[:5]))
         self.assertTrue(all(abs(c - 100.0) < 1e-9 for c in closes[5:]))
-        # volume untouched
-        self.assertEqual(out[0]["v"], bars[0]["v"])
+        # volume scaled inversely so dollar volume is invariant (10x here)
+        self.assertAlmostEqual(out[0]["v"], bars[0]["v"] / 0.1, places=6)
         self.assertEqual(out[-1]["c"], bars[-1]["c"])
 
     def test_reverse_split(self) -> None:
@@ -62,11 +62,21 @@ class TestApplySplitAdjustment(unittest.TestCase):
         self.assertIs(apply_split_adjustment(bars, []), bars)
 
     def test_dollar_volume_invariance(self) -> None:
-        bars = [_bar("2026-01-02", 1000.0, volume=1_000.0), _bar("2026-01-20", 100.0, volume=10_000.0)]
+        # >= 20 bars so avg_dollar_volume_20d is actually computed
+        bars = [_bar(f"2026-01-{d:02d}", 1000.0, volume=1_000.0) for d in range(1, 11)]
+        bars += [_bar(f"2026-01-{d:02d}", 100.0, volume=10_000.0) for d in range(11, 25)]
         out = apply_split_adjustment(bars, [("2026-01-10", 0.1)])
         dims_raw = price_dimension_from_bars(100.0, bars)
         dims_adj = price_dimension_from_bars(100.0, out)
-        self.assertAlmostEqual(dims_raw["avg_dollar_volume_20d"], dims_adj["avg_dollar_volume_20d"], places=4)
+        self.assertIsNotNone(dims_raw["avg_dollar_volume_20d"])
+        self.assertIsNotNone(dims_adj["avg_dollar_volume_20d"])
+        self.assertAlmostEqual(
+            dims_raw["avg_dollar_volume_20d"], dims_adj["avg_dollar_volume_20d"], places=4
+        )
+        # adjusted volume is scaled inversely to price (10x here)
+        self.assertAlmostEqual(out[0]["v"], bars[0]["v"] / 0.1, places=6)
+        # post-split bars pass through untouched
+        self.assertAlmostEqual(out[-1]["v"], bars[-1]["v"], places=6)
 
     def test_price_dimensions_split_corrected(self) -> None:
         # NFLX-style: pre-split raw high 1266, 10:1 split, last close 69.25.

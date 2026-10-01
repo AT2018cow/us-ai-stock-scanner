@@ -2065,15 +2065,16 @@ def apply_split_adjustment(
     bars: list[dict[str, Any]],
     split_events: list[tuple[str, float]] | None,
 ) -> list[dict[str, Any]]:
-    """Split-adjust o/h/l/c for pre-split bars; volume fields untouched.
+    """Split-adjust o/h/l/c/v for pre-split bars.
 
     split_events: [(ex_date, price_mult)] with price_mult = old_rate/new_rate
     (10:1 forward split -> 0.1). Bars dated BEFORE ex_date carry raw
     pre-split prices and are scaled by the cumulative product of the mults
     of all splits with ex_date after the bar date, so the close series
-    becomes continuous in adjusted-price space. Same-day dollar volume is
-    split-invariant and is intentionally left unadjusted; callers that need
-    raw prices × raw share counts (valuation history) must pass the
+    becomes continuous in adjusted-price space. Volume is scaled by
+    1/mult so that close x volume (dollar volume) stays split-invariant
+    and cross-day dollar-volume averages remain correct. Callers that need
+    raw prices x raw share counts (valuation history) must pass the
     unadjusted series.
     """
     if not bars or not split_events:
@@ -2100,6 +2101,12 @@ def apply_split_adjustment(
                 adjusted[key] = float(value) * cum
             except (TypeError, ValueError):
                 continue
+        volume = row.get("v")
+        if volume is not None:
+            try:
+                adjusted["v"] = float(volume) / cum
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
         out.append(adjusted)
     return out
 
