@@ -71,9 +71,13 @@ def detect_run_summary(outputs_dir: Path, run_stem: str | None) -> RunSummary:
         if not report_path.exists():
             raise FileNotFoundError(f"Report not found: {report_path}")
     else:
-        candidates = sorted(outputs_dir.glob("*_report.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        # Only scanner reports — backtest/tuning reports share outputs/ and
+        # would otherwise shadow the newest scan by mtime.
+        candidates = sorted(
+            outputs_dir.glob("ai_value_scan_*_report.md"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
         if not candidates:
-            raise FileNotFoundError(f"No report files found under {outputs_dir}")
+            raise FileNotFoundError(f"No scan report files found under {outputs_dir}")
         report_path = candidates[0]
         run_stem = report_path.name[: -len("_report.md")]
 
