@@ -34,10 +34,39 @@ image = (
 cache_volume = modal.Volume.from_name("ai-scanner-cache", create_if_missing=True)
 
 
+# Exact env keys the cloud replay reads (grep os.getenv/os.environ in src/):
+# shipping the whole .env would also grant unrelated local secrets.
+_MODAL_ENV_KEYS = (
+    "ALPACA_API_ENDPOINT",
+    "ALPACA_API_KEY",
+    "ALPACA_API_SECRET",
+    "ALPACA_DATA_ENDPOINT",
+    "ALPACA_FEED",
+    "SEC_USER_AGENT",
+)
+
+
+def _modal_secrets() -> list:
+    found: dict[str, str] = {}
+    try:
+        for line in Path(".env").read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key in _MODAL_ENV_KEYS and val:
+                found[key] = val
+    except OSError:
+        pass
+    print(f"[modal] shipping {len(found)}/{len(_MODAL_ENV_KEYS)} env keys (names only, never values)")
+    return [modal.Secret.from_dict(found)]
+
+
 @app.function(
     image=image,
     volumes={"/root/cache": cache_volume},
-    secrets=[modal.Secret.from_dotenv(".env")],
+    secrets=_modal_secrets(),
     timeout=6 * 3600,
     # The replay is single-core pandas/JSON work (json.load holds the GIL),
     # so more cores per container only increase billing, not speed.

@@ -21,9 +21,9 @@ import numpy as np
 import requests
 from dotenv import load_dotenv
 
-sys.path.insert(0, "src")
-
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,12}$")
+
+MAX_LOOKBACK_DAYS = 60
 
 
 def sanitize_symbol(raw: str) -> str:
@@ -47,6 +47,9 @@ ZERO_DAY = {
 
 def load_env() -> dict[str, str]:
     load_dotenv()
+    missing = [k for k in ("ALPACA_API_KEY", "ALPACA_API_SECRET") if not os.environ.get(k)]
+    if missing:
+        raise SystemExit(f"缺少 API 密钥环境变量: {', '.join(missing)}（检查 .env）")
     return dict(os.environ)
 
 
@@ -222,11 +225,14 @@ def main() -> None:
     ap.add_argument("--symbols", default="", help="Comma-separated list; overrides --auto-left-side")
     ap.add_argument("--auto-left-side", action="store_true", help="Read latest research pools for left_side_watch names")
     ap.add_argument("--extra-symbols", default="", help="Additional symbols appended to the list")
-    ap.add_argument("--days", type=int, default=8)
+    ap.add_argument("--days", type=int, default=8,
+                    help=f"Lookback trading days for block-flow stats (1-{MAX_LOOKBACK_DAYS})")
     ap.add_argument("--end-date", default=None)
     ap.add_argument("--summary-only", action="store_true")
     args = ap.parse_args()
 
+    if not 1 <= args.days <= MAX_LOOKBACK_DAYS:
+        raise SystemExit(f"--days 须在 1-{MAX_LOOKBACK_DAYS} 之间（回填成本随天数线性增长）")
     symbols = [sanitize_symbol(s) for s in args.symbols.split(",") if s.strip()]
     if not symbols and args.auto_left_side:
         symbols = auto_left_side_symbols()

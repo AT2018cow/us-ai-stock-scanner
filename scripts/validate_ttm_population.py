@@ -170,7 +170,17 @@ def main() -> None:
         cfg0 = load_config("configs/config.risk_off.json")
         sec0 = load_sec_client(cfg0, NetworkMonitor())
         mapping = sec0.ticker_mapping()
-        wl = wl.merge(mapping, on="symbol", how="inner")
+        before = len(wl)
+        wl = wl.merge(mapping, on="symbol", how="left")
+        unmapped = sorted(set(wl.loc[wl["cik"].isna(), "symbol"].astype(str).str.upper()))
+        if unmapped:
+            # Do NOT silently drop: names without SEC mapping are excluded
+            # from the population checks below, so report them loudly. The
+            # PASS/FAIL thresholds are unchanged (follow-up item).
+            log(f"WARNING: {len(unmapped)}/{before} watchlist symbols have no SEC mapping "
+                f"and are EXCLUDED from population validation: {', '.join(unmapped[:20])}"
+                f"{'...' if len(unmapped) > 20 else ''}")
+        wl = wl[wl["cik"].notna()].copy()
     needed = [c for c in ("symbol", "cik") if c in wl.columns]
     if len(needed) < 2:
         raise ValueError(f"watchlist missing symbol/cik columns: {wl.columns.tolist()}")

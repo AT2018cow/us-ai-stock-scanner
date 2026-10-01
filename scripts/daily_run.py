@@ -209,7 +209,7 @@ def main() -> None:
 
     # ---- 每日：trade plan + 操作指导 ----
     ok &= run([python, "-u", "scripts/generate_trade_plan.py", "--capital", str(args.capital)],
-              "④ AI trade plan 生成")
+              "⑨ AI trade plan 生成")
 
     # ---- 整合操作指导 ----
     log("═" * 60)

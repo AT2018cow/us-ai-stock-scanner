@@ -28,7 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -85,11 +85,15 @@ def main() -> None:
 
     existing_watch = pd.read_csv(cfg.watchlist_csv_path)
     existing_syms = set(existing_watch["symbol"].astype(str).str.upper())
-    # Names already in scan outputs (the "leak survivors")
+    # Names already in recent scan outputs (the "leak survivors"): files
+    # modified in the last 7 days, no hardcoded dates.
     import glob
     scan_syms: set[str] = set()
-    for f in glob.glob("outputs/ai_value_scan_20260927T*_full_ranked*.csv"):
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    for f in glob.glob("outputs/ai_value_scan_*_full_ranked*.csv"):
         try:
+            if datetime.fromtimestamp(Path(f).stat().st_mtime, tz=timezone.utc) < cutoff:
+                continue
             d = pd.read_csv(f, usecols=["symbol"])
             scan_syms.update(d["symbol"].astype(str).str.upper())
         except Exception:

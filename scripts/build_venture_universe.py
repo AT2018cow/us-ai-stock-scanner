@@ -27,6 +27,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -184,7 +185,7 @@ def main() -> None:
             kws = spec.get("disclosure_keywords", [])[:3]  # top-3 signal keywords per theme
             found: set[str] = set()
             for kw in kws:
-                q = f'%22{kw.replace(" ", "+")}%22'
+                q = f"%22{urllib.parse.quote_plus(kw)}%22"
                 ciks = sec_fts_search(sec, q, startdt)
                 for cik in ciks:
                     m = mapping[mapping["cik"] == cik]

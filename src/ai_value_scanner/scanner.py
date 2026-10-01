@@ -2084,7 +2084,15 @@ def apply_split_adjustment(
     """
     if not bars or not split_events:
         return bars
-    events = sorted((str(d), float(m)) for d, m in split_events if d and m > 0)
+    events: list[tuple[str, float]] = []
+    for d, m in split_events:
+        try:
+            mult = float(m)
+        except (TypeError, ValueError):
+            continue
+        if d and mult > 0:
+            events.append((str(d), mult))
+    events.sort()
     if not events:
         return bars
     out: list[dict[str, Any]] = []
@@ -2511,7 +2519,11 @@ def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
 
     for bucket, etf_list in bucket_to_etfs.items():
         for etf in etf_list:
-            symbols, _ = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
+            symbols, err = fetch_stockanalysis_etf_symbols(etf, config.watchlist_fetch_timeout_sec)
+            if err:
+                print(f"[watchlist] WARNING: {bucket}/{etf} fetch failed ({err}); bucket proceeds partial")
+            if not symbols:
+                print(f"[watchlist] WARNING: {bucket}/{etf} returned 0 symbols")
             for symbol in symbols:
                 bucket_counts[bucket][symbol] = bucket_counts[bucket].get(symbol, 0) + 1
                 bucket_etf_hits[bucket].setdefault(symbol, []).append(str(etf).upper())

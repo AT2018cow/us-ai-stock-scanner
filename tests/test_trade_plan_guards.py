@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import tempfile
 import unittest
+import unittest.mock as mock
 from datetime import date
 from pathlib import Path
 
@@ -115,7 +118,6 @@ class TestSafeDefaults(unittest.TestCase):
         self.assertFalse(args.allow_no_breaker)
 
     def test_tuner_fallback_defaults_off(self) -> None:
-        import unittest.mock as mock
 
         tuner = _load_script("tune_parameters.py")
         with mock.patch.object(sys, "argv", ["tune_parameters.py"]):
@@ -142,7 +144,6 @@ def _filings(rows: list[tuple]) -> "pd.DataFrame":
 
 class TestPredictEarningsWindow(unittest.TestCase):
     def _qtrs(self, year: int = 2026, q_lag: int = 35, a_lag: int = 70) -> list[tuple]:
-        import pandas as pd
 
         def dt(y: int, m: int, d: int, lag: int) -> tuple[str, str, str]:
             p = pd.Timestamp(y, m, d)
@@ -168,7 +169,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
         return fixed
 
     def test_quarterly_path_matches_legacy(self) -> None:
-        import pandas as pd
 
         df = _filings(self._qtrs())
         # today before next period end -> clear, quarterly lag
@@ -180,7 +180,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
         self.assertEqual(out["window"], "2026-07-25~2026-08-18")
 
     def test_q4_predicts_annual_window(self) -> None:
-        import pandas as pd
 
         # latest = Q3 10-Q (period 2026-09-30); next report is the FY 10-K
         rows = self._qtrs() + [("10-Q", "2026-11-04", "2026-09-30")]
@@ -194,7 +193,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
         self.assertEqual(out["status"], "clear")
 
     def test_imminent_inside_annual_window(self) -> None:
-        import pandas as pd
 
         rows = self._qtrs() + [("10-Q", "2026-11-04", "2026-09-30")]
         df = _filings(rows)
@@ -203,7 +201,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
         self.assertEqual(out["status"], "imminent")
 
     def test_foreign_annual_filer(self) -> None:
-        import pandas as pd
 
         df = _filings([
             ("20-F", "2026-04-28", "2025-12-31"),
@@ -215,7 +212,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
         self.assertEqual(out["next_period"], "2026-12-31")
 
     def test_empty_reports_unknown(self) -> None:
-        import pandas as pd
 
         out = plan_mod.predict_earnings_window(
             pd.DataFrame(columns=["form", "filed", "period"]), pd.Timestamp("2026-06-01"), 7
@@ -225,7 +221,6 @@ class TestPredictEarningsWindow(unittest.TestCase):
 
 class TestEarningsAdvisoryRows(unittest.TestCase):
     def test_imminent_included_others_excluded(self) -> None:
-        import pandas as pd
 
         plan = pd.DataFrame([{"symbol": "MU"}, {"symbol": "CRM"}, {"symbol": "TXN"}])
         status = {
@@ -239,6 +234,83 @@ class TestEarningsAdvisoryRows(unittest.TestCase):
         self.assertEqual(rows[0]["window"], "2026-09-22~2026-10-16")
 
     def test_empty_plan_no_rows(self) -> None:
-        import pandas as pd
 
         self.assertEqual(plan_mod.earnings_advisory_rows(pd.DataFrame(columns=["symbol"]), {}), [])
+
+
+class TestExcludeAuxiliaryChannels(unittest.TestCase):
+    def test_drops_smallcap_rows_only(self) -> None:
+
+        df = pd.DataFrame([
+            {"symbol": "AAA", "channel": "core_ai"},
+            {"symbol": "BBB", "channel": "ai_smallcap"},
+            {"symbol": "CCC", "channel": "ai_peripheral"},
+        ])
+        out = plan_mod.exclude_auxiliary_channels(df)
+        self.assertEqual(sorted(out["symbol"].tolist()), ["AAA", "CCC"])
+
+    def test_include_flag_keeps_all(self) -> None:
+
+        df = pd.DataFrame([{"symbol": "BBB", "channel": "ai_smallcap"}])
+        out = plan_mod.exclude_auxiliary_channels(df, include_smallcap=True)
+        self.assertEqual(len(out), 1)
+
+    def test_empty_and_missing_channel_passthrough(self) -> None:
+
+        self.assertTrue(plan_mod.exclude_auxiliary_channels(pd.DataFrame()).empty)
+        df = pd.DataFrame([{"symbol": "AAA"}])
+        self.assertEqual(len(plan_mod.exclude_auxiliary_channels(df)), 1)
+
+
+class TestSleeveSmallcapFilter(unittest.TestCase):
+    def _write_fixtures(self, root: str) -> None:
+
+        outdir = Path(root) / "outputs"
+        outdir.mkdir(parents=True, exist_ok=True)
+        ranked = pd.DataFrame([
+            {"symbol": "AAA", "triage_label": "keep", "channel": "core_ai", "composite_score": 1.10},
+            {"symbol": "BBB", "triage_label": "watch", "channel": "ai_smallcap", "composite_score": 1.20},
+            {"symbol": "CCC", "triage_label": "watch", "channel": "ai_smallcap", "composite_score": 0.90},
+            {"symbol": "CCC", "triage_label": "watch", "channel": "ai_enabler", "composite_score": 0.80},
+        ])
+        ranked.to_csv(outdir / "ai_value_scan_TESTTS_full_ranked.csv", index=False)
+        mo = pd.DataFrame([
+            {"symbol": "DDD", "channel": "ai_smallcap", "composite_score": 1.00, "research_priority": "research_now"},
+            {"symbol": "EEE", "channel": "core_ai", "composite_score": 0.95, "research_priority": "watch_for_pullback"},
+        ])
+        mo.to_csv(outdir / "ai_value_scan_TESTTS_full_ranked_momentum.csv", index=False)
+
+    def test_smallcap_excluded_by_default(self) -> None:
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_fixtures(tmp)
+            prev = os.getcwd()
+            try:
+                os.chdir(tmp)
+                pos = plan_mod.sleeve_positions("TESTTS", "risk_off")
+            finally:
+                os.chdir(prev)
+        syms = pos["symbol"].tolist()
+        # BBB (smallcap-only) and DDD (smallcap momentum) are gone;
+        # CCC survives via its ai_enabler row; AAA/EEE untouched.
+        self.assertNotIn("BBB", syms)
+        self.assertNotIn("DDD", syms)
+        self.assertIn("AAA", syms)
+        self.assertIn("EEE", syms)
+        ccc = pos[pos["symbol"] == "CCC"]
+        self.assertEqual(len(ccc), 1)
+        self.assertEqual(ccc.iloc[0]["channel"], "ai_enabler")
+
+    def test_include_smallcap_restores(self) -> None:
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_fixtures(tmp)
+            prev = os.getcwd()
+            try:
+                os.chdir(tmp)
+                pos = plan_mod.sleeve_positions("TESTTS", "risk_off", include_smallcap=True)
+            finally:
+                os.chdir(prev)
+        syms = pos["symbol"].tolist()
+        self.assertIn("BBB", syms)
+        self.assertIn("DDD", syms)

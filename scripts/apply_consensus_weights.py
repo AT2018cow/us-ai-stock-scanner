@@ -101,6 +101,8 @@ def main() -> None:
         data = json.loads(path.read_text())
         profiles = data["channel_profiles"]
         for ch in CHANNELS:
+            if ch == "ai_smallcap":
+                continue  # auxiliary observation channel (see module docstring): weights frozen
             prof = profiles[ch]
             raw_lv = prof.get("score_weights", {})
             raw_mo = prof.get("momentum_score_weights", None)

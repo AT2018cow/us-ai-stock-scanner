@@ -200,7 +200,24 @@ def qqq_breaker_state() -> dict:
     }
 
 
-def sleeve_positions(ts: str, style: str) -> pd.DataFrame:
+AUXILIARY_CHANNELS = ("ai_smallcap",)
+
+
+def exclude_auxiliary_channels(df: "pd.DataFrame", include_smallcap: bool = False) -> "pd.DataFrame":
+    """Drop auxiliary-channel rows from plan candidates.
+
+    ai_smallcap is an observation sleeve, not a live-money channel: its
+    hard-gate survivors show negative absolute forwards at 20d/120d and
+    sub-50% win rates in the weight dataset, vs positive for all three main
+    channels. Filtering channel rows (not symbols) lets multi-channel names
+    keep their best non-auxiliary row via the normal dedup below.
+    """
+    if include_smallcap or df.empty or "channel" not in df.columns:
+        return df
+    return df[~df["channel"].isin(AUXILIARY_CHANNELS)].copy()
+
+
+def sleeve_positions(ts: str, style: str, include_smallcap: bool = False) -> pd.DataFrame:
     """keep=1.0x, watch=0.5x (low_value); momentum picks weighted by
     research priority; dedup by symbol.
 
@@ -244,12 +261,16 @@ def sleeve_positions(ts: str, style: str) -> pd.DataFrame:
                 mo = mo[~excluded].copy()
                 mo["lists"] = mo["research_priority"].radd("momentum(") + ")"
             else:
-                mo["weight_mult"] = 1.0
+                raise SystemExit(
+                    f"momentum 清单缺 research_priority 列（旧版扫描产物）：{mo_path}。"
+                    "重跑当日扫描后再生成交易计划（否则 left_side_watch 会被误按全权重买入）。"
+                )
             parts.append(mo)
     if not parts:
         return pd.DataFrame(columns=["symbol", "lists", "channel", "composite_score", "weight_mult"])
     allp = pd.concat(parts, ignore_index=True)
     allp["symbol"] = allp["symbol"].astype(str).str.upper()
+    allp = exclude_auxiliary_channels(allp, include_smallcap)
     # Dedup: a symbol in multiple lists keeps its best (highest) composite,
     # membership noted.
     allp = allp.sort_values("composite_score", ascending=False)
@@ -346,6 +367,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Days around the expected report window counted as earnings-imminent for the advisory note")
     p.add_argument("--allow-no-breaker", action="store_true", default=False,
                    help="Bypass a failed/stale QQQ breaker check (logged loudly and stamped on the report)")
+    p.add_argument("--include-smallcap", action="store_true", default=False,
+                   help="Include ai_smallcap channel rows in plan candidates (default: auxiliary observation only)")
     return p
 
 
@@ -376,7 +399,7 @@ def main() -> None:
     # and the sleeve position cap (full-weight tiers first, then half weight).
     candidates: list[dict] = []
     for style, (ts, alloc) in sleeves.items():
-        pos = sleeve_positions(ts, style)
+        pos = sleeve_positions(ts, style, include_smallcap=args.include_smallcap)
         if pos.empty:
             continue
         pos["tier"] = np.where(pos["weight_mult"] >= 1.0, 0, 1)
