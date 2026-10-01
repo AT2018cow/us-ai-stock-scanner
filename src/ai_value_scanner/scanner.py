@@ -1120,6 +1120,50 @@ class AlpacaClient:
         data = resp.json()
         return data.get("news", data if isinstance(data, list) else [])
 
+    def get_corporate_action_splits(
+        self, symbols: list[str], start_iso: str, end_iso: str | None = None
+    ) -> dict[str, list[tuple[str, float]]]:
+        """Authoritative forward/reverse split events: {symbol: [(ex_date, price_mult)]}.
+
+        price_mult = old_rate / new_rate (a 10:1 forward split -> 0.1): raw
+        pre-split prices are multiplied by this factor to land in adjusted
+        price space. Raises on network errors; callers fail open to raw bars.
+        """
+        if not symbols:
+            return {}
+        url = f"{self.data_endpoint}/v1/corporate-actions"
+        events: dict[str, list[tuple[str, float]]] = {}
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "symbols": ",".join(sorted({str(s).upper() for s in symbols})),
+                "types": "forward_split,reverse_split",
+                "start": str(start_iso)[:10],
+                "limit": 500,
+            }
+            if end_iso:
+                params["end"] = str(end_iso)[:10]
+            if page_token:
+                params["page_token"] = page_token
+            resp = self._get(url, params=params)
+            payload = resp.json()
+            actions = payload.get("corporate_actions", {}) or {}
+            for item in list(actions.get("forward_splits") or []) + list(actions.get("reverse_splits") or []):
+                sym = str(item.get("symbol") or "").upper()
+                ex_date = str(item.get("ex_date") or "")
+                try:
+                    mult = float(item.get("old_rate")) / float(item.get("new_rate"))
+                except (TypeError, ValueError, ZeroDivisionError):
+                    continue
+                if sym and ex_date and np.isfinite(mult) and mult > 0:
+                    events.setdefault(sym, []).append((ex_date, mult))
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
+        for sym in events:
+            events[sym].sort()
+        return events
+
     def get_daily_bars(
         self, symbols: list[str], start_iso: str, chunk_size: int
     ) -> dict[str, list[dict[str, Any]]]:
@@ -2015,6 +2059,49 @@ def price_from_snapshot(snapshot: dict[str, Any]) -> tuple[float | None, float |
     if price is not None and volume is not None:
         dollar_volume = float(price) * float(volume)
     return (float(price) if price is not None else None, dollar_volume)
+
+
+def apply_split_adjustment(
+    bars: list[dict[str, Any]],
+    split_events: list[tuple[str, float]] | None,
+) -> list[dict[str, Any]]:
+    """Split-adjust o/h/l/c for pre-split bars; volume fields untouched.
+
+    split_events: [(ex_date, price_mult)] with price_mult = old_rate/new_rate
+    (10:1 forward split -> 0.1). Bars dated BEFORE ex_date carry raw
+    pre-split prices and are scaled by the cumulative product of the mults
+    of all splits with ex_date after the bar date, so the close series
+    becomes continuous in adjusted-price space. Same-day dollar volume is
+    split-invariant and is intentionally left unadjusted; callers that need
+    raw prices × raw share counts (valuation history) must pass the
+    unadjusted series.
+    """
+    if not bars or not split_events:
+        return bars
+    events = sorted((str(d), float(m)) for d, m in split_events if d and m > 0)
+    if not events:
+        return bars
+    out: list[dict[str, Any]] = []
+    for row in sorted(bars, key=lambda r: str(r.get("t", ""))):
+        bar_date = str(row.get("t", ""))[:10]
+        cum = 1.0
+        for ex_date, mult in events:
+            if ex_date > bar_date:
+                cum *= mult
+        if cum == 1.0:
+            out.append(row)
+            continue
+        adjusted = dict(row)
+        for key in ("o", "h", "l", "c"):
+            value = row.get(key)
+            if value is None:
+                continue
+            try:
+                adjusted[key] = float(value) * cum
+            except (TypeError, ValueError):
+                continue
+        out.append(adjusted)
+    return out
 
 
 def price_dimension_from_bars(
@@ -5597,10 +5684,36 @@ def run_scan(
     if trend_filter_symbol and trend_filter_symbol not in bars_symbols:
         bars_symbols = sorted(set(bars_symbols).union({trend_filter_symbol}))
     bars_map = alpaca.get_daily_bars(bars_symbols, bars_start_iso, config.chunk_size)
+    # Raw bars are NOT split-adjusted (Alpaca adjustment=raw). Cross-day price
+    # metrics below must be computed on a split-continuous series, so split
+    # events are pulled from the authoritative corporate-actions feed and the
+    # o/h/l/c fields are rescaled at the point of use. Valuation history
+    # deliberately keeps the RAW series: raw close x raw shares is
+    # self-consistent across splits.
+    split_events: dict[str, list[tuple[str, float]]] = {}
+    try:
+        split_events = alpaca.get_corporate_action_splits(
+            bars_symbols, bars_start_iso, datetime.now(timezone.utc).date().isoformat()
+        )
+        if split_events:
+            log_status(
+                started_at,
+                "INFO",
+                f"Split events (corporate actions): {len(split_events)} symbols, "
+                f"e.g. {sorted(split_events)[:5]}",
+            )
+    except Exception as exc:
+        # Fail open: unadjusted bars reproduce the legacy behaviour.
+        log_status(
+            started_at,
+            "WARN",
+            f"corporate-actions split fetch failed ({exc.__class__.__name__}); "
+            "price dimensions left unadjusted",
+        )
     benchmark_returns_20d: list[float] = []
     benchmark_returns_60d: list[float] = []
     for etf in benchmark_symbols:
-        bench_bars = bars_map.get(etf, [])
+        bench_bars = apply_split_adjustment(bars_map.get(etf, []), split_events.get(etf))
         ret20 = bars_return_from_lookback(bench_bars, 20)
         ret60 = bars_return_from_lookback(bench_bars, 60)
         if ret20 is not None and np.isfinite(ret20):
@@ -5619,7 +5732,7 @@ def run_scan(
     )
     benchmark_trend_ok: bool | None = None
     if trend_filter_symbol:
-        trend_bars = bars_map.get(trend_filter_symbol, [])
+        trend_bars = apply_split_adjustment(bars_map.get(trend_filter_symbol, []), split_events.get(trend_filter_symbol))
         trend_close = bars_close_from_lookback(
             trend_bars, config.benchmark_trend_filter_sma_days
         )
@@ -5637,7 +5750,7 @@ def run_scan(
             )
     price_feature_rows: list[dict[str, Any]] = []
     for row in df.itertuples(index=False):
-        symbol_bars = bars_map.get(row.symbol, [])
+        symbol_bars = apply_split_adjustment(bars_map.get(row.symbol, []), split_events.get(row.symbol))
         features = price_dimension_from_bars(row.price, symbol_bars)
         price_feature_rows.append({"symbol": row.symbol, **features})
     df_price_features = pd.DataFrame(price_feature_rows)
@@ -5741,6 +5854,9 @@ def run_scan(
     ps_hist_sources: list[str] = []
     pe_hist_sources: list[str] = []
     for row in df.itertuples(index=False):
+        # RAW closes on purpose: paired with raw filed share counts the
+        # market-cap product stays correct on both sides of a split. Adjusted
+        # closes here would understate pre-split multiples by the split factor.
         closes = extract_close_history_from_bars(bars_map.get(row.symbol, []))
         revenue_hist = parse_history_pairs(getattr(row, "revenue_ttm_history_json", None))
         net_income_hist = parse_history_pairs(getattr(row, "net_income_ttm_history_json", None))
