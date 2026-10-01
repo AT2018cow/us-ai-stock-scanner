@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from ai_value_scanner.scanner import write_csv_atomic
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 THEMES = ["nuclear", "quantum", "biotech", "rare_earth", "critical_minerals"]
@@ -59,8 +61,13 @@ def newest_report_for(theme: str, prefix: str = "config.theme") -> Path | None:
 
 def extract_shortlist(theme: str, report: Path, prefix: str = "config.theme") -> pd.DataFrame:
     """Low-value keep/watch + momentum picks of one theme scan as cohort rows."""
-    ts = re.search(r"ranked csv: outputs/(ai_value_scan_\d+T\d+Z)", report.read_text()).group(1)
-    started = re.search(r"Started UTC: ([\dT:\.\-+]+)", report.read_text())
+    text = report.read_text()
+    ranked_m = re.search(r"ranked csv: outputs/(ai_value_scan_\d+T\d+Z)", text)
+    if ranked_m is None:
+        log(f"{theme}: 报告缺少 ranked csv 行，跳过归档（{report.name}）")
+        return pd.DataFrame()
+    ts = ranked_m.group(1)
+    started = re.search(r"Started UTC: ([\dT:\.\-+]+)", text)
     entry_date = started.group(1)[:10] if started else datetime.now(timezone.utc).date().isoformat()
     rows: list[dict] = []
     lv = Path(f"outputs/{ts}_full_ranked.csv")
@@ -90,24 +97,45 @@ def extract_shortlist(theme: str, report: Path, prefix: str = "config.theme") ->
     return pd.DataFrame(rows)
 
 
+def _report_entry_date(report: Path | None) -> str:
+    if report is not None:
+        try:
+            text = report.read_text()
+        except OSError:
+            text = ""
+        started = re.search(r"Started UTC: ([\dT:.\-+]+)", text)
+        if started:
+            return started.group(1)[:10]
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 def archive_cohort(theme: str, cohort: pd.DataFrame, cohort_csv: Path = COHORT_CSV, report: Path | None = None) -> None:
     """Append one cohort; dedupe on (theme, list_type, entry_date, symbol)."""
+    key = ["theme", "list_type", "entry_date", "symbol"]
     if cohort.empty:
         log(f"{theme}: 无可归档的 shortlist（空清单主题也按协议记录为 no-signal）")
         row = pd.DataFrame([{
             "theme": theme, "list_type": "none", "symbol": "", "triage": "",
             "research_priority": "", "composite_score": "",
-            "entry_date": (re.search(r"Started UTC: ([\dT:.\-+]+)", report.read_text()).group(1)[:10] if report else datetime.now(timezone.utc).date().isoformat()),
+            "entry_date": _report_entry_date(report),
             "entry_price": "", "status": "no_signal", "exit_date": "", "return_120d": "",
         }])
-        combined = pd.concat([pd.read_csv(cohort_csv) if cohort_csv.exists() else row, row], ignore_index=True)
-        combined.to_csv(cohort_csv, index=False)
+        existing = pd.read_csv(cohort_csv) if cohort_csv.exists() else row.head(0)
+        # CSV round-trip turns "" into NaN; normalize key columns so reruns dedupe.
+        for _col in key:
+            if _col in existing.columns:
+                existing[_col] = existing[_col].fillna("")
+        combined = pd.concat([existing, row], ignore_index=True)
+        combined = combined.drop_duplicates(subset=key, keep="first")
+        write_csv_atomic(combined, cohort_csv)
         return
     existing = pd.read_csv(cohort_csv) if cohort_csv.exists() else cohort.head(0)
-    key = ["theme", "list_type", "entry_date", "symbol"]
+    for _col in key:
+        if _col in existing.columns:
+            existing[_col] = existing[_col].fillna("")
     merged = pd.concat([existing, cohort], ignore_index=True)
     merged = merged.drop_duplicates(subset=key, keep="first")
-    merged.to_csv(cohort_csv, index=False)
+    write_csv_atomic(merged, cohort_csv)
     log(f"{theme}: 归档 cohort {len(cohort)} 行（entry_date={cohort['entry_date'].iloc[0]}）")
 
 
@@ -162,7 +190,7 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
         d.loc[idx, "exit_date"] = str(frame.index[x_idx].date())
         d.loc[idx, "return_120d"] = round(exit_px / entry - 1.0, 6)
         n_matured += 1
-    d.to_csv(cohort_csv, index=False)
+    write_csv_atomic(d, cohort_csv)
     log(f"结算 {n_matured} 行；未到期行保持 open")
     # 汇总已结算 cohort
     matured = d[(d["status"] == "matured") & pd.to_numeric(d["return_120d"], errors="coerce").notna()]

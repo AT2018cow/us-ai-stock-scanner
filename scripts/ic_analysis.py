@@ -8,8 +8,11 @@ per-stock forward returns (~40k survivor-date observations).
 For each (signal_date, list_type) cross-section:
     IC(date, h) = Spearman(composite_score, fwd_ret_h)  over ALL hard-gate survivors
 
-Aggregates mean IC with t-stats (per-date ICs are near-independent), plus
-breakdowns by year and regime, plus per-dimension ICs for diagnosis.
+Aggregates mean IC with t-stats plus Newey-West overlap-adjusted t-stats
+(t_nw): signal dates are spaced much closer than the 60/120d holding windows,
+so consecutive per-date ICs share most of their forward window and are
+autocorrelated — the plain t overstates significance. Breakdowns by year and
+regime, plus per-dimension ICs for diagnosis.
 
 Usage:
     python scripts/ic_analysis.py --dataset outputs/weight_dataset_risk_off.csv \
@@ -58,6 +61,41 @@ def tstat(vals: list[float]) -> float:
     if sd == 0:
         return np.nan
     return float(x.mean() / sd * np.sqrt(len(x)))
+
+
+def overlap_lags(dates: list[str], horizon_days: int) -> int:
+    """Newey-West lag from actual signal-date spacing vs holding window."""
+    try:
+        ts = sorted(pd.to_datetime(dates).tz_localize(None))
+    except (TypeError, ValueError):
+        return 1
+    if len(ts) < 2:
+        return 1
+    steps = [(b - a).days for a, b in zip(ts, ts[1:])]
+    steps = [s for s in steps if s > 0]
+    if not steps:
+        return 1
+    step = float(np.median(steps))
+    if step <= 0:
+        return 1
+    return max(1, int(round(horizon_days / step)))
+
+
+def tstat_nw(vals: list[float], lags: int) -> float:
+    """Mean / Newey-West standard error (Bartlett kernel, overlap-robust)."""
+    x = np.array([v for v in vals if np.isfinite(v)], dtype=float)
+    n = len(x)
+    if n < 3:
+        return np.nan
+    xc = x - x.mean()
+    gamma0 = float((xc ** 2).sum() / n)
+    var = gamma0
+    for lag in range(1, min(max(1, int(lags)), n - 1) + 1):
+        w = 1.0 - lag / (lags + 1)
+        var += 2.0 * w * float((xc[lag:] * xc[:-lag]).sum() / n)
+    if not np.isfinite(var) or var <= 0:
+        return np.nan
+    return float(x.mean() / np.sqrt(var / n))
 
 
 def main() -> None:
@@ -121,12 +159,14 @@ def main() -> None:
 
     # ---- Composite IC ----
     print(f"\n===== {style} | composite_score 截面 IC（Spearman）=====")
-    print(f"{'list':<10s} {'H':>4s} {'mean_IC':>8s} {'t':>7s} {'n_dates':>8s} {'IC>0占比':>8s}")
+    print(f"{'list':<10s} {'H':>4s} {'mean_IC':>8s} {'t':>7s} {'t_nw':>7s} {'n_dates':>8s} {'IC>0占比':>8s}")
     ic_store: dict[tuple[str, int], dict[str, list[float]]] = {}
+    ic_dates: dict[tuple[str, int], list[str]] = {}
     for lt in list_types:
         part = scored[scored["list_type"] == lt]
         for h in horizons:
             ics: list[float] = []
+            dates: list[str] = []
             by_regime: dict[str, list[float]] = {"up": [], "down": []}
             by_year: dict[str, list[float]] = {}
             for date, day in part.groupby("signal_date"):
@@ -138,13 +178,15 @@ def main() -> None:
                 if not np.isfinite(ic):
                     continue
                 ics.append(ic)
+                dates.append(str(date))
                 reg = regime_map.get(date, "unknown")
                 if reg in by_regime:
                     by_regime[reg].append(ic)
                 by_year.setdefault(date[:4], []).append(ic)
             t = tstat(ics)
+            t_nw = tstat_nw(ics, overlap_lags(dates, h))
             pos = float(np.mean([1 if x > 0 else 0 for x in ics])) if ics else np.nan
-            print(f"{lt:<10s} {h:>4d} {np.mean(ics):>8.4f} {t:>7.2f} {len(ics):>8d} {pos:>7.0%}")
+            print(f"{lt:<10s} {h:>4d} {np.mean(ics):>8.4f} {t:>7.2f} {t_nw:>7.2f} {len(ics):>8d} {pos:>7.0%}")
             ic_store[(lt, h)] = {"all": ics, "up": by_regime["up"], "down": by_regime["down"], "year": by_year}
 
     # ---- IC by regime / year for the primary list ----
@@ -169,12 +211,13 @@ def main() -> None:
         lv["soft_pass_rate"] = pd.to_numeric(lv["soft_pass_count"], errors="coerce") / pd.to_numeric(
             lv["soft_total"], errors="coerce"
         )
-    print(f"{'dimension':<28s} {'mean_IC':>8s} {'t':>7s} {'n_dates':>8s}")
+    print(f"{'dimension':<28s} {'mean_IC':>8s} {'t':>7s} {'t_nw':>7s} {'n_dates':>8s}")
     for comp in comps:
         if comp not in lv.columns:
             print(f"{comp:<28s} (column missing)")
             continue
         ics = []
+        dates = []
         for date, day in lv.groupby("signal_date"):
             x = pd.to_numeric(day[comp], errors="coerce").to_numpy(dtype=float)
             y = day["fwd_ret_60"].to_numpy(dtype=float)
@@ -183,8 +226,10 @@ def main() -> None:
             ic = spearman(x, y)
             if np.isfinite(ic):
                 ics.append(ic)
+                dates.append(str(date))
         t = tstat(ics)
-        print(f"{comp:<28s} {np.mean(ics):>+8.4f} {t:>+7.2f} {len(ics):>8d}")
+        t_nw = tstat_nw(ics, overlap_lags(dates, 60))
+        print(f"{comp:<28s} {np.mean(ics):>+8.4f} {t:>+7.2f} {t_nw:>+7.2f} {len(ics):>8d}")
 
     # save per-date ICs for reference
     out_rows = []

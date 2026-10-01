@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from ai_value_scanner.scanner import ScanConfig, load_config, normalize_equity_symbol
+from ai_value_scanner.scanner import ScanConfig, load_config, normalize_equity_symbol, write_csv_atomic
 
 BUCKET = "ai_smallcap"
 
@@ -362,8 +362,7 @@ def main() -> None:
             print(f"[smallcap] pruned stale ai_smallcap rows={pruned}")
     combined = pd.concat([existing, new_rows], ignore_index=True) if not existing.empty else new_rows
     combined = combined.sort_values(["bucket", "symbol"]).drop_duplicates(subset=["symbol", "bucket"], keep="first")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(out, index=False)
+    write_csv_atomic(combined, out)
     print(f"[smallcap] output={out} total_rows={len(combined)}")
 
 

@@ -934,6 +934,19 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 - **周一额外**：数据质量门槛（validate_ttm_population）+ 主题篮子刷新 + Venture 底单重建
 - **周五额外**：全量 cohort 结算（--evaluate 传播到各观察脚本）
 - 周末仅 `--evaluate` 可用（市场关闭）
+- 扫描完成后自动跑左侧名单资金流（`flow_tracker.py`，`--skip-flow` 跳过）
+
+### 13.20 `scripts/flow_tracker.py` —— 左侧名单大单流统计
+
+```bash
+.venv/bin/python scripts/flow_tracker.py --auto-left-side --days 8
+.venv/bin/python scripts/flow_tracker.py --symbols CRDO,VST --days 8
+```
+
+对给定标的回填 SIP 逐笔成交（按日缓存到 `data/flow/`，可续跑），输出
+$100K/$1M 大单买方主动性（tick rule 近似）、场外占比与 3 日价格联合判定
+（`accumulate_confirm` / `accumulate_unconfirmed` / `distribute` / `mixed`）。
+定位是注释层（不进选股闸门）；单日流向是噪声，以多日聚合为准。
 - 日志：`.debug_logs/daily_YYYYMMDD.log`
 
 ## 14. 说明与限制

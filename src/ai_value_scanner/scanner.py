@@ -610,6 +610,11 @@ class ScanConfig:
         for key, value in raw.items():
             if hasattr(base, key):
                 setattr(base, key, value)
+            else:
+                # Unknown keys are ignored for forward compatibility, but a
+                # typo'd threshold name would silently run on stale values —
+                # always surface it so config edits are verifiable.
+                print(f"[config] WARNING: unknown ScanConfig key ignored: {key!r}")
         return base
 
 
@@ -2475,6 +2480,20 @@ def fetch_stockanalysis_etf_symbols(
     if not out:
         return [], "no_symbols_parsed"
     return out, None
+
+
+def write_csv_atomic(df: "pd.DataFrame", path: str | Path) -> None:
+    """Write a DataFrame to CSV atomically via tmp-file + rename.
+
+    Production input files (watchlist, universes, cohort ledgers) must never
+    be left truncated if the process dies mid-write or another run reads a
+    half-written file.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, target)
 
 
 def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:

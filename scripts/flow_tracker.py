@@ -11,6 +11,7 @@ Usage:
 import argparse
 import csv
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,15 @@ import requests
 from dotenv import load_dotenv
 
 sys.path.insert(0, "src")
+
+SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,12}$")
+
+
+def sanitize_symbol(raw: str) -> str:
+    sym = str(raw or "").strip().upper()
+    if not SYMBOL_PATTERN.match(sym):
+        raise SystemExit(f"非法 symbol（仅允许字母/数字/./-）: {raw!r}")
+    return sym
 
 CACHE_DIR = Path("data/flow")
 DAY_COLS = [
@@ -158,7 +168,12 @@ def auto_left_side_symbols() -> list[str]:
         with open(p) as f:
             for r in csv.DictReader(f):
                 if r.get("research_priority") == "left_side_watch":
-                    names.add(r["symbol"].upper())
+                    sym = str(r.get("symbol") or "").strip().upper()
+                    if sym and not SYMBOL_PATTERN.match(sym):
+                        print(f"[flow] WARNING: 跳过非法 symbol（疑似注入）: {sym!r} (来自 {p})")
+                        continue
+                    if sym:
+                        names.add(sym)
     return sorted(names)
 
 
@@ -168,6 +183,8 @@ def summarize(symbol: str, lookback_days: int) -> dict | None:
         return None
     all_rows = [days[d] for d in sorted(days)]
     rows = [r for r in all_rows if int(float(r.get("volume") or 0)) > 0][-lookback_days:]
+    if not rows:
+        return None
     b1m_sh = sum(float(r["blocks_1m_sh"]) for r in rows)
     b1m_buy = sum(float(r["blocks_1m_buy_sh"]) for r in rows)
     b100k_sh = sum(float(r["blocks_100k_sh"]) for r in rows)
@@ -210,11 +227,11 @@ def main() -> None:
     ap.add_argument("--summary-only", action="store_true")
     args = ap.parse_args()
 
-    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    symbols = [sanitize_symbol(s) for s in args.symbols.split(",") if s.strip()]
     if not symbols and args.auto_left_side:
         symbols = auto_left_side_symbols()
     if args.extra_symbols:
-        symbols += [s.strip().upper() for s in args.extra_symbols.split(",") if s.strip()]
+        symbols += [sanitize_symbol(s) for s in args.extra_symbols.split(",") if s.strip()]
     symbols = sorted(set(symbols))
     if not symbols:
         raise SystemExit("no symbols: pass --symbols or --auto-left-side")

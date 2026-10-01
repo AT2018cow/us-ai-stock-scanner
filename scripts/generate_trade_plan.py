@@ -40,6 +40,56 @@ from ai_value_scanner.scanner import load_config  # noqa: E402
 from ai_value_scanner.backtest import build_bar_db, load_alpaca_client, load_sec_client, NetworkMonitor  # noqa: E402
 
 
+def predict_earnings_window(reports: pd.DataFrame, today: pd.Timestamp, buffer_days: int = 7) -> dict:
+    """Pure earnings-window prediction from periodic filings.
+
+    reports: DataFrame with form/filed/period columns (datetimes), any order.
+    Uses form-aware lags: the NEXT window is predicted with the annual lag
+    when the next report is the annual filing (10-K/20-F/40-F), because a
+    blended median (~35d) systematically closes the window ~5 weeks before a
+    real 10-K lands (~70d) — the gate would clear right into earnings.
+    """
+    ANNUAL_FORMS = {"10-K", "20-F", "40-F"}
+    # Mirror legacy scope (most recent 8 filings): filing-lag regimes drift.
+    reps = reports.sort_values("period", ascending=False).head(8).reset_index(drop=True)
+    if reps.empty:
+        return {"status": "unknown"}
+    reps = reps.copy()
+    reps["lag"] = (reps["filed"] - reps["period"]).dt.days
+    latest = reps.iloc[0]
+    q_lags = reps.loc[~reps["form"].isin(ANNUAL_FORMS), "lag"]
+    a_lags = reps.loc[reps["form"].isin(ANNUAL_FORMS), "lag"]
+    q_lag = int(q_lags.median()) if len(q_lags) else int(reps["lag"].median())
+    # Annual filings take ~5 weeks longer; without annual history, assume so.
+    a_lag = int(a_lags.median()) if len(a_lags) else q_lag + 35
+    annual_periods = reps.loc[reps["form"].isin(ANNUAL_FORMS), "period"]
+    fy_end_month = int(annual_periods.iloc[0].month) if len(annual_periods) else None
+    # Fiscal cadence: annual filers (20-F/40-F) use 365d, else quarterly.
+    cadence = 365 if latest["form"] in ("20-F", "40-F") else 91
+    next_period = latest["period"] + pd.Timedelta(days=cadence)
+    next_is_annual = fy_end_month is not None and int(next_period.month) == fy_end_month
+    lag = a_lag if next_is_annual else q_lag
+    win_start = next_period + pd.Timedelta(days=max(lag - 10, 0))
+    win_end = next_period + pd.Timedelta(days=lag + 14)
+    base = {
+        "next_period": str(next_period.date()),
+        "window": f"{win_start.date()}~{win_end.date()}",
+        "lag_days": lag,
+        "predicted_form": "annual" if next_is_annual else "quarterly",
+    }
+    if today < next_period:
+        return {"status": "clear", **base}
+    # Next period has ended but not yet filed: imminent only when today
+    # falls within buffer_days BEFORE the expected window through its end
+    # (+buffer). Between period-end and window-start-7d the report is
+    # still weeks away — entering then is fine (e.g. QCOM period ends
+    # late Sep, reports late Oct: early-Oct entries are allowed).
+    if win_start - pd.Timedelta(days=buffer_days) <= today <= win_end + pd.Timedelta(days=buffer_days):
+        return {"status": "imminent", **base,
+                "note": f"报告期 {next_period.date()} 已过但未申报，预期窗口 {win_start.date()}~{win_end.date()}"}
+    return {"status": "clear", **base}
+
+
 def earnings_window(symbol: str, sec_client, buffer_days: int = 7) -> dict:
     """Data-driven earnings-window detection from SEC submissions history.
 
@@ -75,34 +125,8 @@ def earnings_window(symbol: str, sec_client, buffer_days: int = 7) -> dict:
             return {"status": "unknown"}
         reports["filed"] = pd.to_datetime(reports["filed"])
         reports["period"] = pd.to_datetime(reports["period"])
-        reports = reports.sort_values("period", ascending=False)
-        latest = reports.iloc[0]
-        lags = reports.head(8).copy()
-        lags["lag"] = (lags["filed"] - lags["period"]).dt.days
-        med_lag = int(lags["lag"].median())
-        # Fiscal cadence: annual filers (20-F/40-F) use 365d, else quarterly.
-        cadence = 365 if latest["form"] in ("20-F", "40-F") else 91
-        next_period = latest["period"] + pd.Timedelta(days=cadence)
-        win_start = next_period + pd.Timedelta(days=max(med_lag - 10, 0))
-        win_end = next_period + pd.Timedelta(days=med_lag + 14)
         today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
-        if today < next_period:
-            return {"status": "clear",
-                    "next_period": str(next_period.date()),
-                    "window": f"{win_start.date()}~{win_end.date()}", "lag_days": med_lag}
-        # Next period has ended but not yet filed: imminent only when today
-        # falls within buffer_days BEFORE the expected window through its end
-        # (+buffer). Between period-end and window-start-7d the report is
-        # still weeks away — entering then is fine (e.g. QCOM period ends
-        # late Sep, reports late Oct: early-Oct entries are allowed).
-        if win_start - pd.Timedelta(days=buffer_days) <= today <= win_end + pd.Timedelta(days=buffer_days):
-            return {"status": "imminent",
-                    "next_period": str(next_period.date()),
-                    "window": f"{win_start.date()}~{win_end.date()}",
-                    "lag_days": med_lag,
-                    "note": f"报告期 {next_period.date()} 已过但未申报，预期窗口 {win_start.date()}~{win_end.date()}"}
-        return {"status": "clear", "next_period": str(next_period.date()),
-                "window": f"{win_start.date()}~{win_end.date()}", "lag_days": med_lag}
+        return predict_earnings_window(reports, today, buffer_days)
     except Exception:
         return {"status": "unknown"}
 

@@ -47,6 +47,7 @@ from ai_value_scanner.scanner import (
     ai_etf_consensus_score,
     ai_market_link_score,
     apply_filters_with_diagnostics,
+    apply_split_adjustment,
     build_filter_steps,
     build_industry_trend_steps,
     build_momentum_steps,
@@ -1355,13 +1356,60 @@ def build_bar_db(
     return out
 
 
+def apply_split_adjustment_to_frame(
+    frame: pd.DataFrame | None,
+    split_events: list[tuple[str, float]] | None,
+) -> pd.DataFrame | None:
+    """Split-adjust a price frame's o/h/l/c (and volume inversely).
+
+    Same semantics as scanner.apply_split_adjustment but operating on the
+    replay's DataFrame bars: pre-split rows are rescaled so the close series
+    is continuous in adjusted-price space, volume is scaled inversely to keep
+    dollar volume split-invariant, and the 200-day SMA is recomputed from the
+    adjusted closes. Returns a copy; the shared bar_db is never mutated.
+    Callers that pair closes with raw filed share counts (valuation history)
+    must keep using the unadjusted frame.
+    """
+    if frame is None or frame.empty or not split_events:
+        return frame
+    events = sorted((str(d), float(m)) for d, m in split_events if d and m > 0)
+    if not events:
+        return frame
+    out = frame.copy()
+    mults = np.ones(len(out))
+    for ex_date, mult in events:
+        try:
+            mask = np.asarray(out.index < pd.Timestamp(ex_date, tz="UTC"))
+        except (TypeError, ValueError):
+            continue
+        mults = np.where(mask, mults * mult, mults)
+    if np.all(mults == 1.0):
+        return frame
+    for col in ("open", "high", "low", "close"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce") * mults
+    if "volume" in out.columns:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out["volume"] = pd.to_numeric(out["volume"], errors="coerce") / np.where(mults == 0, np.nan, mults)
+    if "close" in out.columns:
+        out["sma200"] = (
+            pd.to_numeric(out["close"], errors="coerce").rolling(window=200, min_periods=200).mean()
+        )
+    return out
+
+
 def compute_price_features_asof(
     bar_df: pd.DataFrame,
     asof: pd.Timestamp,
     lookback_days: int,
+    split_events: list[tuple[str, float]] | None = None,
 ) -> dict[str, float | int | None] | None:
     if bar_df.empty:
         return None
+    if split_events:
+        bar_df = apply_split_adjustment_to_frame(bar_df, split_events)
+        if bar_df is None or bar_df.empty:
+            return None
     idx = bar_df.index.searchsorted(asof, side="right") - 1
     if idx < 0:
         return None
@@ -1520,9 +1568,12 @@ def build_news_cache_path(
     end_iso: str,
     limit: int,
 ) -> Path:
+    safe_symbol = str(symbol or "").upper()
+    if not re.match(r"^[A-Z0-9.\-]{1,16}$", safe_symbol):
+        raise ValueError(f"refusing to build cache path for suspicious symbol: {symbol!r}")
     safe_start = start_iso.replace(":", "").replace("+", "").replace("-", "")
     safe_end = end_iso.replace(":", "").replace("+", "").replace("-", "")
-    return cache_dir / f"news_{symbol}_{safe_start}_{safe_end}_{limit}.json"
+    return cache_dir / f"news_{safe_symbol}_{safe_start}_{safe_end}_{limit}.json"
 
 
 def load_symbol_theme_from_historical_news(
@@ -1985,6 +2036,7 @@ def build_cross_section_asof(
     disclosure_lookback_days: int,
     scan_config: ScanConfig,
     benchmark_trend_ok: bool | None = None,
+    split_events: dict[str, list[tuple[str, float]]] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for row in universe.itertuples(index=False):
@@ -1992,10 +2044,12 @@ def build_cross_section_asof(
         bars = bar_db.get(symbol)
         if bars is None:
             continue
+        symbol_splits = (split_events or {}).get(symbol)
         price_feat = compute_price_features_asof(
             bars,
             asof=asof,
             lookback_days=scan_config.price_lookback_days,
+            split_events=symbol_splits,
         )
         if not price_feat:
             continue
@@ -2507,6 +2561,35 @@ def build_signal_events_historical_replay(
         scope=f"replay:{scenario}",
         started_at_monotonic=replay_start,
     )
+    # Authoritative split events for the replay window (same mechanism as the
+    # live scan): cross-day price features, benchmark returns and forward
+    # returns are computed on split-adjusted series. Valuation multiples keep
+    # raw closes x raw filed shares and are never adjusted. Fail open.
+    _split_shared = shared_cache is not None and "split_events" in shared_cache
+    if _split_shared:
+        split_events = shared_cache["split_events"]
+    else:
+        split_events = {}
+        try:
+            split_events = client.get_corporate_action_splits(
+                bars_symbols,
+                bars_start,
+                (end_dt or datetime.now(timezone.utc)).date().isoformat(),
+            )
+            if split_events:
+                bt_log(
+                    f"split events: {len(split_events)} symbols",
+                    scope=f"replay:{scenario}",
+                    started_at_monotonic=replay_start,
+                )
+        except Exception as exc:
+            bt_log(
+                f"corporate-actions split fetch failed ({exc.__class__.__name__}); replay unadjusted",
+                scope=f"replay:{scenario}",
+                started_at_monotonic=replay_start,
+            )
+        if shared_cache is not None:
+            shared_cache["split_events"] = split_events
 
     universe = prefetch_universe[prefetch_universe["symbol"].isin(set(bar_db.keys()))].copy()
     universe = universe.dropna(subset=["cik"]).copy()
@@ -2577,7 +2660,7 @@ def build_signal_events_historical_replay(
             )
             last_heartbeat = now_tick
         benchmark_trailing_60d = benchmark_trailing_return_asof(
-            bar_db, regime_symbol, asof, 60
+            bar_db, regime_symbol, asof, 60, split_events.get(regime_symbol)
         )
         regime = "unknown"
         if benchmark_trailing_60d is not None:
@@ -2613,6 +2696,7 @@ def build_signal_events_historical_replay(
                 etf_bars,
                 asof=asof,
                 lookback_days=scan_config.price_lookback_days,
+                split_events=split_events.get(etf),
             )
             if not etf_feat:
                 continue
@@ -2649,10 +2733,12 @@ def build_signal_events_historical_replay(
                     trend_filter_symbol,
                     asof,
                     scan_config.benchmark_trend_filter_sma_days,
+                    split_events.get(trend_filter_symbol),
                 )
                 if trend_filter_symbol
                 else None
             ),
+            split_events=split_events,
         )
         if df.empty:
             continue
@@ -2716,6 +2802,7 @@ def benchmark_trailing_return_asof(
     symbol: str,
     asof: pd.Timestamp,
     lookback_days: int,
+    split_events: list[tuple[str, float]] | None = None,
 ) -> float | None:
     """PIT trailing return of the benchmark at a replay point.
 
@@ -2725,6 +2812,7 @@ def benchmark_trailing_return_asof(
     frame = bar_db.get(symbol.upper())
     if frame is None or frame.empty:
         return None
+    frame = apply_split_adjustment_to_frame(frame, split_events)
     closes = close_history_from_frame_asof(frame, asof)
     if not closes or lookback_days <= 0:
         return None
@@ -2742,6 +2830,7 @@ def benchmark_trend_ok_asof(
     trend_symbol: str,
     asof: pd.Timestamp,
     sma_days: int,
+    split_events: list[tuple[str, float]] | None = None,
 ) -> bool | None:
     """Benchmark trend state at a replay point: close vs its own long SMA.
 
@@ -2751,6 +2840,7 @@ def benchmark_trend_ok_asof(
     frame = bar_db.get(trend_symbol.upper())
     if frame is None or frame.empty:
         return None
+    frame = apply_split_adjustment_to_frame(frame, split_events)
     closes = close_history_from_frame_asof(frame, asof)
     if not closes or sma_days <= 0:
         return None
@@ -2761,9 +2851,14 @@ def benchmark_trend_ok_asof(
     return bool(values[-1] >= float(np.mean(window)))
 
 
-def build_price_frame_map(bars_map: dict[str, list[dict[str, Any]]]) -> dict[str, pd.DataFrame]:
+def build_price_frame_map(
+    bars_map: dict[str, list[dict[str, Any]]],
+    split_events: dict[str, list[tuple[str, float]]] | None = None,
+) -> dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
     for symbol, rows in bars_map.items():
+        if split_events:
+            rows = apply_split_adjustment(rows, split_events.get(str(symbol).upper()) or None)
         dates: list[pd.Timestamp] = []
         opens: list[float] = []
         closes: list[float] = []
@@ -2839,6 +2934,28 @@ def forward_return(
     return (exit_px / entry) - 1.0 - roundtrip_cost
 
 
+def _hold_window_mature(
+    signal_date: str,
+    horizon: int,
+    buffer_days: int,
+    global_end_date: pd.Timestamp | None,
+) -> bool:
+    """True when a hold window must have completed before the data end.
+
+    A horizon in trading days spans at most ~1.5x in calendar days (weekends
+    + holidays) plus buffer. Only mature windows may treat missing prices as
+    adverse disappearances; recent signals keep the legacy skip behaviour.
+    """
+    if global_end_date is None:
+        return False
+    try:
+        signal_dt = pd.Timestamp(signal_date, tz="UTC")
+        end_dt = pd.Timestamp(global_end_date).tz_convert("UTC")
+    except (TypeError, ValueError):
+        return False
+    return (end_dt - signal_dt).days > int(horizon * 1.5) + int(buffer_days) + 10
+
+
 def event_backtest(
     signals: pd.DataFrame,
     prices_by_symbol: dict[str, pd.DataFrame],
@@ -2863,9 +2980,24 @@ def event_backtest(
         for horizon in horizons:
             returns: list[float] = []
             priced = 0
+            assumed_delist = 0
             for sym in symbols:
                 price_frame = prices_by_symbol.get(sym.upper())
                 if price_frame is None:
+                    # No price data at all for a scored name: on a mature hold
+                    # window this is a delist-like disappearance (the adverse
+                    # assumption applies); on recent signals the window simply
+                    # hasn't matured and the legacy skip is kept.
+                    if (
+                        delist_return_assumption is not None
+                        and _hold_window_mature(
+                            row.signal_date, horizon,
+                            delist_detection_buffer_days, global_end_date,
+                        )
+                    ):
+                        returns.append(float(delist_return_assumption) - roundtrip_cost)
+                        priced += 1
+                        assumed_delist += 1
                     continue
                 ret = forward_return(
                     price_frame,
@@ -2901,6 +3033,7 @@ def event_backtest(
                     "horizon_days": horizon,
                     "n_selected": int(row.n_selected),
                     "n_priced": int(priced),
+                    "n_assumed_delist": int(assumed_delist),
                     "event_status": event_status,
                     "portfolio_return": portfolio_return,
                     "benchmark_trailing_60d": getattr(row, "benchmark_trailing_60d", None),
@@ -3488,7 +3621,18 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     bars_start = (start_dt - timedelta(days=420)).isoformat()
     bt_log("loading pricing bars...", started_at_monotonic=backtest_start)
     bars_map = client.get_daily_bars(symbols, bars_start, scan_cfg.chunk_size)
-    price_map = build_price_frame_map(bars_map)
+    # Same split discipline as the live scan: forward returns must be computed
+    # on split-adjusted prices (a 10:1 split would otherwise print as -90%).
+    # Fail open to raw bars on fetch errors.
+    pricing_splits: dict[str, list[tuple[str, float]]] = {}
+    try:
+        pricing_splits = client.get_corporate_action_splits(symbols, bars_start)
+    except Exception as exc:
+        bt_log(
+            f"corporate-actions split fetch failed ({exc.__class__.__name__}); pricing unadjusted",
+            started_at_monotonic=backtest_start,
+        )
+    price_map = build_price_frame_map(bars_map, pricing_splits)
 
     roundtrip_cost = (2.0 * cfg.trading_cost_bps) / 10000.0
     events, benchmarks = event_backtest(

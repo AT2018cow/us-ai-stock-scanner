@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ai_value_scanner.scanner import ScanConfig, load_config, refresh_watchlist_from_etfs
+from ai_value_scanner.scanner import ScanConfig, load_config, refresh_watchlist_from_etfs, write_csv_atomic
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +23,7 @@ def main() -> None:
         print("[watchlist] no rows generated from ETF refresh.")
     else:
         df = df.sort_values(["bucket", "symbol"]).drop_duplicates(subset=["symbol", "bucket"], keep="first")
-        df.to_csv(out, index=False)
+        write_csv_atomic(df, out)
         bucket_counts = (
             df["bucket"].value_counts().sort_index().to_dict()
             if "bucket" in df.columns

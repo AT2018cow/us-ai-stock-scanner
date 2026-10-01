@@ -5,6 +5,12 @@ each — and pulls back events/benchmarks/segments for combined-portfolio
 analysis. Config JSONs travel as payloads so the latest promoted configs are
 always used. Self-contained by design: modal mounts the entry script at /root/
 inside the container, so importing sibling modules at module scope is fragile.
+
+NOTE on evidence scope: the default window (BT_ARGS start 2023-01-01) overlaps
+the tuning period and, without PIT watchlist snapshots, replays on fallback
+constituents. Treat its numbers as an in-sample re-measurement for regression
+detection — NOT as out-of-sample validation — until it runs on
+snapshot-covered windows with the fallback disabled.
 """
 from __future__ import annotations
 

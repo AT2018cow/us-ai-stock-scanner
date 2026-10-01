@@ -42,6 +42,7 @@ from ai_value_scanner.scanner import (  # noqa: E402
     pick_latest_and_year_ago_with_forms,
     price_from_snapshot,
     reconcile_share_unit_scale,
+    write_csv_atomic,
 )
 from ai_value_scanner.backtest import load_alpaca_client, load_sec_client  # noqa: E402
 
@@ -150,7 +151,10 @@ def main() -> None:
     log(f"L1: 市值窗 ${args.window_min/1e9:.1f}B-${args.window_max/1e9:.1f}B + 流动性 ≥${args.min_dollar_volume/1e3:.0f}k → {len(l1_venture)} 只")
 
     # ---------- L2: basket new-membership events ----------
-    now_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Microsecond resolution: two runs within the same second must not share
+    # a snapshot filename (that would make snaps_[-2]==snaps_[-1] and silently
+    # drop the new-membership diff).
+    now_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     new_members: dict[str, list[str]] = {}
     for theme in THEMES:
         src = Path(f"data/theme_watchlist_{theme}.csv")
@@ -199,7 +203,10 @@ def main() -> None:
     out["is_new_member"] = out["symbol"].map(
         lambda s: any(s in v for v in new_members.values())
     )
-    out.to_csv("data/venture_universe.csv", index=False)
+    if out.empty:
+        log("WARNING: L1 产出为空（上游抓取可能失败），保留旧 universe 不覆盖")
+    else:
+        write_csv_atomic(out, "data/venture_universe.csv")
 
     # ---------- 每主题 venture watchlist（L1 篮子 + L3 FTS 名单合并）----------
     # Venture 扫描配置 (configs/config.venture.<theme>.json) 的输入。
@@ -221,7 +228,10 @@ def main() -> None:
         merged = pd.concat([basket, l3_rows], ignore_index=True) if not l3_rows.empty else basket
         merged = merged.drop_duplicates(subset=["symbol"], keep="first")
         vpath = Path(f"data/venture_watchlist_{theme}.csv")
-        merged.to_csv(vpath, index=False)
+        if merged.empty:
+            log(f"WARNING: {theme} 合并结果为空，保留旧 watchlist 不覆盖")
+            continue
+        write_csv_atomic(merged, vpath)
         log(f"venture watchlist {theme}: {len(merged)} 只（篮子 {len(basket)} + L3 新增 {len(merged)-len(basket)}）→ {vpath}")
 
     report = [
