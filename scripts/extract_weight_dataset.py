@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--replay-max-symbols", type=int, default=800)
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
     p.add_argument("--watchlist-history-dir", default="data/watchlist_history")
-    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=True)
+    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
     p.add_argument("--no-latest-watchlist-fallback", action="store_true")
     p.add_argument("--disclosure-lookback-days", type=int, default=720)
     p.add_argument("--theme-source", default="rules_proxy", choices=["rules_proxy", "zero"])
@@ -95,6 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     started = time.monotonic()
+
+    if bool(args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback):
+        log(
+            "WARNING: --allow-latest-watchlist-fallback is ON: signal dates "
+            "without PIT watchlist snapshots will use the latest (future) "
+            "constituents — dataset contains lookahead bias. Research-only.",
+            started,
+        )
 
     scan_config_path = str(args.scan_config)
     style = "risk_on" if "risk_on" in Path(scan_config_path).name else "risk_off"
@@ -351,6 +359,31 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.to_csv(output_path, index=False)
 
+    snap_dates = []
+    for dt, _, _ in snapshots:
+        try:
+            snap_dates.append(pd.to_datetime(dt))
+        except (TypeError, ValueError):
+            continue
+    req_start = parse_date_utc(args.start_date) or datetime(2023, 1, 1, tzinfo=timezone.utc)
+    req_end = parse_date_utc(args.end_date) or datetime.now(timezone.utc)
+    if not snap_dates:
+        if allow_fallback:
+            watchlist_source = "latest_fallback_only (LOOKAHEAD: no PIT snapshots in watchlist_history_dir)"
+        else:
+            watchlist_source = "none (no PIT snapshots; per-date replay universe empty)"
+    elif min(snap_dates) <= req_start:
+        watchlist_source = "pit_snapshots"
+    elif allow_fallback:
+        watchlist_source = (
+            "mixed: pit_snapshots where available + latest_fallback "
+            f"(LOOKAHEAD before {min(snap_dates).date().isoformat()})"
+        )
+    else:
+        watchlist_source = (
+            f"pit_snapshots (from {min(snap_dates).date().isoformat()}); "
+            "earlier signal dates have no universe"
+        )
     meta = {
         "scan_config": scan_config_path,
         "style": style,
@@ -373,7 +406,7 @@ def main() -> None:
         "channels": sorted(channel_profiles.keys()),
         "n_rows": int(len(dataset)),
         "n_dates": int(dataset["signal_date"].nunique()) if not dataset.empty else 0,
-        "watchlist_source": "latest_fallback (PIT snapshots insufficient — same as Phase 3/4R baseline)",
+        "watchlist_source": watchlist_source,
     }
     meta_path = output_path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps(meta, indent=2))

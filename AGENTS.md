@@ -33,6 +33,7 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Config semantics: `null` disables a filter; `channel_profiles.<channel>` overrides global params per channel; unknown config keys are silently ignored; CLI `--max-symbols` overrides config `max_symbols`.
 - `scripts/tune_parameters.py` auto-promotes to risk_on/risk_off unless `--no-promote` (balanced path is an archived reference). Default windows = past 3 full years + current YTD. `low_value` is the primary pass/fail list; `industry_trend`, `momentum`, `research_pool` are diagnostic only.
 - Backtest `historical_replay` needs PIT watchlist snapshots in `data/watchlist_history`; `--allow-latest-watchlist-fallback` is OFF by default (avoid lookahead). `--theme-source rules_proxy|historical_news|latest_scan|zero` defaults to `rules_proxy`.
+- PIT snapshots only exist from 2026-09-22 on. Any tuning / weight-dataset / validation artifact whose replay window predates snapshot coverage and was built with latest-watchlist fallback contains lookahead bias — treat pre-existing `outputs/tuning_*`, `outputs/weight_dataset_*`, and the Phase 4R baseline table as suspect until regenerated on snapshot-covered windows. `tune_parameters.py` / `extract_weight_dataset.py` default the fallback to OFF (research-only opt-in, warns loudly, honest `watchlist_source` in meta).
 
 ## Conventions
 - Log format: scan `[HH:MM:SS][LEVEL][+elapsed]`, backtest `[scope HH:MM:SS +elapsed]`.

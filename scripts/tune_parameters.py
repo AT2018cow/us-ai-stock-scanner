@@ -134,7 +134,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
     p.add_argument("--theme-source", default="rules_proxy", choices=["rules_proxy", "historical_news", "zero"])
     p.add_argument("--disclosure-lookback-days", type=int, default=720)
-    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=True)
+    p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
     p.add_argument("--no-latest-watchlist-fallback", action="store_true")
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
@@ -1147,6 +1147,14 @@ def main() -> None:
             f"missing from --list-types: {','.join(missing_primary)}"
         )
     stamp = args.output_prefix or datetime.now(timezone.utc).strftime("tuning_%Y%m%dT%H%M%SZ")
+
+    if bool(args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback):
+        log(
+            "WARNING: --allow-latest-watchlist-fallback is ON: replay windows "
+            "without PIT watchlist snapshots will use the latest (future) "
+            "constituents — tuning scores contain lookahead bias. "
+            "Research-only; do not promote these configs."
+        )
 
     base_config = read_json(base_path)
     axes = load_axes(param_space_path)

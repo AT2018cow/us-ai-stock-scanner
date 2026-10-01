@@ -237,7 +237,64 @@ def sleeve_positions(ts: str, style: str) -> pd.DataFrame:
     return dedup[["symbol", "lists", "channel", "composite_score", "triage_label", "weight_mult"]].reset_index(drop=True)
 
 
-def main() -> None:
+def apply_position_caps(conviction: "pd.Series", cap_frac: float, max_iter: int = 100) -> tuple:
+    """Cap-and-renormalize conviction weights against the deployable pool.
+
+    Returns (weights, unallocated_frac, converged). weights sum to
+    1 - unallocated_frac; unallocated_frac > 0 means every name hit the cap
+    and the remainder correctly stays in cash (it is reported, never silently
+    dropped). converged=False means max_iter was hit with names still over
+    cap — output weights are then hard-clipped so the cap is never breached.
+    """
+    total = float(conviction.sum())
+    if not np.isfinite(total) or total <= 0:
+        raise SystemExit(" conviction 总和为 0/非法，无法分配权重——检查候选挑选逻辑")
+    raw_w = conviction / total
+    w = raw_w.copy()
+    converged = False
+    for _ in range(max(1, int(max_iter))):
+        over = w > cap_frac
+        if not over.any():
+            converged = True
+            break
+        excess = (w[over] - cap_frac).sum()
+        w[over] = cap_frac
+        under = ~over
+        if w[under].sum() > 0:
+            w[under] = w[under] + excess * (raw_w[under] / raw_w[under].sum())
+        else:
+            break
+    leftover = w > cap_frac * (1.0 + 1e-9)
+    if leftover.any():
+        w[leftover] = cap_frac
+    unallocated = float(max(0.0, 1.0 - w.sum()))
+    return w, unallocated, converged
+
+
+BREAKER_MAX_STALE_DAYS = 4
+
+
+def check_breaker_state(breaker: dict, today, max_stale_days: int = BREAKER_MAX_STALE_DAYS) -> tuple:
+    """Validate the QQQ circuit-breaker snapshot. Returns (proceed, reason).
+
+    proceed=False is a hard stop: unknown or stale breaker data must never
+    silently issue positions. Callers may bypass only via an explicit
+    --allow-no-breaker flag (logged loudly and stamped on the report).
+    """
+    ok = breaker.get("ok")
+    if ok is None:
+        return False, "QQQ 熔断器数据不可用（Alpaca 拉取失败或缓存为空）"
+    try:
+        asof = datetime.strptime(str(breaker.get("asof")), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False, f"QQQ 熔断器 asof 日期无法解析（{breaker.get('asof')}）"
+    lag_days = (today - asof).days
+    if lag_days > max_stale_days:
+        return False, f"QQQ 熔断器数据陈旧（asof {asof}，距今 {lag_days} 天 > {max_stale_days} 天）"
+    return True, "bull" if ok else "bear"
+
+
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--capital", type=float, required=True, help="Total pilot capital in USD")
     p.add_argument("--risk-on-alloc", type=float, default=0.60)
@@ -248,11 +305,27 @@ def main() -> None:
                    help="Concentrate the sleeve: keeps first, then momentum picks, then watches (half weight), by composite score")
     p.add_argument("--earnings-buffer-days", type=int, default=7,
                    help="No new entry within this many days of an expected earnings report (SEC-submissions-inferred window)")
-    args = p.parse_args()
+    p.add_argument("--allow-no-breaker", action="store_true", default=False,
+                   help="Bypass a failed/stale QQQ breaker check (logged loudly and stamped on the report)")
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     off_ts, on_ts = latest_scan_pair()
     breaker = qqq_breaker_state()
     now = datetime.now(timezone.utc)
+    proceed, breaker_reason = check_breaker_state(breaker, now.date())
+    breaker_overridden = False
+    if not proceed:
+        if not args.allow_no_breaker:
+            raise SystemExit(
+                f"熔断器检查未通过，拒绝生成交易计划: {breaker_reason}。"
+                "确认数据源恢复后重跑，或用 --allow-no-breaker 显式绕过（将记录在报告中）。"
+            )
+        breaker_overridden = True
+        print(f"WARNING: 熔断器检查未通过但已用 --allow-no-breaker 绕过: {breaker_reason}")
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     sec_client = load_sec_client(load_config("configs/config.risk_off.json"), NetworkMonitor())
 
@@ -318,23 +391,25 @@ def main() -> None:
     # consistent once positions are merged across styles. Style allocation
     # (60/40) remains an OBSERVATION/monitoring lens, not a capital split.
     deployable = args.capital * (1.0 - args.cash_buffer_pct)
-    raw_w = plan["conviction"] / plan["conviction"].sum()
-    # Per-name cap is defined as a fraction of TOTAL capital (per the pilot
-    # protocol); as a fraction of the deployable pool that is:
-    cap_frac = args.max_position_pct / (1.0 - args.cash_buffer_pct)
-    # Iterative cap-and-renormalize (converges in a few passes).
-    w = raw_w.copy()
-    for _ in range(10):
-        over = w > cap_frac
-        if not over.any():
-            break
-        excess = (w[over] - cap_frac).sum()
-        w[over] = cap_frac
-        under = ~over
-        if w[under].sum() > 0:
-            w[under] += excess * (raw_w[under] / raw_w[under].sum())
-        else:
-            break
+    if plan.empty:
+        raise SystemExit("无候选——检查扫描产物是否有 keep/momentum 行")
+    # Iterative cap-and-renormalize (converges in a few passes for normal
+    # books). Unlike a silent loop, the unallocated remainder is tracked and
+    # reported: when every name hits the cap, the rest correctly stays cash.
+    w, unallocated_frac, caps_converged = apply_position_caps(
+        plan["conviction"], args.max_position_pct / (1.0 - args.cash_buffer_pct)
+    )
+    w.index = plan.index
+    if not caps_converged:
+        print(
+            "WARNING: 仓位上限迭代未收敛，已硬性截断到上限；"
+            f"未部署 {unallocated_frac:.1%}（通常意味着候选池太薄）"
+        )
+    elif unallocated_frac > 0.005:
+        print(
+            f"WARNING: 可部署资金中 {unallocated_frac:.1%} 因全部仓位触及单仓 "
+            f"{args.max_position_pct:.0%} 上限而保留为现金（非缓冲现金）"
+        )
     # Weights are reported as a fraction of TOTAL capital (sum = 1 - buffer;
     # the remaining buffer sits in cash). notional = weight x total capital.
     plan["weight_pct_of_total"] = (w * (1.0 - args.cash_buffer_pct) * 100).round(2)
@@ -365,6 +440,8 @@ def main() -> None:
         f"QQQ close={breaker['close']:.2f} vs SMA200={breaker['sma200']:.2f} → trend_ok={breaker['ok']}"
         if breaker["ok"] is not None else "QQQ 数据不可用"
     )
+    if breaker_overridden:
+        breaker_txt += "（⚠ 已用 --allow-no-breaker 绕过熔断检查）"
     lines = [
         f"# Trade Plan — {now.strftime('%Y-%m-%d %H:%M UTC')}",
         "",
@@ -435,6 +512,14 @@ def main() -> None:
                     f"| {info.get('window', '?')} | 财报发布后重跑扫描，仍入选则按此权重补买 |"
                 )
             lines.append("")
+    if unallocated_frac > 0.005:
+        lines += [
+            "### 💰 未部署现金（触及单仓上限）",
+            "",
+            f"- 可部署资金中 {unallocated_frac:.1%} 因全部仓位触及单仓 {args.max_position_pct:.0%} 上限而保留为现金（非缓冲现金）。",
+            "- 这通常意味着候选池太薄：接受低部署率，不可手工加仓突破上限；如下次扫描候选增多会自动填满。",
+            "",
+        ]
     lines += [
         "## 基线预期（Phase 4R v2，诚实数字）",
         "",
@@ -457,6 +542,8 @@ def main() -> None:
         print("WARNING: 无持仓——检查扫描产物是否有 keep/momentum 行")
     else:
         print(f"\n持仓 {len(plan)} 个 | 总名义 ${plan['notional_usd'].sum():,.0f}")
+        if unallocated_frac > 0.005:
+            print(f"WARNING: 未部署现金 {unallocated_frac:.1%}（全部触及单仓上限）")
         print(plan.groupby("style_leg")["symbol"].count().to_string())
 
 

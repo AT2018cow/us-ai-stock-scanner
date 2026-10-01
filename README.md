@@ -789,6 +789,7 @@ python scripts/tune_parameters.py \
 ```
 
 详见 §12（参数调优）。`--executor modal` 需要已配置 Modal（见 `scripts/modal_executor.py`）。
+`--allow-latest-watchlist-fallback` 默认关闭；显式开启仅用于研究（会引入前视成分并打印警告）。
 
 ### 13.5 `scripts/calibrate_thresholds.py` —— 产出量校准
 
@@ -856,6 +857,8 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 从最新两风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）：
 分层→权重图例、双风格合并仓（置信度累加，单仓 ≤10% 总资金）、QQQ 熔断器实时状态、
 基线预期（诚实数字含 t 值）。风格识别以报告头 `Config:` 行为准。
+熔断器数据不可用/陈旧（>4 天）时拒绝生成，需 `--allow-no-breaker` 显式绕过
+（报告打标）；全部仓位触及单仓上限时，未部署部分保留现金并在报告中单独列示。
 
 ### 13.14 `scripts/ic_analysis.py` —— 截面 IC 分析
 
@@ -878,6 +881,8 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 
 复用回测 PIT 基础设施，把每个再平衡日的全部硬门幸存者 + 完整指标 + 20/60/120d
 前向收益落盘（约 5 万行）。是权重扫描与 IC 分析的输入。零 Modal 成本。
+`--allow-latest-watchlist-fallback` 默认关闭（与回测一致）；显式开启仅用于研究，
+产物元数据 `watchlist_source` 如实记录成分来源（含前视警告）。
 
 ### 13.16 `scripts/sweep_score_weights.py` —— score_weights 离线扫描
 
