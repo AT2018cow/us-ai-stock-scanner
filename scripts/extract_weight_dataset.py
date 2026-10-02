@@ -130,8 +130,7 @@ def main() -> None:
         type("Cfg", (), {
             "use_historical_watchlist": True,
             "watchlist_history_dir": args.watchlist_history_dir,
-        "allow_latest_watchlist_fallback": allow_fallback,
-        "pre_snapshot_universe": args.pre_snapshot_universe,
+            "allow_latest_watchlist_fallback": allow_fallback,
         })(),
         scan_config,
     )
@@ -418,13 +417,26 @@ def main() -> None:
             continue
     req_start = parse_date_utc(args.start_date) or datetime(2023, 1, 1, tzinfo=timezone.utc)
     req_end = parse_date_utc(args.end_date) or datetime.now(timezone.utc)
+    pre_union = args.pre_snapshot_universe == "union"
     if not snap_dates:
-        if allow_fallback:
+        if pre_union:
+            watchlist_source = (
+                "union_superset_approx (current watchlist; no PIT snapshots — "
+                "membership/etf_count are current-value approximations)"
+            )
+        elif allow_fallback:
             watchlist_source = "latest_fallback_only (LOOKAHEAD: no PIT snapshots in watchlist_history_dir)"
         else:
             watchlist_source = "none (no PIT snapshots; per-date replay universe empty)"
     elif min(snap_dates) <= req_start:
         watchlist_source = "pit_snapshots"
+    elif pre_union:
+        watchlist_source = (
+            "mixed: pit_snapshots from "
+            f"{min(snap_dates).date().isoformat()} + union_superset_approx before that "
+            "(membership/etf_count approximated from earliest snapshot or current list; "
+            "PIT data availability filters candidates; documented upward bias)"
+        )
     elif allow_fallback:
         watchlist_source = (
             "mixed: pit_snapshots where available + latest_fallback "
@@ -433,7 +445,7 @@ def main() -> None:
     else:
         watchlist_source = (
             f"pit_snapshots (from {min(snap_dates).date().isoformat()}); "
-            "earlier signal dates have no universe"
+            "earlier signal dates have no universe (strict mode)"
         )
     meta = {
         "scan_config": scan_config_path,
@@ -454,6 +466,7 @@ def main() -> None:
         "disclosure_lookback_days": args.disclosure_lookback_days,
         "delist_return_assumption": args.delist_return_assumption,
         "allow_latest_watchlist_fallback": allow_fallback,
+        "pre_snapshot_universe": args.pre_snapshot_universe,
         "channels": sorted(channel_profiles.keys()),
         "n_rows": int(len(dataset)),
         "n_dates": int(dataset["signal_date"].nunique()) if not dataset.empty else 0,
