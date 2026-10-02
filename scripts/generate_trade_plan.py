@@ -221,6 +221,15 @@ def sleeve_positions(ts: str, style: str, include_smallcap: bool = False) -> pd.
     """keep=1.0x, watch=0.5x (low_value); momentum picks weighted by
     research priority; dedup by symbol.
 
+    Ordering: low_value and momentum composites come from DIFFERENT weight
+    vectors and are not comparable as raw numbers — after the 2026-10-02
+    median-sweep weights the momentum scale (~1.2-1.3) sits far above the
+    low_value scale (~0.6-0.8), which crowded every keep out of the book.
+    Selection therefore ranks each candidate by its percentile WITHIN its own
+    list and channel cohort (list_pct): the best keep and the best momentum
+    name both stand at 1.0 and compete fairly, while each list's internal
+    ordering (what the weight sweep actually optimized) is preserved.
+
     Momentum priority weights are evidence-based (2021-2026 survivor
     dataset, 120d portfolio basis): research_now +13.1% / watch_for_pullback
     +9.3% / avoid_for_now +8.76% / theme_only +6.3% / left_side_watch +1.0%
@@ -267,19 +276,30 @@ def sleeve_positions(ts: str, style: str, include_smallcap: bool = False) -> pd.
                 )
             parts.append(mo)
     if not parts:
-        return pd.DataFrame(columns=["symbol", "lists", "channel", "composite_score", "weight_mult"])
+        return pd.DataFrame(
+            columns=["symbol", "lists", "channel", "composite_score", "list_pct", "weight_mult"]
+        )
     allp = pd.concat(parts, ignore_index=True)
     allp["symbol"] = allp["symbol"].astype(str).str.upper()
     allp = exclude_auxiliary_channels(allp, include_smallcap)
+    # Within-list percentile: the fair cross-list ordering key (see docstring).
+    allp["list_source"] = np.where(allp["lists"].str.startswith("low_value"), "low_value", "momentum")
+    allp["list_pct"] = allp.groupby(["list_source", "channel"])["composite_score"].rank(
+        pct=True, method="average"
+    )
     # Dedup: a symbol in multiple lists keeps its best (highest) composite,
-    # membership noted.
+    # membership noted; conviction is the best tier across memberships, so a
+    # keep+momentum name never loses its 1.0x to the row the dedup happens to keep.
+    allp["weight_mult"] = allp.groupby("symbol")["weight_mult"].transform("max")
     allp = allp.sort_values("composite_score", ascending=False)
     allp["lists"] = allp.groupby("symbol")["lists"].transform(lambda s: "+".join(sorted(set(s))))
     dedup = allp.drop_duplicates("symbol", keep="first").copy()
-    # Cap per channel top-10 by composite (matches scan output caps).
-    dedup["rank_in_channel"] = dedup.groupby("channel")["composite_score"].rank(ascending=False, method="first")
+    # Cap per channel top-10 by within-list standing (not raw composite).
+    dedup["rank_in_channel"] = dedup.groupby("channel")["list_pct"].rank(ascending=False, method="first")
     dedup = dedup[dedup["rank_in_channel"] <= 10]
-    return dedup[["symbol", "lists", "channel", "composite_score", "triage_label", "weight_mult"]].reset_index(drop=True)
+    return dedup[
+        ["symbol", "lists", "channel", "composite_score", "list_pct", "triage_label", "weight_mult"]
+    ].reset_index(drop=True)
 
 
 def apply_position_caps(conviction: "pd.Series", cap_frac: float, max_iter: int = 100) -> tuple:
@@ -362,7 +382,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-position-pct", type=float, default=0.10, help="Cap per position, fraction of TOTAL capital")
     p.add_argument("--cash-buffer-pct", type=float, default=0.10, help="Unallocated cash per sleeve")
     p.add_argument("--max-positions-per-sleeve", type=int, default=10,
-                   help="Concentrate the sleeve: keeps first, then momentum picks, then watches (half weight), by composite score")
+                   help="Concentrate the sleeve: full-weight tiers (keeps + momentum picks) first, "
+                        "then half-weight watches; within a tier by within-list percentile (list_pct), "
+                        "NOT raw composite (lists use different weight scales)")
     p.add_argument("--earnings-buffer-days", type=int, default=7,
                    help="Days around the expected report window counted as earnings-imminent for the advisory note")
     p.add_argument("--allow-no-breaker", action="store_true", default=False,
@@ -403,7 +425,10 @@ def main() -> None:
         if pos.empty:
             continue
         pos["tier"] = np.where(pos["weight_mult"] >= 1.0, 0, 1)
-        pos = pos.sort_values(["tier", "composite_score"], ascending=[True, False])
+        # Full-weight tiers first, then by WITHIN-LIST standing (list_pct):
+        # raw composites are not comparable across lists (different weight
+        # vectors), composite is only the deterministic tiebreak.
+        pos = pos.sort_values(["tier", "list_pct", "composite_score"], ascending=[True, False, False])
         pos = pos.head(args.max_positions_per_sleeve).copy()
         for _, r in pos.iterrows():
             candidates.append({

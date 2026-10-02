@@ -314,3 +314,93 @@ class TestSleeveSmallcapFilter(unittest.TestCase):
         syms = pos["symbol"].tolist()
         self.assertIn("BBB", syms)
         self.assertIn("DDD", syms)
+
+
+class TestWithinListPercentileOrdering(unittest.TestCase):
+    """list_pct: within-(list, channel) percentile makes cross-list
+    selection scale-free — keeps survive alongside momentum despite the
+    momentum composite scale sitting far above the low_value scale."""
+
+    def _write_scale_fixtures(self, root: str) -> None:
+        import pandas as pd
+
+        outdir = Path(root) / "outputs"
+        outdir.mkdir(parents=True, exist_ok=True)
+        # low_value 池: composite ~0.6-0.8 (keep 阈值之上的真实量纲)
+        ranked = pd.DataFrame([
+            {"symbol": "KEEP1", "triage_label": "keep",  "channel": "core_ai", "composite_score": 0.80},
+            {"symbol": "KEEP2", "triage_label": "keep",  "channel": "core_ai", "composite_score": 0.75},
+            {"symbol": "WTCH1", "triage_label": "watch", "channel": "core_ai", "composite_score": 0.70},
+            {"symbol": "KEEP3", "triage_label": "keep",  "channel": "ai_enabler", "composite_score": 0.60},
+        ])
+        ranked.to_csv(outdir / "ai_value_scan_PCTEST_full_ranked.csv", index=False)
+        # momentum 池: composite ~1.2-1.3（另一套权重，量纲高得多）
+        mo = pd.DataFrame([
+            {"symbol": "MOM1", "channel": "core_ai", "composite_score": 1.30, "research_priority": "research_now"},
+            {"symbol": "MOM2", "channel": "core_ai", "composite_score": 1.25, "research_priority": "watch_for_pullback"},
+            {"symbol": "MOM3", "channel": "core_ai", "composite_score": 1.20, "research_priority": "watch_for_pullback"},
+            {"symbol": "MOM4", "channel": "ai_enabler", "composite_score": 1.22, "research_priority": "research_now"},
+        ])
+        mo.to_csv(outdir / "ai_value_scan_PCTEST_full_ranked_momentum.csv", index=False)
+
+    def _sleeve(self, tmp: str, **kw):
+        import os
+
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp)
+            return plan_mod.sleeve_positions("PCTEST", "risk_off", **kw)
+        finally:
+            os.chdir(prev)
+
+    def test_list_pct_within_list_channel(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_scale_fixtures(tmp)
+            pos = self._sleeve(tmp)
+        g = pos.set_index("symbol")["list_pct"]
+        # core_ai 内: low_value 池 3 行 -> KEEP1=1.0, KEEP2=2/3, WTCH1=1/3
+        self.assertAlmostEqual(g["KEEP1"], 1.0)
+        self.assertAlmostEqual(g["KEEP2"], 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(g["WTCH1"], 1.0 / 3.0, places=6)
+        # core_ai momentum 池 3 行 -> MOM1=1.0（量纲不影响名次）
+        self.assertAlmostEqual(g["MOM1"], 1.0)
+        # ai_enabler 池各 1 行 -> 均 1.0
+        self.assertAlmostEqual(g["KEEP3"], 1.0)
+        self.assertAlmostEqual(g["MOM4"], 1.0)
+
+    def test_keep_survives_channel_cap_despite_lower_composite(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_scale_fixtures(tmp)
+            pos = self._sleeve(tmp)
+        core = pos[pos["channel"] == "core_ai"]
+        # 旧行为（按 raw composite 截 top-10）下这里只有 3 个 momentum 名;
+        # 按排名截断后 keep 与 momentum 按名次共存（本例 5 行全在 ≤10 内）
+        self.assertIn("KEEP1", core["symbol"].tolist())
+        self.assertIn("MOM1", core["symbol"].tolist())
+
+    def test_dual_listed_symbol_keeps_max_conviction(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_scale_fixtures(tmp)
+            # MOM1 同时是 low_value watch（0.5x）与 momentum research_now（1.0x）
+            outdir = Path(tmp) / "outputs"
+            import pandas as pd
+
+            lv = pd.read_csv(outdir / "ai_value_scan_PCTEST_full_ranked.csv")
+            extra = pd.DataFrame([
+                {"symbol": "MOM1", "triage_label": "watch", "channel": "core_ai", "composite_score": 0.65},
+            ])
+            pd.concat([lv, extra], ignore_index=True).to_csv(
+                outdir / "ai_value_scan_PCTEST_full_ranked.csv", index=False
+            )
+            pos = self._sleeve(tmp)
+        row = pos[pos["symbol"] == "MOM1"].iloc[0]
+        # dedup 保留 momentum 行（composite 更高），但 conviction 取两清单最大值 1.0
+        self.assertEqual(float(row["weight_mult"]), 1.0)
+        self.assertIn("low_value(watch)", row["lists"])
+        self.assertIn("momentum(research_now)", row["lists"])
