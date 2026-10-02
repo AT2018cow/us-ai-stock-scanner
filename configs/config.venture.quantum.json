@@ -282,7 +282,7 @@
   "low_value_min_research_score": 0.0,
   "benchmark_trend_filter_symbol": "QQQ",
   "benchmark_trend_filter_sma_days": 200,
-  "sec_cache_ttl_submissions_sec": 0,
+  "sec_cache_ttl_submissions_sec": 86400,
   "filter_mode": "scored",
   "soft_filter_weight": 0.3,
   "archive_watchlist_snapshots": false,

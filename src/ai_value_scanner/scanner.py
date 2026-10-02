@@ -577,7 +577,12 @@ class ScanConfig:
     score_winsor_upper_q: float = 0.95
     benchmark_trend_filter_symbol: str | None = None
     benchmark_trend_filter_sma_days: int = 200
-    sec_cache_ttl_submissions_sec: int = 0
+    # Default 24h: the scheduled SEC cache refresher (scripts/refresh_sec_cache.py,
+    # cron 10:30 local = 22:30 ET, after the EDGAR 22:00 ET cutoff) updates all
+    # caches daily; daily runs then use the fresh cache with zero downloads.
+    # If the refresher is missed, the age exceeds the TTL and the run
+    # self-heals by refetching inline (~2-3 min at 5 req/s).
+    sec_cache_ttl_submissions_sec: int = 86400
     filter_mode: str = "scored"  # "hard" = legacy all-hard; "scored" = core + soft scoring
     soft_filter_weight: float = 0.30  # contribution of soft pass_rate to composite_score
     enabled_exchanges: list[str] = field(
@@ -1385,7 +1390,11 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        cache_path.write_text(json.dumps(payload))
+        # Atomic write: a concurrent daily_run reading this file while the
+        # scheduled cache refresher overwrites it must never see a torn write.
+        tmp = cache_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, cache_path)
         return payload
 
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
@@ -1421,7 +1430,9 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        cache_path.write_text(json.dumps(payload))
+        tmp = cache_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, cache_path)
         return payload
 
 

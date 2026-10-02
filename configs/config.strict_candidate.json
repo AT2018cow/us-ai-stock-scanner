@@ -437,5 +437,5 @@
     "negative_momentum"
   ],
   "low_value_min_research_score": 0.0,
-  "sec_cache_ttl_submissions_sec": 0
+  "sec_cache_ttl_submissions_sec": 86400
 }
