@@ -287,12 +287,15 @@ def sleeve_positions(ts: str, style: str, include_smallcap: bool = False) -> pd.
     allp["list_pct"] = allp.groupby(["list_source", "channel"])["composite_score"].rank(
         pct=True, method="average"
     )
-    # Dedup: a symbol in multiple lists keeps its best (highest) composite,
-    # membership noted; conviction is the best tier across memberships, so a
-    # keep+momentum name never loses its 1.0x to the row the dedup happens to keep.
+    # Dedup: a symbol in multiple lists/channels is represented by its BEST
+    # WITHIN-LIST STANDING row (list_pct), not its highest raw composite —
+    # the row that argues hardest for the symbol's inclusion. Raw composite
+    # (cross-list/cross-channel scale-invalid) is only the tiebreak.
+    # Membership is unioned across all rows; conviction is the best tier
+    # across memberships, so a keep+momentum name never loses its 1.0x.
     allp["weight_mult"] = allp.groupby("symbol")["weight_mult"].transform("max")
-    allp = allp.sort_values("composite_score", ascending=False)
     allp["lists"] = allp.groupby("symbol")["lists"].transform(lambda s: "+".join(sorted(set(s))))
+    allp = allp.sort_values(["list_pct", "composite_score"], ascending=[False, False])
     dedup = allp.drop_duplicates("symbol", keep="first").copy()
     # Cap per channel top-10 by within-list standing (not raw composite).
     dedup["rank_in_channel"] = dedup.groupby("channel")["list_pct"].rank(ascending=False, method="first")

@@ -404,3 +404,48 @@ class TestWithinListPercentileOrdering(unittest.TestCase):
         self.assertEqual(float(row["weight_mult"]), 1.0)
         self.assertIn("low_value(watch)", row["lists"])
         self.assertIn("momentum(research_now)", row["lists"])
+
+
+class TestDedupByStanding(unittest.TestCase):
+    """Dedup must keep the row with the best WITHIN-LIST standing, not the
+    highest raw composite: a dual-channel symbol whose lower-composite row
+    ranks higher in its own cohort should be represented by that row."""
+
+    def _write(self, root: str) -> None:
+        import pandas as pd
+
+        outdir = Path(root) / "outputs"
+        outdir.mkdir(parents=True, exist_ok=True)
+        # core_ai: DUAL 原始分最高(0.90)但池内名次第 3(3 名)
+        # ai_enabler: DUAL 原始分低(0.70)但池内第 1(2 名)
+        ranked = pd.DataFrame([
+            {"symbol": "OTHER", "triage_label": "keep", "channel": "core_ai", "composite_score": 0.95},
+            {"symbol": "OTHER2", "triage_label": "keep", "channel": "core_ai", "composite_score": 0.92},
+            {"symbol": "DUAL", "triage_label": "keep", "channel": "core_ai", "composite_score": 0.90},
+            {"symbol": "DUAL", "triage_label": "keep", "channel": "ai_enabler", "composite_score": 0.70},
+            {"symbol": "EN1", "triage_label": "keep", "channel": "ai_enabler", "composite_score": 0.60},
+        ])
+        ranked.to_csv(outdir / "ai_value_scan_DEDUP_full_ranked.csv", index=False)
+        mo = pd.DataFrame([
+            {"symbol": "MOMX", "channel": "core_ai", "composite_score": 1.30, "research_priority": "research_now"},
+        ])
+        mo.to_csv(outdir / "ai_value_scan_DEDUP_full_ranked_momentum.csv", index=False)
+
+    def test_dedup_keeps_best_standing_row(self) -> None:
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp)
+            prev = os.getcwd()
+            try:
+                os.chdir(tmp)
+                pos = plan_mod.sleeve_positions("DEDUP", "risk_off")
+            finally:
+                os.chdir(prev)
+        row = pos[pos["symbol"] == "DUAL"].iloc[0]
+        # core_ai 名次 3/3 -> pct 1/3; enabler 名次 2/2 -> pct 1.0
+        # 旧逻辑按 raw composite 会保留 core_ai 行(0.90, pct 1/3)；新逻辑保留 enabler 行
+        self.assertEqual(row["channel"], "ai_enabler")
+        self.assertAlmostEqual(float(row["list_pct"]), 1.0, places=6)
+        self.assertAlmostEqual(float(row["composite_score"]), 0.70, places=6)
