@@ -36,6 +36,7 @@ from ai_value_scanner.scanner import (  # noqa: E402
     ScanConfig,
     build_session,
     load_config,
+    load_one_fundamental,
 )
 
 
@@ -128,8 +129,6 @@ def main() -> None:
                 # Fetches submissions + companyfacts (incremental), parses
                 # the 4 MB JSON, computes TTM/YoY/quality, and writes
                 # parsed_fund_{cik}.json — the daily run reads this instead.
-                from ai_value_scanner.scanner import load_one_fundamental
-
                 load_one_fundamental(sec, symbol, cik, cfg)
                 refreshed += 1
             except Exception as exc:
