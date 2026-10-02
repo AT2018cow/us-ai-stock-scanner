@@ -13,3 +13,4 @@ cache/
 .debug_logs/
 data/watchlist_history/
 data/flow/
+configs/*.bak
