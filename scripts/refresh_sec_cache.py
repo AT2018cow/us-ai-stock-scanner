@@ -119,8 +119,18 @@ def main() -> None:
             skipped += 1
         else:
             try:
-                sec.get_submissions(cik)
-                sec.get_companyfacts(cik)
+                # Delete the stale parsed cache so load_one_fundamental
+                # recomputes from the fresh submissions/companyfacts and
+                # writes a new parsed cache for the daily run to consume.
+                parsed_path = Path(cfg.cache_dir) / f"parsed_fund_{cik}.json"
+                if parsed_path.exists():
+                    parsed_path.unlink()
+                # Fetches submissions + companyfacts (incremental), parses
+                # the 4 MB JSON, computes TTM/YoY/quality, and writes
+                # parsed_fund_{cik}.json — the daily run reads this instead.
+                from ai_value_scanner.scanner import load_one_fundamental
+
+                load_one_fundamental(sec, symbol, cik, cfg)
                 refreshed += 1
             except Exception as exc:
                 failed += 1

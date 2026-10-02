@@ -3294,6 +3294,31 @@ def collect_candidates(
 
 
 def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConfig) -> dict[str, Any]:
+    # --- Pre-parsed cache: the scheduled refresher (or a previous run) has
+    # already downloaded the raw submissions/companyfacts, parsed the 4 MB
+    # JSON, computed all TTM/YoY/quality metrics, and cached the RESULT.
+    # Reading this ~3 KB file skips the entire GIL-bound parse+compute chain
+    # (the dominant cost of the SEC step: ~40-45 min for 535 symbols).
+    # Invalidation: same TTL as submissions — if the scheduled refresher
+    # overwrites this file, the new result is used; if the refresher is
+    # missed, the age exceeds the TTL and the slow path self-heals.
+    parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
+    parsed_ttl = float(config.sec_cache_ttl_submissions_sec)
+    # Only trust the parsed cache when the raw submissions cache is also
+    # present: the parsed result is derived from submissions + companyfacts,
+    # so a parsed cache without its raw sources is meaningless (e.g. unit
+    # tests with fake data write parsed caches under fake CIKs).
+    subs_cache = Path(config.cache_dir) / f"submissions_{cik}.json"
+    if parsed_ttl > 0 and parsed_path.exists() and subs_cache.exists():
+        age = time.time() - parsed_path.stat().st_mtime
+        if age <= parsed_ttl:
+            try:
+                cached = json.loads(parsed_path.read_text())
+                cached["symbol"] = symbol  # defensive: match caller expectation
+                return cached
+            except Exception:
+                pass  # corrupt cache → fall through to the slow path
+
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
 
@@ -3543,7 +3568,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         ocf_to_net_income=ocf_to_net_income,
         accrual_ratio=accrual_ratio,
     )
-    return {
+    # --- Cache the parsed result so the next run (or the scheduled refresher)
+    # can skip the 4 MB JSON parse + TTM computation entirely.
+    result = {
         "symbol": symbol,
         "sic": str(sic) if sic is not None else None,
         "sic_description": sic_desc,
@@ -3608,6 +3635,20 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "ai_disclosure_keyword_hits": ai_disclosure_keyword_hits,
         "ai_backlog_signal": ai_backlog_signal,
     }
+    # Write the parsed result for the next run / scheduled refresher.
+    # Only write when the raw submissions cache also exists: unit tests with
+    # fake clients don't write raw caches, and their parsed results must not
+    # pollute the production cache directory.
+    subs_cache = Path(config.cache_dir) / f"submissions_{cik}.json"
+    if subs_cache.exists():
+        parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
+        try:
+            parsed_tmp = parsed_path.with_suffix(".tmp")
+            parsed_tmp.write_text(json.dumps(result, default=str))
+            os.replace(parsed_tmp, parsed_path)
+        except Exception:
+            pass  # cache write failure must not break the scan
+    return result
 
 
 def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -> pd.DataFrame:
