@@ -82,6 +82,8 @@ def main() -> None:
     monitor = NetworkMonitor()
     import os
 
+    max_age_sec = args.max_age_hours * 3600.0
+
     from ai_value_scanner.scanner import SecClient
 
     sec = SecClient(
@@ -91,7 +93,10 @@ def main() -> None:
         cache_dir=Path(cfg.cache_dir),
         request_limiter=RequestRateLimiter(cfg.sec_max_requests_per_sec, monitor=monitor, service_name="sec"),
         monitor=monitor,
-        submissions_ttl_sec=0,  # the script decides freshness via max-age, not TTL
+        # Use the script's max-age as the submissions TTL: if the daily run
+        # already fetched submissions within max_age, reuse the cache (no
+        # network) and only do the CPU-heavy parsing + parsed-cache write.
+        submissions_ttl_sec=int(max_age_sec),
     )
 
     symbols, sources = collect_symbols(repo)
@@ -105,7 +110,6 @@ def main() -> None:
     mapping = sec.ticker_mapping()
     mapped = mapping.set_index("symbol")["cik"].to_dict() if not mapping.empty else {}
 
-    max_age_sec = args.max_age_hours * 3600.0
     now = time.time()
     refreshed, skipped, no_cik, failed = 0, 0, [], 0
     t0 = time.monotonic()
@@ -115,20 +119,23 @@ def main() -> None:
         if not cik:
             no_cik.append(symbol)
             continue
-        cache_path = Path(cfg.cache_dir) / f"submissions_{cik}.json"
-        if cache_path.exists() and now - cache_path.stat().st_mtime < max_age_sec:
+        # Skip check is based on the PARSED cache age (the actual deliverable),
+        # not the submissions cache age. A fresh submissions cache without a
+        # parsed cache still needs processing (the daily run fetched the raw
+        # data but the parsed result was never computed).
+        parsed_path = Path(cfg.cache_dir) / f"parsed_fund_{cik}.json"
+        if parsed_path.exists() and now - parsed_path.stat().st_mtime < max_age_sec:
             skipped += 1
         else:
             try:
-                # Delete the stale parsed cache so load_one_fundamental
+                # Delete any stale parsed cache so load_one_fundamental
                 # recomputes from the fresh submissions/companyfacts and
                 # writes a new parsed cache for the daily run to consume.
-                parsed_path = Path(cfg.cache_dir) / f"parsed_fund_{cik}.json"
                 if parsed_path.exists():
                     parsed_path.unlink()
-                # Fetches submissions + companyfacts (incremental), parses
-                # the 4 MB JSON, computes TTM/YoY/quality, and writes
-                # parsed_fund_{cik}.json — the daily run reads this instead.
+                # Fetches submissions + companyfacts (incremental via the
+                # script's own TTL=max_age), parses the 4 MB JSON, computes
+                # TTM/YoY/quality, and writes parsed_fund_{cik}.json.
                 load_one_fundamental(sec, symbol, cik, cfg)
                 refreshed += 1
             except Exception as exc:
