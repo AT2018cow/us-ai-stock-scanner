@@ -128,6 +128,7 @@
   },
   "score_penalty_overvaluation": 0.2,
   "score_penalty_deterioration": 0.2,
+  "pe_cash_backing_haircut": 1.0,
   "price_lookback_days": 420,
   "min_drawdown_from_52w_high": null,
   "max_range_position_52w": null,

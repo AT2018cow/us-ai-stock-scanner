@@ -2017,6 +2017,7 @@ def rank_and_pick_symbols_with_diagnostics(
             scan_config.score_winsor_upper_q,
             scan_config.score_penalty_overvaluation,
             scan_config.score_penalty_deterioration,
+            scan_config.pe_cash_backing_haircut,
         )
         diagnostics["channels"][channel_name] = {
             "n_input": int(len(df)),

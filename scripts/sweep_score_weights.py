@@ -108,6 +108,7 @@ def precompute_groups(
     dataset: pd.DataFrame,
     base_weights: dict[str, dict[str, dict[str, float]]],
     horizons: list[int],
+    pe_cash_backing_haircut: float = 1.0,
 ) -> dict[tuple[str, str, str], dict[str, Any]]:
     """Per (signal_date, list_type, channel): normalized axis matrix + penalties + fwd returns.
 
@@ -130,6 +131,7 @@ def precompute_groups(
             winsor_upper_q,
             penalty_over,
             penalty_det,
+            pe_cash_backing_haircut,
         )
         axes = [k for k in base.keys() if k != "soft_pass_rate"]
         norm_cols = [f"{a}_norm" for a in axes]
@@ -351,6 +353,7 @@ def summarize_with_keys(
 
 def main() -> None:
     global winsor_lower_q, winsor_upper_q, penalty_over, penalty_det
+    global pe_cash_backing_haircut
 
     args = build_parser().parse_args()
     started = time.monotonic()
@@ -371,6 +374,7 @@ def main() -> None:
     winsor_upper_q = scan_config.score_winsor_upper_q
     penalty_over = scan_config.score_penalty_overvaluation
     penalty_det = scan_config.score_penalty_deterioration
+    pe_cash_backing_haircut = scan_config.pe_cash_backing_haircut
 
     base_weights = load_base_weights(scan_config, channels, list_types)
     for lt in list_types:
@@ -378,7 +382,7 @@ def main() -> None:
             log(f"base weights {lt}/{ch}: " + json.dumps({k: round(v, 3) for k, v in sorted(base_weights[lt][ch].items(), key=lambda x: -x[1])}))
 
     log("precomputing normalized matrices per (date, list, channel) ...")
-    groups = precompute_groups(dataset, base_weights, horizons)
+    groups = precompute_groups(dataset, base_weights, horizons, pe_cash_backing_haircut)
     log(f"groups: {len(groups)}")
 
     rng = np.random.default_rng(args.seed)

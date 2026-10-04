@@ -292,6 +292,7 @@ def run_one_scenario(cfg: ScanConfig, frame: pd.DataFrame) -> dict[str, Any]:
             cfg.score_winsor_upper_q,
             cfg.score_penalty_overvaluation,
             cfg.score_penalty_deterioration,
+            cfg.pe_cash_backing_haircut,
         )
         low_ranked = apply_group_caps(
             low_ranked,
@@ -310,6 +311,7 @@ def run_one_scenario(cfg: ScanConfig, frame: pd.DataFrame) -> dict[str, Any]:
             cfg.score_winsor_upper_q,
             cfg.score_penalty_overvaluation,
             cfg.score_penalty_deterioration,
+            cfg.pe_cash_backing_haircut,
         )
         trend_ranked = apply_group_caps(
             trend_ranked,
@@ -328,6 +330,7 @@ def run_one_scenario(cfg: ScanConfig, frame: pd.DataFrame) -> dict[str, Any]:
             cfg.score_winsor_upper_q,
             cfg.score_penalty_overvaluation,
             cfg.score_penalty_deterioration,
+            cfg.pe_cash_backing_haircut,
         )
         momentum_ranked = apply_group_caps(
             momentum_ranked,

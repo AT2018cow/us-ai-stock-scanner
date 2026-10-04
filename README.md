@@ -429,6 +429,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 | `score_winsor_upper_q` | `0.95` | 打分 winsor 上分位。 |
 | `score_penalty_overvaluation` | `0.2` | 高估惩罚系数。 |
 | `score_penalty_deterioration` | `0.2` | 基本面恶化惩罚系数。 |
+| `pe_cash_backing_haircut` | `1.0` | PE 系便宜信用按 OCF/NI 现金支撑度修剪的强度（0~1）。归一化后仅收缩中位以上（便宜侧）的 `pe_discount` / `pe_percentile_low` / `pe_hist_percentile_low` 信号：净利率被非经营收益（如投资浮盈）虚高 → OCF/NI 低 → PE 显得虚假便宜，其分数贡献按 `1 - 强度×(1-OCF/NI)` 折扣（OCF/NI 钳制在 0~1，缺失按 1 处理）。贵侧与缺失数据完全不受影响；`0` 恢复旧行为。 |
 
 #### 6.2.8 覆盖率模式、去重与输出数量
 

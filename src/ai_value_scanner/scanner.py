@@ -559,6 +559,11 @@ class ScanConfig:
     score_penalty_deterioration: float = 0.20
     min_ps_discount: float = 0.15
     min_pe_discount: float = 0.10
+    # 0..1: how strongly NI-based PE cheap-credit is discounted by OCF/NI cash
+    # backing (1.0 = trust cheap credit exactly in proportion to OCF/NI;
+    # 0.0 = legacy behavior). Guards against non-operating gains (e.g.
+    # unrealized investment marks) manufacturing spurious PE cheapness.
+    pe_cash_backing_haircut: float = 1.0
     price_lookback_days: int = 420
     min_drawdown_from_52w_high: float | None = None
     max_range_position_52w: float | None = None
@@ -4967,6 +4972,7 @@ def score_and_rank(
     score_winsor_upper_q: float,
     overvaluation_penalty_weight: float = 0.20,
     deterioration_penalty_weight: float = 0.20,
+    pe_cash_backing_haircut: float = 1.0,
 ) -> pd.DataFrame:
     out = df.copy()
     required_cols = [
@@ -5081,9 +5087,25 @@ def score_and_rank(
     }
     out["composite_score"] = 0.0
     use_fallback_defaults = not isinstance(weights, dict) or len(weights) == 0
+    # NI-based PE cheap-credit haircut: shrink cheap-side (norm > 0.5) PE
+    # signals toward neutral in proportion to OCF/NI cash backing. One-sided:
+    # the expensive side is untouched, so a low cash factor cannot make an
+    # expensive name look cheaper; missing OCF/NI fails open (factor 1.0).
+    haircut_strength = max(0.0, float(pe_cash_backing_haircut))
+    pe_cash_keys = {"pe_discount", "pe_percentile_low", "pe_hist_percentile_low"}
+    if haircut_strength > 0.0:
+        ocf_ni = pd.to_numeric(out["ocf_to_net_income"], errors="coerce")
+        raw_factor = ocf_ni.clip(lower=0.0, upper=1.0).fillna(1.0)
+        cash_factor = (1.0 - haircut_strength * (1.0 - raw_factor)).clip(lower=0.0, upper=1.0)
     for key, raw in component_series.items():
         norm_col = f"{key}_norm"
         out[norm_col] = robust_normalize_score(raw, score_winsor_lower_q, score_winsor_upper_q)
+        if haircut_strength > 0.0 and key in pe_cash_keys:
+            cheap_side = out[norm_col] > 0.5
+            if cheap_side.any():
+                out.loc[cheap_side, norm_col] = 0.5 + (
+                    out.loc[cheap_side, norm_col] - 0.5
+                ) * cash_factor.loc[cheap_side]
         if use_fallback_defaults:
             weight = float(default_weights.get(key, 0.0))
         else:
@@ -6205,6 +6227,7 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+            config.pe_cash_backing_haircut,
         )
         ranked = apply_research_assessment(ranked, "low_value")
         pre_research_gate_count = len(ranked)
@@ -6440,6 +6463,7 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+            config.pe_cash_backing_haircut,
         )
         trend_ranked = apply_group_caps(
             trend_ranked,
@@ -6497,6 +6521,7 @@ def run_scan(
             config.score_winsor_upper_q,
             config.score_penalty_overvaluation,
             config.score_penalty_deterioration,
+            config.pe_cash_backing_haircut,
         )
         momentum_ranked = apply_group_caps(
             momentum_ranked,
