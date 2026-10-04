@@ -456,3 +456,48 @@ class TestD02FactsRefresh(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestC03MaxDrawdown(unittest.TestCase):
+    def test_initial_nav_included(self):
+        import pandas as pd
+        from scripts.tune_parameters import max_drawdown_for_series  # type: ignore
+
+        self.assertAlmostEqual(max_drawdown_for_series(pd.Series([-0.20])), -0.20)
+        self.assertAlmostEqual(max_drawdown_for_series(pd.Series([-0.20, -0.10])), -0.28)
+        self.assertAlmostEqual(max_drawdown_for_series(pd.Series([0.10, -0.20])), -0.20)
+        self.assertEqual(max_drawdown_for_series(pd.Series([], dtype=float)), 0.0)
+        # Recovery above initial NAV: drawdown measured from the running peak.
+        self.assertAlmostEqual(max_drawdown_for_series(pd.Series([-0.10, 0.30, -0.10])), -0.10)
+
+
+class TestR05NonOverlappingDrawdown(unittest.TestCase):
+    def test_overlapping_events_not_reused(self):
+        import pandas as pd
+        from ai_value_scanner.backtest import non_overlapping_event_returns
+
+        # Monthly signals with a 4-month hold: events at 2024-01, 02, 03, 04
+        # all overlap; only the first (and then 05) should be selected.
+        part = pd.DataFrame(
+            {
+                "signal_date": ["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01", "2024-05-01"],
+                "portfolio_return": [0.10, 0.20, -0.30, 0.05, -0.05],
+            }
+        )
+        rets = non_overlapping_event_returns(part, 120)
+        # Gap = 120*7/5+2 = 170 days: 01-01 selected, next eligible is 06-18+,
+        # so only the January event fits within this sample.
+        self.assertEqual(rets, [0.10])
+
+    def test_disjoint_events_all_selected(self):
+        import pandas as pd
+        from ai_value_scanner.backtest import non_overlapping_event_returns
+
+        part = pd.DataFrame(
+            {
+                "signal_date": ["2024-01-01", "2024-07-01"],
+                "portfolio_return": [0.10, 0.20],
+            }
+        )
+        rets = non_overlapping_event_returns(part, 120)
+        self.assertEqual(rets, [0.10, 0.20])

@@ -49,6 +49,7 @@ from ai_value_scanner.backtest import (
     build_union_watchlist_map,
     compute_price_features_asof,
     forward_return,
+    forward_return_with_exit,
     load_alpaca_client,
     load_sec_client,
     load_watchlist_snapshots,
@@ -283,11 +284,12 @@ def main() -> None:
         )
         for h in horizons:
             qqq_ret = None
+            qqq_end = None
             if qqq_frame is not None:
                 # Same roundtrip cost as the per-symbol legs: sweep/IC excess
                 # math (fwd_ret - qqq_return) must compare cost-loaded returns
                 # on both sides (same convention as event_backtest benchmarks).
-                qqq_ret = forward_return(
+                qqq_ret, qqq_end = forward_return_with_exit(
                     qqq_frame,
                     asof.date().isoformat(),
                     h,
@@ -301,6 +303,7 @@ def main() -> None:
                     "signal_date": asof.date().isoformat(),
                     "horizon_days": h,
                     "qqq_return": qqq_ret,
+                    "qqq_label_end": qqq_end.date().isoformat() if qqq_end is not None else None,
                 }
             )
 
@@ -371,7 +374,7 @@ def main() -> None:
                         rec[col] = row.get(col)
                     for h in horizons:
                         if frame is not None and not frame.empty:
-                            fwd = forward_return(
+                            fwd, label_end = forward_return_with_exit(
                                 frame,
                                 asof.date().isoformat(),
                                 h,
@@ -392,9 +395,16 @@ def main() -> None:
                             # Scored name with no price data on a mature hold
                             # window: delist-like disappearance, not a data gap.
                             fwd = float(args.delist_return_assumption) - roundtrip_cost
+                            label_end = None
                         else:
                             fwd = None
+                            label_end = None
                         rec[f"fwd_ret_{h}"] = fwd
+                        # R04: exact label exit date for train/valid boundary
+                        # clearing (None = delist-assumed or immature).
+                        rec[f"label_end_{h}"] = (
+                            label_end.date().isoformat() if label_end is not None else None
+                        )
                     rows.append(rec)
 
     dataset = pd.DataFrame(rows)
@@ -402,8 +412,8 @@ def main() -> None:
     if not dataset.empty:
         # Attach per-horizon QQQ benchmark returns (constant within a signal date)
         for h in horizons:
-            qqq_h = qqq_df[qqq_df["horizon_days"] == h][["signal_date", "qqq_return"]]
-            qqq_h = qqq_h.rename(columns={"qqq_return": f"qqq_return_{h}"})
+            qqq_h = qqq_df[qqq_df["horizon_days"] == h][["signal_date", "qqq_return", "qqq_label_end"]]
+            qqq_h = qqq_h.rename(columns={"qqq_return": f"qqq_return_{h}", "qqq_label_end": f"qqq_label_end_{h}"})
             dataset = dataset.merge(qqq_h, on="signal_date", how="left")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -157,7 +157,7 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
         return
     from ai_value_scanner.scanner import load_config
     from ai_value_scanner.backtest import build_bar_db, load_alpaca_client
-    from ai_value_scanner.backtest import next_trading_index
+    from ai_value_scanner.backtest import next_trading_index, apply_split_adjustment_to_frame
 
     cfg = load_config("configs/config.risk_off.json")
     client, _ = load_alpaca_client(cfg)
@@ -169,13 +169,25 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
     syms = sorted(set(open_rows["symbol"].astype(str).str.upper()))
     bars_start = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=420)).isoformat()
     bar_db = build_bar_db(client, syms + ["QQQ"], bars_start, cfg.chunk_size)
+    # T01: authoritative split events so settlement prices are continuous in
+    # adjusted-price space (raw open->close would book a 2:1 split as -50%).
+    try:
+        split_events = client.get_corporate_action_splits(syms, bars_start)
+    except Exception as exc:
+        split_events = {}
+        log(f"拆股事件获取失败 ({exc.__class__.__name__})；按未调整价格结算")
     today = pd.Timestamp.now(tz="UTC").tz_localize(None)
     n_matured = 0
+    n_split_adjusted = 0
     for idx, r in open_rows.iterrows():
         entry_dt = pd.Timestamp(str(r["entry_date"]), tz="UTC")
         frame = bar_db.get(str(r["symbol"]).upper())
         if frame is None or frame.empty:
             continue
+        symbol_splits = split_events.get(str(r["symbol"]).upper())
+        if symbol_splits:
+            frame = apply_split_adjustment_to_frame(frame, symbol_splits)
+            n_split_adjusted += 1
         e_idx = next_trading_index(frame.index, entry_dt)
         if e_idx is None:
             continue
@@ -191,7 +203,7 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
         d.loc[idx, "return_120d"] = round(exit_px / entry - 1.0, 6)
         n_matured += 1
     write_csv_atomic(d, cohort_csv)
-    log(f"结算 {n_matured} 行；未到期行保持 open")
+    log(f"结算 {n_matured} 行（其中 {n_split_adjusted} 行经拆股调整）；未到期行保持 open")
     # 汇总已结算 cohort
     matured = d[(d["status"] == "matured") & pd.to_numeric(d["return_120d"], errors="coerce").notna()]
     if not matured.empty:

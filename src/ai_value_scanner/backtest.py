@@ -1337,10 +1337,11 @@ def compute_ai_link_score(
 
 
 def series_up_to_asof(
-    series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp
+    series: list[tuple], asof: pd.Timestamp
 ) -> list[tuple[pd.Timestamp, float]]:
     out: list[tuple[pd.Timestamp, float]] = []
-    for ts, val in series:
+    for entry in series:
+        ts, val = entry[0], entry[1]
         if ts > asof:
             break
         try:
@@ -3196,6 +3197,53 @@ def next_trading_index(index: pd.DatetimeIndex, signal_dt: pd.Timestamp) -> int 
     return int(pos)
 
 
+def forward_return_with_exit(
+    price_frame: pd.DataFrame,
+    signal_date: str,
+    horizon: int,
+    roundtrip_cost: float,
+    entry_price_mode: str = "next_open",
+    exit_price_mode: str = "close",
+    global_end_date: pd.Timestamp | None = None,
+    delist_return_assumption: float | None = None,
+    delist_detection_buffer_days: int = 7,
+) -> tuple[float | None, pd.Timestamp | None]:
+    """Forward return plus the actual exit date (R04 label-end metadata).
+
+    The exit date lets downstream train/valid splits clear labels that
+    extend past the split boundary instead of guessing hold lengths in
+    calendar days. Exit date is None for delist-assumed returns (exact
+    delist date unknown) and for immature windows.
+    """
+    signal_dt = pd.Timestamp(signal_date, tz="UTC")
+    if price_frame is None or price_frame.empty:
+        return None, None
+    idx = next_trading_index(price_frame.index, signal_dt)
+    if idx is None:
+        return None, None
+    hold = max(1, int(horizon))
+    exit_idx = idx + hold - 1
+    if exit_idx >= len(price_frame):
+        if global_end_date is not None and delist_return_assumption is not None:
+            last_dt = pd.Timestamp(price_frame.index[-1]).tz_convert("UTC")
+            if last_dt < (global_end_date - pd.Timedelta(days=delist_detection_buffer_days)):
+                # Assume an adverse delisting return when a symbol disappears
+                # well before the backtest window end.
+                return float(delist_return_assumption) - roundtrip_cost, None
+        return None, None
+
+    entry_col = "open" if str(entry_price_mode).strip().lower() == "next_open" else "close"
+    exit_col = "open" if str(exit_price_mode).strip().lower() == "open" else "close"
+    if entry_col not in price_frame.columns or exit_col not in price_frame.columns:
+        return None, None
+    entry = float(price_frame.iloc[idx][entry_col])
+    exit_px = float(price_frame.iloc[exit_idx][exit_col])
+    if entry <= 0:
+        return None, None
+    exit_date = pd.Timestamp(price_frame.index[exit_idx]).tz_convert("UTC")
+    return (exit_px / entry) - 1.0 - roundtrip_cost, exit_date
+
+
 def forward_return(
     price_frame: pd.DataFrame,
     signal_date: str,
@@ -3207,32 +3255,18 @@ def forward_return(
     delist_return_assumption: float | None = None,
     delist_detection_buffer_days: int = 7,
 ) -> float | None:
-    signal_dt = pd.Timestamp(signal_date, tz="UTC")
-    if price_frame is None or price_frame.empty:
-        return None
-    idx = next_trading_index(price_frame.index, signal_dt)
-    if idx is None:
-        return None
-    hold = max(1, int(horizon))
-    exit_idx = idx + hold - 1
-    if exit_idx >= len(price_frame):
-        if global_end_date is not None and delist_return_assumption is not None:
-            last_dt = pd.Timestamp(price_frame.index[-1]).tz_convert("UTC")
-            if last_dt < (global_end_date - pd.Timedelta(days=delist_detection_buffer_days)):
-                # Assume an adverse delisting return when a symbol disappears
-                # well before the backtest window end.
-                return float(delist_return_assumption) - roundtrip_cost
-        return None
-
-    entry_col = "open" if str(entry_price_mode).strip().lower() == "next_open" else "close"
-    exit_col = "open" if str(exit_price_mode).strip().lower() == "open" else "close"
-    if entry_col not in price_frame.columns or exit_col not in price_frame.columns:
-        return None
-    entry = float(price_frame.iloc[idx][entry_col])
-    exit_px = float(price_frame.iloc[exit_idx][exit_col])
-    if entry <= 0:
-        return None
-    return (exit_px / entry) - 1.0 - roundtrip_cost
+    ret, _ = forward_return_with_exit(
+        price_frame,
+        signal_date,
+        horizon,
+        roundtrip_cost,
+        entry_price_mode=entry_price_mode,
+        exit_price_mode=exit_price_mode,
+        global_end_date=global_end_date,
+        delist_return_assumption=delist_return_assumption,
+        delist_detection_buffer_days=delist_detection_buffer_days,
+    )
+    return ret
 
 
 def _hold_window_mature(
@@ -3383,37 +3417,50 @@ def infer_segment_label(signal_date: str) -> str:
     return str(y)
 
 
-def non_overlapping_cumulative(part: pd.DataFrame, horizon: int) -> tuple[float, int]:
-    """Compound event returns over non-overlapping signal dates only.
+def non_overlapping_event_returns(part: pd.DataFrame, horizon: int) -> list[float]:
+    """Select the event returns of disjoint (non-overlapping) holds.
 
-    Weekly/monthly signal grids with multi-month holds overlap heavily, so
-    compounding every event's mean return as if sequential misstates wealth.
+    Weekly/monthly signal grids with multi-month holds overlap heavily.
     Greedy earliest-first selection with a calendar gap covering the holding
-    window keeps disjoint holds. Returns (cumulative_return, n_events_used).
+    window keeps disjoint holds, so each selected event's capital is not
+    reused while still held. This is a SAMPLING diagnostic, not a full
+    account equity curve (R05): compounding these returns approximates
+    sequential non-overlapping trading, not the rolling portfolio.
     """
     sub = part.dropna(subset=["portfolio_return"]).copy()
     if sub.empty:
-        return float("nan"), 0
+        return []
     try:
         sub["_sig_dt"] = pd.to_datetime(sub["signal_date"], utc=True)
     except (TypeError, ValueError):
-        return float("nan"), 0
+        return []
     sub = sub.sort_values("_sig_dt")
     gap = pd.Timedelta(days=int(horizon * 7 / 5) + 2)
-    acc = 1.0
-    n = 0
+    rets: list[float] = []
     last = None
     for _, r in sub.iterrows():
         d = r["_sig_dt"]
         if pd.isna(d):
             continue
         if last is None or (d - last) >= gap:
-            acc *= 1.0 + float(r["portfolio_return"])
+            rets.append(float(r["portfolio_return"]))
             last = d
-            n += 1
-    if not n:
+    return rets
+
+
+def non_overlapping_cumulative(part: pd.DataFrame, horizon: int) -> tuple[float, int]:
+    """Compound event returns over non-overlapping signal dates only.
+
+    Greedy earliest-first selection with a calendar gap covering the holding
+    window keeps disjoint holds. Returns (cumulative_return, n_events_used).
+    """
+    rets = non_overlapping_event_returns(part, horizon)
+    if not rets:
         return float("nan"), 0
-    return float(acc - 1.0), n
+    acc = 1.0
+    for r in rets:
+        acc *= 1.0 + r
+    return float(acc - 1.0), len(rets)
 
 
 def summarize_backtest(events: pd.DataFrame, benchmarks: pd.DataFrame) -> pd.DataFrame:

@@ -326,7 +326,9 @@ def max_drawdown_for_series(returns: pd.Series) -> float:
     equity = (1.0 + p).cumprod()
     if equity.empty:
         return 0.0
-    peak = equity.cummax()
+    # C03: the peak must include the initial NAV of 1.0 — a first-period
+    # loss is a drawdown from it, not from a later peak.
+    peak = equity.cummax().clip(lower=1.0)
     dd = equity / peak - 1.0
     return float(dd.min())
 
@@ -490,9 +492,18 @@ def evaluate_window(
             events["list_type"].isin(list_types) & events["horizon_days"].isin(horizons)
         ].copy()
         if not parts.empty:
+            from ai_value_scanner.backtest import non_overlapping_event_returns
+
             dds: list[float] = []
-            for _, part in parts.groupby(["scenario", "list_type", "horizon_days"], dropna=False):
-                dds.append(max_drawdown_for_series(part["portfolio_return"]))
+            for key, part in parts.groupby(["scenario", "list_type", "horizon_days"], dropna=False):
+                # R05: overlapping holds reuse the same capital, so the old
+                # sequential compounding of ALL events was not an account
+                # drawdown. Use the non-overlapping selection (a sampling
+                # diagnostic, not a rolling account equity curve).
+                horizon = int(key[2]) if key[2] is not None and not pd.isna(key[2]) else 0
+                rets = non_overlapping_event_returns(part, horizon) if horizon > 0 else []
+                if rets:
+                    dds.append(max_drawdown_for_series(pd.Series(rets)))
             if dds:
                 drawdown = float(min(dds))
 

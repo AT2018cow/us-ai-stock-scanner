@@ -410,12 +410,62 @@ def main() -> None:
     train_mask_dates = set(dataset[dataset["signal_date"] < split_date]["signal_date"].unique())
     valid_mask_dates = set(dataset[dataset["signal_date"] >= split_date]["signal_date"].unique())
 
+    # R04: a training label may not extend into the validation window. Use
+    # the exact label exit dates recorded by the extractor (per-symbol
+    # label_end_{h}, fallback qqq_label_end_{h}); without them, fall back to
+    # the conservative calendar-gap bound (horizon*7/5 + 2 days, the same
+    # bound used for non-overlapping selection).
+    split_dt = pd.Timestamp(split_date, tz="UTC")
+    train_dates_by_h: dict[int, set[str]] = {}
+    valid_dates_by_h: dict[int, set[str]] = {}
+    sig_dates = sorted(dataset["signal_date"].unique())
+    for h in horizons:
+        col = f"label_end_{h}"
+        qcol = f"qqq_label_end_{h}"
+        gap_days = int(h * 7 / 5) + 2
+        if col in dataset.columns:
+            ends = dataset.groupby("signal_date")[col].max()
+        else:
+            ends = pd.Series(dtype=object)
+        if qcol in dataset.columns:
+            qmap = dataset.drop_duplicates("signal_date").set_index("signal_date")[qcol]
+        else:
+            qmap = pd.Series(dtype=object)
+        tr: set[str] = set()
+        va: set[str] = set()
+        for d in sig_dates:
+            if d >= split_date:
+                va.add(d)
+                continue
+            end = ends.get(d)
+            if end is None or (isinstance(end, float) and pd.isna(end)) or end == "":
+                end = qmap.get(d) if len(qmap) else None
+            if end is None or (isinstance(end, float) and pd.isna(end)) or end == "":
+                end = (pd.Timestamp(d, tz="UTC") + pd.Timedelta(days=gap_days)).date().isoformat()
+            if pd.Timestamp(str(end), tz="UTC") < split_dt:
+                tr.add(d)
+        train_dates_by_h[int(h)] = tr
+        valid_dates_by_h[int(h)] = va
+    n_train_blocked = {h: len(train_mask_dates - train_dates_by_h[h]) for h in train_dates_by_h}
+    log(f"R04 boundary clearing: blocked train dates per horizon {n_train_blocked}")
+
+    def _mask_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        tr_parts: list[pd.DataFrame] = []
+        va_parts: list[pd.DataFrame] = []
+        for h, ev_h in events.groupby("horizon_days"):
+            key = int(h)
+            tr_parts.append(ev_h[ev_h["signal_date"].isin(train_dates_by_h.get(key, set()))])
+            va_parts.append(ev_h[ev_h["signal_date"].isin(valid_dates_by_h.get(key, set()))])
+        empty = events.iloc[0:0]
+        ev_tr = pd.concat(tr_parts) if tr_parts else empty
+        ev_va = pd.concat(va_parts) if va_parts else empty
+        return ev_tr, ev_va
+
     def evaluate(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> dict[str, Any]:
         events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
         full = summarize(events, dataset, horizons)
         score_full = objective_from_summary(full, list_types, horizons)
-        ev_tr = events[events["signal_date"].isin(train_mask_dates)]
-        ev_va = events[events["signal_date"].isin(valid_mask_dates)]
+        ev_tr, ev_va = _mask_events(events)
         s_tr = objective_from_summary(summarize(ev_tr, dataset, horizons), list_types, horizons)
         s_va = objective_from_summary(summarize(ev_va, dataset, horizons), list_types, horizons)
         return {
@@ -429,8 +479,7 @@ def main() -> None:
     def evaluate_light(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> tuple[float, float, float]:
         events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
         score_full = objective_from_summary(summarize(events, dataset, horizons), list_types, horizons)
-        ev_tr = events[events["signal_date"].isin(train_mask_dates)]
-        ev_va = events[events["signal_date"].isin(valid_mask_dates)]
+        ev_tr, ev_va = _mask_events(events)
         s_tr = objective_from_summary(summarize(ev_tr, dataset, horizons), list_types, horizons)
         s_va = objective_from_summary(summarize(ev_va, dataset, horizons), list_types, horizons)
         return score_full, s_tr, s_va
