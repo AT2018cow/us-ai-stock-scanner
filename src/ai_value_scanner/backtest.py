@@ -8,7 +8,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,8 @@ from ai_value_scanner.scanner import (
     LIABILITIES_CURRENT_TAGS,
     LONG_TERM_DEBT_TAGS,
     NET_INCOME_TAGS,
+    NONRECURRING_EXPENSE_TAGS,
+    NONRECURRING_GAIN_TAGS,
     OPERATING_CASH_FLOW_TAGS,
     QUARTERLY_FORMS,
     RECEIVABLES_CURRENT_TAGS,
@@ -138,10 +140,19 @@ class FundamentalPointInTime:
     inventory_series: list[tuple[pd.Timestamp, float]]
     interest_expense_series: list[tuple[pd.Timestamp, float]]
     da_series: list[tuple[pd.Timestamp, float]]
-    backlog_series: list[tuple[pd.Timestamp, float]]
+    backlog_series: list[tuple[pd.Timestamp, float, pd.Timestamp]]
     disclosure_series: list[tuple[pd.Timestamp, str]]
     ai_disclosure_score: float
     ai_backlog_signal: float
+    # C05: per-tag TTM series so the replay can apply the same non-recurring
+    # adjustments as the scan (sum of positive latest values across tags,
+    # capped by nonrecurring_addback_revenue_cap).
+    nonrecurring_expense_series: dict[str, list[tuple[pd.Timestamp, float, pd.Timestamp]]] = field(
+        default_factory=dict
+    )
+    nonrecurring_gain_series: dict[str, list[tuple[pd.Timestamp, float, pd.Timestamp]]] = field(
+        default_factory=dict
+    )
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -453,17 +464,28 @@ def collapse_points_by_end(points: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
-def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
+def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
+    """Level series as (visible, value, report_period_end).
+
+    C04: when several points share the same disclosure date (an annual file
+    carries the current period plus prior-year comparatives), the LATEST
+    report period must win — not the first point encountered. Ties on
+    (visible, end) keep the caller's tag-priority order (first wins).
+    """
     if not points:
         return []
-    by_visible: dict[pd.Timestamp, float] = {}
+    best_by_visible: dict[pd.Timestamp, tuple[pd.Timestamp, float]] = {}
     for point in points:
         vis = point["visible"]
-        # First tag in the caller's tag list wins for identical visibility
-        # dates (matches the scanner's tag-priority tie-break semantics).
-        if vis not in by_visible:
-            by_visible[vis] = float(point["value"])
-    out = sorted(by_visible.items(), key=lambda x: x[0])
+        end = point.get("end", vis)
+        cand = (end, float(point["value"]))
+        prev = best_by_visible.get(vis)
+        if prev is None or end > prev[0]:
+            best_by_visible[vis] = cand
+    out = [
+        (vis, value, end)
+        for vis, (end, value) in sorted(best_by_visible.items())
+    ]
     return out
 
 
@@ -477,15 +499,16 @@ def _point_duration_days(point: dict[str, Any]) -> int:
         return 0
 
 
-def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float]]:
-    """PIT flow series built from single-quarter periods.
+def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
+    """PIT flow series as (visible, value, window_period_end).
 
     Mirrors the scanner's quarter reconstruction: single-quarter entries are
     preferred, missing Q4s are derived from annual minus YTD (or annual minus
     the year's other quarters), and rolling 4-quarter windows carry a span
     guard. Each window is keyed by the latest visibility date of its parts so
     a TTM value only becomes available once its last input filing is visible.
-    Legacy points without a `start` are treated as single quarters.
+    The window's period end is kept for the YoY lookup (C02). Legacy points
+    without a `start` are treated as single quarters.
     """
     if not points:
         return []
@@ -692,7 +715,9 @@ def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[
         return build_level_series(collapse_points_by_end(annual))
 
     ends = sorted(quarters)
-    by_visible: dict[pd.Timestamp, float] = {}
+    # Each entry is (value, window_end): the YoY lookup needs the TTM
+    # window's period end, not just its visibility date (C02).
+    by_visible: dict[pd.Timestamp, tuple[float, pd.Timestamp]] = {}
     for idx in range(3, len(ends)):
         e0, e3 = ends[idx - 3], ends[idx]
         span = int((e3 - e0).days)
@@ -701,7 +726,7 @@ def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[
         window = [quarters[e] for e in ends[idx - 3 : idx + 1]]
         visible = max(p["visible"] for p in window)
         value = float(sum(float(p["value"]) for p in window))
-        by_visible[visible] = value
+        by_visible[visible] = (value, e3)
 
     # A fresher 10-K annual supersedes stale quarter windows: the fiscal year
     # IS the trailing twelve months at its own end date (recent 10-Q data
@@ -717,14 +742,17 @@ def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[
         not ends or annual_candidates[-1]["end"] > ends[-1]
     ):
         latest_a = annual_candidates[-1]
-        by_visible[latest_a["visible"]] = float(latest_a["value"])
+        by_visible[latest_a["visible"]] = (float(latest_a["value"]), latest_a["end"])
         if len(annual_candidates) >= 2:
             prev_a = annual_candidates[-2]
             # Restated comparatives often share the latest 10-K's visibility
             # date; never let the prior year overwrite the latest annual.
             if prev_a["visible"] < latest_a["visible"]:
-                by_visible[prev_a["visible"]] = float(prev_a["value"])
-    return sorted(by_visible.items(), key=lambda x: x[0])
+                by_visible[prev_a["visible"]] = (float(prev_a["value"]), prev_a["end"])
+    return [
+        (vis, value, end)
+        for vis, (value, end) in sorted(by_visible.items(), key=lambda x: x[0])
+    ]
 
 
 def build_disclosure_series_from_submissions(submissions: dict[str, Any]) -> list[tuple[pd.Timestamp, str]]:
@@ -1107,7 +1135,7 @@ def build_universe_for_replay(
     return merged
 
 
-def latest_asof(series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp) -> float | None:
+def latest_asof(series: list[tuple], asof: pd.Timestamp) -> float | None:
     if not series:
         return None
     dates = [x[0] for x in series]
@@ -1117,8 +1145,113 @@ def latest_asof(series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp) ->
     return float(series[idx][1])
 
 
+def series_value_asof(
+    series: list[tuple], asof: pd.Timestamp
+) -> tuple[float | None, pd.Timestamp | None]:
+    """Latest visible value (and its report period end) at or before asof."""
+    if not series:
+        return None, None
+    dates = [x[0] for x in series]
+    idx = bisect.bisect_right(dates, asof) - 1
+    if idx < 0:
+        return None, None
+    entry = series[idx]
+    try:
+        value = float(entry[1])
+    except (TypeError, ValueError):
+        return None, None
+    end = entry[2] if len(entry) > 2 else None
+    return value, end
+
+
+def latest_and_year_ago_flow(
+    series: list[tuple], asof: pd.Timestamp, min_gap_days: int = 320, max_gap_days: int = 410
+) -> tuple[float | None, float | None]:
+    """Latest value plus a true year-ago base (C02).
+
+    Mirrors the scanner's pick_latest_and_prev_ttm: the YoY base is the TTM
+    window whose period end is min_gap..max_gap days before the latest
+    window's end (closest to 365), not the adjacent window. Legacy 2-tuple
+    entries (no period end) degrade to the adjacent-window behaviour so
+    synthetic series keep working.
+    """
+    if not series:
+        return None, None
+    entries = sorted((x for x in series if x[0] <= asof), key=lambda x: x[0])
+    if not entries:
+        return None, None
+    latest = entries[-1]
+    try:
+        latest_value = float(latest[1])
+    except (TypeError, ValueError):
+        return None, None
+    latest_end = latest[2] if len(latest) > 2 else None
+    if latest_end is None:
+        prev = float(entries[-2][1]) if len(entries) > 1 else None
+        return latest_value, prev
+    lo = latest_end - pd.Timedelta(days=max_gap_days)
+    hi = latest_end - pd.Timedelta(days=min_gap_days)
+    best_gap: int | None = None
+    prev: float | None = None
+    for entry in entries[:-1]:
+        end = entry[2] if len(entry) > 2 else None
+        if end is None or end < lo or end > hi:
+            continue
+        try:
+            value = float(entry[1])
+        except (TypeError, ValueError):
+            continue
+        gap = abs(int((latest_end - end).days) - 365)
+        if best_gap is None or gap < best_gap:
+            best_gap = gap
+            prev = value
+    return latest_value, prev
+
+
+def latest_and_year_ago_level(
+    series: list[tuple], asof: pd.Timestamp, min_age_days: int = 300
+) -> tuple[float | None, float | None]:
+    """Latest level value plus its comparison base (C02/C04).
+
+    Mirrors the scanner's pick_latest_and_year_ago_with_forms: prefer the
+    newest report period at least min_age_days older than the latest period;
+    fall back to the second-newest entry. Legacy 2-tuple entries degrade to
+    the adjacent-entry fallback.
+    """
+    if not series:
+        return None, None
+    entries = sorted((x for x in series if x[0] <= asof), key=lambda x: x[0])
+    if not entries:
+        return None, None
+    latest = entries[-1]
+    try:
+        latest_value = float(latest[1])
+    except (TypeError, ValueError):
+        return None, None
+    latest_end = latest[2] if len(latest) > 2 else None
+    if latest_end is None:
+        prev = float(entries[-2][1]) if len(entries) > 1 else None
+        return latest_value, prev
+    threshold = latest_end - pd.Timedelta(days=min_age_days)
+    best_end: pd.Timestamp | None = None
+    prev: float | None = None
+    for entry in entries[:-1]:
+        end = entry[2] if len(entry) > 2 else None
+        if end is None or end > threshold:
+            continue
+        if best_end is None or end > best_end:
+            best_end = end
+            try:
+                prev = float(entry[1])
+            except (TypeError, ValueError):
+                prev = None
+    if prev is None and len(entries) > 1:
+        prev = float(entries[-2][1])
+    return latest_value, prev
+
+
 def latest_and_prev_asof(
-    series: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp
+    series: list[tuple], asof: pd.Timestamp
 ) -> tuple[float | None, float | None]:
     if not series:
         return None, None
@@ -1129,6 +1262,78 @@ def latest_and_prev_asof(
     latest = float(series[idx][1])
     prev = float(series[idx - 1][1]) if idx - 1 >= 0 else None
     return latest, prev
+
+
+def compute_adjusted_metrics(
+    net_income: float | None,
+    ebit: float | None,
+    da: float | None,
+    revenue: float | None,
+    revenue_prev: float | None,
+    addback: float | None,
+    gain: float | None,
+    addback_prev: float | None,
+    gain_prev: float | None,
+    cap_ratio: float | None,
+    net_income_prev: float | None = None,
+    ebit_prev: float | None = None,
+) -> dict[str, float | None]:
+    """Mirror the scanner's non-recurring adjustments (C05).
+
+    Same semantics as load_one_fundamental: addback is capped at
+    cap_ratio * revenue (per period), the net adjustment (addback - gain)
+    is applied exactly once to net income and EBIT, and EBITDA is
+    adjusted_ebit + raw D&A (C01 — no double-counted adjustment).
+    """
+    if cap_ratio is not None:
+        if addback is not None and revenue is not None and revenue > 0:
+            addback = min(float(addback), float(revenue) * float(cap_ratio))
+        if addback_prev is not None and revenue_prev is not None and revenue_prev > 0:
+            addback_prev = min(float(addback_prev), float(revenue_prev) * float(cap_ratio))
+
+    def _adjust(value: float | None, adj_add: float | None, adj_gain: float | None) -> float | None:
+        if value is None:
+            return None
+        return float(value) + float(adj_add or 0.0) - float(adj_gain or 0.0)
+
+    adjusted_net_income = _adjust(net_income, addback, gain)
+    adjusted_ebit = _adjust(ebit, addback, gain)
+    adjusted_net_income_prev = _adjust(net_income_prev, addback_prev, gain_prev)
+    adjusted_ebit_prev = _adjust(ebit_prev, addback_prev, gain_prev)
+    adjusted_ebitda = (
+        float(adjusted_ebit) + float(da or 0.0) if adjusted_ebit is not None else None
+    )
+    return {
+        "adjusted_net_income": adjusted_net_income,
+        "adjusted_ebit": adjusted_ebit,
+        "adjusted_ebitda": adjusted_ebitda,
+        "adjusted_net_income_prev": adjusted_net_income_prev,
+        "adjusted_ebit_prev": adjusted_ebit_prev,
+    }
+
+
+def compute_ai_link_score(
+    config: Any,
+    ai_etf_score: float | None,
+    ai_disclosure_score: float | None,
+    ai_market_score: float | None,
+    ai_backlog_signal: float | None,
+) -> float:
+    """Weighted AI-link score using the config's weights (C06).
+
+    The replay previously hardcoded 0.40/0.35/0.15/0.10 and ignored
+    per-style/theme configurations (e.g. themes with disclosure weight 0).
+    """
+    return float(
+        np.clip(
+            float(config.ai_link_weight_etf_consensus) * float(ai_etf_score or 0.0)
+            + float(config.ai_link_weight_disclosure) * float(ai_disclosure_score or 0.0)
+            + float(config.ai_link_weight_market_link) * float(ai_market_score or 0.0)
+            + float(config.ai_link_weight_backlog) * float(ai_backlog_signal or 0.0),
+            0.0,
+            1.0,
+        )
+    )
 
 
 def series_up_to_asof(
@@ -1247,6 +1452,19 @@ def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[
     backlog_series = build_level_series(
         extract_metric_points(companyfacts, BACKLOG_TAGS, "USD", QUARTERLY_FORMS)
     )
+    # C05: per-tag TTM series for the scan's non-recurring adjustment set.
+    nonrecurring_expense_series = {
+        tag: build_flow_ttm_or_annual_series(
+            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
+        )
+        for tag in NONRECURRING_EXPENSE_TAGS
+    }
+    nonrecurring_gain_series = {
+        tag: build_flow_ttm_or_annual_series(
+            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
+        )
+        for tag in NONRECURRING_GAIN_TAGS
+    }
     disclosure_series = build_disclosure_series_from_submissions(submissions)
     ai_disclosure_score, _, _ = ai_disclosure_score_from_submissions(
         submissions,
@@ -1286,6 +1504,8 @@ def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[
         disclosure_series=disclosure_series,
         ai_disclosure_score=float(ai_disclosure_score or 0.0),
         ai_backlog_signal=float(ai_backlog_signal or 0.0),
+        nonrecurring_expense_series=nonrecurring_expense_series,
+        nonrecurring_gain_series=nonrecurring_gain_series,
     )
     return symbol, f
 
@@ -2095,23 +2315,23 @@ def build_cross_section_asof(
         if f is None:
             continue
 
-        revenue, revenue_prev = latest_and_prev_asof(f.revenue_series, asof)
-        net_income, net_income_prev = latest_and_prev_asof(f.net_income_series, asof)
-        shares, shares_prev = latest_and_prev_asof(f.shares_series, asof)
-        operating_cash_flow, operating_cash_flow_prev = latest_and_prev_asof(
+        revenue, revenue_prev = latest_and_year_ago_flow(f.revenue_series, asof)
+        net_income, net_income_prev = latest_and_year_ago_flow(f.net_income_series, asof)
+        shares, shares_prev = latest_and_year_ago_level(f.shares_series, asof)
+        operating_cash_flow, operating_cash_flow_prev = latest_and_year_ago_flow(
             f.operating_cash_flow_series, asof
         )
-        capex_raw, _ = latest_and_prev_asof(f.capex_series, asof)
-        ebit, ebit_prev = latest_and_prev_asof(f.ebit_series, asof)
-        cash_and_equivalents, _ = latest_and_prev_asof(f.cash_series, asof)
-        debt_long_term, _ = latest_and_prev_asof(f.long_term_debt_series, asof)
-        debt_current, _ = latest_and_prev_asof(f.current_debt_series, asof)
-        current_assets, _ = latest_and_prev_asof(f.current_assets_series, asof)
-        current_liabilities, _ = latest_and_prev_asof(f.current_liabilities_series, asof)
-        receivables_current, receivables_prev = latest_and_prev_asof(f.receivables_series, asof)
-        inventory_current, inventory_prev = latest_and_prev_asof(f.inventory_series, asof)
-        interest_expense, _ = latest_and_prev_asof(f.interest_expense_series, asof)
-        depreciation_and_amortization, depreciation_and_amortization_prev = latest_and_prev_asof(
+        capex_raw, _ = series_value_asof(f.capex_series, asof)
+        ebit, ebit_prev = latest_and_year_ago_flow(f.ebit_series, asof)
+        cash_and_equivalents, _ = series_value_asof(f.cash_series, asof)
+        debt_long_term, _ = series_value_asof(f.long_term_debt_series, asof)
+        debt_current, _ = series_value_asof(f.current_debt_series, asof)
+        current_assets, _ = series_value_asof(f.current_assets_series, asof)
+        current_liabilities, _ = series_value_asof(f.current_liabilities_series, asof)
+        receivables_current, receivables_prev = latest_and_year_ago_level(f.receivables_series, asof)
+        inventory_current, inventory_prev = latest_and_year_ago_level(f.inventory_series, asof)
+        interest_expense, _ = series_value_asof(f.interest_expense_series, asof)
+        depreciation_and_amortization, depreciation_and_amortization_prev = latest_and_year_ago_flow(
             f.da_series, asof
         )
 
@@ -2128,19 +2348,57 @@ def build_cross_section_asof(
         if total_debt is not None or cash_and_equivalents is not None:
             net_debt = float(total_debt or 0.0) - float(cash_and_equivalents or 0.0)
 
-        adjusted_net_income = net_income
-        adjusted_ebit = ebit
-        adjusted_ebitda = (
-            float(adjusted_ebit or 0.0) + float(depreciation_and_amortization or 0.0)
-            if adjusted_ebit is not None
-            else None
+        # C05: apply the scan's non-recurring adjustments (sum of positive
+        # latest values across tags, capped by nonrecurring_addback_revenue_cap).
+        def _nonrecurring_sums(series_map: dict[str, list[tuple]]) -> tuple[float | None, float | None]:
+            latest_sum = 0.0
+            prev_sum = 0.0
+            has_latest = False
+            has_prev = False
+            for tag_series in series_map.values():
+                latest, prev = latest_and_year_ago_flow(tag_series, asof)
+                if latest is None:
+                    continue
+                latest_val = max(0.0, float(latest))
+                latest_sum += latest_val
+                has_latest = has_latest or latest_val > 0
+                if prev is not None:
+                    prev_val = max(0.0, float(prev))
+                    prev_sum += prev_val
+                    has_prev = has_prev or prev_val > 0
+            return (latest_sum if has_latest else None, prev_sum if has_prev else None)
+
+        addback, addback_prev = _nonrecurring_sums(f.nonrecurring_expense_series)
+        gain, gain_prev = _nonrecurring_sums(f.nonrecurring_gain_series)
+        adjusted = compute_adjusted_metrics(
+            net_income=net_income,
+            ebit=ebit,
+            da=depreciation_and_amortization,
+            revenue=revenue,
+            revenue_prev=revenue_prev,
+            addback=addback,
+            gain=gain,
+            addback_prev=addback_prev,
+            gain_prev=gain_prev,
+            cap_ratio=(
+                scan_config.nonrecurring_addback_revenue_cap
+                if scan_config.nonrecurring_addback_revenue_cap is not None
+                else None
+            ),
+            net_income_prev=net_income_prev,
+            ebit_prev=ebit_prev,
         )
+        adjusted_net_income = adjusted["adjusted_net_income"]
+        adjusted_ebit = adjusted["adjusted_ebit"]
+        adjusted_ebitda = adjusted["adjusted_ebitda"]
+        adjusted_net_income_prev = adjusted["adjusted_net_income_prev"]
+        adjusted_ebit_prev = adjusted["adjusted_ebit_prev"]
 
         revenue_yoy = safe_yoy(revenue, revenue_prev)
         net_income_yoy = safe_yoy(net_income, net_income_prev)
-        adjusted_net_income_yoy = safe_yoy(adjusted_net_income, net_income_prev)
+        adjusted_net_income_yoy = safe_yoy(adjusted_net_income, adjusted_net_income_prev)
         ebit_yoy = safe_yoy(ebit, ebit_prev)
-        adjusted_ebit_yoy = safe_yoy(adjusted_ebit, ebit_prev)
+        adjusted_ebit_yoy = safe_yoy(adjusted_ebit, adjusted_ebit_prev)
         operating_cash_flow_yoy = safe_yoy(operating_cash_flow, operating_cash_flow_prev)
         shares_yoy = safe_yoy(shares, shares_prev)
         receivables_yoy = safe_yoy(receivables_current, receivables_prev)
@@ -2251,15 +2509,12 @@ def build_cross_section_asof(
             tol_20d=float(scan_config.ai_link_market_return_tolerance_20d),
             tol_60d=float(scan_config.ai_link_market_return_tolerance_60d),
         )
-        ai_link_score = float(
-            np.clip(
-                0.40 * float(ai_etf_score)
-                + 0.35 * float(ai_disclosure_score)
-                + 0.15 * float(ai_market_score)
-                + 0.10 * float(ai_backlog_signal),
-                0.0,
-                1.0,
-            )
+        ai_link_score = compute_ai_link_score(
+            scan_config,
+            ai_etf_score=ai_etf_score,
+            ai_disclosure_score=ai_disclosure_score,
+            ai_market_score=ai_market_score,
+            ai_backlog_signal=ai_backlog_signal,
         )
 
         rows.append(
@@ -2289,6 +2544,8 @@ def build_cross_section_asof(
                 "adjusted_net_income": adjusted_net_income,
                 "adjusted_ebit": adjusted_ebit,
                 "adjusted_ebitda": adjusted_ebitda,
+                "nonrecurring_expense_addback": addback,
+                "nonrecurring_gain_subtraction": gain,
                 "cash_and_equivalents": cash_and_equivalents,
                 "total_debt": total_debt,
                 "net_debt": net_debt,

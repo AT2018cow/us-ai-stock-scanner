@@ -110,11 +110,11 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         points = extract_metric_points(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
         self.assertTrue(len(points) >= 3)
         series = build_level_series(points)
-        at_filing = [v for t, v in series if t == pd.Timestamp("2026-07-23", tz="UTC")]
+        at_filing = [v for t, v, *_ in series if t == pd.Timestamp("2026-07-23", tz="UTC")]
         self.assertEqual(at_filing, [1_347_758_144.0])
         # PIT at 2026-08-01 sees the fresh count, not the 2009 value.
         asof = pd.Timestamp("2026-08-01", tz="UTC")
-        visible_up_to = [v for t, v in series if t <= asof]
+        visible_up_to = [v for t, v, *_ in series if t <= asof]
         self.assertEqual(visible_up_to[-1], 1_347_758_144.0)
 
     def test_archive_watchlist_snapshot_writes_history_copy(self) -> None:

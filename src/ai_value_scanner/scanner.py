@@ -1404,29 +1404,53 @@ class SecClient:
 
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"facts_{cik}.json"
+        meta_path = self.cache_dir / f"facts_meta_{cik}.json"
+        subs_path = self.cache_dir / f"submissions_{cik}.json"
         need_fetch = not cache_path.exists()
-        if cache_path.exists():
-            # Incremental: only refetch when the (freshly-pulled) submissions
-            # show a filing newer than when the facts cache was written.
-            # For companies with no new filings, the 4 MB companyfacts
-            # payload is identical — skip the download entirely.
-            subs_path = self.cache_dir / f"submissions_{cik}.json"
-            if subs_path.exists():
+        latest_accn: str | None = None
+        if subs_path.exists():
+            try:
+                subs = json.loads(subs_path.read_text())
+                recent = subs.get("filings", {}).get("recent", {}) or {}
+                accessions = recent.get("accessionNumber", []) or []
+                if accessions:
+                    latest_accn = str(accessions[0])
+            except Exception:
+                pass  # fall back to metadata/mtime heuristics below
+        if cache_path.exists() and not need_fetch:
+            # D02: accession-based change detection. The old filingDate
+            # vs mtime comparison missed same-day filings (date-midnight
+            # < mtime of a cache written earlier that day).
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except Exception:
+                    meta = {}
+                covered = meta.get("covered_accession")
+                pending = meta.get("pending_accession")
+                if pending:
+                    # Facts API lagged behind submissions: retry until the
+                    # payload actually contains the new accession.
+                    need_fetch = True
+                elif latest_accn and (not covered or latest_accn != covered):
+                    need_fetch = True
+            else:
+                # Legacy cache without metadata: keep the old mtime
+                # heuristic (imperfect for same-day filings) so the first
+                # post-upgrade run does not mass-refetch.
                 try:
                     subs = json.loads(subs_path.read_text())
-                    recent = subs.get("filings", {}).get("recent", {})
-                    filing_dates = recent.get("filingDate", [])
+                    filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
                     if filing_dates:
                         latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
-                        facts_mtime = cache_path.stat().st_mtime
-                        if latest_filing > facts_mtime:
+                        if latest_filing > cache_path.stat().st_mtime:
                             need_fetch = True
                 except Exception:
-                    pass  # fall back to cached facts on any parse error
-            if not need_fetch:
-                if self.monitor:
-                    self.monitor.record_cache("sec", hit=True)
-                return json.loads(cache_path.read_text())
+                    pass
+        if not need_fetch:
+            if self.monitor:
+                self.monitor.record_cache("sec", hit=True)
+            return json.loads(cache_path.read_text())
         if self.monitor:
             self.monitor.record_cache("sec", hit=False)
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -1438,6 +1462,23 @@ class SecClient:
         tmp = cache_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload))
         os.replace(tmp, cache_path)
+        # Record which accession the freshly downloaded facts actually cover
+        # (or mark pending when the API lags behind submissions).
+        if latest_accn:
+            try:
+                payload_text = resp.text if isinstance(resp.text, str) else json.dumps(payload)
+            except Exception:
+                payload_text = json.dumps(payload)
+            if latest_accn in payload_text:
+                new_meta = {"covered_accession": latest_accn, "pending_accession": None}
+            else:
+                new_meta = {"covered_accession": None, "pending_accession": latest_accn}
+            try:
+                meta_tmp = meta_path.with_suffix(".tmp")
+                meta_tmp.write_text(json.dumps(new_meta))
+                os.replace(meta_tmp, meta_path)
+            except Exception:
+                pass  # metadata failure must not break the fetch
         return payload
 
 
@@ -3298,15 +3339,49 @@ def collect_candidates(
     return out
 
 
+def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
+    # Only fields that change the financial computation inside
+    # load_one_fundamental. Output-count or scoring-only knobs must not
+    # cause redundant re-parses (D01).
+    return {
+        "use_ttm_metrics": bool(config.use_ttm_metrics),
+        "nonrecurring_addback_revenue_cap": config.nonrecurring_addback_revenue_cap,
+        "ai_link_disclosure_keyword_cap": config.ai_link_disclosure_keyword_cap,
+        "ai_link_backlog_ratio_cap": config.ai_link_backlog_ratio_cap,
+    }
+
+
+PARSED_FUND_CACHE_VERSION = 2
+
+
+def _parsed_fund_cache_meta(config: ScanConfig, latest_filing: str | None) -> dict[str, object]:
+    return {
+        "v": PARSED_FUND_CACHE_VERSION,
+        "cfg": _parsed_fund_config_fingerprint(config),
+        "latest_filing": latest_filing,
+    }
+
+
+def _submissions_latest_filing(subs_cache: Path) -> str | None:
+    try:
+        subs = json.loads(subs_cache.read_text())
+        filings = subs.get("filings", {}).get("recent", {}) or {}
+        dates = filings.get("filingDate", []) or []
+        return str(dates[0]) if dates else None
+    except Exception:
+        return None
+
+
 def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConfig) -> dict[str, Any]:
     # --- Pre-parsed cache: the scheduled refresher (or a previous run) has
     # already downloaded the raw submissions/companyfacts, parsed the 4 MB
     # JSON, computed all TTM/YoY/quality metrics, and cached the RESULT.
     # Reading this ~3 KB file skips the entire GIL-bound parse+compute chain
     # (the dominant cost of the SEC step: ~40-45 min for 535 symbols).
-    # Invalidation: same TTL as submissions — if the scheduled refresher
-    # overwrites this file, the new result is used; if the refresher is
-    # missed, the age exceeds the TTL and the slow path self-heals.
+    # Invalidation: TTL (as before) AND binding to the config fingerprint
+    # plus the raw submissions version (D01): a cache computed with
+    # different TTM/cap settings, or before the latest filing, must not be
+    # served.
     parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
     parsed_ttl = float(config.sec_cache_ttl_submissions_sec)
     # Only trust the parsed cache when the raw submissions cache is also
@@ -3319,8 +3394,16 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         if age <= parsed_ttl:
             try:
                 cached = json.loads(parsed_path.read_text())
-                cached["symbol"] = symbol  # defensive: match caller expectation
-                return cached
+                meta = cached.get("_cache_meta") or {}
+                latest_filing = _submissions_latest_filing(subs_cache)
+                if (
+                    meta.get("v") == PARSED_FUND_CACHE_VERSION
+                    and meta.get("cfg") == _parsed_fund_config_fingerprint(config)
+                    and meta.get("latest_filing") == latest_filing
+                ):
+                    cached.pop("_cache_meta", None)
+                    cached["symbol"] = symbol  # defensive: match caller expectation
+                    return cached
             except Exception:
                 pass  # corrupt cache → fall through to the slow path
 
@@ -3492,7 +3575,10 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         )
     adjusted_net_income_yoy = safe_yoy(adjusted_net_income, adjusted_net_income_prev)
     adjusted_ebit_yoy = safe_yoy(adjusted_ebit, adjusted_ebit_prev)
-    adjusted_da = float(da or 0.0) + float(nonrecurring_addback or 0.0) - float(nonrecurring_gain or 0.0)
+    adjusted_da = float(da or 0.0)
+    # C01: the non-recurring adjustment is already inside adjusted_ebit, so
+    # adjusted_ebitda must add raw D&A only. Adding an adjusted-D&A variant
+    # would count the adjustment twice (fixed at 320 vs 314 in the fixture).
     adjusted_ebitda = (float(adjusted_ebit) + adjusted_da) if adjusted_ebit is not None else None
 
     ai_disclosure_score, ai_disclosure_group_hits, ai_disclosure_keyword_hits = (
@@ -3648,8 +3734,12 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     if subs_cache.exists():
         parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
         try:
+            cache_payload = dict(result)
+            cache_payload["_cache_meta"] = _parsed_fund_cache_meta(
+                config, _submissions_latest_filing(subs_cache)
+            )
             parsed_tmp = parsed_path.with_suffix(".tmp")
-            parsed_tmp.write_text(json.dumps(result, default=str))
+            parsed_tmp.write_text(json.dumps(cache_payload, default=str))
             os.replace(parsed_tmp, parsed_path)
         except Exception:
             pass  # cache write failure must not break the scan

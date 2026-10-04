@@ -532,3 +532,17 @@ PY
 2026-10-03：完成审查记录与 README 入口，尚未修复实现。后续每个 ID 建议记录负责人、修复提交、验证结果和受影响历史产物的重算状态；未完成重算前，不把旧证据标为新实现的验证结果。
 
 文档验证：已执行附录的六个离线复现案例，输出与基线记录一致；已检查文档中的相对文件链接，目标均存在。202 项测试通过为本次会话前序审查结果，文档编辑后未重复运行整个测试集。
+
+2026-10-05：A 组（数据正确性）修复完成，提交见 git log。
+
+- 已修复并验证（新增 `tests/test_review_p0_fixes.py` 17 项测试，先失败后通过）：
+  - **C01** `adjusted_ebitda = adjusted_ebit + raw D&A`（调整只计一次；`test_gap12_metrics` 的错误预期 320 已更正为 314）。
+  - **C02** 回测新增 `latest_and_year_ago_flow`（320–410 天窗口期匹配，与扫描 `pick_latest_and_prev_ttm` 同口径）与 `latest_and_year_ago_level`（≥300 天报告期 + 次新回退，与扫描 `pick_latest_and_year_ago_with_forms` 同口径）；真实缓存验证 GOOG 收入/净利的 YoY 基数扫描↔回测一致。遗留：最新 TTM 值两路径存在 ~1e-9 级重建差异（pre-existing，属 C05 共享实现范畴）。
+  - **C04** `build_level_series` 同披露日取最新报告期（原取首遇值）；流/存量序列现携带报告期 end（3 元组），2 元组旧序列自动降级为相邻回退（兼容既有测试数据）。
+  - **C05** 回测接入扫描的非经常性调整：`FundamentalPointInTime` 新增 9 个逐标签 TTM 序列，`compute_adjusted_metrics` 复刻扫描语义（逐期 cap、调整只计一次），cross-section 输出新增 `nonrecurring_expense_addback`/`nonrecurring_gain_subtraction` 两列。
+  - **C06** 回测 AI 关联度改用 `scan_config.ai_link_weight_*`（`compute_ai_link_score`），主题 disclosure=0 等配置不再被硬编码覆盖。
+  - **D01** `parsed_fund` 缓存写入 `_cache_meta`（计算版本 v2 + 财务计算相关配置指纹 + 最新申报日期），读取时三者任一不匹配即视为失效。**注意：现有 v1 缓存全部失效，下次运行将一次性重新解析（一次性成本），之后恢复命中。**
+  - **D02** `get_companyfacts` 改用 accession number 变更检测 + `facts_meta_<CIK>.json` 记录已覆盖/待更新状态；facts 滞后于申报时保持 pending 重试。旧缓存无 meta 时保留原 mtime 启发式，首次升级运行不会批量重拉。
+- 附录复现现状：C01=314、C04=100、D01=慢路径触发，与修复后预期一致（附录基线数值为修复前记录，保留作历史对照）。
+- 重算状态：**受影响产物尚未重算**。C02/C04/C05/C06 改变 weight dataset 的特征列，`outputs/weight_dataset_*`、sweep/IC/调参产物需在修复后重建；未重建前旧产物不代表当前实现。
+- B 组（C03、R03–R05）与 C 组尚未处理。

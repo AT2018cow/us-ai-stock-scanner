@@ -303,9 +303,9 @@ class Gap12MetricTests(unittest.TestCase):
         self.assertAlmostEqual(out["revenue"], 460.0, places=6)
         self.assertAlmostEqual(out["adjusted_net_income"], 178.0, places=6)
         self.assertAlmostEqual(out["adjusted_ebit"], 256.0, places=6)
-        self.assertAlmostEqual(out["adjusted_ebitda"], 320.0, places=6)
+        self.assertAlmostEqual(out["adjusted_ebitda"], 314.0, places=6)
         self.assertAlmostEqual(out["interest_coverage"], 6.4, places=6)
-        self.assertAlmostEqual(out["net_debt_to_ebitda"], 300.0 / 320.0, places=6)
+        self.assertAlmostEqual(out["net_debt_to_ebitda"], 300.0 / 314.0, places=6)
         self.assertAlmostEqual(out["current_ratio"], 2.0, places=6)
         # 口径确认: current_debt_ratio = current_debt / current_assets
         self.assertAlmostEqual(out["current_debt_ratio"], 0.2, places=6)

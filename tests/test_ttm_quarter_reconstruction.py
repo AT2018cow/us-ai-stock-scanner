@@ -145,7 +145,7 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
         series = build_flow_ttm_or_annual_series(self._points())
         # PIT staircase: each window becomes available only once its last
         # input filing is visible; no window may be dropped to key collisions.
-        staircase = [(d.strftime("%Y-%m-%d"), v) for d, v in series]
+        staircase = [(d.strftime("%Y-%m-%d"), v) for d, v, *_ in series]
         self.assertEqual(
             staircase,
             [
@@ -177,7 +177,7 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
              "visible": pd.Timestamp("2025-08-15", tz="UTC"), "value": 390.0, "form": "10-K"},
         ]
         series = build_flow_ttm_or_annual_series(points)
-        staircase = [(d.strftime("%Y-%m-%d"), v) for d, v in series]
+        staircase = [(d.strftime("%Y-%m-%d"), v) for d, v, *_ in series]
         self.assertEqual(
             staircase,
             [
@@ -209,7 +209,7 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
              "visible": pd.Timestamp("2026-07-30", tz="UTC"), "value": 150.0, "form": "10-Q"},
         ]
         series = build_flow_ttm_or_annual_series(points)
-        values = [v for _, v in series]
+        values = [v for _, v, *_ in series]
         # Q4'25 = 460 - 330 = 130 (not the mis-tagged 460);
         # latest window = Q3'25 + Q4'25 + Q1'26 + Q2'26 = 120+130+140+150
         self.assertIn(120.0 + 130.0 + 140.0 + 150.0, values)
@@ -236,12 +236,21 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
             },
         ]
         series = build_flow_ttm_or_annual_series(points)
-        # Annual fallback preserves the full annual level series (old behavior).
+        # Annual fallback preserves the full annual level series (old behavior),
+        # now carrying each point's report period end.
         self.assertEqual(
             series,
             [
-                (pd.Timestamp("2024-02-10", tz="UTC"), 450.0),
-                (pd.Timestamp("2025-02-10", tz="UTC"), 500.0),
+                (
+                    pd.Timestamp("2024-02-10", tz="UTC"),
+                    450.0,
+                    pd.Timestamp("2023-12-31", tz="UTC"),
+                ),
+                (
+                    pd.Timestamp("2025-02-10", tz="UTC"),
+                    500.0,
+                    pd.Timestamp("2024-12-31", tz="UTC"),
+                ),
             ],
         )
 
