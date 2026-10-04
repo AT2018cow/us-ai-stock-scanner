@@ -556,3 +556,12 @@ PY
 - **R01 决策**（经确认）：按"固定底单"原则保留 union 元数据作为池静态属性，meta 已如实标注 `union_superset_approx`；不中性化、不重抽。如需 strict-PIT 主张，另做中性化敏感性变体。
 - R03 未处理（留到下一轮真正调参前）；C 组其余与 D03/E0* 未处理。
 - 重算进行中：修复后全量抽取（risk_off、risk_on，含 label_end 列）→ R04-aware sweep + IC。
+
+2026-10-05（续2）：重算完成。
+
+- 新数据集：`outputs/weight_dataset_risk_{off,on}_p0fix.csv`（42 日期；risk_off 42,573 行 / risk_on 32,371 行；含 `label_end_{h}`、`qqq_label_end_{h}` 列，覆盖约 89.8%，缺失=退市假设/未到期）。
+- R04 边界清除生效：sweep 日志显示按期阻止泄漏训练日期 {20d:1, 60d:3, 120d:6}。
+- 基线（当前配置）验证分：risk_off 0.1489→**0.1749**（+0.026，C02 修正后泛化明显改善）；risk_on 0.1841→0.1677（-0.016，略降；train/valid 差距收窄，泄漏虚高被剔除）。
+- 维度级 IC（H=60）：risk_off `pe_discount` +0.0336（t=2.68，保持显著）；risk_on `ps_discount` +0.0749（t=2.49，改善）；`fcf_yield` 在 risk_off 仍为负（-0.104，价值陷阱结论不变）。
+- 权重决策：**不更换**。1000 候选中 37%/28% 超过基线验证分，但 top5-by-train 与 top5-by-valid 零重合——单次运行选权重不可靠，与既往多种子共识流程一致；基线稳定处于中位之上。若需新权重，应跑多种子共识后再评估。
+- 旧数据集与旧 sweep 报告保留为历史产物（`*_rebuilt_20261001*`、`*_haircut_rebuild*`）。
