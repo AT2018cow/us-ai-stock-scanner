@@ -338,6 +338,12 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
     for idx, r in open_rows.iterrows():
         symbol = str(r["symbol"]).upper()
         signal_date = str(r["entry_date"])
+        _, qqq_net, qqq_exit = _paper_forward_return(
+            bar_db.get("QQQ"),
+            split_events.get("QQQ"),
+            signal_date,
+            roundtrip_cost=roundtrip_cost,
+        )
         gross, net, exit_date = _paper_forward_return(
             bar_db.get(symbol),
             split_events.get(symbol),
@@ -345,11 +351,10 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
             roundtrip_cost=roundtrip_cost,
         )
         if net is None or exit_date is None:
-            # Preserve open for genuinely immature rows. If the nominal horizon
-            # should already have matured but pricing is unavailable, mark it
-            # separately so missing data cannot masquerade as "not matured".
-            nominal_end = pd.Timestamp(signal_date, tz="UTC") + pd.Timedelta(days=190)
-            if pd.Timestamp.now(tz="UTC") >= nominal_end:
+            # QQQ is the market-calendar maturity clock. If its same 120d
+            # window has completed but the symbol still cannot be priced, this
+            # is a data/universe resolution issue, not an immature cohort.
+            if qqq_net is not None and qqq_exit is not None:
                 d.loc[idx, "status"] = "unresolved_price"
                 d.loc[idx, "evaluation_note"] = "symbol forward window unavailable"
                 n_unresolved += 1
@@ -360,12 +365,6 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
         d.loc[idx, "return_120d_gross"] = round(float(gross), 6)
         d.loc[idx, "return_120d"] = round(float(net), 6)
 
-        _, qqq_net, qqq_exit = _paper_forward_return(
-            bar_db.get("QQQ"),
-            split_events.get("QQQ"),
-            signal_date,
-            roundtrip_cost=roundtrip_cost,
-        )
         if qqq_net is not None and qqq_exit is not None:
             d.loc[idx, "qqq_return_120d"] = round(float(qqq_net), 6)
             d.loc[idx, "excess_vs_qqq_120d"] = round(float(net - qqq_net), 6)
