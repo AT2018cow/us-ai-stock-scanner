@@ -81,6 +81,7 @@ class CandidateScore:
     research_pool_avg_excess_vs_qqq: float
     research_pool_avg_win_rate: float
     window_failure_summary: str
+    window_metrics_json: str
     constraints_passed: bool
     failure_reason: str
     deltas_json: str
@@ -110,6 +111,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-prefix", default=None, help="Optional fixed prefix for tuning artifacts.")
     p.add_argument("--work-dir", default="outputs/tuner_work")
     p.add_argument("--windows", default=",".join(default_windows_tokens()))
+    p.add_argument(
+        "--selection-mode",
+        default="walk_forward",
+        choices=["walk_forward", "pooled"],
+        help="walk_forward selects candidates using only prior windows; pooled is research-only and cannot promote.",
+    )
     p.add_argument("--horizons", default="20,60,120")
     p.add_argument("--list-types", default="low_value,industry_trend,momentum,research_pool")
     p.add_argument(
@@ -399,6 +406,289 @@ def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
         if valid_counts
         else 1.0,
         "worst_max_drawdown": float(min(drawdowns)) if drawdowns else -1.0,
+    }
+
+
+def validate_walk_forward_windows(windows: list[TuneWindow]) -> None:
+    """Require chronological, non-overlapping windows for OOS selection."""
+    if len(windows) < 2:
+        raise ValueError("walk_forward selection requires at least two windows")
+    previous_end: pd.Timestamp | None = None
+    for window in windows:
+        start = pd.Timestamp(window.start_date)
+        end = pd.Timestamp(window.end_date)
+        if start > end:
+            raise ValueError(f"window {window.label} starts after it ends")
+        if previous_end is not None and start <= previous_end:
+            raise ValueError(
+                f"walk_forward windows must be chronological and non-overlapping: "
+                f"{window.label} starts {start.date()} <= prior end {previous_end.date()}"
+            )
+        previous_end = end
+
+
+def _window_metrics(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def aggregate_regime_stats(stats: list[dict[str, Any]]) -> dict[str, Any]:
+    usable = [s for s in stats if isinstance(s, dict)]
+    n_valid = sum(int(s.get("n_valid", 0) or 0) for s in usable)
+    n_periods = sum(int(s.get("n_periods", 0) or 0) for s in usable)
+
+    def weighted(key: str) -> float:
+        pairs: list[tuple[float, int]] = []
+        for s in usable:
+            val = safe_float(s.get(key))
+            n = int(s.get("n_valid", 0) or 0)
+            if np.isfinite(val) and n > 0:
+                pairs.append((val, n))
+        denom = sum(n for _, n in pairs)
+        return float(sum(v * n for v, n in pairs) / denom) if denom else float("nan")
+
+    dds = [
+        safe_float(s.get("worst_dd"))
+        for s in usable
+        if np.isfinite(safe_float(s.get("worst_dd")))
+    ]
+    return {
+        "n_valid": n_valid,
+        "n_periods": n_periods,
+        "participation": float(n_valid / n_periods) if n_periods else 0.0,
+        "avg_ret": weighted("avg_ret"),
+        "avg_ex": weighted("avg_ex"),
+        "win_rate": weighted("win_rate"),
+        "series_std": weighted("series_std"),
+        "worst_dd": float(min(dds)) if dds else -1.0,
+    }
+
+
+def score_training_subset(
+    row: pd.Series,
+    train_labels: list[str],
+    profile: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Score one candidate using ONLY the named training windows."""
+    metrics = [
+        m for m in _window_metrics(row.get("window_metrics_json"))
+        if str(m.get("label")) in set(train_labels)
+    ]
+    if not metrics:
+        return {"rank_score": float("-inf"), "constraints_passed": False, "failure_reason": "no_training_metrics"}
+
+    primary_evals = [m.get("primary") or {} for m in metrics]
+    strict_evals = [m.get("strict") or {} for m in metrics if m.get("strict") is not None]
+    primary = aggregate_window_evals(primary_evals)
+    strict = aggregate_window_evals(strict_evals)
+
+    scores = [safe_float(e.get("score")) for e in primary_evals]
+    scores = [x for x in scores if np.isfinite(x)]
+    excesses = [safe_float(e.get("avg_excess_vs_qqq")) for e in primary_evals]
+    excesses = [x for x in excesses if np.isfinite(x)]
+    objective = float(np.mean(scores)) if scores else float("-inf")
+    stability = float(statistics.pstdev(scores)) if len(scores) > 1 else 0.0
+    positive_score_ratio = (
+        float(sum(x > 0.0 for x in scores) / len(scores)) if scores else 0.0
+    )
+    positive_excess_ratio = (
+        float(sum(x > 0.0 for x in excesses) / len(excesses)) if excesses else 0.0
+    )
+
+    penalty, failures = candidate_constraint_penalty(
+        total_valid=int(primary.get("total_valid_events", 0) or 0),
+        min_window_valid=int(primary.get("min_window_valid_events", 0) or 0),
+        coverage_ratio=float(primary.get("coverage_ratio", 0.0) or 0.0),
+        worst_dd=float(primary.get("worst_max_drawdown", -1.0) or -1.0),
+        window_stability_std=stability,
+        positive_window_score_ratio=positive_score_ratio,
+        positive_excess_window_ratio=positive_excess_ratio,
+        empty_window_ratio=float(primary.get("empty_window_ratio", 1.0) or 0.0),
+        avg_ret=float(primary.get("avg_return", float("nan"))),
+        avg_ex=float(primary.get("avg_excess_vs_qqq", float("nan"))),
+        avg_win=float(primary.get("avg_win_rate", float("nan"))),
+        args=args,
+    )
+    if strict_evals:
+        if int(args.min_strict_total_valid_events) > 0 and int(strict["total_valid_events"]) < int(args.min_strict_total_valid_events):
+            penalty += 0.6
+            failures.append("strict_total_valid_events_too_low")
+        if float(args.strict_coverage_ratio_floor) > 0.0 and float(strict["coverage_ratio"]) < float(args.strict_coverage_ratio_floor):
+            penalty += 0.5
+            failures.append("strict_coverage_ratio_too_low")
+        strict_win = safe_float(strict.get("avg_win_rate"))
+        if float(args.min_strict_avg_win_rate) > 0.0 and (
+            not np.isfinite(strict_win) or strict_win < float(args.min_strict_avg_win_rate)
+        ):
+            penalty += 0.5
+            failures.append("strict_avg_win_rate_too_low")
+
+    objective_score = objective - penalty
+    constraints_passed = len(failures) == 0 and np.isfinite(objective_score)
+
+    up = aggregate_regime_stats([m.get("up_stats") or {} for m in metrics])
+    down = aggregate_regime_stats([m.get("down_stats") or {} for m in metrics])
+    coverage = float(primary.get("coverage_ratio", 0.0) or 0.0)
+    avg_ret = safe_float(primary.get("avg_return"))
+    avg_ex = safe_float(primary.get("avg_excess_vs_qqq"))
+    avg_win = safe_float(primary.get("avg_win_rate"))
+    avg_std = safe_float(primary.get("avg_std_return"))
+    worst_dd = float(primary.get("worst_max_drawdown", -1.0) or -1.0)
+
+    if profile == "risk_on" and up["n_valid"] > 0:
+        rank_score = (
+            0.45 * (up["avg_ex"] if np.isfinite(up["avg_ex"]) else 0.0)
+            + 0.25 * (up["win_rate"] - 0.5)
+            + 0.15 * up["participation"]
+            - 0.15 * (up["series_std"] if np.isfinite(up["series_std"]) else 0.0)
+        )
+    elif profile == "risk_off" and down["n_valid"] > 0:
+        rank_score = (
+            0.45 * (down["avg_ex"] if np.isfinite(down["avg_ex"]) else 0.0)
+            + 0.35 * (down["win_rate"] - 0.5)
+            - 0.20 * max(0.0, abs(down["worst_dd"]) - 0.15)
+        )
+    elif profile == "risk_on":
+        rank_score = (
+            objective_score
+            + 0.35 * coverage
+            + 0.45 * (avg_ret if np.isfinite(avg_ret) else 0.0)
+            + 0.20 * (avg_ex if np.isfinite(avg_ex) else 0.0)
+        )
+    elif profile == "risk_off":
+        rank_score = (
+            objective_score
+            + 0.35 * (avg_win if np.isfinite(avg_win) else 0.0)
+            - 0.45 * abs(min(0.0, worst_dd))
+            - 0.20 * (avg_std if np.isfinite(avg_std) else 0.0)
+        )
+    else:
+        rank_score = objective_score
+
+    return {
+        "rank_score": float(rank_score),
+        "objective_score": float(objective_score),
+        "constraints_passed": bool(constraints_passed),
+        "failure_reason": ";".join(failures),
+        "coverage_ratio": coverage,
+        "avg_return": avg_ret,
+        "avg_excess_vs_qqq": avg_ex,
+        "avg_win_rate": avg_win,
+        "drawdown_diagnostic": worst_dd,
+    }
+
+
+def heldout_validation(
+    row: pd.Series,
+    label: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Evaluate the already-selected candidate on one untouched window."""
+    metrics = [
+        m for m in _window_metrics(row.get("window_metrics_json"))
+        if str(m.get("label")) == label
+    ]
+    if not metrics:
+        return {"passed": False, "reason": "heldout_metrics_missing"}
+    primary = metrics[0].get("primary") or {}
+    score = safe_float(primary.get("score"))
+    avg_ret = safe_float(primary.get("avg_return"))
+    avg_ex = safe_float(primary.get("avg_excess_vs_qqq"))
+    avg_win = safe_float(primary.get("avg_win_rate"))
+    coverage = safe_float(primary.get("coverage_ratio"))
+    valid = int(primary.get("total_valid_events", 0) or 0)
+    reasons: list[str] = []
+    if not np.isfinite(score):
+        reasons.append("heldout_score_missing")
+    if valid < int(args.min_window_valid_events):
+        reasons.append("heldout_valid_events_too_low")
+    if not np.isfinite(coverage) or coverage < float(args.coverage_ratio_floor):
+        reasons.append("heldout_coverage_too_low")
+    if not np.isfinite(avg_ret) or avg_ret < float(args.min_avg_return):
+        reasons.append("heldout_avg_return_too_low")
+    if not np.isfinite(avg_ex) or avg_ex < float(args.min_avg_excess_vs_qqq):
+        reasons.append("heldout_avg_excess_too_low")
+    if not np.isfinite(avg_win) or avg_win < float(args.min_avg_win_rate):
+        reasons.append("heldout_avg_win_rate_too_low")
+    return {
+        "passed": not reasons,
+        "reason": ";".join(reasons),
+        "score": score,
+        "avg_return": avg_ret,
+        "avg_excess_vs_qqq": avg_ex,
+        "avg_win_rate": avg_win,
+        "coverage_ratio": coverage,
+        "valid_events": valid,
+    }
+
+
+def walk_forward_profile_selection(
+    scores_df: pd.DataFrame,
+    windows: list[TuneWindow],
+    profile: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Anchored walk-forward selection: prior windows select, next window validates."""
+    validate_walk_forward_windows(windows)
+    folds: list[dict[str, Any]] = []
+    for idx in range(1, len(windows)):
+        train_labels = [w.label for w in windows[:idx]]
+        validation_label = windows[idx].label
+        ranked: list[tuple[float, str, bool, str]] = []
+        for _, row in scores_df.iterrows():
+            train = score_training_subset(row, train_labels, profile, args)
+            ranked.append(
+                (
+                    float(train["rank_score"]),
+                    str(row["cid"]),
+                    bool(train["constraints_passed"]),
+                    str(train["failure_reason"]),
+                )
+            )
+        eligible = [x for x in ranked if x[2] and np.isfinite(x[0])]
+        pool = eligible if eligible else [x for x in ranked if np.isfinite(x[0])]
+        if not pool:
+            folds.append(
+                {
+                    "train_labels": train_labels,
+                    "validation_label": validation_label,
+                    "selected_cid": None,
+                    "training_constraints_passed": False,
+                    "training_failure_reason": "no_finite_candidate",
+                    "validation": {"passed": False, "reason": "no_selected_candidate"},
+                }
+            )
+            continue
+        best = max(pool, key=lambda x: (x[0], x[1]))
+        selected = scores_df[scores_df["cid"] == best[1]].iloc[0]
+        validation = heldout_validation(selected, validation_label, args)
+        folds.append(
+            {
+                "train_labels": train_labels,
+                "validation_label": validation_label,
+                "selected_cid": best[1],
+                "training_rank_score": best[0],
+                "training_constraints_passed": best[2],
+                "training_failure_reason": best[3],
+                "validation": validation,
+            }
+        )
+    final = folds[-1] if folds else {}
+    return {
+        "profile": profile,
+        "folds": folds,
+        "final_candidate": final.get("selected_cid"),
+        "promotion_eligible": bool(
+            final.get("selected_cid")
+            and final.get("training_constraints_passed")
+            and (final.get("validation") or {}).get("passed")
+        ),
     }
 
 
