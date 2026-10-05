@@ -662,6 +662,7 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.ris
 - `--entry-price-mode next_open|next_close`
 - `--exit-price-mode close|open`
 - `--watchlist-history-dir data/watchlist_history`
+- `--watchlist-csv-path`：可选 fixed-current candidate pool 覆盖，仅用于需要冻结输入的可重复实验；默认仍读取 scan config 中的 `watchlist_csv_path`。
 - `--allow-latest-watchlist-fallback`（默认关闭，避免无快照时引入前视）
 - `--disclosure-lookback-days`
 - `--enable-perturbation|--no-perturbation`
@@ -685,6 +686,22 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.ris
 - `unpriced`：有入选股票，但无法取得有效 forward return，通常与价格数据缺失、窗口过短或退市处理有关。
 
 `*_summary.csv` 和 `*_segments.csv` 会统计 `n_no_signal_events`、`n_unpriced_events`、`n_partial_valid_events`，用于区分“没有选出股票”和“选出股票但无法定价”。
+
+### 11.1 E01 模块化重构基线
+
+正式拆分 `scanner.py/backtest.py` 前，先按固定输入冻结 post-correctness 行为基线。完整协议见
+[`docs/refactor_baseline_protocol.md`](docs/refactor_baseline_protocol.md)。
+
+基线不是重新调参，不允许 promote。核心做法：
+
+1. 复制当前 `data/ai_watchlist.csv` 和 `data/watchlist_history/*.csv` 到 `outputs/` 下的冻结副本；
+2. risk_off / risk_on 都用固定 `2023-01-01 → 2026-03-31`、monthly replay、相同冻结 universe；
+3. 跑一个固定 seed / 4 candidates / no-perturbation 的 risk_off anchored walk-forward tuner smoke；
+4. 用 `scripts/refactor_baseline.py capture` 生成 manifest（输入 hash、deterministic CSV hash、summary/signal contract、tuner folds、network provenance）；
+5. 后续纯结构 PR 重跑相同实验，用 `scripts/refactor_baseline.py compare`。出现 `BASELINE_MISMATCH` 必须先解释，不能直接刷新 baseline。
+
+为支持冻结输入，backtest/tuner 增加可选的 `--watchlist-csv-path` 和
+`--watchlist-history-dir`。默认值不变，日常扫描/回测行为不受影响。
 
 ## 12. 参数调优（自动化）
 

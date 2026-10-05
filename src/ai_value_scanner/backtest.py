@@ -114,6 +114,7 @@ class BacktestConfig:
     delist_detection_buffer_days: int = 7
     use_historical_watchlist: bool = True
     watchlist_history_dir: str = "data/watchlist_history"
+    watchlist_csv_path: str | None = None
     allow_latest_watchlist_fallback: bool = False
     pre_snapshot_universe: str = "union"
     disclosure_lookback_days: int = 720
@@ -3779,6 +3780,7 @@ def build_markdown_report(
         lines.append(f"- replay_asset_status: {cfg.replay_asset_status}")
         lines.append(f"- use_historical_watchlist: {cfg.use_historical_watchlist}")
         lines.append(f"- watchlist_history_dir: {cfg.watchlist_history_dir}")
+        lines.append(f"- watchlist_csv_path_override: {cfg.watchlist_csv_path}")
         lines.append(f"- allow_latest_watchlist_fallback: {cfg.allow_latest_watchlist_fallback}")
         lines.append(f"- disclosure_lookback_days: {cfg.disclosure_lookback_days}")
         lines.append(f"- theme_source: {cfg.theme_source}")
@@ -3891,6 +3893,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--replay-max-symbols", type=int, default=800)
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
     p.add_argument("--watchlist-history-dir", default="data/watchlist_history")
+    p.add_argument(
+        "--watchlist-csv-path",
+        default=None,
+        help="Optional current-pool CSV override; useful for frozen refactor baselines.",
+    )
     p.add_argument("--use-historical-watchlist", action="store_true", default=True)
     p.add_argument("--no-historical-watchlist", action="store_true")
     p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
@@ -3987,6 +3994,8 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
 def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     backtest_start = time.monotonic()
     scan_cfg = load_config(cfg.scan_config_path)
+    if cfg.watchlist_csv_path:
+        scan_cfg.watchlist_csv_path = cfg.watchlist_csv_path
     events_path, summary_path, benchmarks_path, segments_path, report_path = resolve_output_paths(
         cfg.output_prefix,
         Path(cfg.outputs_dir),
@@ -4195,6 +4204,7 @@ def main() -> None:
         replay_asset_status=args.replay_asset_status,
         use_historical_watchlist=use_historical_watchlist,
         watchlist_history_dir=args.watchlist_history_dir,
+        watchlist_csv_path=args.watchlist_csv_path,
         allow_latest_watchlist_fallback=allow_latest_watchlist_fallback,
         pre_snapshot_universe=args.pre_snapshot_universe,
         disclosure_lookback_days=args.disclosure_lookback_days,
