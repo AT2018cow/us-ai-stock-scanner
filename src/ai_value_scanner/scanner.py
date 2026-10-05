@@ -5581,7 +5581,9 @@ def apply_scored_or_hard_filters(
     production momentum lists were empty despite hundreds of backtest picks.
     """
     if str(getattr(config, "filter_mode", "scored")).lower() == "scored":
-        hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+        hard_steps, soft_steps = partition_filter_steps(
+            steps, channel_name, config.strategy_style
+        )
         filtered, diagnostics = apply_filters_with_diagnostics(df, hard_steps)
         if not filtered.empty and soft_steps:
             soft_matrix = pd.DataFrame(
@@ -5601,21 +5603,22 @@ def apply_scored_or_hard_filters(
 
 
 def partition_filter_steps(
-    steps: list[tuple[str, Any]], channel_name: str
+    steps: list[tuple[str, Any]],
+    channel_name: str,
+    strategy_style: str | None = None,
 ) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
     """Split filter steps into hard gates (core + style-structural) and soft.
 
-    In scored mode the hard gates are the only pass/fail elimination;
-    soft steps are evaluated on survivors and contribute to composite_score
-    via the soft_pass_rate scoring dimension.
+    Style is explicit. Production risk_on/risk_off configs carry
+    ScanConfig.strategy_style; non-style configs retain the historical
+    risk_off structural default rather than inferring style from whichever
+    threshold names happen to be enabled.
     """
-    # Determine style from config path convention (risk_off vs risk_on).
-    # For now use a simple heuristic: the presence of min_price_to_sma200
-    # in the step list indicates risk_on structural gates.
-    style = "risk_on" if any(
-        name == "min_price_to_sma200" for name, _ in steps
-    ) else "risk_off"
-    structural = STYLE_STRUCTURAL_STEP_NAMES.get(style, frozenset())
+    del channel_name  # retained for API compatibility / future per-channel policy
+    style = strategy_style or "risk_off"
+    if style not in STYLE_STRUCTURAL_STEP_NAMES:
+        raise ValueError(f"Unsupported strategy_style for filter partition: {style!r}")
+    structural = STYLE_STRUCTURAL_STEP_NAMES[style]
     hard: list[tuple[str, Any]] = []
     soft: list[tuple[str, Any]] = []
     for name, fn in steps:
