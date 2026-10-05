@@ -1004,6 +1004,42 @@ class ScanConfig:
                         "must satisfy min <= max",
                     )
 
+                allowed_score_weight_keys = {
+                    "accrual_ratio_low",
+                    "adv_participation_low",
+                    "ai_link_score",
+                    "current_debt_ratio_low",
+                    "cycle_proxy",
+                    "days_below_sma200",
+                    "drawdown_from_52w_high",
+                    "ebit_yoy",
+                    "estimated_slippage_bps_low",
+                    "ev_to_ebit_low",
+                    "expectation_proxy",
+                    "fcf_yield",
+                    "fundamental_quality_score",
+                    "interest_coverage",
+                    "inventory_growth_gap_low",
+                    "liquidity",
+                    "net_debt_to_ebitda_low",
+                    "net_income_yoy",
+                    "net_margin",
+                    "ocf_to_net_income",
+                    "operating_cash_flow_yoy",
+                    "pe_discount",
+                    "pe_hist_percentile_low",
+                    "pe_percentile_low",
+                    "ps_discount",
+                    "ps_hist_percentile_low",
+                    "ps_percentile_low",
+                    "range_position_52w_low",
+                    "return_20d",
+                    "return_60d",
+                    "revenue_yoy",
+                    "shares_yoy_low",
+                    "soft_pass_rate",
+                    "watchlist_etf_count",
+                }
                 for weight_key in ("score_weights", "trend_score_weights", "momentum_score_weights"):
                     weights = profile.get(weight_key)
                     if weights is None:
@@ -1011,6 +1047,12 @@ class ScanConfig:
                     if not isinstance(weights, dict) or not weights:
                         err(f"channel_profiles.{channel}.{weight_key}", "must be a non-empty object")
                         continue
+                    unknown_metrics = sorted(set(weights) - allowed_score_weight_keys)
+                    if unknown_metrics:
+                        err(
+                            f"channel_profiles.{channel}.{weight_key}",
+                            "unknown score dimensions: " + ", ".join(unknown_metrics),
+                        )
                     for metric, weight in weights.items():
                         if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)):
                             err(
@@ -1039,9 +1081,78 @@ class ScanConfig:
         if not isinstance(self.low_coverage_soft_score_weights, dict):
             err("low_coverage_soft_score_weights", "must be an object")
         else:
+            allowed_soft = {"current_debt_ratio_low", "inventory_growth_gap_low"}
+            extra_soft = sorted(set(self.low_coverage_soft_score_weights) - allowed_soft)
+            if extra_soft:
+                err(
+                    "low_coverage_soft_score_weights",
+                    "unknown score dimensions: " + ", ".join(extra_soft),
+                )
             for metric, weight in self.low_coverage_soft_score_weights.items():
                 if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)) or float(weight) < 0:
                     err(f"low_coverage_soft_score_weights.{metric}", "must be a finite non-negative number")
+
+        if not isinstance(self.triage_rules, dict):
+            err("triage_rules", "must be an object")
+        else:
+            extra_triage = sorted(set(self.triage_rules) - {"keep", "drop"})
+            if extra_triage:
+                err("triage_rules", "unknown sections: " + ", ".join(extra_triage))
+            keep_rules = self.triage_rules.get("keep", {})
+            if not isinstance(keep_rules, dict):
+                err("triage_rules.keep", "must be an object")
+            else:
+                for channel, rule in keep_rules.items():
+                    if not isinstance(rule, dict):
+                        err(f"triage_rules.keep.{channel}", "must be an object")
+                        continue
+                    extra = sorted(
+                        set(rule)
+                        - {"min_composite_score", "min_ps_discount", "min_pe_discount"}
+                    )
+                    if extra:
+                        err(
+                            f"triage_rules.keep.{channel}",
+                            "unknown keys: " + ", ".join(extra),
+                        )
+                    for key, value in rule.items():
+                        if (
+                            isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not np.isfinite(float(value))
+                        ):
+                            err(
+                                f"triage_rules.keep.{channel}.{key}",
+                                "must be a finite numeric value",
+                            )
+            drop_rules = self.triage_rules.get("drop", {})
+            if not isinstance(drop_rules, dict):
+                err("triage_rules.drop", "must be an object")
+            else:
+                extra = sorted(
+                    set(drop_rules)
+                    - {"max_composite_score", "require_both_value_premium"}
+                )
+                if extra:
+                    err("triage_rules.drop", "unknown keys: " + ", ".join(extra))
+                if "max_composite_score" in drop_rules:
+                    value = drop_rules["max_composite_score"]
+                    if (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                    ):
+                        err(
+                            "triage_rules.drop.max_composite_score",
+                            "must be a finite numeric value",
+                        )
+                if "require_both_value_premium" in drop_rules and not isinstance(
+                    drop_rules["require_both_value_premium"], bool
+                ):
+                    err(
+                        "triage_rules.drop.require_both_value_premium",
+                        "must be boolean",
+                    )
 
         if errors:
             raise ValueError("Invalid ScanConfig:\n- " + "\n- ".join(errors))
