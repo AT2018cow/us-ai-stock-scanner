@@ -136,16 +136,21 @@ def earnings_window(symbol: str, sec_client, buffer_days: int = 7) -> dict:
 
 
 def _report_style(report_path: str) -> str | None:
-    """Identify the scan style from the report's Config header line.
+    """Identify scan style from explicit report metadata.
 
-    Reports written since 2026-09-27 carry "- Config: configs/config.<style>.json".
-    Older reports return None and are rejected for executable trade plans.
+    Current reports carry Strategy-Style from ScanConfig. The Config-path
+    pattern is retained only for pre-E02 reports already on disk.
     """
     try:
         text = Path(report_path).read_text()
     except OSError:
         return None
-    for line in text.splitlines()[:10]:
+    lines = text.splitlines()[:12]
+    for line in lines:
+        m = re.match(r"- Strategy-Style: (risk_off|risk_on)\s*$", line.strip())
+        if m:
+            return m.group(1)
+    for line in lines:
         m = re.match(r"- Config: .*config\.(risk_off|risk_on)\.json", line.strip())
         if m:
             return m.group(1)
@@ -170,7 +175,7 @@ def latest_scan_pair(
     """Return a fresh, style-verified risk_off/risk_on report pair.
 
     Executable plans must never silently combine a fresh report from one style
-    with a stale report from the other. Legacy reports without Config headers
+    with a stale report from the other. Legacy reports without style-identifying headers
     are therefore rejected instead of being paired by mtime.
     """
     reports = sorted(
