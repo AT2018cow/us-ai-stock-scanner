@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ai_value_scanner.backtest import BacktestConfig, run_backtest
+from ai_value_scanner.backtest import BacktestConfig, run_backtest, summarize_backtest
 
 
 DEFAULT_HORIZONS = [20, 60, 120]
@@ -488,8 +488,15 @@ def score_training_subset(
     if not metrics:
         return {"rank_score": float("-inf"), "constraints_passed": False, "failure_reason": "no_training_metrics"}
 
-    primary_evals = [m.get("primary") or {} for m in metrics]
-    strict_evals = [m.get("strict") or {} for m in metrics if m.get("strict") is not None]
+    primary_evals = [
+        (m.get("purged_primary") if m.get("purged_primary") is not None else m.get("primary")) or {}
+        for m in metrics
+    ]
+    strict_evals = [
+        (m.get("purged_strict") if m.get("purged_strict") is not None else m.get("strict")) or {}
+        for m in metrics
+        if (m.get("purged_strict") is not None or m.get("strict") is not None)
+    ]
     primary = aggregate_window_evals(primary_evals)
     strict = aggregate_window_evals(strict_evals)
 
@@ -537,8 +544,14 @@ def score_training_subset(
     objective_score = objective - penalty
     constraints_passed = len(failures) == 0 and np.isfinite(objective_score)
 
-    up = aggregate_regime_stats([m.get("up_stats") or {} for m in metrics])
-    down = aggregate_regime_stats([m.get("down_stats") or {} for m in metrics])
+    up = aggregate_regime_stats([
+        (m.get("purged_up_stats") if m.get("purged_up_stats") is not None else m.get("up_stats")) or {}
+        for m in metrics
+    ])
+    down = aggregate_regime_stats([
+        (m.get("purged_down_stats") if m.get("purged_down_stats") is not None else m.get("down_stats")) or {}
+        for m in metrics
+    ])
     coverage = float(primary.get("coverage_ratio", 0.0) or 0.0)
     avg_ret = safe_float(primary.get("avg_return"))
     avg_ex = safe_float(primary.get("avg_excess_vs_qqq"))
@@ -1081,7 +1094,7 @@ def run_candidate(
     strict_list_types = [t for t in list_types if t != "research_pool"]
     research_pool_list_types = [t for t in list_types if t == "research_pool"]
 
-    for window in windows:
+    for window_idx, window in enumerate(windows):
         prefix = f"{output_stem}_{candidate.cid}_{window.label}"
         cfg = BacktestConfig(
             mode="historical_replay",
@@ -1171,6 +1184,73 @@ def run_candidate(
 
         up_for_window = regime_stats(events, window_benchmarks, "up", list_types, horizons)
         down_for_window = regime_stats(events, window_benchmarks, "down", list_types, horizons)
+
+        # R03/R04: when a window later serves as training data, purge every
+        # forward-return label whose actual/fallback label end crosses into
+        # the next chronological window. Signal-date separation alone leaks
+        # future prices for 60d/120d labels near year-end.
+        purged_primary: dict[str, Any] | None = None
+        purged_strict: dict[str, Any] | None = None
+        purged_up: dict[str, Any] | None = None
+        purged_down: dict[str, Any] | None = None
+        purged_events_count: int | None = None
+        purged_cutoff: str | None = None
+        if window_idx + 1 < len(windows):
+            next_start = pd.Timestamp(windows[window_idx + 1].start_date)
+            if next_start.tzinfo is None:
+                next_start = next_start.tz_localize("UTC")
+            else:
+                next_start = next_start.tz_convert("UTC")
+            purged_cutoff = next_start.date().isoformat()
+            if "label_end_date" not in events.columns or "label_end_date" not in window_benchmarks.columns:
+                raise RuntimeError(
+                    "walk-forward requires label_end_date in events/benchmarks; "
+                    "rebuild with the current backtest engine"
+                )
+            event_label_end = pd.to_datetime(events["label_end_date"], utc=True, errors="coerce")
+            bench_label_end = pd.to_datetime(
+                window_benchmarks["label_end_date"], utc=True, errors="coerce"
+            )
+            train_events = events[event_label_end < next_start].copy()
+            train_benchmarks = window_benchmarks[bench_label_end < next_start].copy()
+            purged_events_count = len(train_events)
+            train_summary = summarize_backtest(train_events, train_benchmarks)
+            train_horizons = (
+                mature_horizons_from_summary(train_summary, primary_list_types, horizons)
+                or horizons
+            )
+            purged_primary = evaluate_window(
+                summary=train_summary,
+                events=train_events,
+                list_types=primary_list_types,
+                horizons=train_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={k: list_weights.get(k, 1.0) for k in primary_list_types},
+                horizon_weights=horizon_weights,
+            )
+            if strict_list_types:
+                strict_train_horizons = (
+                    mature_horizons_from_summary(train_summary, strict_list_types, horizons)
+                    or train_horizons
+                )
+                purged_strict = evaluate_window(
+                    summary=train_summary,
+                    events=train_events,
+                    list_types=strict_list_types,
+                    horizons=strict_train_horizons,
+                    objective_weights=objective_weights,
+                    scenario_weights=scenario_weights,
+                    list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
+                    horizon_weights=horizon_weights,
+                )
+            purged_up = regime_stats(
+                train_events, train_benchmarks, "up", list_types, horizons
+            )
+            purged_down = regime_stats(
+                train_events, train_benchmarks, "down", list_types, horizons
+            )
+
         window_failure = classify_window_failure(primary_eval, events)
         window_failure_reasons.append(window_failure)
         window_metrics.append(
@@ -1183,6 +1263,12 @@ def run_candidate(
                 "research_pool": research_eval_for_window,
                 "up_stats": up_for_window,
                 "down_stats": down_for_window,
+                "purged_primary": purged_primary,
+                "purged_strict": purged_strict,
+                "purged_up_stats": purged_up,
+                "purged_down_stats": purged_down,
+                "purged_cutoff": purged_cutoff,
+                "purged_event_rows": purged_events_count,
                 "failure_reason": window_failure,
             }
         )
