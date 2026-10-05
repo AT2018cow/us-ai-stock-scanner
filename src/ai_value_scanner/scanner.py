@@ -1435,16 +1435,29 @@ class SecClient:
                 elif latest_accn and (not covered or latest_accn != covered):
                     need_fetch = True
             else:
-                # Legacy cache without metadata: keep the old mtime
-                # heuristic (imperfect for same-day filings) so the first
-                # post-upgrade run does not mass-refetch.
+                # Legacy cache without accession metadata. Inspect it once so
+                # same-day filings are not missed during migration: filingDate
+                # alone cannot distinguish two filings on the same date.
                 try:
-                    subs = json.loads(subs_path.read_text())
-                    filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
-                    if filing_dates:
-                        latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
-                        if latest_filing > cache_path.stat().st_mtime:
+                    cached_text = cache_path.read_text()
+                    if latest_accn:
+                        if latest_accn not in cached_text:
                             need_fetch = True
+                        else:
+                            meta_tmp = meta_path.with_suffix(".tmp")
+                            meta_tmp.write_text(
+                                json.dumps(
+                                    {"covered_accession": latest_accn, "pending_accession": None}
+                                )
+                            )
+                            os.replace(meta_tmp, meta_path)
+                    if not need_fetch:
+                        subs = json.loads(subs_path.read_text())
+                        filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
+                        if filing_dates:
+                            latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
+                            if latest_filing > cache_path.stat().st_mtime:
+                                need_fetch = True
                 except Exception:
                     pass
         if not need_fetch:
@@ -3351,14 +3364,21 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 2
+PARSED_FUND_CACHE_VERSION = 3
 
 
-def _parsed_fund_cache_meta(config: ScanConfig, latest_filing: str | None) -> dict[str, object]:
+def _parsed_fund_cache_meta(
+    config: ScanConfig,
+    latest_filing: str | None,
+    latest_accession: str | None = None,
+    facts_covered_accession: str | None = None,
+) -> dict[str, object]:
     return {
         "v": PARSED_FUND_CACHE_VERSION,
         "cfg": _parsed_fund_config_fingerprint(config),
         "latest_filing": latest_filing,
+        "latest_accession": latest_accession,
+        "facts_covered_accession": facts_covered_accession,
     }
 
 
@@ -3370,6 +3390,30 @@ def _submissions_latest_filing(subs_cache: Path) -> str | None:
         return str(dates[0]) if dates else None
     except Exception:
         return None
+
+
+def _submissions_latest_accession(subs_cache: Path) -> str | None:
+    try:
+        subs = json.loads(subs_cache.read_text())
+        filings = subs.get("filings", {}).get("recent", {}) or {}
+        accessions = filings.get("accessionNumber", []) or []
+        return str(accessions[0]) if accessions else None
+    except Exception:
+        return None
+
+
+def _facts_accession_state(cache_dir: str | Path, cik: str) -> tuple[str | None, str | None]:
+    meta_path = Path(cache_dir) / f"facts_meta_{cik}.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return None, None
+    covered = meta.get("covered_accession")
+    pending = meta.get("pending_accession")
+    return (
+        str(covered) if covered else None,
+        str(pending) if pending else None,
+    )
 
 
 def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConfig) -> dict[str, Any]:
@@ -3396,10 +3440,19 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                 cached = json.loads(parsed_path.read_text())
                 meta = cached.get("_cache_meta") or {}
                 latest_filing = _submissions_latest_filing(subs_cache)
+                latest_accession = _submissions_latest_accession(subs_cache)
+                facts_covered, facts_pending = _facts_accession_state(config.cache_dir, cik)
+                facts_ready = (
+                    not facts_pending
+                    and (latest_accession is None or facts_covered == latest_accession)
+                )
                 if (
                     meta.get("v") == PARSED_FUND_CACHE_VERSION
                     and meta.get("cfg") == _parsed_fund_config_fingerprint(config)
                     and meta.get("latest_filing") == latest_filing
+                    and meta.get("latest_accession") == latest_accession
+                    and meta.get("facts_covered_accession") == facts_covered
+                    and facts_ready
                 ):
                     cached.pop("_cache_meta", None)
                     cached["symbol"] = symbol  # defensive: match caller expectation
@@ -3734,13 +3787,27 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     if subs_cache.exists():
         parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
         try:
-            cache_payload = dict(result)
-            cache_payload["_cache_meta"] = _parsed_fund_cache_meta(
-                config, _submissions_latest_filing(subs_cache)
+            latest_filing = _submissions_latest_filing(subs_cache)
+            latest_accession = _submissions_latest_accession(subs_cache)
+            facts_covered, facts_pending = _facts_accession_state(config.cache_dir, cik)
+            facts_ready = (
+                not facts_pending
+                and (latest_accession is None or facts_covered == latest_accession)
             )
-            parsed_tmp = parsed_path.with_suffix(".tmp")
-            parsed_tmp.write_text(json.dumps(cache_payload, default=str))
-            os.replace(parsed_tmp, parsed_path)
+            # Never persist a derived cache while companyfacts is known to lag
+            # the newest submission; doing so would freeze stale fundamentals
+            # ahead of SecClient's pending-accession retry loop.
+            if facts_ready:
+                cache_payload = dict(result)
+                cache_payload["_cache_meta"] = _parsed_fund_cache_meta(
+                    config,
+                    latest_filing,
+                    latest_accession,
+                    facts_covered,
+                )
+                parsed_tmp = parsed_path.with_suffix(".tmp")
+                parsed_tmp.write_text(json.dumps(cache_payload, default=str))
+                os.replace(parsed_tmp, parsed_path)
         except Exception:
             pass  # cache write failure must not break the scan
     return result

@@ -14,7 +14,10 @@
 
 周五额外：
   8. 所有到期 cohort 结算（--evaluate，120 交易日到期才真正结算）
-  9. AI trade plan 生成（可选，仅 P0 阶段标记纸面）
+
+AI trade plan 不再每日自动生成。按 live pilot 的月度 cohort 节奏，由操作人显式传
+--generate-trade-plan；生成前要求本次 AI 双风格扫描成功（若本次执行扫描）以及当日
+周检成功（若当天为周一）。
 
 所有日志写入 .debug_logs/daily_YYYYMMDD.log。可用 --skip-scan 跳过扫描只跑结算。
 """
@@ -154,6 +157,11 @@ def main() -> None:
     p.add_argument("--skip-flow", action="store_true", help="Skip left-side block-flow statistics")
     p.add_argument("--flow-days", type=int, default=8, help="Lookback trading days for block-flow stats")
     p.add_argument("--flow-extra-symbols", default="", help="Extra symbols appended to the left-side flow run")
+    p.add_argument(
+        "--generate-trade-plan",
+        action="store_true",
+        help="Explicitly generate the AI trade plan. Use on the intended monthly cohort date; never runs by default.",
+    )
     args = p.parse_args()
 
     now = datetime.now(timezone.utc)
@@ -169,10 +177,13 @@ def main() -> None:
     themes = ["nuclear", "quantum", "biotech", "rare_earth", "critical_minerals"]
     python = sys.executable
     ok = True
+    ai_scan_ok = True
+    validation_ok = True
 
     # ---- 每日：AI 双风格 ----
     if not args.skip_scan:
-        ok &= run([python, "-u", "scripts/observation_scan.py"], "① AI 双风格观察扫描")
+        ai_scan_ok = run([python, "-u", "scripts/observation_scan.py"], "① AI 双风格观察扫描")
+        ok &= ai_scan_ok
 
     # ---- 每日：五主题 ----
     if not args.skip_scan:
@@ -185,7 +196,8 @@ def main() -> None:
 
     # ---- 周一：数据质量门槛 + 主题篮子刷新 + venture 底单重建 ----
     if dow == 0:
-        ok &= run([python, "-u", "scripts/validate_ttm_population.py"], "④ 数据质量门槛（周检）")
+        validation_ok = run([python, "-u", "scripts/validate_ttm_population.py"], "④ 数据质量门槛（周检）")
+        ok &= validation_ok
         ok &= run([python, "-u", "scripts/build_theme_universe.py"], "⑤ 主题篮子刷新 + 新成员 diff")
         ok &= run([python, "-u", "scripts/build_venture_universe.py", "--fts"], "⑥ Venture 三层底单重建")
 
@@ -207,15 +219,30 @@ def main() -> None:
         else:
             log("✓ 左侧资金流: 今日无 left_side_watch 名单，跳过")
 
-    # ---- 每日：trade plan + 操作指导 ----
-    ok &= run([python, "-u", "scripts/generate_trade_plan.py", "--capital", str(args.capital)],
-              "⑨ AI trade plan 生成")
-
-    # ---- 整合操作指导 ----
-    log("═" * 60)
-    log("📋 TODAY'S OPERATION GUIDE")
-    log("═" * 60)
-    print_operation_guidance(args.capital)
+    # ---- 显式：trade plan + 操作指导 ----
+    plan_ok = False
+    if args.generate_trade_plan:
+        if not ai_scan_ok:
+            log("✗ AI trade plan 跳过：本次双风格扫描失败，禁止使用旧报告补位。")
+            ok = False
+        elif dow == 0 and not validation_ok:
+            log("✗ AI trade plan 跳过：今日数据质量周检失败。")
+            ok = False
+        else:
+            plan_ok = run(
+                [python, "-u", "scripts/generate_trade_plan.py", "--capital", str(args.capital)],
+                "⑨ AI trade plan 生成",
+            )
+            ok &= plan_ok
+        if plan_ok:
+            log("═" * 60)
+            log("📋 TODAY'S OPERATION GUIDE")
+            log("═" * 60)
+            print_operation_guidance(args.capital)
+        else:
+            log("交易计划未生成成功；不打印任何旧计划的执行指导。")
+    else:
+        log("✓ AI trade plan: 默认不生成（按月度 cohort 节奏，需要时显式传 --generate-trade-plan）")
 
     if not ok:
         log("⚠ 有任务失败——检查上方日志")

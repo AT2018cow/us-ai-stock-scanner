@@ -135,7 +135,7 @@ def _report_style(report_path: str) -> str | None:
     """Identify the scan style from the report's Config header line.
 
     Reports written since 2026-09-27 carry "- Config: configs/config.<style>.json".
-    Older reports fall back to None (caller must use mtime ordering + warn).
+    Older reports return None and are rejected for executable trade plans.
     """
     try:
         text = Path(report_path).read_text()
@@ -148,12 +148,26 @@ def _report_style(report_path: str) -> str | None:
     return None
 
 
-def latest_scan_pair() -> tuple[str, str]:
-    """Most recent (risk_off_ts, risk_on_ts), style-verified via report headers.
+def _report_timestamp(report_path: str) -> datetime | None:
+    """Parse the UTC scan timestamp embedded in an ai_value_scan filename."""
+    token = Path(report_path).name.replace("ai_value_scan_", "").split("_")[0]
+    try:
+        return datetime.strptime(token, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
-    Style mislabeling here produced a swapped live trade plan once (2026-09-27:
-    odd report count made mtime[-2] point at the other style's run) — hence
-    headers are authoritative and mismatches fail loudly.
+
+def latest_scan_pair(
+    *,
+    now: datetime | None = None,
+    max_age_hours: float = 12.0,
+    max_pair_skew_hours: float = 6.0,
+) -> tuple[str, str]:
+    """Return a fresh, style-verified risk_off/risk_on report pair.
+
+    Executable plans must never silently combine a fresh report from one style
+    with a stale report from the other. Legacy reports without Config headers
+    are therefore rejected instead of being paired by mtime.
     """
     reports = sorted(
         glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
@@ -162,25 +176,48 @@ def latest_scan_pair() -> tuple[str, str]:
     if len(reports) < 2:
         raise SystemExit("需要至少两份风格报告（先跑 scripts/observation_scan.py）")
 
+    by_style: dict[str, str] = {}
+    for p in reversed(reports):
+        style = _report_style(p)
+        if style and style not in by_style:
+            by_style[style] = p
+    missing = [style for style in ("risk_off", "risk_on") if style not in by_style]
+    if missing:
+        raise SystemExit(
+            "缺少带 Config 头的双风格扫描报告: "
+            + ", ".join(missing)
+            + "。拒绝使用旧版 mtime 配对；请重跑 scripts/observation_scan.py。"
+        )
+
+    off_path = by_style["risk_off"]
+    on_path = by_style["risk_on"]
+    off_dt = _report_timestamp(off_path)
+    on_dt = _report_timestamp(on_path)
+    if off_dt is None or on_dt is None:
+        raise SystemExit("双风格报告文件名时间戳无法解析，拒绝生成交易计划。")
+
+    current = now or datetime.now(timezone.utc)
+    newest = max(off_dt, on_dt)
+    oldest = min(off_dt, on_dt)
+    newest_age_hours = (current - newest).total_seconds() / 3600.0
+    oldest_age_hours = (current - oldest).total_seconds() / 3600.0
+    skew_hours = (newest - oldest).total_seconds() / 3600.0
+    if newest_age_hours < -0.25:
+        raise SystemExit("扫描报告时间戳位于未来，拒绝生成交易计划。")
+    if oldest_age_hours > max_age_hours:
+        raise SystemExit(
+            f"双风格扫描报告过旧（较旧报告距今 {oldest_age_hours:.1f}h > {max_age_hours:.1f}h），请重跑扫描。"
+        )
+    if skew_hours > max_pair_skew_hours:
+        raise SystemExit(
+            f"双风格报告时间差过大（{skew_hours:.1f}h > {max_pair_skew_hours:.1f}h），"
+            "可能来自不同批次，拒绝生成交易计划。"
+        )
+
     def ts(p: str) -> str:
         return Path(p).name.replace("ai_value_scan_", "").split("_")[0]
 
-    by_style: dict[str, str] = {}
-    for p in reversed(reports):  # newest first; keep the newest per style
-        style = _report_style(p)
-        if style and style not in by_style:
-            by_style[style] = ts(p)
-    if len(by_style) == 2:
-        return by_style["risk_off"], by_style["risk_on"]
-
-    # Fallback (legacy reports without Config header): newest two reports,
-    # mtime order (risk_off ran first in observation_scan). Warn loudly.
-    print(
-        "WARNING: 报告缺少 Config 头（旧版产物），退回 mtime 顺序配对——"
-        "若报告数为奇数可能拿反风格。建议重跑 observation_scan.py 生成新报告。",
-        file=sys.stderr,
-    )
-    return ts(reports[-2]), ts(reports[-1])
+    return ts(off_path), ts(on_path)
 
 
 def qqq_breaker_state() -> dict:
@@ -345,9 +382,9 @@ BREAKER_MAX_STALE_DAYS = 4
 def check_breaker_state(breaker: dict, today, max_stale_days: int = BREAKER_MAX_STALE_DAYS) -> tuple:
     """Validate the QQQ circuit-breaker snapshot. Returns (proceed, reason).
 
-    proceed=False is a hard stop: unknown or stale breaker data must never
-    silently issue positions. Callers may bypass only via an explicit
-    --allow-no-breaker flag (logged loudly and stamped on the report).
+    proceed=False is a hard stop. Unknown/stale data may be bypassed only by
+    the caller's explicit --allow-no-breaker handling; a fresh bear regime is
+    a protocol stop and must never be bypassed.
     """
     ok = breaker.get("ok")
     if ok is None:
@@ -359,7 +396,9 @@ def check_breaker_state(breaker: dict, today, max_stale_days: int = BREAKER_MAX_
     lag_days = (today - asof).days
     if lag_days > max_stale_days:
         return False, f"QQQ 熔断器数据陈旧（asof {asof}，距今 {lag_days} 天 > {max_stale_days} 天）"
-    return True, "bull" if ok else "bear"
+    if not bool(ok):
+        return False, "bear"
+    return True, "bull"
 
 
 def earnings_advisory_rows(plan: "pd.DataFrame", earnings_status: dict[str, dict]) -> list[dict]:
@@ -391,7 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--earnings-buffer-days", type=int, default=7,
                    help="Days around the expected report window counted as earnings-imminent for the advisory note")
     p.add_argument("--allow-no-breaker", action="store_true", default=False,
-                   help="Bypass a failed/stale QQQ breaker check (logged loudly and stamped on the report)")
+                   help="Bypass unavailable/stale QQQ data only; never bypass QQQ < SMA200")
     p.add_argument("--include-smallcap", action="store_true", default=False,
                    help="Include ai_smallcap channel rows in plan candidates (default: auxiliary observation only)")
     return p
@@ -406,13 +445,15 @@ def main() -> None:
     proceed, breaker_reason = check_breaker_state(breaker, now.date())
     breaker_overridden = False
     if not proceed:
+        if breaker_reason == "bear":
+            raise SystemExit("QQQ 收盘低于 SMA200（bear regime），按 live pilot 协议停止一切新开仓。")
         if not args.allow_no_breaker:
             raise SystemExit(
-                f"熔断器检查未通过，拒绝生成交易计划: {breaker_reason}。"
-                "确认数据源恢复后重跑，或用 --allow-no-breaker 显式绕过（将记录在报告中）。"
+                f"熔断器数据检查未通过，拒绝生成交易计划: {breaker_reason}。"
+                "确认数据源恢复后重跑，或用 --allow-no-breaker 显式绕过数据可用性检查（将记录在报告中）。"
             )
         breaker_overridden = True
-        print(f"WARNING: 熔断器检查未通过但已用 --allow-no-breaker 绕过: {breaker_reason}")
+        print(f"WARNING: QQQ 数据检查未通过但已用 --allow-no-breaker 绕过: {breaker_reason}")
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     sec_client = load_sec_client(load_config("configs/config.risk_off.json"), NetworkMonitor())
 
