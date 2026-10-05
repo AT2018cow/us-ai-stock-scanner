@@ -11,6 +11,8 @@ from unittest import mock
 
 import pandas as pd
 
+import ai_value_scanner.backtest as backtest
+
 
 def _load_script(name: str):
     root = Path(__file__).resolve().parents[1]
@@ -270,6 +272,23 @@ class TestRefactorBaselineTool(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["tune_parameters.py"]):
             args = tuner.parse_args()
         self.assertEqual(args.watchlist_history_dir, "data/watchlist_history")
+        self.assertIsNone(args.watchlist_csv_path)
+
+    def test_backtest_watchlist_overrides_default_off(self) -> None:
+        args = backtest.build_parser().parse_args([])
+        self.assertEqual(args.watchlist_history_dir, "data/watchlist_history")
+        self.assertIsNone(args.watchlist_csv_path)
+
+        args = backtest.build_parser().parse_args(
+            [
+                "--watchlist-csv-path",
+                "outputs/frozen.csv",
+                "--watchlist-history-dir",
+                "outputs/frozen_history",
+            ]
+        )
+        self.assertEqual(args.watchlist_csv_path, "outputs/frozen.csv")
+        self.assertEqual(args.watchlist_history_dir, "outputs/frozen_history")
 
 
 if __name__ == "__main__":
