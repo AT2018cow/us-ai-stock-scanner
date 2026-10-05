@@ -229,16 +229,20 @@ def main() -> None:
         evaluate_matured(cohort_csv)
         return
 
+    failed_themes: list[str] = []
+
     for theme in THEMES:
         if not args.skip_scan:
             log(f"[{theme}] scan start")
             result = subprocess.run([sys.executable, "run_scan.py", "--config", f"configs/{prefix}.{theme}.json"])
             if result.returncode != 0:
                 print(f"[{theme}] scan FAILED (exit {result.returncode})", flush=True)
+                failed_themes.append(theme)
                 continue
         report = newest_report_for(theme, prefix)
         if report is None:
             print(f"[{theme}] 无扫描报告", flush=True)
+            failed_themes.append(theme)
             continue
         cohort = extract_shortlist(theme, report, prefix)
         archive_cohort(theme, cohort, cohort_csv, report)
@@ -249,6 +253,12 @@ def main() -> None:
         "run --evaluate weekly to mature settled rows (docs/theme_observation_protocol.md).",
         flush=True,
     )
+    if failed_themes:
+        print(
+            "FAILED themes: " + ", ".join(sorted(set(failed_themes))) + "; returning non-zero status.",
+            flush=True,
+        )
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
