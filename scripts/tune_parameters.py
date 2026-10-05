@@ -1072,6 +1072,7 @@ def run_candidate(
     strict_window_evals: list[dict[str, Any]] = []
     research_pool_window_evals: list[dict[str, Any]] = []
     primary_window_evals: list[dict[str, Any]] = []
+    window_metrics: list[dict[str, Any]] = []
     strict_list_types = [t for t in list_types if t != "research_pool"]
     research_pool_list_types = [t for t in list_types if t == "research_pool"]
 
@@ -1129,40 +1130,57 @@ def run_candidate(
             horizon_weights=horizon_weights,
         )
         primary_window_evals.append(primary_eval)
+        strict_eval_for_window: dict[str, Any] | None = None
+        research_eval_for_window: dict[str, Any] | None = None
         if strict_list_types:
             strict_horizons = (
                 mature_horizons_from_summary(summary, strict_list_types, horizons) or window_horizons
             )
-            strict_window_evals.append(
-                evaluate_window(
-                    summary=summary,
-                    events=events,
-                    list_types=strict_list_types,
-                    horizons=strict_horizons,
-                    objective_weights=objective_weights,
-                    scenario_weights=scenario_weights,
-                    list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
-                    horizon_weights=horizon_weights,
-                )
+            strict_eval_for_window = evaluate_window(
+                summary=summary,
+                events=events,
+                list_types=strict_list_types,
+                horizons=strict_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
+                horizon_weights=horizon_weights,
             )
+            strict_window_evals.append(strict_eval_for_window)
         if research_pool_list_types:
             research_pool_horizons = (
                 mature_horizons_from_summary(summary, research_pool_list_types, horizons)
                 or window_horizons
             )
-            research_pool_window_evals.append(
-                evaluate_window(
-                    summary=summary,
-                    events=events,
-                    list_types=research_pool_list_types,
-                    horizons=research_pool_horizons,
-                    objective_weights=objective_weights,
-                    scenario_weights=scenario_weights,
-                    list_weights={"research_pool": 1.0},
-                    horizon_weights=horizon_weights,
-                )
+            research_eval_for_window = evaluate_window(
+                summary=summary,
+                events=events,
+                list_types=research_pool_list_types,
+                horizons=research_pool_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={"research_pool": 1.0},
+                horizon_weights=horizon_weights,
             )
-        window_failure_reasons.append(classify_window_failure(primary_eval, events))
+            research_pool_window_evals.append(research_eval_for_window)
+
+        up_for_window = regime_stats(events, window_benchmarks, "up", list_types, horizons)
+        down_for_window = regime_stats(events, window_benchmarks, "down", list_types, horizons)
+        window_failure = classify_window_failure(primary_eval, events)
+        window_failure_reasons.append(window_failure)
+        window_metrics.append(
+            {
+                "label": window.label,
+                "start_date": window.start_date,
+                "end_date": window.end_date,
+                "primary": primary_eval,
+                "strict": strict_eval_for_window,
+                "research_pool": research_eval_for_window,
+                "up_stats": up_for_window,
+                "down_stats": down_for_window,
+                "failure_reason": window_failure,
+            }
+        )
         if bool(args.prune_backtest_artifacts and not args.no_prune_backtest_artifacts):
             maybe_prune_backtest_artifacts(bt_result)
 
@@ -1337,6 +1355,7 @@ def run_candidate(
             ensure_ascii=False,
             sort_keys=True,
         ),
+        window_metrics_json=json.dumps(window_metrics, ensure_ascii=False, sort_keys=True),
         constraints_passed=bool(constraints_passed),
         failure_reason=failure_reason,
         deltas_json=json.dumps(candidate.deltas, ensure_ascii=False, sort_keys=True),
