@@ -118,7 +118,7 @@ python run_scan.py --config configs/config.risk_off.json
 
 调参空间同时覆盖并行清单阈值与研究池参数，例如 `research_pool_min_score`。`research_pool_top_n` 会影响扫描输出规模；在历史回放中，回测层还会受 `--top-n` 约束。
 
-### 3.6 定期调参（分段历史稳健性；尚非完整 OOS walk-forward）
+### 3.6 定期调参（anchored OOS walk-forward）
 
 入口：
 
@@ -131,18 +131,18 @@ python scripts/tune_parameters.py \
 ```
 
 默认行为：
-- 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）
-- 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`
-- 默认以 `low_value` 作为 `--primary-list-types`，生产参数通过/失败主要由 `Low-Value` 决定
-- 调参结果同时输出并行清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）
-- 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
-- `industry_trend`、`momentum`、`research_pool` 可以参与回测输出和诊断，但默认不决定生产参数是否通过。
-- 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
+- 默认按“过去 3 个完整自然年 + 当年 YTD”做分段回测（可用 `--windows` 覆盖）。
+- 默认 `--selection-mode walk_forward`，按 anchored folds 做真正的时间隔离。例如 2026 年运行时：
+  - 2023 选参 → 2024 held-out；
+  - 2023+2024 选参 → 2025 held-out；
+  - 2023+2024+2025 选参 → 2026 YTD held-out。
+- 训练窗口中的 20/60/120d 前向标签会记录 `label_end_date`；凡标签终点跨入下一 held-out 窗口的事件都会从训练评分中 purge，避免仅按 `signal_date` 切年造成边界泄漏。
+- `--selection-mode pooled` 仅保留作研究诊断；它会让所有窗口共同参与排序，因此禁止与 `--promote` 联用。
+- 默认评估 `low_value`、`industry_trend`、`momentum`、`research_pool`，默认以 `low_value` 作为 `--primary-list-types`。
+- 调参结果同时输出并行清单分层指标（`strict_*`）和研究池分层指标（`research_pool_*`）。
+- 多目标打分包含收益、相对 QQQ 超额、胜率、波动/非重叠事件回撤诊断、覆盖率约束。这里的 drawdown 是抽样诊断，不是账户净值回撤。
 - **默认只评估，不覆盖任何生产配置**。
-- 只有显式传 `--promote` 才会写生产配置，而且一次 tuning run 只能写回其 `--base-config` 所属 style：
-  - `--base-config configs/config.risk_on.json --promote` 只能更新 risk_on；
-  - `--base-config configs/config.risk_off.json --promote` 只能更新 risk_off。
-- 当前分段窗口用于历史稳健性评分，尚未实现“训练选参 → 未触碰验证窗口 → 滚动前移”的完整 OOS walk-forward；因此生产晋级仍应人工审阅。
+- 只有显式传 `--promote` 才会写配置，而且一次 tuning run 只能写回其 `--base-config` 所属 style；最终候选必须由最后一个 held-out 窗口之前的数据选出，并通过该 held-out 窗口验证。
 
 若只评估三张并行扫描清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。若要改变生产评价目标，可显式设置 `--primary-list-types`。
 
@@ -153,6 +153,7 @@ python scripts/tune_parameters.py \
 - `run_scan.py` 只读取本地 `watchlist_csv_path`（默认 `data/ai_watchlist.csv`）
 - 扫描前不会自动刷新 watchlist
 - watchlist 缺失或为空时会直接报错并终止
+- **ETF 只用于构建当前选股底单/watchlist，不是历史回测的数据依赖。** 不追踪、不重建历史 ETF 成分；walk-forward 的时间隔离针对参数选择和前向收益标签，不改变这一 universe 原则。
 
 ### 4.2 CSV 字段规范
 
@@ -844,7 +845,7 @@ python scripts/validate_small_scale.py --config configs/config.risk_off.json --m
 I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.csv`，4,760 行）。
 **实盘试点协议的周检门槛：连续 2 周 FAIL 暂停新开仓。**
 
-### 13.13 `scripts/generate_trade_plan.py` —— 生成实盘交易计划
+### 13.13 `scripts/generate_trade_plan.py` —— 生成选股快速参考（兼容名 trade_plan）
 
 ```bash
 .venv/bin/python scripts/generate_trade_plan.py --capital 100000
@@ -853,15 +854,15 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 #       --include-smallcap（默认关闭：ai_smallcap 为辅线观察层，不进交易计划）
 ```
 
-从最新双风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）。可执行计划只接受带 `Config:` 头、时间戳可解析且足够新鲜的一对报告；默认要求最新报告 ≤12 小时、两风格时间差 ≤6 小时，拒绝用旧报告补位：
+从最新双风格扫描生成供人工复核的快速参考摘要（`outputs/trade_plan_<UTC>.md/.csv`）。历史文件名 `trade_plan` 为兼容保留；脚本**不连接券商、不读取真实持仓、不生成订单、不自动交易**。参考摘要只接受带 `Config:` 头、时间戳可解析且足够新鲜的一对报告；默认要求最新报告 ≤12 小时、两风格时间差 ≤6 小时，拒绝用旧报告补位：
 排序规则：low_value 与 momentum 的 composite 出自不同权重向量、量纲不可直接比较
 （2026-10-02 中位数 sweep 后 momentum ~1.2-1.3 vs low_value ~0.6-0.8），袖珍选择按
 **各清单内、按通道分组的百分位名次（list_pct）** 排序——最佳 keep 与最佳 momentum
 并列 1.0 公平竞争，各清单内部排序质量（权重 sweep 优化的对象）保持不变；置信度取
 标的两清单最高档（keep+momentum 双入选不会被代表行降档）。
-分层→权重图例、双风格合并仓（置信度累加，单仓 ≤10% 总资金）、QQQ 熔断器实时状态、
+分层→参考权重图例、双风格合并候选（置信度累加，单标的参考权重 ≤10%）、QQQ 熔断器状态、
 基线预期（诚实数字含 t 值）。风格识别以报告头 `Config:` 行为准。
-QQQ < SMA200 时按 live pilot 协议**硬停止新开仓**，不能用 `--allow-no-breaker` 绕过。
+QQQ < SMA200 时按 live pilot 规则不生成“新开仓参考名单”，不能用 `--allow-no-breaker` 绕过。
 只有熔断器数据不可用/陈旧（>4 天）时，才允许用 `--allow-no-breaker` 显式绕过数据可用性检查
 （报告打标）；全部仓位触及单仓上限时，未部署部分保留现金并在报告中单独列示。
 
@@ -930,7 +931,7 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 
 ```bash
 .venv/bin/python scripts/daily_run.py  # 工作日：三套观察流 + 归档；默认不生成交易计划
-.venv/bin/python scripts/daily_run.py --generate-trade-plan --capital N  # 月度 cohort 入场日显式生成
+.venv/bin/python scripts/daily_run.py --generate-trade-plan --capital N  # 需要快速参考时显式生成
 .venv/bin/python scripts/daily_run.py --skip-scan --evaluate  # 只跑 cohort 结算
 ```
 
@@ -940,8 +941,9 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 - **周五额外**：全量 cohort 结算（--evaluate 传播到各观察脚本）
 - 周末仅 `--evaluate` 可用（市场关闭）
 - 扫描完成后自动跑左侧名单资金流（`flow_tracker.py`，`--skip-flow` 跳过）
-- **不会每日自动生成 trade plan**；按月度 cohort 节奏由操作人显式传 `--generate-trade-plan`
-- 显式生成计划时，本次 AI 双风格扫描失败会 fail-closed；周一若数据质量周检失败也不会生成计划
+- **不会每日自动生成 trade plan**；它只是完整报告的人工快速参考，需要时显式传 `--generate-trade-plan`
+- 参考摘要不连接券商、不读取历史/当前持仓、不下单；`--capital` 只用于把模型权重换算成便于阅读的参考名义金额
+- 显式生成参考摘要时，本次 AI 双风格扫描失败会 fail-closed；周一若数据质量周检失败也不会生成新的参考摘要
 
 ### 13.20 `scripts/flow_tracker.py` —— 左侧名单大单流统计
 
@@ -980,7 +982,7 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 
 按星期自动执行：工作日跑 AI 双风格 + 五主题 + Venture 三套观察扫描 + cohort 归档；
 周一额外跑数据质量门槛 + 主题篮子刷新 + venture 三层底单重建；周五额外跑 cohort 结算。
-**交易计划不是每日任务。** 在预定的月度 cohort 入场日显式执行：
+**trade plan 是人工快速参考，不是自动交易任务。** 需要把完整扫描压缩成简表时显式生成：
 
 ```bash
 .venv/bin/python scripts/daily_run.py --generate-trade-plan --capital 100000
