@@ -1454,19 +1454,18 @@ def run_candidate(
 
 
 def promotion_profile_from_base_config(path: str) -> str | None:
-    """Return the production style owned by this tuning run.
+    """Return the explicit production style owned by this tuning run.
 
-    A candidate family is a deep copy of one base config, so it is only valid
-    for that same style. Cross-promoting a risk_off-derived candidate into
-    risk_on (or vice versa) silently overwrites style-specific fields that are
-    outside the tuning parameter space.
+    Style identity comes from ScanConfig.strategy_style, not the filename.
+    This prevents a renamed/copied config from being promoted into the wrong
+    production profile.
     """
-    name = Path(path).name
-    if name == "config.risk_on.json":
-        return "risk_on"
-    if name == "config.risk_off.json":
-        return "risk_off"
-    return None
+    try:
+        payload = read_json(Path(path))
+    except Exception:
+        return None
+    style = payload.get("strategy_style")
+    return str(style) if style in {"risk_on", "risk_off"} else None
 
 
 def pick_profile_candidates(scores_df: pd.DataFrame) -> dict[str, str]:
