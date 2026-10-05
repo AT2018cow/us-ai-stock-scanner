@@ -25,6 +25,10 @@ class TestScanConfigValidation(unittest.TestCase):
         cfg = ScanConfig.from_dict({"_theme_meta": {"theme": "x"}})
         self.assertIsNone(cfg.strategy_style)
 
+    def test_unsupported_schema_version_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported version"):
+            ScanConfig.from_dict({"config_schema_version": 2})
+
     def test_invalid_quantiles_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "lower < upper"):
             ScanConfig.from_dict(
