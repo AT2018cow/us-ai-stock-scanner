@@ -115,34 +115,106 @@ def _report_entry_date(report: Path | None) -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def archive_cohort(theme: str, cohort: pd.DataFrame, cohort_csv: Path = COHORT_CSV, report: Path | None = None) -> None:
-    """Append one cohort; dedupe on (theme, list_type, entry_date, symbol)."""
-    key = ["theme", "list_type", "entry_date", "symbol"]
+def weekly_cohort_id(theme: str, entry_date: str) -> str:
+    dt = pd.Timestamp(entry_date)
+    iso = dt.isocalendar()
+    return f"{theme}:{int(iso.year)}-W{int(iso.week):02d}"
+
+
+def _backfill_cohort_identity(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    if "cohort_id" not in out.columns:
+        out["cohort_id"] = ""
+    if "signal_utc" not in out.columns:
+        out["signal_utc"] = ""
+    if "source_report" not in out.columns:
+        out["source_report"] = ""
+    if "entry_date" in out.columns and "theme" in out.columns:
+        missing = out["cohort_id"].fillna("").astype(str).eq("")
+        for idx in out.index[missing]:
+            entry = str(out.loc[idx, "entry_date"] or "")
+            theme_name = str(out.loc[idx, "theme"] or "")
+            if entry and theme_name and entry.lower() != "nan":
+                try:
+                    out.loc[idx, "cohort_id"] = weekly_cohort_id(theme_name, entry)
+                except (ValueError, TypeError):
+                    pass
+    return out
+
+
+def archive_cohort(
+    theme: str,
+    cohort: pd.DataFrame,
+    cohort_csv: Path = COHORT_CSV,
+    report: Path | None = None,
+) -> None:
+    """Freeze one weekly cohort; reruns in the same ISO week are idempotent."""
+    entry_date = (
+        str(cohort["entry_date"].iloc[0])
+        if not cohort.empty and "entry_date" in cohort.columns
+        else _report_entry_date(report)
+    )
+    cohort_id = weekly_cohort_id(theme, entry_date)
+    report_name = report.name if report is not None else ""
+    signal_utc = ""
+    if report is not None:
+        try:
+            text = report.read_text()
+        except OSError:
+            text = ""
+        started = re.search(r"Started UTC: ([\dT:.\-+]+)", text)
+        if started:
+            signal_utc = started.group(1)
+
     if cohort.empty:
-        log(f"{theme}: 无可归档的 shortlist（空清单主题也按协议记录为 no-signal）")
-        row = pd.DataFrame([{
-            "theme": theme, "list_type": "none", "symbol": "", "triage": "",
-            "research_priority": "", "composite_score": "",
-            "entry_date": _report_entry_date(report),
-            "entry_price": "", "status": "no_signal", "exit_date": "", "return_120d": "",
-        }])
-        existing = pd.read_csv(cohort_csv) if cohort_csv.exists() else row.head(0)
-        # CSV round-trip turns "" into NaN; normalize key columns so reruns dedupe.
-        for _col in key:
-            if _col in existing.columns:
-                existing[_col] = existing[_col].fillna("")
-        combined = pd.concat([existing, row], ignore_index=True)
-        combined = combined.drop_duplicates(subset=key, keep="first")
-        write_csv_atomic(combined, cohort_csv)
-        return
-    existing = pd.read_csv(cohort_csv) if cohort_csv.exists() else cohort.head(0)
-    for _col in key:
-        if _col in existing.columns:
-            existing[_col] = existing[_col].fillna("")
-    merged = pd.concat([existing, cohort], ignore_index=True)
-    merged = merged.drop_duplicates(subset=key, keep="first")
+        log(f"{theme}: 无可归档 shortlist；冻结 weekly no_signal cohort")
+        incoming = pd.DataFrame(
+            [
+                {
+                    "cohort_id": cohort_id,
+                    "theme": theme,
+                    "list_type": "none",
+                    "symbol": "",
+                    "triage": "",
+                    "research_priority": "",
+                    "composite_score": "",
+                    "signal_utc": signal_utc,
+                    "source_report": report_name,
+                    "entry_date": entry_date,
+                    "entry_price": "",
+                    "status": "no_signal",
+                    "exit_date": "",
+                    "return_120d": "",
+                }
+            ]
+        )
+    else:
+        incoming = cohort.copy()
+        incoming["cohort_id"] = cohort_id
+        incoming["signal_utc"] = signal_utc
+        incoming["source_report"] = report_name
+
+    existing = (
+        _backfill_cohort_identity(pd.read_csv(cohort_csv))
+        if cohort_csv.exists()
+        else incoming.head(0)
+    )
+    incoming = _backfill_cohort_identity(incoming)
+    for col in ("cohort_id", "list_type", "symbol"):
+        if col in existing.columns:
+            existing[col] = existing[col].fillna("")
+        incoming[col] = incoming[col].fillna("")
+
+    merged = pd.concat([existing, incoming], ignore_index=True, sort=False)
+    merged = merged.drop_duplicates(
+        subset=["cohort_id", "list_type", "symbol"],
+        keep="first",
+    )
     write_csv_atomic(merged, cohort_csv)
-    log(f"{theme}: 归档 cohort {len(cohort)} 行（entry_date={cohort['entry_date'].iloc[0]}）")
+    log(
+        f"{theme}: weekly cohort {cohort_id} frozen "
+        f"({len(incoming)} rows, entry_date={entry_date})"
+    )
 
 
 def print_summary(theme: str, report: Path) -> None:
@@ -350,7 +422,7 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
             )
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--skip-scan", action="store_true", help="Reuse latest reports")
     p.add_argument("--evaluate", action="store_true", help="Only score matured cohorts")
@@ -361,7 +433,11 @@ def main() -> None:
     )
     p.add_argument("--sleeve", choices=["theme", "venture"], default="theme",
                    help="theme = config.theme.* (five-theme P0); venture = config.venture.* (venture sleeve P0)")
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     prefix = f"config.{args.sleeve}"
     cohort_csv = Path(f"data/{args.sleeve}_cohorts.csv")
