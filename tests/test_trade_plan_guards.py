@@ -99,7 +99,7 @@ class TestCheckBreakerState(unittest.TestCase):
         )
         self.assertTrue(proceed)
 
-    def test_fresh_bull_and_bear_proceed(self) -> None:
+    def test_fresh_bull_proceeds_bear_blocks(self) -> None:
         proceed, regime = plan_mod.check_breaker_state(
             {"ok": True, "close": 700.0, "sma200": 600.0, "asof": "2026-09-28"}, date(2026, 9, 29)
         )
@@ -108,7 +108,7 @@ class TestCheckBreakerState(unittest.TestCase):
         proceed, regime = plan_mod.check_breaker_state(
             {"ok": False, "close": 600.0, "sma200": 700.0, "asof": "2026-09-28"}, date(2026, 9, 29)
         )
-        self.assertTrue(proceed)
+        self.assertFalse(proceed)
         self.assertEqual(regime, "bear")
 
 
@@ -123,6 +123,21 @@ class TestSafeDefaults(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["tune_parameters.py"]):
             args = tuner.parse_args()
         self.assertFalse(args.allow_latest_watchlist_fallback)
+        self.assertFalse(args.promote)
+
+    def test_tuner_promotion_profile_is_base_style_only(self) -> None:
+        tuner = _load_script("tune_parameters.py")
+        self.assertEqual(
+            tuner.promotion_profile_from_base_config("configs/config.risk_off.json"),
+            "risk_off",
+        )
+        self.assertEqual(
+            tuner.promotion_profile_from_base_config("configs/config.risk_on.json"),
+            "risk_on",
+        )
+        self.assertIsNone(
+            tuner.promotion_profile_from_base_config("configs/config.strict_candidate.json")
+        )
 
     def test_extract_fallback_defaults_off(self) -> None:
         extract = _load_script("extract_weight_dataset.py")
