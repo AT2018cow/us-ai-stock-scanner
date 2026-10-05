@@ -310,7 +310,8 @@ def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
             d.loc[idx, "theme_benchmark_return_120d"] = round(basket_ret, 6)
             d.loc[idx, "excess_vs_theme_benchmark_120d"] = round(float(net - basket_ret), 6)
         else:
-            note = str(d.loc[idx, "evaluation_note"] or "")
+            note_raw = d.loc[idx, "evaluation_note"]
+            note = "" if pd.isna(note_raw) else str(note_raw).strip()
             d.loc[idx, "evaluation_note"] = (
                 (note + "; " if note else "") + "theme benchmark unavailable"
             )
