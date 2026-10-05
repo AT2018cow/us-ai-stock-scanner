@@ -172,6 +172,8 @@
 
 验收：网络失败并使用旧缓存时，报告可识别降级；重写文件不改变数据 `asof`；计划检查所用个股和基准的数据时点。
 
+**2026-10-05 修复状态：已处理。** Alpaca 数据读取现在把 network / TTL 内缓存 / 精确 stale fallback / 跨 key fallback 分开记录，network diagnostics 与扫描 Markdown 同时输出 source、feed、市场数据 `data_asof`、缓存文件年龄、观测时间与降级原因。bars 网络失败后若使用旧缓存，不再把 fallback payload 重新写回缓存，因此旧数据不会通过刷新 mtime 被伪装成新鲜缓存。新增离线回归测试覆盖 stale fallback、mtime 保持与 provenance 字段。该机制是研究数据质量标记，不引入账户/订单状态。
+
 ### R01：早期 union 回放含未来 ETF 特征
 
 位置：[backtest.py](../src/ai_value_scanner/backtest.py)，`build_union_watchlist_map`、`resolve_watchlist_asof`、`build_cross_section_asof`。
@@ -357,6 +359,8 @@
 建议：增加明确的 style／schema version，显式声明硬门／软项；校验字段、范围、权重及 null 语义。`_theme_meta` 等元数据使用明确命名空间；保留兼容入口，并对生产配置采用严格检查。不要未经审查把现有整体替换改成深合并，以免继承不应存在的通道。
 
 验收：拼错的关键字段可定位；非法组合启动时失败；关闭单个阈值不隐式改变风格；生成配置与加载结果可对照。
+
+**2026-10-05 修复状态：已处理。** `ScanConfig` 增加 v1 配置契约与 fail-fast 校验：未知顶层/通道/评分维度/triage key、错误类型、非法范围和关键交叉约束在加载阶段失败；以下划线开头的 theme/venture 元数据保留为非运行时命名空间。生产 `risk_on/risk_off` 明确声明 `strategy_style`，扫描报告写出 `Strategy-Style:`，tuner 晋级与 scanner/backtest 的 hard/soft partition 均读取显式 style，不再通过 `min_price_to_sma200` 等阈值名反推风格。原有 `channel_profiles` 整体替换语义保持不变，没有引入隐式深合并。新增测试遍历全部运行时 config 并覆盖错拼字段、schema version、style mismatch 和显式 partition 行为。
 
 ### E03：测试通过不证明公式正确
 
