@@ -865,13 +865,16 @@ class ScanConfig:
         for name in (
             "min_revenue",
             "min_net_income",
+            "min_ps_discount",
+            "min_pe_discount",
+        ):
+            require_number(name, allow_none=True)
+        for name in (
             "ai_link_market_return_tolerance_20d",
             "ai_link_market_return_tolerance_60d",
             "ai_link_backlog_ratio_cap",
             "score_penalty_overvaluation",
             "score_penalty_deterioration",
-            "min_ps_discount",
-            "min_pe_discount",
         ):
             require_number(name)
         if self.ai_link_market_return_tolerance_20d <= 0:
