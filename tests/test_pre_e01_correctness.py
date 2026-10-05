@@ -62,7 +62,7 @@ class _FakeClient:
 
 
 def _frame(entry_open: float, exit_close: float) -> pd.DataFrame:
-    idx = pd.date_range("2026-01-02", periods=120, freq="B", tz="UTC")
+    idx = pd.date_range("2025-01-02", periods=120, freq="B", tz="UTC")
     opens = [entry_open] * len(idx)
     closes = [entry_open] * len(idx)
     closes[-1] = exit_close
@@ -95,7 +95,7 @@ class TestThemePaperCohortEvaluation(unittest.TestCase):
                     "triage": "keep",
                     "research_priority": "research_now",
                     "composite_score": 0.7,
-                    "entry_date": "2026-01-01",
+                    "entry_date": "2025-01-01",
                     "entry_price": 100.0,
                     "status": "open",
                     "exit_date": "",
@@ -120,7 +120,6 @@ class TestThemePaperCohortEvaluation(unittest.TestCase):
                     "load_theme_benchmarks",
                     return_value={"nuclear": ["NLR", "URA"]},
                 ),
-                patch.object(pd.Timestamp, "now", return_value=pd.Timestamp("2026-10-05", tz="UTC")),
             ):
                 theme.evaluate_matured(path)
 
