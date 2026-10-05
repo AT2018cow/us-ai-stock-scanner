@@ -49,10 +49,17 @@ git rev-parse HEAD
 
 ```bash
 BASE="pre_e01_$(git rev-parse --short HEAD)"
+HIST="outputs/${BASE}_watchlist_history"
+
 mkdir -p outputs
+rm -rf "$HIST"
+mkdir -p "$HIST"
+cp data/watchlist_history/*.csv "$HIST"/
 ```
 
-后面的命令都使用同一个 `$BASE`。
+后面的命令都使用同一个 `$BASE` 和冻结后的 `$HIST`。
+
+为什么要冻结 `watchlist_history`：`pre_snapshot_universe=union` 会把快照历史中见过的股票加入 replay pool。未来新增快照可能扩大这个 union；如果继续读取动态的 `data/watchlist_history/`，即使代码完全没变，重构后重跑也可能产生不同 universe。baseline/refactor 对比必须始终使用这份冻结副本。
 
 ## 4. risk_off 固定历史回放
 
@@ -70,6 +77,7 @@ mkdir -p outputs
   --start-date 2023-01-01 \
   --end-date 2026-03-31 \
   --rebalance-frequency monthly \
+  --watchlist-history-dir "$HIST" \
   --theme-source rules_proxy \
   --pre-snapshot-universe union
 ```
@@ -113,6 +121,7 @@ mkdir -p outputs
   --max-candidates 4 \
   --random-seed 42 \
   --rebalance-frequency monthly \
+  --watchlist-history-dir "$HIST" \
   --no-perturbation \
   --no-promote
 ```
@@ -124,8 +133,7 @@ mkdir -p outputs
 - training 仍执行 label-end purge；
 - 没有生产配置被改写。
 
-如果本地执行太慢，可以将 tuner smoke 单独改成 `--executor modal`；但 baseline
-manifest 必须记录实际产物，而且后续 refactor 对比应使用同一种 executor 方式。
+baseline tuner smoke 建议使用默认本地 executor。冻结的 `$HIST` 是本地输入；不要在同一 baseline 中临时切换 executor 或 snapshot 来源。
 
 ## 7. 捕获 baseline manifest
 
@@ -137,6 +145,7 @@ manifest 必须记录实际产物，而且后续 refactor 对比应使用同一�
   --risk-off-prefix "${BASE}_risk_off" \
   --risk-on-prefix "${BASE}_risk_on" \
   --tuning-prefix "${BASE}_tuner_risk_off" \
+  --watchlist-history-dir "$HIST" \
   --replay-start 2023-01-01 \
   --replay-end 2026-03-31 \
   --rebalance-frequency monthly \
@@ -156,6 +165,7 @@ manifest 包含：
 - risk_on / risk_off config SHA256；
 - tuner param-space SHA256；
 - watchlist SHA256、symbol-set SHA256、行数；
+- 冻结 watchlist-history 目录的文件清单与目录 SHA256；
 - backtest deterministic CSV SHA256；
 - canonical summary metrics；
 - signal date/list/scenario contract；
@@ -193,7 +203,7 @@ outputs/${BASE}_manifest.json
 NEW="e01_config_$(git rev-parse --short HEAD)"
 ```
 
-运行与第 4–6 节相同的实验，只把 output prefix 换成 `$NEW`。然后：
+运行与第 4–6 节相同的实验，只把 output prefix 换成 `$NEW`，并且继续使用原 baseline 的 `$HIST`，不要重新复制当前 `data/watchlist_history/`。然后：
 
 ```bash
 .venv/bin/python scripts/refactor_baseline.py compare \
@@ -201,6 +211,7 @@ NEW="e01_config_$(git rev-parse --short HEAD)"
   --risk-off-prefix "${NEW}_risk_off" \
   --risk-on-prefix "${NEW}_risk_on" \
   --tuning-prefix "${NEW}_tuner_risk_off" \
+  --watchlist-history-dir "$HIST" \
   --replay-start 2023-01-01 \
   --replay-end 2026-03-31 \
   --rebalance-frequency monthly
