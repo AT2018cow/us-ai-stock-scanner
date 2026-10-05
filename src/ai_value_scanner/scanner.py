@@ -1159,6 +1159,7 @@ class AlpacaClient:
             payload = json.loads(cache_path.read_text())
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                self.monitor.record_data_source("alpaca", namespace, "fresh_cache", age)
             return payload
         except Exception:
             if self.monitor:
@@ -1177,6 +1178,10 @@ class AlpacaClient:
             payload = json.loads(cache_path.read_text())
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                age = time.time() - cache_path.stat().st_mtime
+                self.monitor.record_data_source(
+                    "alpaca", namespace, "stale_cache_fallback", age
+                )
             return payload
         except Exception:
             if self.monitor:
@@ -1207,13 +1212,25 @@ class AlpacaClient:
                     hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                self.monitor.record_data_source(
+                    "alpaca",
+                    "snapshots",
+                    "stale_cross_key_fallback",
+                    time.time() - path.stat().st_mtime,
+                )
         if out:
             return out
         if self.monitor:
             self.monitor.record_cache("alpaca", hit=False)
         return {}
 
-    def _load_bars_from_any_cache(self, symbols: list[str], start_iso: str) -> dict[str, list[dict[str, Any]]]:
+    def _load_bars_from_any_cache(
+        self,
+        symbols: list[str],
+        start_iso: str,
+        *,
+        provenance_source: str = "cross_key_cache",
+    ) -> dict[str, list[dict[str, Any]]]:
         if not self.cache_enabled:
             return {}
         targets = [str(s).upper() for s in symbols if s]
@@ -1263,6 +1280,12 @@ class AlpacaClient:
                 hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                self.monitor.record_data_source(
+                    "alpaca",
+                    "bars",
+                    provenance_source,
+                    time.time() - path.stat().st_mtime,
+                )
         if best_rows:
             return best_rows
         if self.monitor:
@@ -1345,6 +1368,8 @@ class AlpacaClient:
             resp = self._get(url, params=params)
             payload = resp.json()
             self._save_cache("assets", cache_key, payload)
+            if self.monitor:
+                self.monitor.record_data_source("alpaca", "assets", "network")
             return payload
         except Exception:
             stale = self._load_cache_stale("assets", cache_key)
@@ -1377,6 +1402,8 @@ class AlpacaClient:
                     else:
                         payload = {}
                     self._save_cache("snapshots", cache_key, payload)
+                    if self.monitor:
+                        self.monitor.record_data_source("alpaca", "snapshots", "network")
                 except Exception:
                     stale = self._load_cache_stale("snapshots", cache_key)
                     if isinstance(stale, dict):
@@ -1482,7 +1509,11 @@ class AlpacaClient:
                     if not min_ts or (start_iso and min_ts > str(start_iso)):
                         needs_enrichment.append(sym)
                 if needs_enrichment:
-                    any_cache = self._load_bars_from_any_cache(needs_enrichment, start_iso)
+                    any_cache = self._load_bars_from_any_cache(
+                        needs_enrichment,
+                        start_iso,
+                        provenance_source="cross_key_cache_enrichment",
+                    )
                     for symbol, rows in any_cache.items():
                         existing = bars_by_symbol.get(symbol)
                         if self._should_replace_rows(existing, rows, start_iso):
@@ -1491,6 +1522,7 @@ class AlpacaClient:
                 continue
 
             batch_bars: dict[str, list[dict[str, Any]]] = {}
+            fetched_from_network = False
             try:
                 page_token: str | None = None
                 while True:
@@ -1516,6 +1548,9 @@ class AlpacaClient:
                     page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
                     if not page_token:
                         break
+                fetched_from_network = True
+                if self.monitor:
+                    self.monitor.record_data_source("alpaca", "bars", "network")
             except Exception:
                 stale = self._load_cache_stale("bars", cache_key)
                 if isinstance(stale, dict):
@@ -1523,14 +1558,22 @@ class AlpacaClient:
                         if isinstance(rows, list):
                             batch_bars.setdefault(symbol, []).extend(rows)
                 else:
-                    any_cache = self._load_bars_from_any_cache(batch, start_iso)
+                    any_cache = self._load_bars_from_any_cache(
+                        batch,
+                        start_iso,
+                        provenance_source="stale_cross_key_fallback",
+                    )
                     if any_cache:
                         for symbol, rows in any_cache.items():
                             if isinstance(rows, list):
                                 batch_bars.setdefault(symbol, []).extend(rows)
                     else:
                         raise
-            self._save_cache("bars", cache_key, batch_bars)
+            # Never refresh cache mtime with fallback data. Otherwise a stale
+            # payload becomes indistinguishable from a fresh TTL cache on the
+            # next run.
+            if fetched_from_network:
+                self._save_cache("bars", cache_key, batch_bars)
             for symbol, rows in batch_bars.items():
                 bars_by_symbol.setdefault(symbol, []).extend(rows)
             time.sleep(0.05)
