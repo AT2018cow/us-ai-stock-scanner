@@ -112,6 +112,28 @@ class TestCheckBreakerState(unittest.TestCase):
         self.assertEqual(regime, "bear")
 
 
+class TestExplicitReportStyle(unittest.TestCase):
+    def test_explicit_style_header_overrides_legacy_config_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "report.md"
+            path.write_text(
+                "# report\n"
+                "- Strategy-Style: risk_on\n"
+                "- Config: configs/config.risk_off.json\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(plan_mod._report_style(str(path)), "risk_on")
+
+    def test_legacy_config_path_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "report.md"
+            path.write_text(
+                "# report\n- Config: configs/config.risk_off.json\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(plan_mod._report_style(str(path)), "risk_off")
+
+
 class TestSafeDefaults(unittest.TestCase):
     def test_trade_plan_allows_no_breaker_override_flag(self) -> None:
         args = plan_mod.build_parser().parse_args(["--capital", "100"])

@@ -293,7 +293,8 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 2. 全局参数来自配置文件顶层（`ScanConfig` 顶层字段）。
 3. 通道参数来自 `channel_profiles.<channel>`，会覆盖同名全局参数。
 4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
-5. 配置中的未知字段会被忽略（不会报错，也不会生效）。
+5. 配置采用 fail-fast 校验：未知字段、错误类型、非法范围或交叉约束会在启动时直接报错；仅 `_theme_meta` / `_venture_meta` 等以下划线开头的文档元数据不会进入运行时配置。
+6. `config.risk_on.json` / `config.risk_off.json` 通过顶层 `strategy_style` 显式声明风格身份；扫描报告写入 `Strategy-Style:`，下游优先读取该字段，不再依赖文件名推断。
 
 ### 6.2 全局参数与阈值（以 `configs/config.risk_off.json` 为基准参考）
 
@@ -303,6 +304,8 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 | 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
+| `config_schema_version` | `1` | 配置契约版本；缺省按 v1 兼容读取，显式出现未知版本会 fail-fast。 |
+| `strategy_style` | `risk_off` | 生产双风格显式身份（risk_on/risk_off）；主题、venture、校准配置可为 `null`。 |
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
 | `chunk_size` | `200` | 拉取数据的批处理大小。 |
@@ -312,7 +315,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 | `alpaca_cache_enabled` | `true` | 是否启用 Alpaca 本地缓存。 |
 | `alpaca_cache_ttl_assets_sec` | `21600` | `assets` 缓存 TTL（秒）。 |
 | `alpaca_cache_ttl_snapshots_sec` | `120` | `snapshots` 缓存 TTL（秒）。 |
-| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。 |
+| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。网络失败使用过期缓存时不会刷新原文件 mtime；network JSON/Markdown 会记录 source、feed、市场数据 `data_asof`、最大 cache age、降级原因和 stale-fallback 标记。 |
 | `cache_dir` | `cache` | 缓存目录（默认值来自代码）。 |
 | `output_dir` | `outputs` | 输出目录（默认值来自代码）。 |
 
@@ -1000,12 +1003,13 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 # ② 每周：数据质量门槛（必须 PASS；连续 FAIL 暂停开仓）
 .venv/bin/python scripts/validate_ttm_population.py
 
-# ③ 每月（或每周）：生成交易计划
+# ③ 可选：把完整双风格扫描压缩成便于人工阅读的快速参考
 .venv/bin/python scripts/generate_trade_plan.py --capital 100000
 
-# ④ 按计划执行：次日开盘市价单买入新 cohort（跳空 >5% 放弃该标的）；
-#    报告“财报临近提示”段所列标的预期财报临近，自行评估是否避开（仅提示、不延迟），
-#    120 个交易日后到期卖出；期间只看两条线：单仓 -25% 止损、QQQ<SMA200 停止新开仓
+# ④ 人工复核并自行决策
+#    trade_plan 只是参考摘要：不连接券商、不读取持仓、不生成订单、不自动交易。
+#    次日开盘、参考权重、财报窗口、止损和 QQQ<SMA200 等字段仅用于展示预注册研究/
+#    人工执行协议的上下文，是否交易及如何执行完全由用户自行决定。
 
 # ⑤ 五主题 + Venture sleeve（P0 纸面观察，互不阻塞）
 .venv/bin/python scripts/theme_observation_scan.py                  # 五主题
@@ -1028,11 +1032,11 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 | CHKP | low_value | keep | 4.5% | 4,500 |   ← 20-F 年报申报者，数据滞后 ~9 个月（已知）
 ```
 
-关键纪律（预注册，禁止临场修改）：
-- 不买 drop/left_side_watch；watch/theme_only 半仓
-- 不加仓摊平、不追跳空、熔断期不"抄底"
-- 每月新 cohort + 到期结算（记录 120d 超额 vs QQQ、超额胜率）
-- 每季度按协议 §2 条件做阶段晋级/降级评估
+参考协议（用于人工复核和研究记录，不是程序交易指令）：
+- drop/left_side_watch、watch/theme_only 的权重规则是参考分层语义；
+- 跳空、熔断、止损等规则用于解释研究/人工交易协议，程序不会自动执行；
+- paper cohort 仍按既定周期结算，用于记录 120d 超额 vs QQQ、超额胜率；
+- 阶段评估由人工根据协议复核。
 
 历史基线（Phase 4R v2，2023-2026，诚实数字）：risk_on low_value 120d 超额
 +4.94pp/期（t=1.82 未达显著）、momentum +1.16pp（t=0.53）；risk_off 持仓期

@@ -9,13 +9,14 @@ import re
 import shutil
 import time
 import threading
+import types
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, get_args, get_origin, get_type_hints, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -461,6 +462,10 @@ def default_low_coverage_soft_score_weights() -> dict[str, float]:
 
 @dataclass
 class ScanConfig:
+    config_schema_version: int = 1
+    # Explicit identity for production two-style configs. None is valid for
+    # theme/venture/calibration configs that are not one of the two AI styles.
+    strategy_style: str | None = None
     max_symbols: int | None = None
     max_workers: int = 8
     alpaca_max_requests_per_sec: float = 2.5
@@ -517,8 +522,8 @@ class ScanConfig:
     nonrecurring_addback_revenue_cap: float | None = 0.25
     use_ttm_metrics: bool = True
     min_fundamental_quality_score: float | None = 0.45
-    min_revenue: float = 10_000_000.0
-    min_net_income: float = 1_000_000.0
+    min_revenue: float | None = 10_000_000.0
+    min_net_income: float | None = 1_000_000.0
     min_operating_cash_flow: float | None = 0.0
     min_free_cash_flow: float | None = 0.0
     min_ebit: float | None = 0.0
@@ -557,8 +562,8 @@ class ScanConfig:
     )
     score_penalty_overvaluation: float = 0.20
     score_penalty_deterioration: float = 0.20
-    min_ps_discount: float = 0.15
-    min_pe_discount: float = 0.10
+    min_ps_discount: float | None = 0.15
+    min_pe_discount: float | None = 0.10
     # 0..1: how strongly NI-based PE cheap-credit is discounted by OCF/NI cash
     # backing (1.0 = trust cheap credit exactly in proportion to OCF/NI;
     # 0.0 = legacy behavior). Guards against non-operating gains (e.g.
@@ -614,18 +619,605 @@ class ScanConfig:
     cache_dir: str = "cache"
     output_dir: str = "outputs"
 
+    @staticmethod
+    def _matches_annotation(value: Any, annotation: Any) -> bool:
+        if annotation is Any:
+            return True
+        origin = get_origin(annotation)
+        if origin is types.UnionType:
+            return any(ScanConfig._matches_annotation(value, arg) for arg in get_args(annotation))
+        if origin is list:
+            if not isinstance(value, list):
+                return False
+            args = get_args(annotation)
+            item_type = args[0] if args else Any
+            return all(ScanConfig._matches_annotation(item, item_type) for item in value)
+        if origin is dict:
+            if not isinstance(value, dict):
+                return False
+            args = get_args(annotation)
+            key_type, value_type = args if len(args) == 2 else (Any, Any)
+            return all(
+                ScanConfig._matches_annotation(k, key_type)
+                and ScanConfig._matches_annotation(v, value_type)
+                for k, v in value.items()
+            )
+        if annotation is bool:
+            return isinstance(value, bool)
+        if annotation is int:
+            return isinstance(value, int) and not isinstance(value, bool)
+        if annotation is float:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if annotation is str:
+            return isinstance(value, str)
+        if annotation is type(None):
+            return value is None
+        return isinstance(value, annotation)
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ScanConfig":
+        if not isinstance(raw, dict):
+            raise ValueError("ScanConfig must be loaded from a JSON object")
         base = cls()
+        known = {f.name for f in fields(cls)}
+        hints = get_type_hints(cls)
+        unknown = sorted(k for k in raw if k not in known and not str(k).startswith("_"))
+        if unknown:
+            raise ValueError(
+                "Unknown ScanConfig keys (possible typo): " + ", ".join(repr(k) for k in unknown)
+            )
+        type_errors: list[str] = []
         for key, value in raw.items():
-            if hasattr(base, key):
-                setattr(base, key, value)
-            else:
-                # Unknown keys are ignored for forward compatibility, but a
-                # typo'd threshold name would silently run on stale values —
-                # always surface it so config edits are verifiable.
-                print(f"[config] WARNING: unknown ScanConfig key ignored: {key!r}")
+            # Metadata blocks (_theme_meta/_venture_meta) are documentation
+            # provenance, not runtime configuration.
+            if key not in known:
+                continue
+            annotation = hints.get(key, Any)
+            if not cls._matches_annotation(value, annotation):
+                type_errors.append(
+                    f"{key}: expected {annotation!s}, got {type(value).__name__}"
+                )
+                continue
+            setattr(base, key, value)
+        if type_errors:
+            raise ValueError("Invalid ScanConfig types:\n- " + "\n- ".join(type_errors))
+        base.validate()
         return base
+
+    def validate(self) -> None:
+        """Fail fast on config type/range/cross-field errors.
+
+        This intentionally validates semantics that would otherwise be
+        silently coerced by downstream float()/bool() calls. It is not a
+        separate configuration framework; ScanConfig remains the source of
+        truth for runtime fields.
+        """
+        errors: list[str] = []
+
+        def err(name: str, message: str) -> None:
+            errors.append(f"{name}: {message}")
+
+        def require_bool(name: str) -> None:
+            if not isinstance(getattr(self, name), bool):
+                err(name, "must be boolean")
+
+        def require_int(name: str, *, minimum: int | None = None, allow_none: bool = False) -> None:
+            value = getattr(self, name)
+            if value is None and allow_none:
+                return
+            if isinstance(value, bool) or not isinstance(value, int):
+                err(name, "must be an integer" + (" or null" if allow_none else ""))
+                return
+            if minimum is not None and value < minimum:
+                err(name, f"must be >= {minimum}")
+
+        def require_number(
+            name: str,
+            *,
+            minimum: float | None = None,
+            maximum: float | None = None,
+            allow_none: bool = False,
+        ) -> None:
+            value = getattr(self, name)
+            if value is None and allow_none:
+                return
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                err(name, "must be numeric" + (" or null" if allow_none else ""))
+                return
+            val = float(value)
+            if not np.isfinite(val):
+                err(name, "must be finite")
+                return
+            if minimum is not None and val < minimum:
+                err(name, f"must be >= {minimum}")
+            if maximum is not None and val > maximum:
+                err(name, f"must be <= {maximum}")
+
+        require_int("config_schema_version", minimum=1)
+        if self.config_schema_version != 1:
+            err(
+                "config_schema_version",
+                f"unsupported version {self.config_schema_version!r}; expected 1",
+            )
+        if self.strategy_style not in (None, "risk_on", "risk_off"):
+            err("strategy_style", "must be null, 'risk_on', or 'risk_off'")
+
+        for name in (
+            "alpaca_cache_enabled",
+            "archive_watchlist_snapshots",
+            "require_positive_revenue",
+            "require_positive_net_income",
+            "require_positive_operating_cash_flow",
+            "require_positive_free_cash_flow",
+            "require_positive_ebit",
+            "use_adjusted_quality_metrics",
+            "use_ttm_metrics",
+            "force_hard_filter_low_coverage_metrics",
+            "require_channel_bucket_match",
+            "enforce_unique_symbol_per_list",
+            "enforce_unique_symbol_across_lists",
+        ):
+            require_bool(name)
+
+        for name in (
+            "max_workers",
+            "chunk_size",
+            "request_timeout_sec",
+            "watchlist_fetch_timeout_sec",
+            "ai_link_etf_count_saturation",
+            "ai_link_disclosure_keyword_cap",
+            "own_history_valuation_window_days",
+            "price_lookback_days",
+            "benchmark_trend_filter_sma_days",
+            "top_n_per_channel_low_value",
+            "top_n_per_channel_trend",
+            "top_n_per_channel_momentum",
+            "research_pool_top_n",
+        ):
+            require_int(name, minimum=1)
+        require_int("max_symbols", minimum=1, allow_none=True)
+        require_int("min_days_below_sma200", minimum=0, allow_none=True)
+        require_int("max_per_sector_per_list", minimum=1, allow_none=True)
+        require_int("max_per_watchlist_etf_source_per_list", minimum=1, allow_none=True)
+        for name in (
+            "alpaca_cache_ttl_assets_sec",
+            "alpaca_cache_ttl_snapshots_sec",
+            "alpaca_cache_ttl_bars_sec",
+            "sec_cache_ttl_submissions_sec",
+        ):
+            require_int(name, minimum=0)
+
+        for name in ("alpaca_max_requests_per_sec", "sec_max_requests_per_sec"):
+            require_number(name, minimum=0.000001)
+        for name in (
+            "min_price",
+            "min_market_cap",
+            "min_dollar_volume",
+            "assumed_position_usd",
+            "research_pool_min_score",
+        ):
+            require_number(name, minimum=0.0)
+        for name in (
+            "max_adv_participation",
+            "pe_cash_backing_haircut",
+            "soft_filter_weight",
+            "ai_link_weight_etf_consensus",
+            "ai_link_weight_disclosure",
+            "ai_link_weight_market_link",
+            "ai_link_weight_backlog",
+            "score_winsor_lower_q",
+            "score_winsor_upper_q",
+        ):
+            require_number(name, minimum=0.0, maximum=1.0)
+        for name in (
+            "max_ps_percentile_in_sic",
+            "max_pe_percentile_in_sic",
+            "max_ps_hist_percentile",
+            "max_pe_hist_percentile",
+            "min_drawdown_percentile",
+            "min_avg_dollar_volume_20d_percentile",
+            "max_60d_volatility_percentile",
+            "min_fundamental_quality_score",
+        ):
+            require_number(name, minimum=0.0, maximum=1.0, allow_none=True)
+        require_number(
+            "nonrecurring_addback_revenue_cap",
+            minimum=0.0,
+            maximum=1.0,
+            allow_none=True,
+        )
+        for name in (
+            "min_avg_dollar_volume_20d",
+            "min_operating_cash_flow",
+            "min_free_cash_flow",
+            "min_ebit",
+            "min_net_margin",
+            "max_ps",
+            "max_pe",
+            "max_ev_to_ebit",
+            "min_fcf_yield",
+            "min_revenue_yoy",
+            "min_net_income_yoy",
+            "max_net_debt_to_ebitda",
+            "min_interest_coverage",
+            "max_current_debt_ratio",
+            "min_current_ratio",
+            "min_ocf_to_net_income",
+            "max_accrual_ratio",
+            "max_receivables_growth_gap",
+            "max_inventory_growth_gap",
+            "max_shares_yoy",
+            "min_expectation_proxy",
+            "min_cycle_proxy",
+            "max_estimated_slippage_bps",
+            "min_drawdown_from_52w_high",
+            "max_range_position_52w",
+            "min_range_position_52w",
+            "max_price_to_sma200",
+            "min_price_to_sma200",
+            "min_return_20d",
+            "min_return_60d",
+            "max_20d_return",
+            "max_60d_volatility",
+            "low_value_min_research_score",
+        ):
+            require_number(name, allow_none=True)
+        for name in (
+            "min_revenue",
+            "min_net_income",
+            "min_ps_discount",
+            "min_pe_discount",
+        ):
+            require_number(name, allow_none=True)
+        for name in (
+            "ai_link_market_return_tolerance_20d",
+            "ai_link_market_return_tolerance_60d",
+            "ai_link_backlog_ratio_cap",
+            "score_penalty_overvaluation",
+            "score_penalty_deterioration",
+        ):
+            require_number(name)
+        if self.ai_link_market_return_tolerance_20d <= 0:
+            err("ai_link_market_return_tolerance_20d", "must be > 0")
+        if self.ai_link_market_return_tolerance_60d <= 0:
+            err("ai_link_market_return_tolerance_60d", "must be > 0")
+        if self.ai_link_backlog_ratio_cap <= 0:
+            err("ai_link_backlog_ratio_cap", "must be > 0")
+        if (
+            isinstance(self.score_winsor_lower_q, (int, float))
+            and isinstance(self.score_winsor_upper_q, (int, float))
+            and float(self.score_winsor_lower_q) >= float(self.score_winsor_upper_q)
+        ):
+            err("score_winsor_lower_q/score_winsor_upper_q", "must satisfy lower < upper")
+        if self.max_market_cap is not None:
+            require_number("max_market_cap", minimum=0.0, allow_none=True)
+            if (
+                isinstance(self.max_market_cap, (int, float))
+                and isinstance(self.min_market_cap, (int, float))
+                and float(self.max_market_cap) < float(self.min_market_cap)
+            ):
+                err("max_market_cap", "must be >= min_market_cap")
+        if self.min_range_position_52w is not None and self.max_range_position_52w is not None:
+            if float(self.min_range_position_52w) > float(self.max_range_position_52w):
+                err("min_range_position_52w/max_range_position_52w", "must satisfy min <= max")
+        if self.min_price_to_sma200 is not None and self.max_price_to_sma200 is not None:
+            if float(self.min_price_to_sma200) > float(self.max_price_to_sma200):
+                err("min_price_to_sma200/max_price_to_sma200", "must satisfy min <= max")
+
+        if self.filter_mode not in {"hard", "scored"}:
+            err("filter_mode", "must be 'hard' or 'scored'")
+        if self.metric_hard_filter_coverage_mode not in {
+            "high_coverage_only",
+            "balanced",
+            "all_metrics",
+        }:
+            err(
+                "metric_hard_filter_coverage_mode",
+                "must be high_coverage_only, balanced, or all_metrics",
+            )
+
+        for name in ("watchlist_csv_path", "cache_dir", "output_dir"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                err(name, "must be a non-empty string")
+        if self.benchmark_trend_filter_symbol is not None and (
+            not isinstance(self.benchmark_trend_filter_symbol, str)
+            or not self.benchmark_trend_filter_symbol.strip()
+        ):
+            err("benchmark_trend_filter_symbol", "must be a non-empty string or null")
+        for name in (
+            "enabled_exchanges",
+            "exclude_sic_codes",
+            "ai_link_benchmark_etfs",
+            "watchlist_core_etfs",
+            "watchlist_enabler_etfs",
+            "watchlist_peripheral_etfs",
+            "low_value_allowed_research_priorities",
+            "low_value_excluded_research_risks",
+        ):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, list)
+                or any(not isinstance(item, str) or not item.strip() for item in value)
+            ):
+                err(name, "must be a list of non-empty strings")
+
+        if not isinstance(self.channel_profiles, dict) or not self.channel_profiles:
+            err("channel_profiles", "must be a non-empty object")
+        else:
+            allowed_profile_keys = {
+                "require_positive_revenue", "require_positive_net_income",
+                "require_positive_operating_cash_flow", "require_positive_free_cash_flow",
+                "require_positive_ebit", "require_channel_bucket_match",
+                "min_watchlist_etf_count", "min_ai_link_score", "min_avg_dollar_volume_20d",
+                "min_net_margin", "min_revenue", "min_net_income", "min_operating_cash_flow",
+                "min_free_cash_flow", "min_ebit", "max_ev_to_ebit", "max_ps", "max_pe",
+                "min_fcf_yield", "max_ps_percentile_in_sic", "max_pe_percentile_in_sic",
+                "min_revenue_yoy", "min_net_income_yoy", "min_fundamental_quality_score",
+                "max_net_debt_to_ebitda", "min_interest_coverage", "max_current_debt_ratio",
+                "min_current_ratio", "min_ocf_to_net_income", "max_accrual_ratio",
+                "max_receivables_growth_gap", "max_inventory_growth_gap", "max_shares_yoy",
+                "max_ps_hist_percentile", "max_pe_hist_percentile", "min_expectation_proxy",
+                "min_cycle_proxy", "max_adv_participation", "max_estimated_slippage_bps",
+                "min_ps_discount", "min_pe_discount", "min_drawdown_from_52w_high",
+                "max_range_position_52w", "min_range_position_52w", "max_price_to_sma200",
+                "min_price_to_sma200", "min_days_below_sma200", "min_return_20d",
+                "min_return_60d", "max_20d_return", "max_60d_volatility",
+                "min_drawdown_percentile", "min_avg_dollar_volume_20d_percentile",
+                "max_60d_volatility_percentile", "hard_filter_current_debt_ratio",
+                "hard_filter_inventory_growth_gap", "score_weights",
+                "trend_min_return_60d", "trend_max_60d_volatility",
+                "trend_min_avg_dollar_volume_20d", "trend_min_watchlist_etf_count",
+                "trend_score_weights", "momentum_min_return_20d",
+                "momentum_min_return_60d", "momentum_min_price_to_sma200",
+                "momentum_max_drawdown_from_52w_high", "momentum_max_60d_volatility",
+                "momentum_min_avg_dollar_volume_20d", "momentum_min_watchlist_etf_count",
+                "momentum_score_weights",
+            }
+            for channel, profile in self.channel_profiles.items():
+                if not isinstance(channel, str) or not channel.strip():
+                    err("channel_profiles", "channel names must be non-empty strings")
+                    continue
+                if not isinstance(profile, dict):
+                    err(f"channel_profiles.{channel}", "must be an object")
+                    continue
+                extra = sorted(set(profile) - allowed_profile_keys)
+                if extra:
+                    err(
+                        f"channel_profiles.{channel}",
+                        "unknown keys: " + ", ".join(extra),
+                    )
+                bool_profile_keys = {
+                    "require_positive_revenue",
+                    "require_positive_net_income",
+                    "require_positive_operating_cash_flow",
+                    "require_positive_free_cash_flow",
+                    "require_positive_ebit",
+                    "require_channel_bucket_match",
+                    "hard_filter_current_debt_ratio",
+                    "hard_filter_inventory_growth_gap",
+                }
+                int_profile_keys = {
+                    "min_watchlist_etf_count",
+                    "min_days_below_sma200",
+                    "trend_min_watchlist_etf_count",
+                    "momentum_min_watchlist_etf_count",
+                }
+                dict_profile_keys = {
+                    "score_weights",
+                    "trend_score_weights",
+                    "momentum_score_weights",
+                }
+                for key, value in profile.items():
+                    if key in bool_profile_keys:
+                        if not isinstance(value, bool):
+                            err(f"channel_profiles.{channel}.{key}", "must be boolean")
+                        continue
+                    if key in int_profile_keys:
+                        if (
+                            value is not None
+                            and (
+                                isinstance(value, bool)
+                                or not isinstance(value, int)
+                                or value < 0
+                            )
+                        ):
+                            err(
+                                f"channel_profiles.{channel}.{key}",
+                                "must be a non-negative integer or null",
+                            )
+                        continue
+                    if key in dict_profile_keys:
+                        continue
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                    ):
+                        err(
+                            f"channel_profiles.{channel}.{key}",
+                            "must be a finite numeric value or null",
+                        )
+
+                min_range = profile.get("min_range_position_52w")
+                max_range = profile.get("max_range_position_52w")
+                if (
+                    isinstance(min_range, (int, float))
+                    and not isinstance(min_range, bool)
+                    and isinstance(max_range, (int, float))
+                    and not isinstance(max_range, bool)
+                    and float(min_range) > float(max_range)
+                ):
+                    err(
+                        f"channel_profiles.{channel}.min/max_range_position_52w",
+                        "must satisfy min <= max",
+                    )
+                min_sma = profile.get("min_price_to_sma200")
+                max_sma = profile.get("max_price_to_sma200")
+                if (
+                    isinstance(min_sma, (int, float))
+                    and not isinstance(min_sma, bool)
+                    and isinstance(max_sma, (int, float))
+                    and not isinstance(max_sma, bool)
+                    and float(min_sma) > float(max_sma)
+                ):
+                    err(
+                        f"channel_profiles.{channel}.min/max_price_to_sma200",
+                        "must satisfy min <= max",
+                    )
+
+                allowed_score_weight_keys = {
+                    "accrual_ratio_low",
+                    "adv_participation_low",
+                    "ai_link_score",
+                    "current_debt_ratio_low",
+                    "cycle_proxy",
+                    "days_below_sma200",
+                    "drawdown_from_52w_high",
+                    "ebit_yoy",
+                    "estimated_slippage_bps_low",
+                    "ev_to_ebit_low",
+                    "expectation_proxy",
+                    "fcf_yield",
+                    "fundamental_quality_score",
+                    "interest_coverage",
+                    "inventory_growth_gap_low",
+                    "liquidity",
+                    "net_debt_to_ebitda_low",
+                    "net_income_yoy",
+                    "net_margin",
+                    "ocf_to_net_income",
+                    "operating_cash_flow_yoy",
+                    "pe_discount",
+                    "pe_hist_percentile_low",
+                    "pe_percentile_low",
+                    "ps_discount",
+                    "ps_hist_percentile_low",
+                    "ps_percentile_low",
+                    "range_position_52w_low",
+                    "return_20d",
+                    "return_60d",
+                    "revenue_yoy",
+                    "shares_yoy_low",
+                    "soft_pass_rate",
+                    "watchlist_etf_count",
+                }
+                for weight_key in ("score_weights", "trend_score_weights", "momentum_score_weights"):
+                    weights = profile.get(weight_key)
+                    if weights is None:
+                        continue
+                    if not isinstance(weights, dict) or not weights:
+                        err(f"channel_profiles.{channel}.{weight_key}", "must be a non-empty object")
+                        continue
+                    unknown_metrics = sorted(set(weights) - allowed_score_weight_keys)
+                    if unknown_metrics:
+                        err(
+                            f"channel_profiles.{channel}.{weight_key}",
+                            "unknown score dimensions: " + ", ".join(unknown_metrics),
+                        )
+                    for metric, weight in weights.items():
+                        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)):
+                            err(
+                                f"channel_profiles.{channel}.{weight_key}.{metric}",
+                                "must be a finite numeric weight",
+                            )
+
+                for pct_key in (
+                    "min_ai_link_score", "min_fundamental_quality_score",
+                    "max_ps_percentile_in_sic", "max_pe_percentile_in_sic",
+                    "max_ps_hist_percentile", "max_pe_hist_percentile",
+                    "min_drawdown_percentile", "min_avg_dollar_volume_20d_percentile",
+                    "max_60d_volatility_percentile", "min_range_position_52w",
+                    "max_range_position_52w",
+                ):
+                    value = profile.get(pct_key)
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                        or float(value) < 0.0
+                        or float(value) > 1.0
+                    ):
+                        err(f"channel_profiles.{channel}.{pct_key}", "must be within [0, 1] or null")
+
+        if not isinstance(self.low_coverage_soft_score_weights, dict):
+            err("low_coverage_soft_score_weights", "must be an object")
+        else:
+            allowed_soft = {"current_debt_ratio_low", "inventory_growth_gap_low"}
+            extra_soft = sorted(set(self.low_coverage_soft_score_weights) - allowed_soft)
+            if extra_soft:
+                err(
+                    "low_coverage_soft_score_weights",
+                    "unknown score dimensions: " + ", ".join(extra_soft),
+                )
+            for metric, weight in self.low_coverage_soft_score_weights.items():
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)) or float(weight) < 0:
+                    err(f"low_coverage_soft_score_weights.{metric}", "must be a finite non-negative number")
+
+        if not isinstance(self.triage_rules, dict):
+            err("triage_rules", "must be an object")
+        else:
+            extra_triage = sorted(set(self.triage_rules) - {"keep", "drop"})
+            if extra_triage:
+                err("triage_rules", "unknown sections: " + ", ".join(extra_triage))
+            keep_rules = self.triage_rules.get("keep", {})
+            if not isinstance(keep_rules, dict):
+                err("triage_rules.keep", "must be an object")
+            else:
+                for channel, rule in keep_rules.items():
+                    if not isinstance(rule, dict):
+                        err(f"triage_rules.keep.{channel}", "must be an object")
+                        continue
+                    extra = sorted(
+                        set(rule)
+                        - {"min_composite_score", "min_ps_discount", "min_pe_discount"}
+                    )
+                    if extra:
+                        err(
+                            f"triage_rules.keep.{channel}",
+                            "unknown keys: " + ", ".join(extra),
+                        )
+                    for key, value in rule.items():
+                        if (
+                            isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not np.isfinite(float(value))
+                        ):
+                            err(
+                                f"triage_rules.keep.{channel}.{key}",
+                                "must be a finite numeric value",
+                            )
+            drop_rules = self.triage_rules.get("drop", {})
+            if not isinstance(drop_rules, dict):
+                err("triage_rules.drop", "must be an object")
+            else:
+                extra = sorted(
+                    set(drop_rules)
+                    - {"max_composite_score", "require_both_value_premium"}
+                )
+                if extra:
+                    err("triage_rules.drop", "unknown keys: " + ", ".join(extra))
+                if "max_composite_score" in drop_rules:
+                    value = drop_rules["max_composite_score"]
+                    if (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                    ):
+                        err(
+                            "triage_rules.drop.max_composite_score",
+                            "must be a finite numeric value",
+                        )
+                if "require_both_value_premium" in drop_rules and not isinstance(
+                    drop_rules["require_both_value_premium"], bool
+                ):
+                    err(
+                        "triage_rules.drop.require_both_value_premium",
+                        "must be boolean",
+                    )
+
+        if errors:
+            raise ValueError("Invalid ScanConfig:\n- " + "\n- ".join(errors))
 
 
 @dataclass
@@ -656,6 +1248,7 @@ class NetworkMonitor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stats: dict[str, ServiceNetworkStats] = {}
+        self._data_provenance: dict[str, dict[str, dict[str, Any]]] = {}
 
     def _bucket(self, service: str) -> ServiceNetworkStats:
         if service not in self._stats:
@@ -720,6 +1313,52 @@ class NetworkMonitor:
             else:
                 s.cache_misses += 1
 
+    def record_data_source(
+        self,
+        service: str,
+        namespace: str,
+        source: str,
+        cache_age_sec: float | None = None,
+        *,
+        data_asof_utc: str | None = None,
+        feed: str | None = None,
+        degraded_reason: str | None = None,
+    ) -> None:
+        """Record returned-data provenance separately from cache file age."""
+        with self._lock:
+            service_map = self._data_provenance.setdefault(service, {})
+            row = service_map.setdefault(
+                namespace,
+                {
+                    "counts": {},
+                    "max_cache_age_sec": None,
+                    "latest_data_asof_utc": None,
+                    "feed": None,
+                    "degraded_reasons": [],
+                    "last_observed_at_utc": None,
+                    "stale_fallback_used": False,
+                },
+            )
+            counts = row["counts"]
+            counts[source] = int(counts.get(source, 0)) + 1
+            row["last_observed_at_utc"] = datetime.now(timezone.utc).isoformat()
+            if cache_age_sec is not None and np.isfinite(float(cache_age_sec)):
+                age = max(0.0, float(cache_age_sec))
+                previous = row.get("max_cache_age_sec")
+                row["max_cache_age_sec"] = age if previous is None else max(float(previous), age)
+            if data_asof_utc:
+                previous_asof = row.get("latest_data_asof_utc")
+                if previous_asof is None or str(data_asof_utc) > str(previous_asof):
+                    row["latest_data_asof_utc"] = str(data_asof_utc)
+            if feed:
+                row["feed"] = str(feed)
+            if degraded_reason:
+                reasons = row["degraded_reasons"]
+                if degraded_reason not in reasons:
+                    reasons.append(str(degraded_reason))
+            if source in {"stale_cache_fallback", "stale_cross_key_fallback"}:
+                row["stale_fallback_used"] = True
+
     def to_dict(self) -> dict[str, Any]:
         with self._lock:
             services = {}
@@ -757,8 +1396,16 @@ class NetworkMonitor:
                 )
                 services[service] = row
                 any_issue = any_issue or row["had_rate_limit_or_network_issue"]
+            provenance = json.loads(json.dumps(self._data_provenance))
+            stale_market_data = any(
+                bool(row.get("stale_fallback_used"))
+                for service_map in provenance.values()
+                for row in service_map.values()
+            )
             return {
                 "had_rate_limit_or_network_issue": any_issue,
+                "stale_market_data_fallback_used": stale_market_data,
+                "data_provenance": provenance,
                 "services": services,
             }
 
@@ -864,6 +1511,46 @@ class AlpacaClient:
         ).hexdigest()
         return self.cache_dir / f"{namespace}_{digest}.json"
 
+    @staticmethod
+    def _payload_data_asof(namespace: str, payload: Any) -> str | None:
+        timestamps: list[str] = []
+        if namespace == "bars" and isinstance(payload, dict):
+            for rows in payload.values():
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if isinstance(row, dict) and row.get("t"):
+                        timestamps.append(str(row["t"]))
+        elif namespace == "snapshots" and isinstance(payload, dict):
+            for snap in payload.values():
+                if not isinstance(snap, dict):
+                    continue
+                for key in ("latestTrade", "latestQuote", "minuteBar", "dailyBar", "prevDailyBar"):
+                    item = snap.get(key)
+                    if isinstance(item, dict) and item.get("t"):
+                        timestamps.append(str(item["t"]))
+        return max(timestamps) if timestamps else None
+
+    def _record_market_source(
+        self,
+        namespace: str,
+        source: str,
+        payload: Any,
+        cache_age_sec: float | None = None,
+        degraded_reason: str | None = None,
+    ) -> None:
+        if not self.monitor:
+            return
+        self.monitor.record_data_source(
+            "alpaca",
+            namespace,
+            source,
+            cache_age_sec,
+            data_asof_utc=self._payload_data_asof(namespace, payload),
+            feed=self.feed,
+            degraded_reason=degraded_reason,
+        )
+
     def _load_cache(
         self, namespace: str, key_payload: dict[str, Any], ttl_sec: int
     ) -> Any | None:
@@ -883,6 +1570,7 @@ class AlpacaClient:
             payload = json.loads(cache_path.read_text())
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                self._record_market_source(namespace, "fresh_cache", payload, age)
             return payload
         except Exception:
             if self.monitor:
@@ -901,6 +1589,14 @@ class AlpacaClient:
             payload = json.loads(cache_path.read_text())
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                age = time.time() - cache_path.stat().st_mtime
+                self._record_market_source(
+                    namespace,
+                    "stale_cache_fallback",
+                    payload,
+                    age,
+                    degraded_reason="network/request failed; exact-key stale cache used",
+                )
             return payload
         except Exception:
             if self.monitor:
@@ -931,13 +1627,26 @@ class AlpacaClient:
                     hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
+                self._record_market_source(
+                    "snapshots",
+                    "stale_cross_key_fallback",
+                    {symbol: out[symbol] for symbol in out if symbol in payload},
+                    time.time() - path.stat().st_mtime,
+                    degraded_reason="network/request failed; alternate snapshot cache used",
+                )
         if out:
             return out
         if self.monitor:
             self.monitor.record_cache("alpaca", hit=False)
         return {}
 
-    def _load_bars_from_any_cache(self, symbols: list[str], start_iso: str) -> dict[str, list[dict[str, Any]]]:
+    def _load_bars_from_any_cache(
+        self,
+        symbols: list[str],
+        start_iso: str,
+        *,
+        provenance_source: str = "cross_key_cache",
+    ) -> dict[str, list[dict[str, Any]]]:
         if not self.cache_enabled:
             return {}
         targets = [str(s).upper() for s in symbols if s]
@@ -947,6 +1656,7 @@ class AlpacaClient:
         best_rows: dict[str, list[dict[str, Any]]] = {}
         best_min_ts: dict[str, str] = {}
         best_len: dict[str, int] = {}
+        best_age_sec: dict[str, float] = {}
         start_key = str(start_iso or "")
         for path in sorted(self.cache_dir.glob("bars_*.json")):
             try:
@@ -984,10 +1694,25 @@ class AlpacaClient:
                     best_rows[symbol] = candidate
                     best_len[symbol] = cand_len
                     best_min_ts[symbol] = min_ts
+                    best_age_sec[symbol] = max(0.0, time.time() - path.stat().st_mtime)
                 hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
         if best_rows:
+            if self.monitor:
+                degraded_reason = (
+                    "network/request failed; alternate bars cache used"
+                    if provenance_source == "stale_cross_key_fallback"
+                    else None
+                )
+                for symbol in sorted(best_rows):
+                    self._record_market_source(
+                        "bars",
+                        provenance_source,
+                        {symbol: best_rows[symbol]},
+                        best_age_sec.get(symbol),
+                        degraded_reason=degraded_reason,
+                    )
             return best_rows
         if self.monitor:
             self.monitor.record_cache("alpaca", hit=False)
@@ -1069,6 +1794,8 @@ class AlpacaClient:
             resp = self._get(url, params=params)
             payload = resp.json()
             self._save_cache("assets", cache_key, payload)
+            if self.monitor:
+                self._record_market_source("assets", "network", payload)
             return payload
         except Exception:
             stale = self._load_cache_stale("assets", cache_key)
@@ -1101,6 +1828,8 @@ class AlpacaClient:
                     else:
                         payload = {}
                     self._save_cache("snapshots", cache_key, payload)
+                    if self.monitor:
+                        self._record_market_source("snapshots", "network", payload)
                 except Exception:
                     stale = self._load_cache_stale("snapshots", cache_key)
                     if isinstance(stale, dict):
@@ -1206,7 +1935,11 @@ class AlpacaClient:
                     if not min_ts or (start_iso and min_ts > str(start_iso)):
                         needs_enrichment.append(sym)
                 if needs_enrichment:
-                    any_cache = self._load_bars_from_any_cache(needs_enrichment, start_iso)
+                    any_cache = self._load_bars_from_any_cache(
+                        needs_enrichment,
+                        start_iso,
+                        provenance_source="cross_key_cache_enrichment",
+                    )
                     for symbol, rows in any_cache.items():
                         existing = bars_by_symbol.get(symbol)
                         if self._should_replace_rows(existing, rows, start_iso):
@@ -1215,6 +1948,7 @@ class AlpacaClient:
                 continue
 
             batch_bars: dict[str, list[dict[str, Any]]] = {}
+            fetched_from_network = False
             try:
                 page_token: str | None = None
                 while True:
@@ -1240,6 +1974,9 @@ class AlpacaClient:
                     page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
                     if not page_token:
                         break
+                fetched_from_network = True
+                if self.monitor:
+                    self._record_market_source("bars", "network", batch_bars)
             except Exception:
                 stale = self._load_cache_stale("bars", cache_key)
                 if isinstance(stale, dict):
@@ -1247,14 +1984,22 @@ class AlpacaClient:
                         if isinstance(rows, list):
                             batch_bars.setdefault(symbol, []).extend(rows)
                 else:
-                    any_cache = self._load_bars_from_any_cache(batch, start_iso)
+                    any_cache = self._load_bars_from_any_cache(
+                        batch,
+                        start_iso,
+                        provenance_source="stale_cross_key_fallback",
+                    )
                     if any_cache:
                         for symbol, rows in any_cache.items():
                             if isinstance(rows, list):
                                 batch_bars.setdefault(symbol, []).extend(rows)
                     else:
                         raise
-            self._save_cache("bars", cache_key, batch_bars)
+            # Never refresh cache mtime with fallback data. Otherwise a stale
+            # payload becomes indistinguishable from a fresh TTL cache on the
+            # next run.
+            if fetched_from_network:
+                self._save_cache("bars", cache_key, batch_bars)
             for symbol, rows in batch_bars.items():
                 bars_by_symbol.setdefault(symbol, []).extend(rows)
             time.sleep(0.05)
@@ -3253,9 +3998,22 @@ def resolve_channel_profile(
 
 def load_config(path: str | None) -> ScanConfig:
     if not path:
-        return ScanConfig()
+        config = ScanConfig()
+        config.validate()
+        return config
     raw = json.loads(Path(path).read_text())
-    return ScanConfig.from_dict(raw)
+    config = ScanConfig.from_dict(raw)
+    name = Path(path).name
+    expected_style = {
+        "config.risk_on.json": "risk_on",
+        "config.risk_off.json": "risk_off",
+    }.get(name)
+    if expected_style is not None and config.strategy_style != expected_style:
+        raise ValueError(
+            f"{path}: strategy_style must be {expected_style!r}; "
+            f"got {config.strategy_style!r}"
+        )
+    return config
 
 
 def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, NetworkMonitor]:
@@ -5077,7 +5835,9 @@ def apply_scored_or_hard_filters(
     production momentum lists were empty despite hundreds of backtest picks.
     """
     if str(getattr(config, "filter_mode", "scored")).lower() == "scored":
-        hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+        hard_steps, soft_steps = partition_filter_steps(
+            steps, channel_name, config.strategy_style
+        )
         filtered, diagnostics = apply_filters_with_diagnostics(df, hard_steps)
         if not filtered.empty and soft_steps:
             soft_matrix = pd.DataFrame(
@@ -5097,21 +5857,22 @@ def apply_scored_or_hard_filters(
 
 
 def partition_filter_steps(
-    steps: list[tuple[str, Any]], channel_name: str
+    steps: list[tuple[str, Any]],
+    channel_name: str,
+    strategy_style: str | None = None,
 ) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
     """Split filter steps into hard gates (core + style-structural) and soft.
 
-    In scored mode the hard gates are the only pass/fail elimination;
-    soft steps are evaluated on survivors and contribute to composite_score
-    via the soft_pass_rate scoring dimension.
+    Style is explicit. Production risk_on/risk_off configs carry
+    ScanConfig.strategy_style; non-style configs retain the historical
+    risk_off structural default rather than inferring style from whichever
+    threshold names happen to be enabled.
     """
-    # Determine style from config path convention (risk_off vs risk_on).
-    # For now use a simple heuristic: the presence of min_price_to_sma200
-    # in the step list indicates risk_on structural gates.
-    style = "risk_on" if any(
-        name == "min_price_to_sma200" for name, _ in steps
-    ) else "risk_off"
-    structural = STYLE_STRUCTURAL_STEP_NAMES.get(style, frozenset())
+    del channel_name  # retained for API compatibility / future per-channel policy
+    style = strategy_style or "risk_off"
+    if style not in STYLE_STRUCTURAL_STEP_NAMES:
+        raise ValueError(f"Unsupported strategy_style for filter partition: {style!r}")
+    structural = STYLE_STRUCTURAL_STEP_NAMES[style]
     hard: list[tuple[str, Any]] = []
     soft: list[tuple[str, Any]] = []
     for name, fn in steps:
@@ -5676,6 +6437,8 @@ def build_run_report_markdown(
     paths: dict[str, Path],
     network_issue_flag: bool,
     sec_cache_summary: str | None,
+    market_data_provenance: dict[str, Any] | None = None,
+    strategy_style: str | None = None,
     scan_config_path: str | None = None,
     industry_trend_count: int | None = None,
     industry_trend_path: Path | None = None,
@@ -5689,9 +6452,10 @@ def build_run_report_markdown(
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
     lines.append("")
-    # Config path in the header: downstream tooling (trade plan generator)
-    # MUST identify the style from the report itself — mtime-order pairing
-    # across runs mislabels styles when the number of reports is odd.
+    # Explicit style identity is authoritative for current reports. Config
+    # path remains for provenance and legacy downstream compatibility.
+    if strategy_style is not None:
+        lines.append(f"- Strategy-Style: {strategy_style}")
     if scan_config_path is not None:
         lines.append(f"- Config: {scan_config_path}")
     lines.append(f"- Started UTC: {started_at.isoformat()}")
@@ -5831,6 +6595,29 @@ def build_run_report_markdown(
             lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
             lines.append(f"- avoid_for_now: {priority_counts.get('avoid_for_now', 0)}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
+    if market_data_provenance:
+        stale_used = bool(market_data_provenance.get("stale_market_data_fallback_used"))
+        lines.append(
+            f"- stale market-data fallback used: {'YES' if stale_used else 'NO'}"
+        )
+        alpaca_sources = (
+            market_data_provenance.get("data_provenance", {}).get("alpaca", {})
+        )
+        for namespace in ("assets", "snapshots", "bars"):
+            row = alpaca_sources.get(namespace)
+            if not isinstance(row, dict):
+                continue
+            counts = row.get("counts", {})
+            age = row.get("max_cache_age_sec")
+            age_text = "n/a" if age is None else f"{float(age):.0f}s"
+            data_asof = row.get("latest_data_asof_utc") or "n/a"
+            feed = row.get("feed") or "n/a"
+            degraded = row.get("degraded_reasons") or []
+            lines.append(
+                f"- alpaca {namespace} provenance: {counts} | feed={feed} "
+                f"| data_asof={data_asof} | max_cache_age={age_text}"
+                + (f" | degraded={degraded}" if degraded else "")
+            )
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
     lines.append("")
@@ -6795,6 +7582,8 @@ def run_scan(
     report["finished_at_utc"] = finished_at.isoformat()
     report["elapsed_seconds"] = round((finished_at - started_at).total_seconds(), 2)
     report["scan_context"] = {
+        "config_schema_version": config.config_schema_version,
+        "strategy_style": config.strategy_style,
         "max_symbols": config.max_symbols,
         "top_n_per_channel_low_value": top_n_low_value,
         "top_n_per_channel_trend": top_n_trend,
@@ -6862,6 +7651,8 @@ def run_scan(
         paths=paths,
         network_issue_flag=bool(report.get("had_rate_limit_or_network_issue")),
         sec_cache_summary=sec_cache_summary,
+        market_data_provenance=report,
+        strategy_style=config.strategy_style,
         scan_config_path=scan_config_path,
         industry_trend_count=len(industry_trend),
         industry_trend_path=trend_out_path,

@@ -172,6 +172,8 @@
 
 验收：网络失败并使用旧缓存时，报告可识别降级；重写文件不改变数据 `asof`；计划检查所用个股和基准的数据时点。
 
+**2026-10-05 修复状态：已处理。** Alpaca 数据读取现在把 network / TTL 内缓存 / 精确 stale fallback / 跨 key fallback 分开记录，network diagnostics 与扫描 Markdown 同时输出 source、feed、市场数据 `data_asof`、缓存文件年龄、观测时间与降级原因。bars 网络失败后若使用旧缓存，不再把 fallback payload 重新写回缓存，因此旧数据不会通过刷新 mtime 被伪装成新鲜缓存。新增离线回归测试覆盖 stale fallback、mtime 保持与 provenance 字段。该机制是研究数据质量标记，不引入账户/订单状态。
+
 ### R01：早期 union 回放含未来 ETF 特征
 
 位置：[backtest.py](../src/ai_value_scanner/backtest.py)，`build_union_watchlist_map`、`resolve_watchlist_asof`、`build_cross_section_asof`。
@@ -357,6 +359,8 @@
 建议：增加明确的 style／schema version，显式声明硬门／软项；校验字段、范围、权重及 null 语义。`_theme_meta` 等元数据使用明确命名空间；保留兼容入口，并对生产配置采用严格检查。不要未经审查把现有整体替换改成深合并，以免继承不应存在的通道。
 
 验收：拼错的关键字段可定位；非法组合启动时失败；关闭单个阈值不隐式改变风格；生成配置与加载结果可对照。
+
+**2026-10-05 修复状态：已处理。** `ScanConfig` 增加 v1 配置契约与 fail-fast 校验：未知顶层/通道/评分维度/triage key、错误类型、非法范围和关键交叉约束在加载阶段失败；以下划线开头的 theme/venture 元数据保留为非运行时命名空间。生产 `risk_on/risk_off` 明确声明 `strategy_style`，扫描报告写出 `Strategy-Style:`，tuner 晋级与 scanner/backtest 的 hard/soft partition 均读取显式 style，不再通过 `min_price_to_sma200` 等阈值名反推风格。原有 `channel_profiles` 整体替换语义保持不变，没有引入隐式深合并。新增测试遍历全部运行时 config 并覆盖错拼字段、schema version、style mismatch 和显式 partition 行为。
 
 ### E03：测试通过不证明公式正确
 
@@ -565,3 +569,18 @@ PY
 - 维度级 IC（H=60）：risk_off `pe_discount` +0.0336（t=2.68，保持显著）；risk_on `ps_discount` +0.0749（t=2.49，改善）；`fcf_yield` 在 risk_off 仍为负（-0.104，价值陷阱结论不变）。
 - 权重决策：**不更换**。1000 候选中 37%/28% 超过基线验证分，但 top5-by-train 与 top5-by-valid 零重合——单次运行选权重不可靠，与既往多种子共识流程一致；基线稳定处于中位之上。若需新权重，应跑多种子共识后再评估。
 - 旧数据集与旧 sweep 报告保留为历史产物（`*_rebuilt_20261001*`、`*_haircut_rebuild*`）。
+
+
+2026-10-05（续3）：PR #2 已合并（merge `7e6387dd`），**R03** 完成 anchored OOS walk-forward：候选只用前序窗口选择，下一窗口 held-out；训练事件按 `label_end_date` purge 跨验证边界的 20/60/120d 标签，pooled 模式降级为研究诊断且禁止 promote。R05 仍明确为 non-overlapping sampling diagnostic，不宣称账户 NAV 回撤。
+
+2026-10-05（续4）：**E02 / D03 correctness 修复进入 PR**。
+
+- **E02 配置契约**：
+  - `ScanConfig.from_dict` 对所有 dataclass 顶层字段按类型注解 fail-fast；未知运行时 key 不再警告后忽略（以下划线开头的 theme/venture 文档元数据除外）。
+  - 增加关键范围/交叉约束验证（并发/TTL/quantile、百分位、winsor lower<upper、min/max range/SMA、channel profile 类型与未知 key、score weight 数值等）。
+  - `config.risk_on.json` / `config.risk_off.json` 增加显式 `strategy_style`；加载时文件身份与字段必须匹配。扫描报告输出 `Strategy-Style:`，trade-plan reference 与 tuner promotion 优先使用显式身份，文件名仅作为旧报告兼容回退。
+- **D03 行情 freshness/provenance**：
+  - `NetworkMonitor` 记录 Alpaca assets/snapshots/bars 的来源（network / fresh_cache / stale fallback / cross-key enrichment）、最大 cache age 与 stale-fallback 总标记；scan/backtest network JSON 可机器读取，扫描 Markdown 同步摘要。
+  - 修复 bars 网络失败后的关键问题：stale/cross-key fallback 数据不再重新写入 exact-key cache，因此不会通过刷新 mtime 把旧行情伪装成 TTL 内新鲜数据。
+  - cross-key bars provenance 只统计最终被采用的缓存候选，避免把扫描过但未采用的文件年龄误报为实际数据来源。
+- 新增回归测试覆盖：全部现有 runtime config 均可加载、未知/类型/范围/嵌套 typo fail-fast、显式 style 身份、stale bars fallback 保留原 mtime、fresh/stale provenance 标记。

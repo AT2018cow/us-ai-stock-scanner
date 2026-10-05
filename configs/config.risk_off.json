@@ -1,4 +1,6 @@
 {
+  "config_schema_version": 1,
+  "strategy_style": "risk_off",
   "max_symbols": null,
   "max_workers": 8,
   "chunk_size": 200,
