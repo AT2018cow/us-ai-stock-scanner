@@ -522,8 +522,8 @@ class ScanConfig:
     nonrecurring_addback_revenue_cap: float | None = 0.25
     use_ttm_metrics: bool = True
     min_fundamental_quality_score: float | None = 0.45
-    min_revenue: float = 10_000_000.0
-    min_net_income: float = 1_000_000.0
+    min_revenue: float | None = 10_000_000.0
+    min_net_income: float | None = 1_000_000.0
     min_operating_cash_flow: float | None = 0.0
     min_free_cash_flow: float | None = 0.0
     min_ebit: float | None = 0.0
@@ -562,8 +562,8 @@ class ScanConfig:
     )
     score_penalty_overvaluation: float = 0.20
     score_penalty_deterioration: float = 0.20
-    min_ps_discount: float = 0.15
-    min_pe_discount: float = 0.10
+    min_ps_discount: float | None = 0.15
+    min_pe_discount: float | None = 0.10
     # 0..1: how strongly NI-based PE cheap-credit is discounted by OCF/NI cash
     # backing (1.0 = trust cheap credit exactly in proportion to OCF/NI;
     # 0.0 = legacy behavior). Guards against non-operating gains (e.g.
