@@ -2214,7 +2214,9 @@ def rank_and_pick_symbols_with_diagnostics(
         if str(getattr(scan_config, "filter_mode", "scored")).lower() == "scored":
             from ai_value_scanner.scanner import partition_filter_steps
 
-            hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+            hard_steps, soft_steps = partition_filter_steps(
+                steps, channel_name, scan_config.strategy_style
+            )
             filtered, step_diagnostics = apply_filters_with_diagnostics(df, hard_steps)
             if not filtered.empty and soft_steps:
                 soft_matrix = pd.DataFrame(
