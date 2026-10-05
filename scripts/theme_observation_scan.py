@@ -200,6 +200,14 @@ def archive_cohort(
         else incoming.head(0)
     )
     incoming = _backfill_cohort_identity(incoming)
+    if (
+        not existing.empty
+        and "cohort_id" in existing.columns
+        and existing["cohort_id"].fillna("").astype(str).eq(cohort_id).any()
+    ):
+        log(f"{theme}: weekly cohort {cohort_id} already frozen; rerun leaves it unchanged")
+        return
+
     for col in ("cohort_id", "list_type", "symbol"):
         if col in existing.columns:
             existing[col] = existing[col].fillna("")
