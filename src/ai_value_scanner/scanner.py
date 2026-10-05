@@ -746,6 +746,12 @@ class ScanConfig:
         for name in (
             "max_adv_participation",
             "pe_cash_backing_haircut",
+            "soft_filter_weight",
+            "nonrecurring_addback_revenue_cap",
+            "ai_link_weight_etf_consensus",
+            "ai_link_weight_disclosure",
+            "ai_link_weight_market_link",
+            "ai_link_weight_backlog",
             "score_winsor_lower_q",
             "score_winsor_upper_q",
         ):
@@ -767,6 +773,20 @@ class ScanConfig:
             and float(self.score_winsor_lower_q) >= float(self.score_winsor_upper_q)
         ):
             err("score_winsor_lower_q/score_winsor_upper_q", "must satisfy lower < upper")
+        if self.max_market_cap is not None:
+            require_number("max_market_cap", minimum=0.0, allow_none=True)
+            if (
+                isinstance(self.max_market_cap, (int, float))
+                and isinstance(self.min_market_cap, (int, float))
+                and float(self.max_market_cap) < float(self.min_market_cap)
+            ):
+                err("max_market_cap", "must be >= min_market_cap")
+        if self.min_range_position_52w is not None and self.max_range_position_52w is not None:
+            if float(self.min_range_position_52w) > float(self.max_range_position_52w):
+                err("min_range_position_52w/max_range_position_52w", "must satisfy min <= max")
+        if self.min_price_to_sma200 is not None and self.max_price_to_sma200 is not None:
+            if float(self.min_price_to_sma200) > float(self.max_price_to_sma200):
+                err("min_price_to_sma200/max_price_to_sma200", "must satisfy min <= max")
 
         if self.filter_mode not in {"hard", "scored"}:
             err("filter_mode", "must be 'hard' or 'scored'")
@@ -3572,9 +3592,22 @@ def resolve_channel_profile(
 
 def load_config(path: str | None) -> ScanConfig:
     if not path:
-        return ScanConfig()
+        config = ScanConfig()
+        config.validate()
+        return config
     raw = json.loads(Path(path).read_text())
-    return ScanConfig.from_dict(raw)
+    config = ScanConfig.from_dict(raw)
+    name = Path(path).name
+    expected_style = {
+        "config.risk_on.json": "risk_on",
+        "config.risk_off.json": "risk_off",
+    }.get(name)
+    if expected_style is not None and config.strategy_style != expected_style:
+        raise ValueError(
+            f"{path}: strategy_style must be {expected_style!r}; "
+            f"got {config.strategy_style!r}"
+        )
+    return config
 
 
 def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, NetworkMonitor]:
@@ -5995,6 +6028,8 @@ def build_run_report_markdown(
     paths: dict[str, Path],
     network_issue_flag: bool,
     sec_cache_summary: str | None,
+    market_data_provenance: dict[str, Any] | None = None,
+    strategy_style: str | None = None,
     scan_config_path: str | None = None,
     industry_trend_count: int | None = None,
     industry_trend_path: Path | None = None,
@@ -6008,9 +6043,10 @@ def build_run_report_markdown(
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
     lines.append("")
-    # Config path in the header: downstream tooling (trade plan generator)
-    # MUST identify the style from the report itself — mtime-order pairing
-    # across runs mislabels styles when the number of reports is odd.
+    # Explicit style identity is authoritative for current reports. Config
+    # path remains for provenance and legacy downstream compatibility.
+    if strategy_style is not None:
+        lines.append(f"- Strategy-Style: {strategy_style}")
     if scan_config_path is not None:
         lines.append(f"- Config: {scan_config_path}")
     lines.append(f"- Started UTC: {started_at.isoformat()}")
@@ -6150,6 +6186,24 @@ def build_run_report_markdown(
             lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
             lines.append(f"- avoid_for_now: {priority_counts.get('avoid_for_now', 0)}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
+    if market_data_provenance:
+        stale_used = bool(market_data_provenance.get("stale_market_data_fallback_used"))
+        lines.append(
+            f"- stale market-data fallback used: {'YES' if stale_used else 'NO'}"
+        )
+        alpaca_sources = (
+            market_data_provenance.get("data_provenance", {}).get("alpaca", {})
+        )
+        for namespace in ("assets", "snapshots", "bars"):
+            row = alpaca_sources.get(namespace)
+            if not isinstance(row, dict):
+                continue
+            counts = row.get("counts", {})
+            age = row.get("max_cache_age_sec")
+            age_text = "n/a" if age is None else f"{float(age):.0f}s"
+            lines.append(
+                f"- alpaca {namespace} provenance: {counts} | max_cache_age={age_text}"
+            )
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
     lines.append("")
@@ -7181,6 +7235,8 @@ def run_scan(
         paths=paths,
         network_issue_flag=bool(report.get("had_rate_limit_or_network_issue")),
         sec_cache_summary=sec_cache_summary,
+        market_data_provenance=report,
+        strategy_style=config.strategy_style,
         scan_config_path=scan_config_path,
         industry_trend_count=len(industry_trend),
         industry_trend_path=trend_out_path,
