@@ -200,6 +200,29 @@ def input_file(path: Path) -> dict[str, Any]:
     return record
 
 
+def directory_contract(path: Path, pattern: str = "*.csv") -> dict[str, Any]:
+    if not path.exists() or not path.is_dir():
+        raise FileNotFoundError(path)
+    files = sorted(p for p in path.glob(pattern) if p.is_file())
+    records = [
+        {
+            "name": p.name,
+            "sha256": sha256_file(p),
+            "bytes": p.stat().st_size,
+        }
+        for p in files
+    ]
+    digest = hashlib.sha256(
+        "\n".join(f"{r['name']}:{r['sha256']}" for r in records).encode("utf-8")
+    ).hexdigest()
+    return {
+        "path": str(path),
+        "file_count": len(records),
+        "sha256": digest,
+        "files": records,
+    }
+
+
 def watchlist_contract(path: Path) -> dict[str, Any]:
     record = input_file(path)
     frame = pd.read_csv(path)
@@ -303,6 +326,7 @@ def capture_manifest(args: argparse.Namespace) -> dict[str, Any]:
             ],
             "theme_source": "rules_proxy",
             "pre_snapshot_universe": "union",
+            "watchlist_history_dir": args.watchlist_history_dir,
             "allow_latest_watchlist_fallback": False,
             "promote": False,
         },
@@ -311,6 +335,7 @@ def capture_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "risk_on_config": input_file(root / args.risk_on_config),
             "tuner_param_space": input_file(root / args.param_space),
             "watchlist": watchlist_contract(root / args.watchlist),
+            "watchlist_history": directory_contract(root / args.watchlist_history_dir),
         },
         "runs": {
             "risk_off": backtest_contract(outputs, args.risk_off_prefix),
@@ -352,7 +377,13 @@ def compare_manifest(
         current.get("experiment_contract"),
         diffs,
     )
-    for key in ("risk_off_config", "risk_on_config", "tuner_param_space", "watchlist"):
+    for key in (
+        "risk_off_config",
+        "risk_on_config",
+        "tuner_param_space",
+        "watchlist",
+        "watchlist_history",
+    ):
         compare_values(
             f"inputs.{key}.sha256",
             baseline["inputs"][key]["sha256"],
@@ -415,6 +446,11 @@ def common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--risk-on-config", default="configs/config.risk_on.json")
     p.add_argument("--param-space", default="configs/tuner.param_space.json")
     p.add_argument("--watchlist", default="data/ai_watchlist.csv")
+    p.add_argument(
+        "--watchlist-history-dir",
+        default="data/watchlist_history",
+        help="Frozen PIT watchlist-history directory used by the baseline experiments.",
+    )
     p.add_argument("--replay-start", default="2023-01-01")
     p.add_argument("--replay-end", default="2026-03-31")
     p.add_argument("--rebalance-frequency", default="monthly")
