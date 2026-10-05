@@ -94,7 +94,7 @@ class ScoredListParityTest(unittest.TestCase):
     def test_momentum_partition_matches_backtest_shape(self):
         for ch, prof in (self.cfg.channel_profiles or {}).items():
             steps, _ = build_momentum_steps(self.cfg, ch, prof)
-            hard, soft = partition_filter_steps(steps, ch)
+            hard, soft = partition_filter_steps(steps, ch, self.cfg.strategy_style)
             # Core-only hard set: no momentum_* threshold may be a hard gate
             hard_names = {n for n, _ in hard}
             self.assertFalse(
