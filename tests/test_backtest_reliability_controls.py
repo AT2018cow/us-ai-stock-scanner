@@ -294,6 +294,39 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         self.assertIsNotNone(ret)
         self.assertEqual(round(float(ret), 6), 0.25)
 
+    def test_event_backtest_records_forward_label_end_for_purging(self) -> None:
+        idx = pd.date_range("2026-01-01", "2026-01-12", freq="B", tz="UTC")
+        frame = pd.DataFrame(
+            {
+                "open": [10, 11, 12, 13, 14, 15, 16, 17],
+                "close": [10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5],
+            },
+            index=idx,
+        )
+        signals = pd.DataFrame(
+            [
+                {
+                    "scenario": "base",
+                    "run_stem": "r1",
+                    "run_ts_utc": "2025-12-31T00:00:00+00:00",
+                    "signal_date": "2025-12-31",
+                    "list_type": "low_value",
+                    "symbols": ["AAA"],
+                    "n_selected": 1,
+                }
+            ]
+        )
+        events, benchmarks = event_backtest(
+            signals=signals,
+            prices_by_symbol={"AAA": frame, "QQQ": frame},
+            horizons=[3],
+            roundtrip_cost=0.0,
+            benchmark_symbols=["QQQ"],
+        )
+        # Entry is 2026-01-01; horizon=3 exits on the third trading row.
+        self.assertEqual(events.iloc[0]["label_end_date"], "2026-01-05")
+        self.assertEqual(benchmarks.iloc[0]["label_end_date"], "2026-01-05")
+
     def test_event_backtest_marks_no_signal_and_unpriced_events(self) -> None:
         signals = pd.DataFrame(
             [
@@ -326,6 +359,10 @@ class TestBacktestReliabilityControls(unittest.TestCase):
         )
         self.assertEqual(events.loc[0, "event_status"], "no_signal")
         self.assertEqual(events.loc[1, "event_status"], "unpriced")
+        # Even rows without a realized return get a conservative nominal
+        # label end, so boundary purging never treats unknown future labels
+        # as safely inside the training period.
+        self.assertTrue(bool(events["label_end_date"].notna().all()))
 
     def test_build_signal_diagnostics_parses_channel_json(self) -> None:
         signals = pd.DataFrame(
