@@ -933,16 +933,17 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 ### 13.19 `scripts/daily_run.py` —— 每日运行入口（推荐）
 
 ```bash
-.venv/bin/python scripts/daily_run.py  # 工作日：三套观察流 + 归档；默认不生成交易计划
+.venv/bin/python scripts/daily_run.py  # 美国市场工作日：三套观察流；周五冻结周度 paper cohort
 .venv/bin/python scripts/daily_run.py --generate-trade-plan --capital N  # 需要快速参考时显式生成
 .venv/bin/python scripts/daily_run.py --skip-scan --evaluate  # 只跑 cohort 结算
 ```
 
 按星期自动调度（详见 §15 与 `docs/theme_observation_protocol.md`）：
-- **工作日**：AI 双风格扫描 + 五主题扫描 + Venture sleeve 扫描 + cohort 归档
+- 业务日期按 **America/New_York** 计算（可用 `--run-date YYYY-MM-DD` 做确定性覆盖）
+- **工作日**：AI 双风格扫描 + 五主题/Venture observation；日度 theme/venture observation 默认不写 cohort
 - **周一额外**：数据质量门槛（validate_ttm_population）+ 主题篮子刷新 + Venture 底单重建
-- **周五额外**：全量 cohort 结算（--evaluate 传播到各观察脚本）
-- 周末仅 `--evaluate` 可用（市场关闭）
+- **周五额外**：冻结本周唯一 theme/venture paper cohort（first-freeze-wins）+ 结算已成熟 cohort
+- 周末仅 `--evaluate` 可用（按美国市场业务日期）
 - 扫描完成后自动跑左侧名单资金流（`flow_tracker.py`，`--skip-flow` 跳过）
 - **不会每日自动生成 trade plan**；它只是完整报告的人工快速参考，需要时显式传 `--generate-trade-plan`
 - 参考摘要不连接券商、不读取历史/当前持仓、不下单；`--capital` 只用于把模型权重换算成便于阅读的参考名义金额
@@ -959,7 +960,7 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 $100K/$1M 大单买方主动性（tick rule 近似）、场外占比与 3 日价格联合判定
 （`accumulate_confirm` / `accumulate_unconfirmed` / `distribute` / `mixed`）。
 定位是注释层（不进选股闸门）；单日流向是噪声，以多日聚合为准。
-- 日志：`.debug_logs/daily_YYYYMMDD.log`
+- runner 调度/结果摘要日志：`.debug_logs/daily_YYYYMMDD.log`；子进程完整输出仍直接写控制台
 
 ## 14. 说明与限制
 
@@ -983,8 +984,9 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 .venv/bin/python scripts/daily_run.py
 ```
 
-按星期自动执行：工作日跑 AI 双风格 + 五主题 + Venture 三套观察扫描 + cohort 归档；
-周一额外跑数据质量门槛 + 主题篮子刷新 + venture 三层底单重建；周五额外跑 cohort 结算。
+按 America/New_York 业务日期自动执行：工作日跑 AI 双风格 + 五主题 + Venture 三套 observation；
+周一额外跑数据质量门槛 + 主题篮子刷新 + venture 三层底单重建；周五冻结本周唯一
+theme/venture paper cohort，并结算已经成熟的 120d cohort。
 **trade plan 是人工快速参考，不是自动交易任务。** 需要把完整扫描压缩成简表时显式生成：
 
 ```bash
@@ -1012,9 +1014,11 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 #    人工执行协议的上下文，是否交易及如何执行完全由用户自行决定。
 
 # ⑤ 五主题 + Venture sleeve（P0 纸面观察，互不阻塞）
-.venv/bin/python scripts/theme_observation_scan.py                  # 五主题
-.venv/bin/python scripts/theme_observation_scan.py --sleeve venture # Venture
-.venv/bin/python scripts/theme_observation_scan.py --evaluate       # 周五结算到期 cohort
+.venv/bin/python scripts/theme_observation_scan.py                   # 日度 observation，不归档 cohort
+.venv/bin/python scripts/theme_observation_scan.py --sleeve venture # Venture observation
+.venv/bin/python scripts/theme_observation_scan.py --archive-cohort # 周五冻结本周 theme cohort
+.venv/bin/python scripts/theme_observation_scan.py --sleeve venture --archive-cohort
+.venv/bin/python scripts/theme_observation_scan.py --evaluate       # 结算成熟 cohort
 ```
 
 输出示例（`trade_plan_*.md` 核心段）：
@@ -1035,7 +1039,7 @@ P2 50%→P3 100% 与降级条件）。日常观察运行：
 参考协议（用于人工复核和研究记录，不是程序交易指令）：
 - drop/left_side_watch、watch/theme_only 的权重规则是参考分层语义；
 - 跳空、熔断、止损等规则用于解释研究/人工交易协议，程序不会自动执行；
-- paper cohort 仍按既定周期结算，用于记录 120d 超额 vs QQQ、超额胜率；
+- theme/venture paper cohort 每周五 first-freeze 一次；成熟后记录 15bps/side 成本后的绝对收益、vs QQQ 超额与 vs 注册主题篮超额；
 - 阶段评估由人工根据协议复核。
 
 历史基线（Phase 4R v2，2023-2026，诚实数字）：risk_on low_value 120d 超额
