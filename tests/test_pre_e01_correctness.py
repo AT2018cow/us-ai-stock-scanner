@@ -143,12 +143,39 @@ class TestThemePaperCohortEvaluation(unittest.TestCase):
         self.assertEqual(row["theme_benchmark_symbols"], "NLR,URA")
 
     def test_default_scan_is_observation_not_cohort_archive(self) -> None:
-        # The parser behavior is intentionally encoded in source-level CLI:
-        # --archive-cohort is opt-in. Archive behavior itself is exercised
-        # through the Friday policy test above.
-        parser_source = Path(theme.__file__).read_text()
-        self.assertIn('"--archive-cohort"', parser_source)
-        self.assertIn("if args.archive_cohort:", parser_source)
+        args = theme.build_parser().parse_args([])
+        self.assertFalse(args.archive_cohort)
+
+    def test_weekly_cohort_first_freeze_wins(self) -> None:
+        first = pd.DataFrame(
+            [
+                {
+                    "theme": "nuclear",
+                    "list_type": "low_value",
+                    "symbol": "AAA",
+                    "triage": "keep",
+                    "research_priority": "research_now",
+                    "composite_score": 0.7,
+                    "entry_date": "2026-10-09",
+                    "entry_price": 10.0,
+                    "status": "open",
+                    "exit_date": "",
+                    "return_120d": "",
+                }
+            ]
+        )
+        second = first.copy()
+        second.loc[0, "symbol"] = "BBB"
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "theme_cohorts.csv"
+            theme.archive_cohort("nuclear", first, path)
+            theme.archive_cohort("nuclear", second, path)
+            out = pd.read_csv(path)
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["symbol"], "AAA")
+        self.assertEqual(out.iloc[0]["cohort_id"], "nuclear:2026-W41")
 
 
 if __name__ == "__main__":
