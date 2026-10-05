@@ -747,7 +747,6 @@ class ScanConfig:
             "max_adv_participation",
             "pe_cash_backing_haircut",
             "soft_filter_weight",
-            "nonrecurring_addback_revenue_cap",
             "ai_link_weight_etf_consensus",
             "ai_link_weight_disclosure",
             "ai_link_weight_market_link",
@@ -767,6 +766,12 @@ class ScanConfig:
             "min_fundamental_quality_score",
         ):
             require_number(name, minimum=0.0, maximum=1.0, allow_none=True)
+        require_number(
+            "nonrecurring_addback_revenue_cap",
+            minimum=0.0,
+            maximum=1.0,
+            allow_none=True,
+        )
         if (
             isinstance(self.score_winsor_lower_q, (int, float))
             and isinstance(self.score_winsor_upper_q, (int, float))
@@ -799,6 +804,27 @@ class ScanConfig:
                 "metric_hard_filter_coverage_mode",
                 "must be high_coverage_only, balanced, or all_metrics",
             )
+
+        for name in ("watchlist_csv_path", "cache_dir", "output_dir"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                err(name, "must be a non-empty string")
+        for name in (
+            "enabled_exchanges",
+            "exclude_sic_codes",
+            "ai_link_benchmark_etfs",
+            "watchlist_core_etfs",
+            "watchlist_enabler_etfs",
+            "watchlist_peripheral_etfs",
+            "low_value_allowed_research_priorities",
+            "low_value_excluded_research_risks",
+        ):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, list)
+                or any(not isinstance(item, str) or not item.strip() for item in value)
+            ):
+                err(name, "must be a list of non-empty strings")
 
         if not isinstance(self.channel_profiles, dict) or not self.channel_profiles:
             err("channel_profiles", "must be a non-empty object")
@@ -845,6 +871,85 @@ class ScanConfig:
                         f"channel_profiles.{channel}",
                         "unknown keys: " + ", ".join(extra),
                     )
+                bool_profile_keys = {
+                    "require_positive_revenue",
+                    "require_positive_net_income",
+                    "require_positive_operating_cash_flow",
+                    "require_positive_free_cash_flow",
+                    "require_positive_ebit",
+                    "require_channel_bucket_match",
+                    "hard_filter_current_debt_ratio",
+                    "hard_filter_inventory_growth_gap",
+                }
+                int_profile_keys = {
+                    "min_watchlist_etf_count",
+                    "min_days_below_sma200",
+                    "trend_min_watchlist_etf_count",
+                    "momentum_min_watchlist_etf_count",
+                }
+                dict_profile_keys = {
+                    "score_weights",
+                    "trend_score_weights",
+                    "momentum_score_weights",
+                }
+                for key, value in profile.items():
+                    if key in bool_profile_keys:
+                        if not isinstance(value, bool):
+                            err(f"channel_profiles.{channel}.{key}", "must be boolean")
+                        continue
+                    if key in int_profile_keys:
+                        if (
+                            value is not None
+                            and (
+                                isinstance(value, bool)
+                                or not isinstance(value, int)
+                                or value < 0
+                            )
+                        ):
+                            err(
+                                f"channel_profiles.{channel}.{key}",
+                                "must be a non-negative integer or null",
+                            )
+                        continue
+                    if key in dict_profile_keys:
+                        continue
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                    ):
+                        err(
+                            f"channel_profiles.{channel}.{key}",
+                            "must be a finite numeric value or null",
+                        )
+
+                min_range = profile.get("min_range_position_52w")
+                max_range = profile.get("max_range_position_52w")
+                if (
+                    isinstance(min_range, (int, float))
+                    and not isinstance(min_range, bool)
+                    and isinstance(max_range, (int, float))
+                    and not isinstance(max_range, bool)
+                    and float(min_range) > float(max_range)
+                ):
+                    err(
+                        f"channel_profiles.{channel}.min/max_range_position_52w",
+                        "must satisfy min <= max",
+                    )
+                min_sma = profile.get("min_price_to_sma200")
+                max_sma = profile.get("max_price_to_sma200")
+                if (
+                    isinstance(min_sma, (int, float))
+                    and not isinstance(min_sma, bool)
+                    and isinstance(max_sma, (int, float))
+                    and not isinstance(max_sma, bool)
+                    and float(min_sma) > float(max_sma)
+                ):
+                    err(
+                        f"channel_profiles.{channel}.min/max_price_to_sma200",
+                        "must satisfy min <= max",
+                    )
+
                 for weight_key in ("score_weights", "trend_score_weights", "momentum_score_weights"):
                     weights = profile.get(weight_key)
                     if weights is None:
