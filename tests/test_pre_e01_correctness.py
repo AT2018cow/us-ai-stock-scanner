@@ -35,15 +35,15 @@ class TestDailyRunBusinessCalendar(unittest.TestCase):
     def test_business_date_uses_new_york_not_utc(self) -> None:
         # 2026-10-05 01:00 UTC is still Sunday evening in New York.
         early_utc = datetime(2026, 10, 5, 1, 0, tzinfo=timezone.utc)
-        self.assertEqual(daily.market_business_date(early_utc), date(2026, 10, 4))
+        self.assertEqual(daily.runner_calendar_date(early_utc), date(2026, 10, 4))
 
         # Later the same UTC day is Monday in New York.
         later_utc = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
-        self.assertEqual(daily.market_business_date(later_utc), date(2026, 10, 5))
+        self.assertEqual(daily.runner_calendar_date(later_utc), date(2026, 10, 5))
 
     def test_run_date_override_is_deterministic(self) -> None:
         self.assertEqual(
-            daily.market_business_date(
+            daily.runner_calendar_date(
                 datetime(2030, 1, 1, tzinfo=timezone.utc),
                 "2026-10-09",
             ),
