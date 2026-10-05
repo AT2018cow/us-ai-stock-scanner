@@ -438,7 +438,12 @@ def _window_metrics(value: Any) -> list[dict[str, Any]]:
 
 
 def aggregate_regime_stats(stats: list[dict[str, Any]]) -> dict[str, Any]:
-    usable = [s for s in stats if isinstance(s, dict)]
+    # Empty regime windows carry sentinel drawdown=-1.0; exclude them from
+    # aggregation rather than letting a no-event year look like a 100% loss.
+    usable = [
+        s for s in stats
+        if isinstance(s, dict) and int(s.get("n_valid", 0) or 0) > 0
+    ]
     n_valid = sum(int(s.get("n_valid", 0) or 0) for s in usable)
     n_periods = sum(int(s.get("n_periods", 0) or 0) for s in usable)
 
@@ -1473,17 +1478,29 @@ def write_tuning_report(
         if not cid:
             lines.append(f"- {name}: none")
             continue
-        row = scores_df[scores_df["cid"] == cid].iloc[0]
-        lines.append(
-            f"- {name}: `{cid}` | objective={row['objective_score']:.4f} "
-            f"| coverage={row['coverage_ratio']:.3f} | dd={row['worst_max_drawdown']:.3f} "
-            f"| strict_valid={int(row.get('strict_total_valid_events', 0) or 0)} "
-            f"| research_valid={int(row.get('research_pool_total_valid_events', 0) or 0)} "
-            f"| pos_excess_windows={row['positive_excess_window_ratio']:.3f} "
-            f"| empty_windows={row['empty_window_ratio']:.3f}"
-        )
+        if walk_forward and (walk_forward.get(name) or {}).get("folds"):
+            final_fold = walk_forward[name]["folds"][-1]
+            validation = final_fold.get("validation") or {}
+            lines.append(
+                f"- {name}: `{cid}` | selected_on="
+                f"`{'+'.join(final_fold.get('train_labels') or [])}` "
+                f"| train_rank={safe_float(final_fold.get('training_rank_score')):.4f} "
+                f"| held_out=`{final_fold.get('validation_label')}` "
+                f"| OOS_pass={bool(validation.get('passed'))} "
+                f"| OOS_score={safe_float(validation.get('score')):.4f} "
+                f"| OOS_excess={safe_float(validation.get('avg_excess_vs_qqq')):.4f}"
+            )
+        else:
+            row = scores_df[scores_df["cid"] == cid].iloc[0]
+            lines.append(
+                f"- {name}: `{cid}` | pooled_objective={row['objective_score']:.4f} "
+                f"| pooled_coverage={row['coverage_ratio']:.3f} "
+                f"| nonoverlap_dd_diagnostic={row['worst_max_drawdown']:.3f}"
+            )
     lines.append("")
-    lines.append("## Top 10 Candidates (Balanced Rank)")
+    lines.append(
+        "## Top 10 Candidates (Pooled Diagnostic; not used for walk-forward selection)"
+    )
     lines.append("")
     top = scores_df.sort_values(by="balanced_rank_score", ascending=False).head(10)
     for row in top.itertuples(index=False):
@@ -1548,6 +1565,7 @@ def main() -> None:
     )
     log(f"tuning_run_id={stamp}")
     log(f"search_mode={args.search_mode} candidates={len(candidates)}")
+    log(f"selection_mode={args.selection_mode}")
     log(f"list_types={','.join(list_types)} primary_list_types={','.join(primary_list_types)}")
 
     objective_weights = dict(DEFAULT_OBJECTIVE_WEIGHTS)
