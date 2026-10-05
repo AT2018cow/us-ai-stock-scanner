@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_value_scanner.scanner import ScanConfig, load_config
+from ai_value_scanner.scanner import ScanConfig, load_config, partition_filter_steps
 
 
 class TestScanConfigValidation(unittest.TestCase):
@@ -47,6 +47,41 @@ class TestScanConfigValidation(unittest.TestCase):
                     }
                 }
             )
+
+    def test_unsupported_schema_version_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported version"):
+            ScanConfig.from_dict({"config_schema_version": 2})
+
+    def test_unknown_score_weight_dimension_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown score dimensions"):
+            ScanConfig.from_dict(
+                {
+                    "channel_profiles": {
+                        "core_ai": {
+                            "score_weights": {
+                                "liquidity": 0.5,
+                                "liquidty": 0.5,
+                            }
+                        }
+                    }
+                }
+            )
+
+    def test_filter_partition_uses_explicit_style_not_step_heuristic(self) -> None:
+        steps = [
+            ("price_filter", lambda frame: frame.index == frame.index),
+            ("min_price_to_sma200", lambda frame: frame.index == frame.index),
+        ]
+        hard_off, soft_off = partition_filter_steps(
+            steps, "core_ai", strategy_style="risk_off"
+        )
+        hard_on, soft_on = partition_filter_steps(
+            steps, "core_ai", strategy_style="risk_on"
+        )
+        self.assertNotIn("min_price_to_sma200", {name for name, _ in hard_off})
+        self.assertIn("min_price_to_sma200", {name for name, _ in soft_off})
+        self.assertIn("min_price_to_sma200", {name for name, _ in hard_on})
+        self.assertNotIn("min_price_to_sma200", {name for name, _ in soft_on})
 
     def test_production_style_identity_must_match_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
