@@ -5,15 +5,18 @@ Every observation cycle:
 1. Runs each theme's full scan (configs/config.theme.<name>.json) — the
    same scored architecture as the AI styles, isolated watchlists, no
    snapshot archiving into the AI PIT series.
-2. Extracts each theme's shortlist (low_value keep/watch + momentum picks)
-   and ARCHIVES a paper cohort to data/theme_cohorts.csv: every cohort is
-   held 120 trading days on paper and evaluated against QQQ AND the
-   theme's own benchmark basket (scripts/theme_observation_scan.py --evaluate).
-3. Prints a side-by-side summary.
+2. Extracts each theme's shortlist (low_value keep/watch + momentum picks).
+   A scan is an observation by default. Only --archive-cohort freezes the
+   observation into the weekly paper-cohort dataset.
+3. Matured cohorts are held 120 trading days on paper and evaluated on
+   absolute net return, excess vs QQQ, and excess vs the registered theme
+   benchmark basket.
+4. Prints a side-by-side summary.
 
 Usage:
-    .venv/bin/python scripts/theme_observation_scan.py            # scan + archive
-    .venv/bin/python scripts/theme_observation_scan.py --skip-scan  # summarize + archive from latest
+    .venv/bin/python scripts/theme_observation_scan.py              # scan observation only
+    .venv/bin/python scripts/theme_observation_scan.py --archive-cohort  # scan + freeze weekly cohort
+    .venv/bin/python scripts/theme_observation_scan.py --skip-scan --archive-cohort  # freeze latest
     .venv/bin/python scripts/theme_observation_scan.py --evaluate  # score matured cohorts only
 """
 
@@ -27,6 +30,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -37,6 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 THEMES = ["nuclear", "quantum", "biotech", "rare_earth", "critical_minerals"]
 COHORT_CSV = Path("data/theme_cohorts.csv")  # set per sleeve in main()
 HOLD_TRADING_DAYS = 120
+PAPER_TRADING_COST_BPS = 15.0
+THEME_REGISTRY = Path("configs/theme_universe.json")
 
 
 def log(msg: str) -> None:
@@ -150,74 +156,208 @@ def print_summary(theme: str, report: Path) -> None:
     print(f"momentum picks: {len(mo)}")
 
 
+def load_theme_benchmarks(registry_path: Path = THEME_REGISTRY) -> dict[str, list[str]]:
+    raw = json.loads(registry_path.read_text())
+    themes = raw.get("themes", {})
+    out: dict[str, list[str]] = {}
+    for theme, spec in themes.items():
+        values = [
+            str(x).upper().strip()
+            for x in (spec.get("benchmark_etfs") or [])
+            if str(x).strip()
+        ]
+        out[str(theme)] = list(dict.fromkeys(values))
+    return out
+
+
+def ensure_evaluation_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    defaults: dict[str, Any] = {
+        "return_120d_gross": "",
+        "return_120d": "",
+        "qqq_return_120d": "",
+        "excess_vs_qqq_120d": "",
+        "theme_benchmark_return_120d": "",
+        "excess_vs_theme_benchmark_120d": "",
+        "theme_benchmark_symbols": "",
+        "evaluation_note": "",
+    }
+    for col, default in defaults.items():
+        if col not in out.columns:
+            out[col] = default
+    return out
+
+
+def _paper_forward_return(
+    frame: pd.DataFrame | None,
+    split_events: list[tuple[str, float]] | None,
+    signal_date: str,
+    *,
+    roundtrip_cost: float,
+) -> tuple[float | None, float | None, pd.Timestamp | None]:
+    if frame is None or frame.empty:
+        return None, None, None
+    from ai_value_scanner.backtest import apply_split_adjustment_to_frame, forward_return_with_exit
+
+    adjusted = apply_split_adjustment_to_frame(frame, split_events or [])
+    net, exit_date = forward_return_with_exit(
+        adjusted,
+        signal_date,
+        HOLD_TRADING_DAYS,
+        roundtrip_cost,
+        entry_price_mode="next_open",
+        exit_price_mode="close",
+    )
+    if net is None:
+        return None, None, exit_date
+    gross = float(net) + roundtrip_cost
+    return gross, float(net), exit_date
+
+
 def evaluate_matured(cohort_csv: Path = COHORT_CSV) -> None:
-    """Score cohorts whose 120 trading days have elapsed (paper exit)."""
+    """Settle matured paper cohorts with absolute and benchmark-relative returns."""
     if not cohort_csv.exists():
         log("无 cohort 归档")
         return
     from ai_value_scanner.scanner import load_config
     from ai_value_scanner.backtest import build_bar_db, load_alpaca_client
-    from ai_value_scanner.backtest import next_trading_index, apply_split_adjustment_to_frame
 
     cfg = load_config("configs/config.risk_off.json")
     client, _ = load_alpaca_client(cfg)
-    d = pd.read_csv(cohort_csv)
+    d = ensure_evaluation_columns(pd.read_csv(cohort_csv))
     open_rows = d[(d["status"] == "open") & d["symbol"].notna() & (d["symbol"] != "")]
     if open_rows.empty:
         log("无待结算 cohort")
         return
+
+    theme_benchmarks = load_theme_benchmarks()
     syms = sorted(set(open_rows["symbol"].astype(str).str.upper()))
+    benchmark_syms = sorted(
+        {"QQQ"}
+        | {
+            sym
+            for theme in open_rows["theme"].dropna().astype(str).unique()
+            for sym in theme_benchmarks.get(theme, [])
+        }
+    )
+    all_syms = sorted(set(syms) | set(benchmark_syms))
     bars_start = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=420)).isoformat()
-    bar_db = build_bar_db(client, syms + ["QQQ"], bars_start, cfg.chunk_size)
-    # T01: authoritative split events so settlement prices are continuous in
-    # adjusted-price space (raw open->close would book a 2:1 split as -50%).
+    bar_db = build_bar_db(client, all_syms, bars_start, cfg.chunk_size)
+
     try:
-        split_events = client.get_corporate_action_splits(syms, bars_start)
+        split_events = client.get_corporate_action_splits(all_syms, bars_start)
     except Exception as exc:
         split_events = {}
         log(f"拆股事件获取失败 ({exc.__class__.__name__})；按未调整价格结算")
-    today = pd.Timestamp.now(tz="UTC").tz_localize(None)
+
+    roundtrip_cost = (2.0 * PAPER_TRADING_COST_BPS) / 10000.0
     n_matured = 0
-    n_split_adjusted = 0
+    n_unresolved = 0
+    n_benchmark_degraded = 0
+
     for idx, r in open_rows.iterrows():
-        entry_dt = pd.Timestamp(str(r["entry_date"]), tz="UTC")
-        frame = bar_db.get(str(r["symbol"]).upper())
-        if frame is None or frame.empty:
+        symbol = str(r["symbol"]).upper()
+        signal_date = str(r["entry_date"])
+        gross, net, exit_date = _paper_forward_return(
+            bar_db.get(symbol),
+            split_events.get(symbol),
+            signal_date,
+            roundtrip_cost=roundtrip_cost,
+        )
+        if net is None or exit_date is None:
+            # Preserve open for genuinely immature rows. If the nominal horizon
+            # should already have matured but pricing is unavailable, mark it
+            # separately so missing data cannot masquerade as "not matured".
+            nominal_end = pd.Timestamp(signal_date, tz="UTC") + pd.Timedelta(days=190)
+            if pd.Timestamp.now(tz="UTC") >= nominal_end:
+                d.loc[idx, "status"] = "unresolved_price"
+                d.loc[idx, "evaluation_note"] = "symbol forward window unavailable"
+                n_unresolved += 1
             continue
-        symbol_splits = split_events.get(str(r["symbol"]).upper())
-        if symbol_splits:
-            frame = apply_split_adjustment_to_frame(frame, symbol_splits)
-            n_split_adjusted += 1
-        e_idx = next_trading_index(frame.index, entry_dt)
-        if e_idx is None:
-            continue
-        x_idx = e_idx + HOLD_TRADING_DAYS - 1
-        if x_idx >= len(frame):
-            continue  # not matured yet
-        entry = float(frame.iloc[e_idx]["open"])
-        exit_px = float(frame.iloc[x_idx]["close"])
-        if entry <= 0:
-            continue
+
         d.loc[idx, "status"] = "matured"
-        d.loc[idx, "exit_date"] = str(frame.index[x_idx].date())
-        d.loc[idx, "return_120d"] = round(exit_px / entry - 1.0, 6)
+        d.loc[idx, "exit_date"] = exit_date.date().isoformat()
+        d.loc[idx, "return_120d_gross"] = round(float(gross), 6)
+        d.loc[idx, "return_120d"] = round(float(net), 6)
+
+        _, qqq_net, qqq_exit = _paper_forward_return(
+            bar_db.get("QQQ"),
+            split_events.get("QQQ"),
+            signal_date,
+            roundtrip_cost=roundtrip_cost,
+        )
+        if qqq_net is not None and qqq_exit is not None:
+            d.loc[idx, "qqq_return_120d"] = round(float(qqq_net), 6)
+            d.loc[idx, "excess_vs_qqq_120d"] = round(float(net - qqq_net), 6)
+        else:
+            d.loc[idx, "evaluation_note"] = "QQQ benchmark unavailable"
+            n_benchmark_degraded += 1
+
+        basket = theme_benchmarks.get(str(r["theme"]), [])
+        basket_returns: list[float] = []
+        for bench in basket:
+            _, bench_net, bench_exit = _paper_forward_return(
+                bar_db.get(bench),
+                split_events.get(bench),
+                signal_date,
+                roundtrip_cost=roundtrip_cost,
+            )
+            if bench_net is not None and bench_exit is not None:
+                basket_returns.append(float(bench_net))
+        d.loc[idx, "theme_benchmark_symbols"] = ",".join(basket)
+        if basket_returns:
+            basket_ret = float(pd.Series(basket_returns).median())
+            d.loc[idx, "theme_benchmark_return_120d"] = round(basket_ret, 6)
+            d.loc[idx, "excess_vs_theme_benchmark_120d"] = round(float(net - basket_ret), 6)
+        else:
+            note = str(d.loc[idx, "evaluation_note"] or "")
+            d.loc[idx, "evaluation_note"] = (
+                (note + "; " if note else "") + "theme benchmark unavailable"
+            )
+            n_benchmark_degraded += 1
         n_matured += 1
+
     write_csv_atomic(d, cohort_csv)
-    log(f"结算 {n_matured} 行（其中 {n_split_adjusted} 行经拆股调整）；未到期行保持 open")
-    # 汇总已结算 cohort
-    matured = d[(d["status"] == "matured") & pd.to_numeric(d["return_120d"], errors="coerce").notna()]
+    log(
+        f"结算 {n_matured} 行；unresolved_price={n_unresolved}；"
+        f"benchmark_degraded={n_benchmark_degraded}；成本={PAPER_TRADING_COST_BPS:.0f}bps/side"
+    )
+
+    matured = d[
+        (d["status"] == "matured")
+        & pd.to_numeric(d["return_120d"], errors="coerce").notna()
+    ]
     if not matured.empty:
         m = matured.copy()
-        m["ret"] = pd.to_numeric(m["return_120d"])
-        print("\n===== 已结算 cohort 汇总（120d 纸面收益）=====")
+        for col in (
+            "return_120d",
+            "excess_vs_qqq_120d",
+            "excess_vs_theme_benchmark_120d",
+        ):
+            m[col] = pd.to_numeric(m[col], errors="coerce")
+        print("\n===== 已结算 cohort 汇总（120d paper）=====")
         for (theme, lt), part in m.groupby(["theme", "list_type"]):
-            print(f"{theme}/{lt}: n={len(part)} mean={part['ret'].mean()*100:+.1f}% win={(part['ret']>0).mean()*100:.0f}%")
+            abs_mean = part["return_120d"].mean()
+            qqq_mean = part["excess_vs_qqq_120d"].mean()
+            theme_mean = part["excess_vs_theme_benchmark_120d"].mean()
+            print(
+                f"{theme}/{lt}: n={len(part)} "
+                f"abs={abs_mean*100:+.1f}% "
+                f"vsQQQ={qqq_mean*100:+.1f}% "
+                f"vsTheme={theme_mean*100:+.1f}% "
+                f"win={(part['return_120d']>0).mean()*100:.0f}%"
+            )
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--skip-scan", action="store_true", help="Reuse latest reports")
     p.add_argument("--evaluate", action="store_true", help="Only score matured cohorts")
+    p.add_argument(
+        "--archive-cohort",
+        action="store_true",
+        help="Freeze this observation into the weekly paper-cohort dataset.",
+    )
     p.add_argument("--sleeve", choices=["theme", "venture"], default="theme",
                    help="theme = config.theme.* (five-theme P0); venture = config.venture.* (venture sleeve P0)")
     args = p.parse_args()
@@ -245,12 +385,16 @@ def main() -> None:
             failed_themes.append(theme)
             continue
         cohort = extract_shortlist(theme, report, prefix)
-        archive_cohort(theme, cohort, cohort_csv, report)
+        if args.archive_cohort:
+            archive_cohort(theme, cohort, cohort_csv, report)
+        else:
+            log(f"{theme}: observation only（未传 --archive-cohort，不写 paper cohort）")
         print_summary(theme, report)
 
     print(
-        "\nObservation reminder: cohorts are held 120 trading days on paper; "
-        "run --evaluate weekly to mature settled rows (docs/theme_observation_protocol.md).",
+        "\nObservation reminder: scans may run daily, but paper cohorts are frozen explicitly "
+        "with --archive-cohort (daily_run does this on Friday only); "
+        "run --evaluate weekly to settle matured rows.",
         flush=True,
     )
     if failed_themes:
