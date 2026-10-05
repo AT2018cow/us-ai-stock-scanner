@@ -55,6 +55,11 @@ def market_business_date(
     return current.astimezone(MARKET_TZ).date()
 
 
+def should_archive_weekly_cohort(business_date: date) -> bool:
+    """Friday observations are the single frozen paper cohort for that week."""
+    return business_date.weekday() == 4
+
+
 def configure_summary_log(run_date: date) -> Path:
     global _LOG_FILE
     path = Path(".debug_logs") / f"daily_{run_date.strftime('%Y%m%d')}.log"
@@ -235,7 +240,7 @@ def main() -> None:
         venture_cmd = [
             python, "-u", "scripts/theme_observation_scan.py", "--sleeve", "venture"
         ]
-        if dow == 4:
+        if should_archive_weekly_cohort(business_date):
             theme_cmd.append("--archive-cohort")
             venture_cmd.append("--archive-cohort")
         theme_label = (
