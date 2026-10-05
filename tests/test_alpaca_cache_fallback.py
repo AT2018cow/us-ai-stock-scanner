@@ -108,6 +108,9 @@ class TestAlpacaBarsCacheFallback(unittest.TestCase):
             bars = report["data_provenance"]["alpaca"]["bars"]
             self.assertEqual(bars["counts"].get("stale_cache_fallback"), 1)
             self.assertGreater(float(bars["max_cache_age_sec"]), 7000.0)
+            self.assertEqual(bars["feed"], "iex")
+            self.assertEqual(bars["latest_data_asof_utc"], "2024-01-02T00:00:00Z")
+            self.assertTrue(bars["degraded_reasons"])
 
     def test_fresh_cache_provenance_is_not_marked_stale(self) -> None:
         monitor = NetworkMonitor()
@@ -125,6 +128,8 @@ class TestAlpacaBarsCacheFallback(unittest.TestCase):
             self.assertFalse(report["stale_market_data_fallback_used"])
             snap = report["data_provenance"]["alpaca"]["snapshots"]
             self.assertEqual(snap["counts"].get("fresh_cache"), 1)
+            self.assertEqual(snap["feed"], "iex")
+            self.assertIsNotNone(snap["last_observed_at_utc"])
 
     def test_get_daily_bars_enriches_short_exact_cache_from_any_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
