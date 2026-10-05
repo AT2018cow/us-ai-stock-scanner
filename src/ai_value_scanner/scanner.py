@@ -7579,6 +7579,8 @@ def run_scan(
     report["finished_at_utc"] = finished_at.isoformat()
     report["elapsed_seconds"] = round((finished_at - started_at).total_seconds(), 2)
     report["scan_context"] = {
+        "config_schema_version": config.config_schema_version,
+        "strategy_style": config.strategy_style,
         "max_symbols": config.max_symbols,
         "top_n_per_channel_low_value": top_n_low_value,
         "top_n_per_channel_trend": top_n_trend,
