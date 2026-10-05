@@ -1412,6 +1412,7 @@ class AlpacaClient:
         best_rows: dict[str, list[dict[str, Any]]] = {}
         best_min_ts: dict[str, str] = {}
         best_len: dict[str, int] = {}
+        best_age_sec: dict[str, float] = {}
         start_key = str(start_iso or "")
         for path in sorted(self.cache_dir.glob("bars_*.json")):
             try:
@@ -1449,16 +1450,19 @@ class AlpacaClient:
                     best_rows[symbol] = candidate
                     best_len[symbol] = cand_len
                     best_min_ts[symbol] = min_ts
+                    best_age_sec[symbol] = max(0.0, time.time() - path.stat().st_mtime)
                 hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
-                self.monitor.record_data_source(
-                    "alpaca",
-                    "bars",
-                    provenance_source,
-                    time.time() - path.stat().st_mtime,
-                )
         if best_rows:
+            if self.monitor:
+                for symbol in sorted(best_rows):
+                    self.monitor.record_data_source(
+                        "alpaca",
+                        "bars",
+                        provenance_source,
+                        best_age_sec.get(symbol),
+                    )
             return best_rows
         if self.monitor:
             self.monitor.record_cache("alpaca", hit=False)
