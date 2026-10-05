@@ -293,7 +293,8 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 2. 全局参数来自配置文件顶层（`ScanConfig` 顶层字段）。
 3. 通道参数来自 `channel_profiles.<channel>`，会覆盖同名全局参数。
 4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
-5. 配置中的未知字段会被忽略（不会报错，也不会生效）。
+5. 配置采用 fail-fast 校验：未知字段、错误类型、非法范围或交叉约束会在启动时直接报错；仅 `_theme_meta` / `_venture_meta` 等以下划线开头的文档元数据不会进入运行时配置。
+6. `config.risk_on.json` / `config.risk_off.json` 通过顶层 `strategy_style` 显式声明风格身份；扫描报告写入 `Strategy-Style:`，下游优先读取该字段，不再依赖文件名推断。
 
 ### 6.2 全局参数与阈值（以 `configs/config.risk_off.json` 为基准参考）
 
@@ -303,6 +304,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 | 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
+| `strategy_style` | `risk_off` | 生产双风格显式身份（risk_on/risk_off）；主题、venture、校准配置可为 `null`。 |
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
 | `chunk_size` | `200` | 拉取数据的批处理大小。 |
@@ -312,7 +314,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 | `alpaca_cache_enabled` | `true` | 是否启用 Alpaca 本地缓存。 |
 | `alpaca_cache_ttl_assets_sec` | `21600` | `assets` 缓存 TTL（秒）。 |
 | `alpaca_cache_ttl_snapshots_sec` | `120` | `snapshots` 缓存 TTL（秒）。 |
-| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。 |
+| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。网络失败使用过期缓存时不会刷新原文件 mtime；network JSON/Markdown 会记录 source、最大 cache age 和 stale-fallback 标记。 |
 | `cache_dir` | `cache` | 缓存目录（默认值来自代码）。 |
 | `output_dir` | `outputs` | 输出目录（默认值来自代码）。 |
 
