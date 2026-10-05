@@ -140,8 +140,13 @@ def parse_args() -> argparse.Namespace:
                    help="Universe for replay dates before the first PIT snapshot (default union).")
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
-    p.add_argument("--promote", action="store_true", default=True)
-    p.add_argument("--no-promote", action="store_true")
+    p.add_argument(
+        "--promote",
+        action="store_true",
+        default=False,
+        help="Explicitly promote the winner for the style identified by --base-config.",
+    )
+    p.add_argument("--no-promote", action="store_true", help="Deprecated compatibility flag; promotion is off by default.")
     p.add_argument("--risk-on-config-path", default="configs/config.risk_on.json")
     p.add_argument("--balanced-config-path", default="configs/archive/config.balanced.json")  # archived; two-style promote uses risk_on/risk_off
     p.add_argument("--risk-off-config-path", default="configs/config.risk_off.json")
@@ -1048,6 +1053,22 @@ def run_candidate(
     )
 
 
+def promotion_profile_from_base_config(path: str) -> str | None:
+    """Return the production style owned by this tuning run.
+
+    A candidate family is a deep copy of one base config, so it is only valid
+    for that same style. Cross-promoting a risk_off-derived candidate into
+    risk_on (or vice versa) silently overwrites style-specific fields that are
+    outside the tuning parameter space.
+    """
+    name = Path(path).name
+    if name == "config.risk_on.json":
+        return "risk_on"
+    if name == "config.risk_off.json":
+        return "risk_off"
+    return None
+
+
 def pick_profile_candidates(scores_df: pd.DataFrame) -> dict[str, str]:
     valid = scores_df[scores_df["constraints_passed"] == True].copy()
     if valid.empty:
@@ -1248,22 +1269,24 @@ def main() -> None:
     )
 
     if bool(args.promote and not args.no_promote):
-        mapping = {
-            # Two-style architecture: balanced is archived and never promoted.
-            # The key is kept for backward compatibility with older reports.
-            "risk_on": Path(args.risk_on_config_path),
-            "risk_off": Path(args.risk_off_config_path),
-        }
-        for profile, target_path in mapping.items():
-            cid = picks.get(profile)
-            if not cid:
-                continue
+        profile = promotion_profile_from_base_config(args.base_config)
+        if profile is None:
+            raise SystemExit(
+                "--promote requires --base-config to be exactly "
+                "configs/config.risk_on.json or configs/config.risk_off.json; "
+                "a tuning run may only promote back into its own style."
+            )
+        target_path = Path(
+            args.risk_on_config_path if profile == "risk_on" else args.risk_off_config_path
+        )
+        cid = picks.get(profile)
+        if cid:
             picked = scores_df[scores_df["cid"] == cid]
             if picked.empty or not bool(picked.iloc[0]["constraints_passed"]):
                 log(f"skipped promotion for {profile}: {cid} did not pass constraints")
-                continue
-            write_json(target_path, candidate_map[cid].config)
-            log(f"promoted {profile}: {cid} -> {target_path}")
+            else:
+                write_json(target_path, candidate_map[cid].config)
+                log(f"promoted {profile}: {cid} -> {target_path}")
 
     summary_json = outputs_dir / f"{stamp}_summary.json"
     payload = {
