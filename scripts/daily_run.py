@@ -2,8 +2,8 @@
 
 工作日（Mon-Fri）：
   1. AI 双风格观察扫描（risk_off + risk_on）
-  2. 五主题扫描 + cohort 归档
-  3. Venture sleeve 扫描 + cohort 归档
+  2. 五主题 observation 扫描（周五冻结周度 paper cohort）
+  3. Venture sleeve observation 扫描（周五冻结周度 paper cohort）
   4. 左侧名单资金流统计（scripts/flow_tracker.py，8 交易日大单流回填；
      可 --skip-flow 跳过，--flow-days N 调窗口，--flow-extra-symbols 附加自选）
 
@@ -20,7 +20,9 @@ AI trade plan 是给人工复核用的快速参考摘要，不是订单或自动
 --generate-trade-plan。生成前要求本次 AI 双风格扫描成功（若本次执行扫描）以及当日
 周检成功（若当天为周一）。
 
-所有日志写入 .debug_logs/daily_YYYYMMDD.log。可用 --skip-scan 跳过扫描只跑结算。
+runner 自身的调度/结果摘要写入 .debug_logs/daily_YYYYMMDD.log；子进程仍直接输出到控制台。
+业务日期统一按 America/New_York 计算，可用 --run-date 做确定性覆盖。
+可用 --skip-scan 跳过扫描只跑结算。
 """
 
 from __future__ import annotations
@@ -29,18 +31,53 @@ import argparse
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 
+MARKET_TZ = ZoneInfo("America/New_York")
+_LOG_FILE: Path | None = None
+
+
+def runner_calendar_date(
+    now_utc: datetime | None = None,
+    override: str | None = None,
+) -> date:
+    """Resolve the runner calendar date in America/New_York."""
+    if override:
+        return date.fromisoformat(override)
+    current = now_utc or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(MARKET_TZ).date()
+
+
+def should_archive_weekly_cohort(business_date: date) -> bool:
+    """Friday observations are the single frozen paper cohort for that week."""
+    return business_date.weekday() == 4
+
+
+def configure_summary_log(run_date: date) -> Path:
+    global _LOG_FILE
+    path = Path(".debug_logs") / f"daily_{run_date.strftime('%Y%m%d')}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _LOG_FILE = path
+    return path
+
+
 def log(msg: str) -> None:
     stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[daily {stamp}] {msg}", flush=True)
+    line = f"[daily {stamp}] {msg}"
+    print(line, flush=True)
+    if _LOG_FILE is not None:
+        with _LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
 
 
-def print_reference_guidance(capital: float) -> None:
+def print_reference_guidance(capital: float, business_date: date | None = None) -> None:
     """Consolidated manual-review reference from all observation streams."""
     import glob
     import json
@@ -76,7 +113,7 @@ def print_reference_guidance(capital: float) -> None:
 
     # ---- 2. Theme cohorts (today's entries) ----
     cohort_file = Path("data/theme_cohorts.csv")
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = (business_date or runner_calendar_date()).isoformat()
     if cohort_file.exists():
         d = pd.read_csv(cohort_file)
         today_rows = d[d["entry_date"] == today]
@@ -160,6 +197,11 @@ def main() -> None:
     p.add_argument("--flow-days", type=int, default=8, help="Lookback trading days for block-flow stats")
     p.add_argument("--flow-extra-symbols", default="", help="Extra symbols appended to the left-side flow run")
     p.add_argument(
+        "--run-date",
+        default=None,
+        help="Override US-market business date for deterministic/manual runs (YYYY-MM-DD).",
+    )
+    p.add_argument(
         "--generate-trade-plan",
         action="store_true",
         help="Explicitly generate the AI trade-plan reference summary for manual review; never runs by default.",
@@ -167,10 +209,15 @@ def main() -> None:
     args = p.parse_args()
 
     now = datetime.now(timezone.utc)
-    dow = now.weekday()  # 0=Mon ... 4=Fri, 5=Sat, 6=Sun
-    date_tag = now.strftime("%Y%m%d")
+    business_date = runner_calendar_date(now, args.run_date)
+    dow = business_date.weekday()  # 0=Mon ... 4=Fri, 5=Sat, 6=Sun
+    date_tag = business_date.strftime("%Y%m%d")
     run_started_ts = time.time()
-    log_file = Path(f".debug_logs/daily_{date_tag}.log")
+    log_file = configure_summary_log(business_date)
+    log(
+        f"business_date={business_date.isoformat()} timezone=America/New_York "
+        f"(utc_now={now.isoformat()})"
+    )
 
     if dow >= 5 and not args.evaluate:
         log("周末（Sat/Sun）——市场关闭，仅可跑 --evaluate 结算或数据维护。跳过扫描。")
@@ -187,14 +234,27 @@ def main() -> None:
         ai_scan_ok = run([python, "-u", "scripts/observation_scan.py"], "① AI 双风格观察扫描")
         ok &= ai_scan_ok
 
-    # ---- 每日：五主题 ----
+    # ---- 每日：五主题 / Venture observation；周五冻结周度 paper cohort ----
     if not args.skip_scan:
-        ok &= run([python, "-u", "scripts/theme_observation_scan.py"], "② 五主题扫描 + cohort 归档")
-
-    # ---- 每日：Venture sleeve ----
-    if not args.skip_scan:
-        ok &= run([python, "-u", "scripts/theme_observation_scan.py", "--sleeve", "venture"],
-                  "③ Venture sleeve 扫描 + cohort 归档")
+        theme_cmd = [python, "-u", "scripts/theme_observation_scan.py"]
+        venture_cmd = [
+            python, "-u", "scripts/theme_observation_scan.py", "--sleeve", "venture"
+        ]
+        if should_archive_weekly_cohort(business_date):
+            theme_cmd.append("--archive-cohort")
+            venture_cmd.append("--archive-cohort")
+        theme_label = (
+            "② 五主题扫描 + 周度 paper cohort 冻结"
+            if dow == 4
+            else "② 五主题 observation（不归档 cohort）"
+        )
+        venture_label = (
+            "③ Venture 扫描 + 周度 paper cohort 冻结"
+            if dow == 4
+            else "③ Venture observation（不归档 cohort）"
+        )
+        ok &= run(theme_cmd, theme_label)
+        ok &= run(venture_cmd, venture_label)
 
     # ---- 周一：数据质量门槛 + 主题篮子刷新 + venture 底单重建 ----
     if dow == 0:
@@ -240,11 +300,11 @@ def main() -> None:
             log("═" * 60)
             log("📋 TODAY'S MANUAL-REVIEW REFERENCE")
             log("═" * 60)
-            print_reference_guidance(args.capital)
+            print_reference_guidance(args.capital, business_date)
         else:
             log("交易参考未生成成功；不打印任何旧参考摘要。")
     else:
-        log("✓ AI trade plan: 默认不生成（按月度 cohort 节奏，需要时显式传 --generate-trade-plan）")
+        log("✓ AI trade plan: 默认不生成；需要人工快速参考时显式传 --generate-trade-plan")
 
     if not ok:
         log("⚠ 有任务失败——检查上方日志")

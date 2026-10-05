@@ -2,16 +2,16 @@
 
 ## 1. 目标与现状
 
-状态：建议方案，尚未实施代码重构。对应的问题与复现证据见[设计、逻辑与计算审查记录](design_and_calculation_review_20261003.md)，特别是 C01–C06、D01–D02、L01–L02、E01–E03。
+状态：**pre-E01 correctness 已基本收口，准备进入实施。** 对应的问题与复现证据见[设计、逻辑与计算审查记录](design_and_calculation_review_20261003.md)。截至 2026-10-05，C01–C06、D01–D03、R03/R04、T01/T02/T03/T05、E02 已修复或显式收口；R01/R02/R05、T04、E04/E05 保留为已知研究近似/语义边界，不阻塞结构迁移。
 
 建议采用“公共计算核心＋独立流程编排”的模块化单体，继续使用现有 CLI、单进程与本地存储。重构目标是明确职责、降低依赖并消除重复计算；文件行数下降是结果，不是唯一验收标准。
 
-审查基线为 `674c7cbde3612d960cdb39b3d80c76246b16686a`。主要结构问题：
+当前实施基线为 PR #3 合并后的 `6b21299ea62aa5e9c75f40b88d3af5bf1e9a3fcf`，再叠加 pre-E01 closure PR。主要结构问题仍然成立，而且 monolith 继续增长：
 
-- [scanner.py](../src/ai_value_scanner/scanner.py) 共 6,840 行，其中 `run_scan` 约 1,108 行，混合数据加载、特征计算、选股、诊断和输出。
-- [backtest.py](../src/ai_value_scanner/backtest.py) 共 3,866 行，其中 `build_cross_section_asof` 约 453 行，重复实现扫描中的大量财务特征。
-- `backtest.py` 从 `scanner.py` 导入 50 个符号；交易计划、缓存刷新和股票池脚本又从回测模块导入客户端。底层能力依附于业务入口。
-- 审查期间 202 项离线测试通过，但部分测试未覆盖跨流程一致性，也有测试固化错误公式。测试通过需要与独立计算证据结合判断。
+- [scanner.py](../src/ai_value_scanner/scanner.py) 约 7.8k 行，`run_scan` 仍混合数据加载、特征计算、选股、诊断和输出。
+- [backtest.py](../src/ai_value_scanner/backtest.py) 约 4.2k 行，仍重复实现扫描中的大量财务/特征逻辑。
+- `backtest.py` 仍从 `scanner.py` 导入数十个常量、客户端、计算及策略函数；工具脚本也通过业务入口借用底层能力。
+- PR #4 当前 CI 共 258 项离线测试通过，其中 pre-E01 closure 新增独立收益/日历/cohort 边界测试。E03 仍作为重构验收原则：测试通过不能替代独立正确答案和跨流程一致性。
 
 ## 2. 建议职责边界
 
@@ -23,7 +23,7 @@
 | `features/` | 价格、估值、横截面和主题特征 | 拆股、价格维度、历史估值、行业相对估值、关联度 |
 | `strategy/` | 过滤、评分、研究标签、候选选择和名单限额 | 三清单 steps、scored 分层、排名、triage、去重和 group caps |
 | `evaluation/` | 历史回放、前向收益、基准与统计评价 | replay、事件回测、成熟窗口、汇总和重叠校正 |
-| `portfolio/` | 从候选到目标仓位、资金约束和后续账户模拟 | 分层权重、跨风格合并、单名封顶、目标仓位 |
+| `portfolio/`（可选） | 从候选到人工参考 allocation | 分层参考权重、跨风格合并、单名封顶；不维护真实账户/订单状态 |
 | `reporting/` | 输出格式、报告渲染和产物写入 | CSV／JSON／Markdown、诊断报告、路径和原子输出 |
 | `workflows/` | 组织业务步骤和处理运行依赖 | 扫描、回测、观察、交易计划和日常运行编排 |
 
@@ -57,7 +57,7 @@ src/ai_value_scanner/
 │   ├── returns.py
 │   └── metrics.py
 ├── portfolio/
-│   └── planning.py            # 现有计划构造的公共实现
+│   └── planning.py            # 可选：现有人工 reference allocation 的纯构造实现
 ├── reporting/
 │   ├── exports.py
 │   └── markdown.py
@@ -68,7 +68,7 @@ src/ai_value_scanner/
 └── backtest.py                # 迁移期薄兼容入口
 ```
 
-账户／cohort 台账、逐日账户模拟、运行 manifest 可以在对应模块中后续新增。它们属于行为和功能扩展，不应在纯文件迁移中被标为已完成。
+本项目边界是选股/研究/报告，不是自动交易。真实券商账户台账、订单状态和自动执行不属于本轮 E01；若未来新增 portfolio simulator，应作为独立功能。当前 theme/venture paper cohort 仅为研究数据，已在 pre-E01 closure 中明确 weekly identity/provenance。
 
 ## 3. 依赖方向
 
@@ -78,7 +78,7 @@ CLI 和工具脚本调用 workflow；workflow 组织数据加载、纯计算与�
 - `fundamentals/` 处理传入事实，不依赖客户端或 workflow。
 - `features/` 可以使用财务事实和公共计算，不依赖网络或输出模块。
 - `strategy/` 消费已构建的特征，不重新拉取财报／行情。
-- `portfolio/` 消费候选和账户状态；`evaluation/` 复用特征、策略及必要的组合构造。
+- `portfolio/` 若保留，仅消费候选并生成**人工参考 allocation**；不得暗示真实账户/订单状态。`evaluation/` 复用特征和策略能力。
 - `reporting/` 消费结果与元数据，不重新计算选股结论。
 - `workflows/` 注入客户端、组织调用、处理依赖状态和错误，并调用 reporting。
 - 底层新模块不再导入 `scanner.py` 或 `backtest.py`；两者仅依赖新模块用于兼容。
@@ -126,13 +126,13 @@ Pandas DataFrame 可以继续作为批量特征载体，不必将全部行改成
 
 raw bars 继续作为原始数据；价格变化和前向收益按用途修正拆股，历史估值保持与 raw filed shares 一致的价格单位。公共化不能把不同用途的价格单位混在一起。
 
-### 4.3 候选选择与账户评价分离
+### 4.3 候选选择与人工参考输出分离
 
-`strategy/selection.py` 构建各清单候选，`portfolio/planning.py` 将候选转换成目标仓位。扫描、交易计划和需要组合口径的回测复用它们。
+`strategy/selection.py` 构建各清单候选；如保留 `portfolio/planning.py`，其职责只应是把候选转换成供人工阅读的参考 allocation，而不是维护真实账户状态。扫描、trade-plan reference 和需要组合口径的研究评价可复用纯构造函数。
 
-事件回测保留排名／选股诊断作用；账户模拟需要现金、现有持仓、滚动 cohort、实际入场和止损等状态，单独实现。两种评价分别报告，不能用等权事件收益替代分层滚动账户表现。
+事件回测继续承担排名/选股诊断；R05 的 non-overlapping drawdown 明确保持 sampling diagnostic，不扩张为账户 NAV 模拟。若未来确有账户模拟需求，作为独立项目新增，不能在机械重构中偷偷引入。
 
-保留现有交易计划按名单内 percentile 选择的改进，明确原始 composite 在跨列表平局和展示时的作用；不恢复跨权重尺度的直接分数竞争。
+保留现有 trade-plan reference 按名单内 percentile 选择的改进，明确原始 composite 在跨列表平局和展示时的作用；不恢复跨权重尺度的直接分数竞争。
 
 ## 5. 五批迁移步骤
 
@@ -140,7 +140,7 @@ raw bars 继续作为原始数据；价格变化和前向收益按用途修正�
 
 保存固定离线输入、两风格生产配置以及 feature／候选／报告关键结果。先梳理脚本和测试导入，识别动态文件加载、源码检查与 mock 使用点。
 
-现有 202 项测试作为迁移起点；为审查确认的错误保留独立正确答案。行为保持基线用于纯搬迁，正确性用例用于修复，两者目的不同。
+PR #4 当前 CI 的 258 项测试作为迁移起点；为审查确认的错误继续保留独立正确答案。行为保持基线用于纯搬迁，正确性用例用于修复，两者目的不同。
 
 交付：依赖清单、离线样本与输出契约，明确“已知旧错误”和“重构引入差异”的区分。
 
@@ -148,7 +148,7 @@ raw bars 继续作为原始数据；价格变化和前向收益按用途修正�
 
 先迁移配置、默认 profile、HTTP／限流／网络监控，再迁移客户端、缓存和股票池。修正脚本从回测入口导入客户端的依赖。
 
-首批配置搬迁保持现有 null、通道整体替换、默认值及 CLI 覆盖语义；严格校验、显式 style 和配置 schema version 作为后续明确的行为变更。
+首批配置搬迁必须**原样保持 PR #3 已落地的契约**：`config_schema_version=1`、显式 `strategy_style`、unknown/type/range fail-fast、null 禁用语义、`channel_profiles` 整体替换以及 CLI 覆盖。这里不再新增配置行为，只做机械迁移与兼容 re-export。
 
 交付：底层不依赖 scanner／backtest；导入不会构造客户端或要求环境变量；CLI 及脚本入口可用。
 
@@ -168,13 +168,13 @@ raw bars 继续作为原始数据；价格变化和前向收益按用途修正�
 
 交付：三清单共用明确的选择接口；报告不重新选股；同一批次配置和数据来源随产物保存。
 
-### 第五批：迁移回放与工具链，补执行闭环
+### 第五批：迁移回放与工具链，保持研究运行契约
 
 迁移历史回放、收益和评价函数；权重数据提取、主题观察、缓存刷新和交易计划通过公共模块使用能力。逐步将 `scripts/` 中的可复用逻辑移入包内，保留参数解析入口。
 
-随后独立实施账户／cohort 台账、账户模拟、结构化 manifest、验证及阶段状态，以及失败任务的依赖处理。这些工作对应审查记录的 L01–L05、T01–T05，按各项验收规则实施。
+theme/venture weekly paper-cohort、评价状态、business-date 与运行失败传播已经在 correctness 阶段收口；迁移时只保持这些契约。结构化 run manifest 可作为后续工程增强，但真实账户/cohort ledger、订单闭环和自动执行明确不在当前产品范围。
 
-交付：工具链不再从业务入口借底层函数；事件评价与账户评价清晰分开；依赖失败状态准确传递。
+交付：工具链不再从业务入口借底层函数；事件评价、paper cohort 评价与人工 reference 输出边界清楚；依赖失败状态准确传递。
 
 ## 6. 兼容迁移与变更隔离
 
@@ -210,4 +210,13 @@ raw bars 继续作为原始数据；价格变化和前向收益按用途修正�
 
 轻量机械拆分可以为纠错准备边界，不能代替错误修复、真实前向观察和历史影响重算。性能优化也需要单独测量，模块拆分本身不保证扫描更快或收益更好。
 
-2026-10-03：记录本方案，尚未创建上述业务模块或修改业务实现。后续每批记录迁移提交、兼容范围、验收结果、预期行为变化及未完成事项。
+2026-10-03：记录初版方案，尚未创建上述业务模块。
+
+2026-10-05：correctness 阶段完成三批合并（PR #1–#3）并进入 pre-E01 closure。E01 正式实施顺序更新为：
+1. 冻结当前离线基线与跨 scanner/backtest characterization；
+2. 抽取 `config.py`，保持 PR #3 契约零行为漂移；
+3. 抽取 data/http/cache/Alpaca/SEC；
+4. 统一 fundamentals/features；
+5. 再迁 strategy/reporting/evaluation/workflows。
+
+每批记录迁移提交、兼容 re-export、验收结果及预期零差异；不要在机械移动 PR 中顺手修改 E04/T04 等模型语义。

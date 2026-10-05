@@ -306,6 +306,8 @@
 
 验收：同进入／退出窗口的三种收益口径齐全；基准成分来源可追溯；缺价、未成熟、无信号和退市假设分开计数，不只汇总能定价的赢家。
 
+**2026-10-05 修复状态：已处理。** `theme_observation_scan.py --evaluate` 现在统一用 120 交易日 next-open→close 窗口和 15bps/side 成本，写出 gross、net `return_120d`、QQQ 净收益/超额、注册主题 benchmark basket 的净收益中位数/超额，并保存 benchmark symbols。QQQ 同窗口已成熟但个股无法定价时标记 `unresolved_price`；benchmark 缺失写入 `evaluation_note`，不伪装成零收益或未成熟。
+
 ### T03：观察频率与 cohort 语义不统一
 
 位置：[daily_run.py](../scripts/daily_run.py)、[theme_observation_scan.py](../scripts/theme_observation_scan.py)，`archive_cohort`；[主题协议](theme_observation_protocol.md)、[实盘协议](live_pilot_protocol.md)。
@@ -317,6 +319,8 @@
 运行顺序补充：周一 daily runner 先跑主题／venture 扫描，再刷新主题篮与 venture 底单，因此刷新默认从后续扫描生效。若要求当日使用新底单，应将对应构建任务置于扫描之前；若有意延后，应明确记录使用的 universe 版本。这是依赖与时点的优化建议，不将该顺序本身判为确定错误。
 
 验收：协议与代码频率一致；重跑语义可说明；样本量不把重叠日度记录当独立样本；保留空信号和失败状态的区别。
+
+**2026-10-05 修复状态：已处理。** 日度 theme/venture 扫描改为 observation-only；只有显式 `--archive-cohort` 才冻结 paper cohort，`daily_run.py` 仅在 America/New_York 周五传该参数。新行保存 ISO-week `cohort_id`、`signal_utc`、`source_report`；同一 theme/week 采用 first-freeze-wins，重跑不会事后补入新 symbol。旧 CSV 首次追加时按 `entry_date` 回填 cohort identity。日度 observation 不再计入周度 cohort 样本数。
 
 ### T04：新主题继承 AI 校准假设
 
@@ -413,6 +417,8 @@ drop 在文档所述历史幸存者样本中未触发，这是已有研究记录
 建议：代码修复后同步权威 README、协议和 AGENTS.md；运行摘要使用结构化产物来源，避免从 Markdown 文本反向提取业务状态。历史数字保留出处与旧版标签，更新需要可重跑的产物。
 
 验收：当前默认行为与文档一致；日志文件实际生成或文档明确依赖外部重定向；旧基线不会被贴为新版本验证结果。
+
+**2026-10-05 pre-E01 收口：运行契约已进一步对齐。** `daily_run.py` 的业务日期明确为 `America/New_York`，提供 `--run-date YYYY-MM-DD` 测试/人工覆盖；runner 自身调度与结果摘要实际追加到 `.debug_logs/daily_YYYYMMDD.log`，子进程输出仍直接留在控制台，文档不再声称全部子进程日志写入该文件。主题 observation/cohort 与 trade-plan reference 的非自动交易语义同步到 README/AGENTS/协议。历史性能基线仍保留为历史证据，不因重构自动继承。
 
 ## 9. 应保留的设计与优化顺序
 

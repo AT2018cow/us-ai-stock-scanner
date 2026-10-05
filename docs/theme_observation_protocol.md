@@ -9,27 +9,35 @@
 - **零资本**：所有主题只做纸面观察，不进入 generate_trade_plan，不与 AI 试点共享任何资金规则
 - **隔离**：主题扫描不归档 AI PIT 快照（`archive_watchlist_snapshots=false`），watchlist 独立，
   报告以 `Config:` 头识别，与 AI 双风格的观察并行互不干扰
-- **同构评价**：cohort 机制与 AI 试点一致——120 个交易日持有、重叠月度 cohort、
-  绝对收益 + 超额 vs QQQ + 超额 vs 主题基准篮三口径
+- **观察与 cohort 分离**：扫描可以工作日每日运行，但日度结果只是 observation；每周五只冻结一次 paper cohort（同一 ISO week first-freeze-wins），避免把高度重叠的日度记录当作独立样本。
+- **同构评价**：weekly paper cohort 持有 120 个交易日，结算采用 15bps/side 成本后的净收益，并同时记录绝对收益、超额 vs QQQ、超额 vs 注册主题 benchmark basket 三口径
 - **不继承证据**：AI 主题的 IC 证据（t=3~7）不自动适用于新主题；"主题中心度泛化"
   假设由本观察检验
 
 ## 2. 执行节奏
 
-每期（至少每周一次）：
+运行节奏：
 
 ```bash
-.venv/bin/python scripts/theme_observation_scan.py            # 五主题扫描 + cohort 归档
-.venv/bin/python scripts/theme_observation_scan.py --evaluate  # 结算到期 cohort（120 交易日后）
-.venv/bin/python scripts/build_theme_universe.py              # 周度刷新主题篮 + 新成员 diff（L2 信号）
-.venv/bin/python scripts/build_venture_universe.py --fts      # venture 三层底单（并行积累）
+# 工作日可每日运行：只产生 observation/report，不写 paper cohort
+.venv/bin/python scripts/theme_observation_scan.py
+
+# 每周五：冻结本周唯一 paper cohort
+.venv/bin/python scripts/theme_observation_scan.py --archive-cohort
+
+# 周五或需要时：结算已经成熟的 120d cohort
+.venv/bin/python scripts/theme_observation_scan.py --evaluate
+
+# 周一维护：刷新主题篮与 venture 底单；后续 observation 使用新底单
+.venv/bin/python scripts/build_theme_universe.py
+.venv/bin/python scripts/build_venture_universe.py --fts
 ```
+
+推荐直接使用 `scripts/daily_run.py`：它按 America/New_York 业务日期判定周一/周五，并仅在周五向 theme/venture observation 传 `--archive-cohort`。
 
 ## 3. 预注册指标（每期记录）
 
-> **已知缺失（2026-09-28 审查发现）**：`--evaluate` 目前只计算 cohort 的绝对收益；
-> 协议承诺的"超额 vs QQQ + vs 主题基准篮"双口径尚未实现（需在 cohort 行加基准结算列）。
-> 已排入下一个工程周期——在实现之前，主题 cohort 的"选择能力"暂用绝对收益替代评价。
+> **2026-10-05 已闭环**：`--evaluate` 对成熟行记录 gross return、15bps/side 成本后的净 `return_120d`、同期 QQQ 净收益与超额、注册主题 benchmark basket 的同期净收益中位数与超额。长期无法取得个股前向窗口的数据标为 `unresolved_price`；benchmark 缺失单独写入 `evaluation_note`，不伪装成有效零收益。
 
 
 
@@ -49,7 +57,7 @@
 
 ## 5. 审查触发条件
 
-1. 任意主题连续 3 期零信号（含 no_signal 归档）
+1. 任意主题连续 3 个**周度冻结 cohort**零信号（含 no_signal 归档）
 2. 主题篮子源 ETF 页面结构变化导致持仓抓取失败
 3. 单主题成熟 cohort 均值 120d < -20%（配置校准问题的信号）
 4. 主题基准篮数据缺失（NLR/QTUM 等 bars 断供）
@@ -58,7 +66,7 @@
 
 ## 6. 进入实盘（P1）的前置条件（预注册，不提前松动）
 
-1. **≥2 个季度**的成熟 cohort 数据（约 26 个周度 cohort × 120d 结算）
+1. **≥2 个季度**的成熟 weekly cohort 数据（约 26 个周度 cohort × 120d 结算；日度 observation 不计入样本数）
 2. 主题 cohort 均值 120d 超额 **vs 主题基准篮 > 0**（主题 β 之外的选股能力）
 3. 校准积压项（docs/multi_theme_expansion.md §阶段2 校准清单）中影响评价的项目已解决
 4. 与 AI 试点一样按试点协议分级（P1 起步 25%×该主题目标配额），不跳级
