@@ -9,13 +9,14 @@ import re
 import shutil
 import time
 import threading
+import types
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, get_args, get_origin, get_type_hints, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -617,22 +618,68 @@ class ScanConfig:
     cache_dir: str = "cache"
     output_dir: str = "outputs"
 
+    @staticmethod
+    def _matches_annotation(value: Any, annotation: Any) -> bool:
+        if annotation is Any:
+            return True
+        origin = get_origin(annotation)
+        if origin is types.UnionType:
+            return any(ScanConfig._matches_annotation(value, arg) for arg in get_args(annotation))
+        if origin is list:
+            if not isinstance(value, list):
+                return False
+            args = get_args(annotation)
+            item_type = args[0] if args else Any
+            return all(ScanConfig._matches_annotation(item, item_type) for item in value)
+        if origin is dict:
+            if not isinstance(value, dict):
+                return False
+            args = get_args(annotation)
+            key_type, value_type = args if len(args) == 2 else (Any, Any)
+            return all(
+                ScanConfig._matches_annotation(k, key_type)
+                and ScanConfig._matches_annotation(v, value_type)
+                for k, v in value.items()
+            )
+        if annotation is bool:
+            return isinstance(value, bool)
+        if annotation is int:
+            return isinstance(value, int) and not isinstance(value, bool)
+        if annotation is float:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if annotation is str:
+            return isinstance(value, str)
+        if annotation is type(None):
+            return value is None
+        return isinstance(value, annotation)
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ScanConfig":
         if not isinstance(raw, dict):
             raise ValueError("ScanConfig must be loaded from a JSON object")
         base = cls()
         known = {f.name for f in fields(cls)}
+        hints = get_type_hints(cls)
         unknown = sorted(k for k in raw if k not in known and not str(k).startswith("_"))
         if unknown:
             raise ValueError(
                 "Unknown ScanConfig keys (possible typo): " + ", ".join(repr(k) for k in unknown)
             )
+        type_errors: list[str] = []
         for key, value in raw.items():
             # Metadata blocks (_theme_meta/_venture_meta) are documentation
             # provenance, not runtime configuration.
-            if key in known:
-                setattr(base, key, value)
+            if key not in known:
+                continue
+            annotation = hints.get(key, Any)
+            if not cls._matches_annotation(value, annotation):
+                type_errors.append(
+                    f"{key}: expected {annotation!s}, got {type(value).__name__}"
+                )
+                continue
+            setattr(base, key, value)
+        if type_errors:
+            raise ValueError("Invalid ScanConfig types:\n- " + "\n- ".join(type_errors))
         base.validate()
         return base
 
