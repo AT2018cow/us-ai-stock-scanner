@@ -118,7 +118,7 @@ python run_scan.py --config configs/config.risk_off.json
 
 调参空间同时覆盖并行清单阈值与研究池参数，例如 `research_pool_min_score`。`research_pool_top_n` 会影响扫描输出规模；在历史回放中，回测层还会受 `--top-n` 约束。
 
-### 3.6 定期调参（walk-forward）
+### 3.6 定期调参（分段历史稳健性；尚非完整 OOS walk-forward）
 
 入口：
 
@@ -138,17 +138,13 @@ python scripts/tune_parameters.py \
 - 多目标打分（收益、相对 QQQ 超额、胜率、波动/回撤惩罚、覆盖率约束）
 - `industry_trend`、`momentum`、`research_pool` 可以参与回测输出和诊断，但默认不决定生产参数是否通过。
 - 候选参数必须通过调参护栏，默认要求平均收益非负、相对 QQQ 平均超额非负、平均胜率不低于 `0.52`，且至少一半窗口的综合得分为正。
-- 自动选择并覆盖两套生产配置（balanced 路径仅为归档参考）：
-  - `configs/config.risk_on.json`
-  - `configs/config.risk_off.json`
+- **默认只评估，不覆盖任何生产配置**。
+- 只有显式传 `--promote` 才会写生产配置，而且一次 tuning run 只能写回其 `--base-config` 所属 style：
+  - `--base-config configs/config.risk_on.json --promote` 只能更新 risk_on；
+  - `--base-config configs/config.risk_off.json --promote` 只能更新 risk_off。
+- 当前分段窗口用于历史稳健性评分，尚未实现“训练选参 → 未触碰验证窗口 → 滚动前移”的完整 OOS walk-forward；因此生产晋级仍应人工审阅。
 
 若只评估三张并行扫描清单，可通过 `--list-types low_value,industry_trend,momentum` 排除 `research_pool`。若要改变生产评价目标，可显式设置 `--primary-list-types`。
-
-如果只想评估不覆盖配置：
-
-```bash
-python scripts/tune_parameters.py --no-promote
-```
 
 ## 4. Watchlist 机制
 
@@ -780,16 +776,17 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 python scripts/tune_parameters.py \
   --base-config configs/config.risk_off.json \
   --param-space configs/tuner.param_space.json \
-  --max-candidates 36 --no-promote
+  --max-candidates 36
 
 # Modal 云并行执行（每候选一个容器，--executor modal）
 python scripts/tune_parameters.py \
   --base-config configs/config.risk_on.json \
   --param-space configs/tuner.param_space.momentum.json \
-  --max-candidates 80 --executor modal --no-promote
+  --max-candidates 80 --executor modal
 ```
 
 详见 §12（参数调优）。`--executor modal` 需要已配置 Modal（见 `scripts/modal_executor.py`）。
+默认不会覆盖生产配置；需要晋级时显式加 `--promote`，且只能写回与 `--base-config` 同一 style。
 `--allow-latest-watchlist-fallback` 默认关闭；显式开启仅用于研究（会引入前视成分并打印警告）。
 
 ### 13.5 `scripts/calibrate_thresholds.py` —— 产出量校准
@@ -856,7 +853,7 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 #       --include-smallcap（默认关闭：ai_smallcap 为辅线观察层，不进交易计划）
 ```
 
-从最新两风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）：
+从最新双风格扫描生成交易计划（`outputs/trade_plan_<UTC>.md/.csv`）。可执行计划只接受带 `Config:` 头、时间戳可解析且足够新鲜的一对报告；默认要求最新报告 ≤12 小时、两风格时间差 ≤6 小时，拒绝用旧报告补位：
 排序规则：low_value 与 momentum 的 composite 出自不同权重向量、量纲不可直接比较
 （2026-10-02 中位数 sweep 后 momentum ~1.2-1.3 vs low_value ~0.6-0.8），袖珍选择按
 **各清单内、按通道分组的百分位名次（list_pct）** 排序——最佳 keep 与最佳 momentum
@@ -864,7 +861,8 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 标的两清单最高档（keep+momentum 双入选不会被代表行降档）。
 分层→权重图例、双风格合并仓（置信度累加，单仓 ≤10% 总资金）、QQQ 熔断器实时状态、
 基线预期（诚实数字含 t 值）。风格识别以报告头 `Config:` 行为准。
-熔断器数据不可用/陈旧（>4 天）时拒绝生成，需 `--allow-no-breaker` 显式绕过
+QQQ < SMA200 时按 live pilot 协议**硬停止新开仓**，不能用 `--allow-no-breaker` 绕过。
+只有熔断器数据不可用/陈旧（>4 天）时，才允许用 `--allow-no-breaker` 显式绕过数据可用性检查
 （报告打标）；全部仓位触及单仓上限时，未部署部分保留现金并在报告中单独列示。
 
 ### 13.14 `scripts/ic_analysis.py` —— 截面 IC 分析
@@ -931,8 +929,8 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 ### 13.19 `scripts/daily_run.py` —— 每日运行入口（推荐）
 
 ```bash
-.venv/bin/python scripts/daily_run.py             # 工作日：三套观察流 + 归档
-.venv/bin/python scripts/daily_run.py --capital N # 加生成 AI trade plan
+.venv/bin/python scripts/daily_run.py  # 工作日：三套观察流 + 归档；默认不生成交易计划
+.venv/bin/python scripts/daily_run.py --generate-trade-plan --capital N  # 月度 cohort 入场日显式生成
 .venv/bin/python scripts/daily_run.py --skip-scan --evaluate  # 只跑 cohort 结算
 ```
 
@@ -942,6 +940,8 @@ AI 的 PIT 序列。阶段 3（试点接入）前的校准积压见设计文档�
 - **周五额外**：全量 cohort 结算（--evaluate 传播到各观察脚本）
 - 周末仅 `--evaluate` 可用（市场关闭）
 - 扫描完成后自动跑左侧名单资金流（`flow_tracker.py`，`--skip-flow` 跳过）
+- **不会每日自动生成 trade plan**；按月度 cohort 节奏由操作人显式传 `--generate-trade-plan`
+- 显式生成计划时，本次 AI 双风格扫描失败会 fail-closed；周一若数据质量周检失败也不会生成计划
 
 ### 13.20 `scripts/flow_tracker.py` —— 左侧名单大单流统计
 
@@ -972,7 +972,7 @@ $100K/$1M 大单买方主动性（tick rule 近似）、场外占比与 3 日价
 ## 15. 实盘试点操作流程（Live Pilot）
 
 完整规则见 `docs/live_pilot_protocol.md`（预注册，含资金分级 P0 纸面→P1 25%→
-P2 50%→P3 100% 与降级条件）。**日常操作只有一条命令**：
+P2 50%→P3 100% 与降级条件）。日常观察运行：
 
 ```bash
 .venv/bin/python scripts/daily_run.py
@@ -980,8 +980,14 @@ P2 50%→P3 100% 与降级条件）。**日常操作只有一条命令**：
 
 按星期自动执行：工作日跑 AI 双风格 + 五主题 + Venture 三套观察扫描 + cohort 归档；
 周一额外跑数据质量门槛 + 主题篮子刷新 + venture 三层底单重建；周五额外跑 cohort 结算。
-可选参数：`--capital N`（生成 AI trade plan）、`--evaluate`（非周五强制结算）、
-`--skip-scan`（跳过扫描只跑维护）。
+**交易计划不是每日任务。** 在预定的月度 cohort 入场日显式执行：
+
+```bash
+.venv/bin/python scripts/daily_run.py --generate-trade-plan --capital 100000
+```
+
+可选参数：`--evaluate`（非周五强制结算）、`--skip-scan`（跳过扫描只跑维护）、
+`--skip-flow`（跳过资金流注释层）。
 
 手动分步命令（与 daily_run.py 等价）：
 
