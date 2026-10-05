@@ -105,11 +105,13 @@ cp data/watchlist_history/*.csv "$HIST"/
   --start-date 2023-01-01 \
   --end-date 2026-03-31 \
   --rebalance-frequency monthly \
+  --watchlist-csv-path "$WATCHLIST" \
+  --watchlist-history-dir "$HIST" \
   --theme-source rules_proxy \
   --pre-snapshot-universe union
 ```
 
-两次 backtest 之间不要刷新 `data/ai_watchlist.csv`。
+两次 backtest 必须使用同一份冻结 `$WATCHLIST` / `$HIST`。
 
 ## 6. anchored walk-forward tuner smoke
 
