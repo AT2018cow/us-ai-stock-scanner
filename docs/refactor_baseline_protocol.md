@@ -49,17 +49,24 @@ git rev-parse HEAD
 
 ```bash
 BASE="pre_e01_$(git rev-parse --short HEAD)"
+WATCHLIST="outputs/${BASE}_ai_watchlist.csv"
 HIST="outputs/${BASE}_watchlist_history"
 
 mkdir -p outputs
+cp data/ai_watchlist.csv "$WATCHLIST"
 rm -rf "$HIST"
 mkdir -p "$HIST"
 cp data/watchlist_history/*.csv "$HIST"/
 ```
 
-后面的命令都使用同一个 `$BASE` 和冻结后的 `$HIST`。
+后面的命令都使用同一个 `$BASE`、冻结后的 `$WATCHLIST` 和 `$HIST`。
 
-为什么要冻结 `watchlist_history`：`pre_snapshot_universe=union` 会把快照历史中见过的股票加入 replay pool。未来新增快照可能扩大这个 union；如果继续读取动态的 `data/watchlist_history/`，即使代码完全没变，重构后重跑也可能产生不同 universe。baseline/refactor 对比必须始终使用这份冻结副本。
+为什么两个都要冻结：
+
+- `data/ai_watchlist.csv` 是 fixed-current candidate pool，本身会随日常刷新变化；
+- `pre_snapshot_universe=union` 会把快照历史中见过的股票加入 replay pool。未来新增快照可能扩大这个 union。
+
+如果继续读取动态输入，即使代码完全没变，重构后重跑也可能产生不同 universe。baseline/refactor 对比必须始终使用这两份冻结副本。
 
 ## 4. risk_off 固定历史回放
 
@@ -77,6 +84,7 @@ cp data/watchlist_history/*.csv "$HIST"/
   --start-date 2023-01-01 \
   --end-date 2026-03-31 \
   --rebalance-frequency monthly \
+  --watchlist-csv-path "$WATCHLIST" \
   --watchlist-history-dir "$HIST" \
   --theme-source rules_proxy \
   --pre-snapshot-universe union
@@ -121,6 +129,7 @@ cp data/watchlist_history/*.csv "$HIST"/
   --max-candidates 4 \
   --random-seed 42 \
   --rebalance-frequency monthly \
+  --watchlist-csv-path "$WATCHLIST" \
   --watchlist-history-dir "$HIST" \
   --no-perturbation \
   --no-promote
@@ -145,6 +154,7 @@ baseline tuner smoke 建议使用默认本地 executor。冻结的 `$HIST` 是�
   --risk-off-prefix "${BASE}_risk_off" \
   --risk-on-prefix "${BASE}_risk_on" \
   --tuning-prefix "${BASE}_tuner_risk_off" \
+  --watchlist "$WATCHLIST" \
   --watchlist-history-dir "$HIST" \
   --replay-start 2023-01-01 \
   --replay-end 2026-03-31 \
@@ -189,7 +199,7 @@ outputs/${BASE}_manifest.json
 检查：
 
 1. risk_on / risk_off 都是正确的 `strategy_style`；
-2. `watchlist_source` 没有 latest-watchlist fallback；
+2. `watchlist_source` 没有 latest-watchlist fallback，且 report 中的 watchlist path 指向冻结的 `$WATCHLIST`；
 3. network provenance 中如果使用 stale fallback，原因和 data-asof 有记录；
 4. tuner 没有 promote；
 5. manifest 的 `git.commit` 是本次 PR #5A 合并后的 `main`；
@@ -203,7 +213,7 @@ outputs/${BASE}_manifest.json
 NEW="e01_config_$(git rev-parse --short HEAD)"
 ```
 
-运行与第 4–6 节相同的实验，只把 output prefix 换成 `$NEW`，并且继续使用原 baseline 的 `$HIST`，不要重新复制当前 `data/watchlist_history/`。然后：
+运行与第 4–6 节相同的实验，只把 output prefix 换成 `$NEW`，并且继续使用原 baseline 的 `$WATCHLIST` / `$HIST`，不要重新复制当前 `data/ai_watchlist.csv` 或 `data/watchlist_history/`。然后：
 
 ```bash
 .venv/bin/python scripts/refactor_baseline.py compare \
@@ -211,6 +221,7 @@ NEW="e01_config_$(git rev-parse --short HEAD)"
   --risk-off-prefix "${NEW}_risk_off" \
   --risk-on-prefix "${NEW}_risk_on" \
   --tuning-prefix "${NEW}_tuner_risk_off" \
+  --watchlist "$WATCHLIST" \
   --watchlist-history-dir "$HIST" \
   --replay-start 2023-01-01 \
   --replay-end 2026-03-31 \
