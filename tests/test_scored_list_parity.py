@@ -110,7 +110,7 @@ class ScoredListParityTest(unittest.TestCase):
         df = _make_df(40)
         for ch, prof in (self.cfg.channel_profiles or {}).items():
             steps, _ = build_momentum_steps(self.cfg, ch, prof)
-            hard, soft = partition_filter_steps(steps, ch)
+            hard, soft = partition_filter_steps(steps, ch, self.cfg.strategy_style)
             out, _ = apply_scored_or_hard_filters(df, steps, ch, self.cfg)
             if out.empty:
                 continue
