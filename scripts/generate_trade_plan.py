@@ -135,7 +135,7 @@ def _report_style(report_path: str) -> str | None:
     """Identify the scan style from the report's Config header line.
 
     Reports written since 2026-09-27 carry "- Config: configs/config.<style>.json".
-    Older reports fall back to None (caller must use mtime ordering + warn).
+    Older reports return None and are rejected for executable trade plans.
     """
     try:
         text = Path(report_path).read_text()
@@ -199,13 +199,14 @@ def latest_scan_pair(
     current = now or datetime.now(timezone.utc)
     newest = max(off_dt, on_dt)
     oldest = min(off_dt, on_dt)
-    age_hours = (current - newest).total_seconds() / 3600.0
+    newest_age_hours = (current - newest).total_seconds() / 3600.0
+    oldest_age_hours = (current - oldest).total_seconds() / 3600.0
     skew_hours = (newest - oldest).total_seconds() / 3600.0
-    if age_hours < -0.25:
+    if newest_age_hours < -0.25:
         raise SystemExit("扫描报告时间戳位于未来，拒绝生成交易计划。")
-    if age_hours > max_age_hours:
+    if oldest_age_hours > max_age_hours:
         raise SystemExit(
-            f"双风格扫描报告过旧（最新报告距今 {age_hours:.1f}h > {max_age_hours:.1f}h），请重跑扫描。"
+            f"双风格扫描报告过旧（较旧报告距今 {oldest_age_hours:.1f}h > {max_age_hours:.1f}h），请重跑扫描。"
         )
     if skew_hours > max_pair_skew_hours:
         raise SystemExit(
@@ -381,9 +382,9 @@ BREAKER_MAX_STALE_DAYS = 4
 def check_breaker_state(breaker: dict, today, max_stale_days: int = BREAKER_MAX_STALE_DAYS) -> tuple:
     """Validate the QQQ circuit-breaker snapshot. Returns (proceed, reason).
 
-    proceed=False is a hard stop: unknown or stale breaker data must never
-    silently issue positions. Callers may bypass only via an explicit
-    --allow-no-breaker flag (logged loudly and stamped on the report).
+    proceed=False is a hard stop. Unknown/stale data may be bypassed only by
+    the caller's explicit --allow-no-breaker handling; a fresh bear regime is
+    a protocol stop and must never be bypassed.
     """
     ok = breaker.get("ok")
     if ok is None:
