@@ -462,6 +462,7 @@ def default_low_coverage_soft_score_weights() -> dict[str, float]:
 
 @dataclass
 class ScanConfig:
+    config_schema_version: int = 1
     # Explicit identity for production two-style configs. None is valid for
     # theme/venture/calibration configs that are not one of the two AI styles.
     strategy_style: str | None = None
@@ -732,6 +733,12 @@ class ScanConfig:
             if maximum is not None and val > maximum:
                 err(name, f"must be <= {maximum}")
 
+        require_int("config_schema_version", minimum=1)
+        if self.config_schema_version != 1:
+            err(
+                "config_schema_version",
+                f"unsupported version {self.config_schema_version!r}; expected 1",
+            )
         if self.strategy_style not in (None, "risk_on", "risk_off"):
             err("strategy_style", "must be null, 'risk_on', or 'risk_off'")
 
