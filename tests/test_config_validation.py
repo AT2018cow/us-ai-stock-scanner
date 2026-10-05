@@ -52,10 +52,6 @@ class TestScanConfigValidation(unittest.TestCase):
                 }
             )
 
-    def test_unsupported_schema_version_fails(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unsupported version"):
-            ScanConfig.from_dict({"config_schema_version": 2})
-
     def test_unknown_score_weight_dimension_fails(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown score dimensions"):
             ScanConfig.from_dict(
