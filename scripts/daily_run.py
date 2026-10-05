@@ -42,11 +42,11 @@ MARKET_TZ = ZoneInfo("America/New_York")
 _LOG_FILE: Path | None = None
 
 
-def market_business_date(
+def runner_calendar_date(
     now_utc: datetime | None = None,
     override: str | None = None,
 ) -> date:
-    """Resolve the runner's business date in the US market timezone."""
+    """Resolve the runner calendar date in America/New_York."""
     if override:
         return date.fromisoformat(override)
     current = now_utc or datetime.now(timezone.utc)
@@ -113,7 +113,7 @@ def print_reference_guidance(capital: float, business_date: date | None = None) 
 
     # ---- 2. Theme cohorts (today's entries) ----
     cohort_file = Path("data/theme_cohorts.csv")
-    today = (business_date or market_business_date()).isoformat()
+    today = (business_date or runner_calendar_date()).isoformat()
     if cohort_file.exists():
         d = pd.read_csv(cohort_file)
         today_rows = d[d["entry_date"] == today]
@@ -209,7 +209,7 @@ def main() -> None:
     args = p.parse_args()
 
     now = datetime.now(timezone.utc)
-    business_date = market_business_date(now, args.run_date)
+    business_date = runner_calendar_date(now, args.run_date)
     dow = business_date.weekday()  # 0=Mon ... 4=Fri, 5=Sat, 6=Sun
     date_tag = business_date.strftime("%Y%m%d")
     run_started_ts = time.time()
