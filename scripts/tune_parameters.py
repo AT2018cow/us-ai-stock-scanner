@@ -1406,6 +1406,7 @@ def write_tuning_report(
     windows: list[TuneWindow],
     scores_df: pd.DataFrame,
     picks: dict[str, str],
+    walk_forward: dict[str, Any] | None = None,
 ) -> None:
     lines: list[str] = []
     lines.append("# Parameter Tuning Report")
@@ -1418,7 +1419,8 @@ def write_tuning_report(
     lines.append(f"- primary_list_types: `{args.primary_list_types}`")
     lines.append(f"- windows: `{', '.join(f'{w.label}:{w.start_date}->{w.end_date}' for w in windows)}`")
     lines.append(f"- candidate_count: {len(scores_df)}")
-    lines.append(f"- constraints_passed: {int((scores_df['constraints_passed'] == True).sum())}")
+    lines.append(f"- selection_mode: `{args.selection_mode}`")
+    lines.append(f"- constraints_passed (pooled diagnostic): {int((scores_df['constraints_passed'] == True).sum())}")
     lines.append(
         "- guardrails: "
         f"min_avg_return={args.min_avg_return}, "
@@ -1428,6 +1430,41 @@ def write_tuning_report(
         f"min_positive_excess_window_ratio={args.min_positive_excess_window_ratio}, "
         f"max_empty_window_ratio={args.max_empty_window_ratio}"
     )
+    if walk_forward:
+        lines.append("")
+        lines.append("## Anchored Walk-Forward OOS")
+        lines.append("")
+        lines.append(
+            "Each fold selects a candidate using only the preceding windows; "
+            "the next window is held out until after selection. The final candidate "
+            "is the one selected before the last window, not a candidate re-ranked on that held-out data."
+        )
+        lines.append("")
+        for profile in ("risk_on", "risk_off"):
+            result = walk_forward.get(profile) or {}
+            lines.append(f"### {profile}")
+            lines.append("")
+            for fold in result.get("folds", []):
+                selected = fold.get("selected_cid") or "none"
+                validation = fold.get("validation") or {}
+                train = "+".join(fold.get("train_labels") or [])
+                valid_label = fold.get("validation_label")
+                lines.append(
+                    f"- train=`{train}` → held-out=`{valid_label}` | selected=`{selected}` "
+                    f"| train_pass={bool(fold.get('training_constraints_passed'))} "
+                    f"| OOS_pass={bool(validation.get('passed'))} "
+                    f"| OOS_score={safe_float(validation.get('score')):.4f} "
+                    f"| OOS_excess={safe_float(validation.get('avg_excess_vs_qqq')):.4f}"
+                )
+                if fold.get("training_failure_reason"):
+                    lines.append(f"  training_failure: `{fold['training_failure_reason']}`")
+                if validation.get("reason"):
+                    lines.append(f"  OOS_failure: `{validation['reason']}`")
+            lines.append(
+                f"- final_candidate: `{result.get('final_candidate') or 'none'}` "
+                f"| promotion_eligible={bool(result.get('promotion_eligible'))}"
+            )
+            lines.append("")
     lines.append("")
     lines.append("## Profile Picks")
     lines.append("")
@@ -1566,7 +1603,21 @@ def main() -> None:
     results_csv = outputs_dir / f"{stamp}_results.csv"
     scores_df.sort_values(by="balanced_rank_score", ascending=False).to_csv(results_csv, index=False)
 
-    picks = pick_profile_candidates(scores_df)
+    walk_forward: dict[str, Any] | None = None
+    if args.selection_mode == "walk_forward":
+        validate_walk_forward_windows(windows)
+        walk_forward = {
+            profile: walk_forward_profile_selection(scores_df, windows, profile, args)
+            for profile in ("risk_on", "risk_off")
+        }
+        picks = {
+            profile: str(result["final_candidate"])
+            for profile, result in walk_forward.items()
+            if result.get("final_candidate")
+        }
+    else:
+        picks = pick_profile_candidates(scores_df)
+
     report_path = outputs_dir / f"{stamp}_report.md"
     write_tuning_report(
         path=report_path,
@@ -1575,9 +1626,15 @@ def main() -> None:
         windows=windows,
         scores_df=scores_df,
         picks=picks,
+        walk_forward=walk_forward,
     )
 
     if bool(args.promote and not args.no_promote):
+        if args.selection_mode != "walk_forward":
+            raise SystemExit(
+                "--promote requires --selection-mode walk_forward. "
+                "Pooled ranking uses validation windows during selection and is research-only."
+            )
         profile = promotion_profile_from_base_config(args.base_config)
         if profile is None:
             raise SystemExit(
@@ -1585,17 +1642,21 @@ def main() -> None:
                 "configs/config.risk_on.json or configs/config.risk_off.json; "
                 "a tuning run may only promote back into its own style."
             )
-        target_path = Path(
-            args.risk_on_config_path if profile == "risk_on" else args.risk_off_config_path
-        )
-        cid = picks.get(profile)
-        if cid:
-            picked = scores_df[scores_df["cid"] == cid]
-            if picked.empty or not bool(picked.iloc[0]["constraints_passed"]):
-                log(f"skipped promotion for {profile}: {cid} did not pass constraints")
-            else:
-                write_json(target_path, candidate_map[cid].config)
-                log(f"promoted {profile}: {cid} -> {target_path}")
+        wf_profile = (walk_forward or {}).get(profile) or {}
+        cid = wf_profile.get("final_candidate")
+        if not cid:
+            log(f"skipped promotion for {profile}: no final walk-forward candidate")
+        elif not bool(wf_profile.get("promotion_eligible")):
+            log(
+                f"skipped promotion for {profile}: {cid} was selected without the final held-out "
+                "window, but its OOS validation did not pass"
+            )
+        else:
+            target_path = Path(
+                args.risk_on_config_path if profile == "risk_on" else args.risk_off_config_path
+            )
+            write_json(target_path, candidate_map[str(cid)].config)
+            log(f"promoted {profile}: {cid} -> {target_path} (walk-forward OOS validated)")
 
     summary_json = outputs_dir / f"{stamp}_summary.json"
     payload = {
@@ -1604,8 +1665,10 @@ def main() -> None:
         "param_space": args.param_space,
         "list_types": list_types,
         "primary_list_types": primary_list_types,
+        "selection_mode": args.selection_mode,
         "candidates": len(candidates),
         "picks": picks,
+        "walk_forward": walk_forward,
         "results_csv": str(results_csv),
         "report_path": str(report_path),
     }
