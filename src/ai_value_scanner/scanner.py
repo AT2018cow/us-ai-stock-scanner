@@ -826,6 +826,60 @@ class ScanConfig:
             maximum=1.0,
             allow_none=True,
         )
+        for name in (
+            "min_avg_dollar_volume_20d",
+            "min_operating_cash_flow",
+            "min_free_cash_flow",
+            "min_ebit",
+            "min_net_margin",
+            "max_ps",
+            "max_pe",
+            "max_ev_to_ebit",
+            "min_fcf_yield",
+            "min_revenue_yoy",
+            "min_net_income_yoy",
+            "max_net_debt_to_ebitda",
+            "min_interest_coverage",
+            "max_current_debt_ratio",
+            "min_current_ratio",
+            "min_ocf_to_net_income",
+            "max_accrual_ratio",
+            "max_receivables_growth_gap",
+            "max_inventory_growth_gap",
+            "max_shares_yoy",
+            "min_expectation_proxy",
+            "min_cycle_proxy",
+            "max_estimated_slippage_bps",
+            "min_drawdown_from_52w_high",
+            "max_range_position_52w",
+            "min_range_position_52w",
+            "max_price_to_sma200",
+            "min_price_to_sma200",
+            "min_return_20d",
+            "min_return_60d",
+            "max_20d_return",
+            "max_60d_volatility",
+            "low_value_min_research_score",
+        ):
+            require_number(name, allow_none=True)
+        for name in (
+            "min_revenue",
+            "min_net_income",
+            "ai_link_market_return_tolerance_20d",
+            "ai_link_market_return_tolerance_60d",
+            "ai_link_backlog_ratio_cap",
+            "score_penalty_overvaluation",
+            "score_penalty_deterioration",
+            "min_ps_discount",
+            "min_pe_discount",
+        ):
+            require_number(name)
+        if self.ai_link_market_return_tolerance_20d <= 0:
+            err("ai_link_market_return_tolerance_20d", "must be > 0")
+        if self.ai_link_market_return_tolerance_60d <= 0:
+            err("ai_link_market_return_tolerance_60d", "must be > 0")
+        if self.ai_link_backlog_ratio_cap <= 0:
+            err("ai_link_backlog_ratio_cap", "must be > 0")
         if (
             isinstance(self.score_winsor_lower_q, (int, float))
             and isinstance(self.score_winsor_upper_q, (int, float))
@@ -863,6 +917,11 @@ class ScanConfig:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 err(name, "must be a non-empty string")
+        if self.benchmark_trend_filter_symbol is not None and (
+            not isinstance(self.benchmark_trend_filter_symbol, str)
+            or not self.benchmark_trend_filter_symbol.strip()
+        ):
+            err("benchmark_trend_filter_symbol", "must be a non-empty string or null")
         for name in (
             "enabled_exchanges",
             "exclude_sic_codes",
