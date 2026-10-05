@@ -15,8 +15,9 @@
 周五额外：
   8. 所有到期 cohort 结算（--evaluate，120 交易日到期才真正结算）
 
-AI trade plan 不再每日自动生成。按 live pilot 的月度 cohort 节奏，由操作人显式传
---generate-trade-plan；生成前要求本次 AI 双风格扫描成功（若本次执行扫描）以及当日
+AI trade plan 是给人工复核用的快速参考摘要，不是订单或自动交易指令。它不读取券商
+持仓、不维护账户状态，也不会下单。默认不生成；需要快速参考时由操作人显式传
+--generate-trade-plan。生成前要求本次 AI 双风格扫描成功（若本次执行扫描）以及当日
 周检成功（若当天为周一）。
 
 所有日志写入 .debug_logs/daily_YYYYMMDD.log。可用 --skip-scan 跳过扫描只跑结算。
@@ -39,8 +40,8 @@ def log(msg: str) -> None:
     print(f"[daily {stamp}] {msg}", flush=True)
 
 
-def print_operation_guidance(capital: float) -> None:
-    """Consolidated operation guidance from all observation streams."""
+def print_reference_guidance(capital: float) -> None:
+    """Consolidated manual-review reference from all observation streams."""
     import glob
     import json
 
@@ -66,12 +67,12 @@ def print_operation_guidance(capital: float) -> None:
                                  "triage": cols[5] if len(cols) > 5 else "",
                                  "weight": cols[6] if len(cols) > 6 else ""})
         if rows:
-            log(f"  AI trade plan: {len(rows)} 个仓位:")
+            log(f"  AI trade plan reference: {len(rows)} 个参考标的:")
             for r in rows[:12]:
                 log(f"    {r['symbol']:<8s} {r['triage']:<12s} {r['weight']}")
             if len(rows) > 12:
                 log(f"    ... 共 {len(rows)} 个")
-        log(f"  详细计划: {plans[0]}")
+        log(f"  详细参考: {plans[0]}")
 
     # ---- 2. Theme cohorts (today's entries) ----
     cohort_file = Path("data/theme_cohorts.csv")
@@ -116,8 +117,9 @@ def print_operation_guidance(capital: float) -> None:
 
     # ---- 5. 提醒 ----
     log("─" * 60)
-    log("  ⚡ 操作: AI trade plan 的仓位按次日开盘市价单执行；")
-    log("  主题/venture 为 P0 纸面（不买），120 交易日后自动结算。")
+    log("  AI trade plan 仅为人工复核参考；不生成订单、不读取券商持仓、不自动交易。")
+    log("  次日开盘/权重等字段是协议参考口径，是否交易及如何执行由人工决定。")
+    log("  主题/venture 为 P0 纸面观察，120 交易日后自动结算。")
     log("  每周五 --evaluate 结算到期行。")
     log("═" * 60)
 
@@ -160,7 +162,7 @@ def main() -> None:
     p.add_argument(
         "--generate-trade-plan",
         action="store_true",
-        help="Explicitly generate the AI trade plan. Use on the intended monthly cohort date; never runs by default.",
+        help="Explicitly generate the AI trade-plan reference summary for manual review; never runs by default.",
     )
     args = p.parse_args()
 
@@ -236,11 +238,11 @@ def main() -> None:
             ok &= plan_ok
         if plan_ok:
             log("═" * 60)
-            log("📋 TODAY'S OPERATION GUIDE")
+            log("📋 TODAY'S MANUAL-REVIEW REFERENCE")
             log("═" * 60)
-            print_operation_guidance(args.capital)
+            print_reference_guidance(args.capital)
         else:
-            log("交易计划未生成成功；不打印任何旧计划的执行指导。")
+            log("交易参考未生成成功；不打印任何旧参考摘要。")
     else:
         log("✓ AI trade plan: 默认不生成（按月度 cohort 节奏，需要时显式传 --generate-trade-plan）")
 

@@ -38,6 +38,9 @@ def _args(**overrides: float | int) -> argparse.Namespace:
         "positive_excess_window_penalty_weight": 0.5,
         "empty_window_penalty_weight": 0.7,
         "stability_penalty_weight": 0.35,
+        "min_strict_total_valid_events": 0,
+        "strict_coverage_ratio_floor": 0.0,
+        "min_strict_avg_win_rate": 0.0,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -212,6 +215,109 @@ class TestTuneParameterConstraints(unittest.TestCase):
         self.assertAlmostEqual(out["coverage_ratio"], 0.5)
         self.assertAlmostEqual(out["empty_window_ratio"], 0.5)
         self.assertAlmostEqual(out["worst_max_drawdown"], -0.10)
+
+    @staticmethod
+    def _window_metric(label: str, score: float, excess: float, *, purged_score: float | None = None) -> dict:
+        def ev(s: float, ex: float) -> dict:
+            return {
+                "score": s,
+                "coverage_ratio": 1.0,
+                "avg_win_rate": 0.60,
+                "avg_return": 0.05,
+                "avg_excess_vs_qqq": ex,
+                "avg_std_return": 0.02,
+                "total_valid_events": 20,
+                "total_events": 20,
+                "max_drawdown": -0.10,
+            }
+
+        primary = ev(score, excess)
+        purged = ev(purged_score, excess) if purged_score is not None else None
+        empty_regime = {
+            "n_valid": 0,
+            "n_periods": 0,
+            "participation": 0.0,
+            "avg_ret": float("nan"),
+            "avg_ex": float("nan"),
+            "win_rate": float("nan"),
+            "series_std": float("nan"),
+            "worst_dd": -1.0,
+        }
+        return {
+            "label": label,
+            "primary": primary,
+            "strict": primary,
+            "purged_primary": purged,
+            "purged_strict": purged,
+            "up_stats": empty_regime,
+            "down_stats": empty_regime,
+            "purged_up_stats": empty_regime if purged is not None else None,
+            "purged_down_stats": empty_regime if purged is not None else None,
+        }
+
+    def test_walk_forward_heldout_window_cannot_change_selection(self) -> None:
+        import json
+
+        windows = [
+            self.tuner.TuneWindow("2023", "2023-01-01", "2023-12-31"),
+            self.tuner.TuneWindow("2024", "2024-01-01", "2024-12-31"),
+        ]
+        # A wins 2023 training. B is spectacular in held-out 2024, but that
+        # future result must not affect which candidate enters validation.
+        scores = self.tuner.pd.DataFrame(
+            [
+                {
+                    "cid": "A",
+                    "window_metrics_json": json.dumps(
+                        [
+                            self._window_metric("2023", 0.20, 0.05, purged_score=0.20),
+                            self._window_metric("2024", -0.50, -0.20),
+                        ]
+                    ),
+                },
+                {
+                    "cid": "B",
+                    "window_metrics_json": json.dumps(
+                        [
+                            self._window_metric("2023", 0.05, 0.01, purged_score=0.05),
+                            self._window_metric("2024", 5.00, 1.00),
+                        ]
+                    ),
+                },
+            ]
+        )
+        out = self.tuner.walk_forward_profile_selection(scores, windows, "risk_on", _args())
+        self.assertEqual(out["folds"][0]["selected_cid"], "A")
+
+    def test_training_score_prefers_purged_metrics_over_leaky_full_window(self) -> None:
+        import json
+
+        row = self.tuner.pd.Series(
+            {
+                "window_metrics_json": json.dumps(
+                    [
+                        self._window_metric(
+                            "2025",
+                            score=9.0,       # leaky full-window diagnostic
+                            excess=0.05,
+                            purged_score=0.10,
+                        )
+                    ]
+                )
+            }
+        )
+        out = self.tuner.score_training_subset(row, ["2025"], "risk_on", _args())
+        # With no regime stats, fallback rank is objective + coverage/return/excess.
+        # The result must be based on purged 0.10, not the full-window 9.0.
+        self.assertLess(out["rank_score"], 1.0)
+
+    def test_walk_forward_windows_must_be_non_overlapping(self) -> None:
+        windows = [
+            self.tuner.TuneWindow("a", "2023-01-01", "2023-12-31"),
+            self.tuner.TuneWindow("b", "2023-12-31", "2024-12-31"),
+        ]
+        with self.assertRaises(ValueError):
+            self.tuner.validate_walk_forward_windows(windows)
 
     def test_mature_horizons_from_summary_excludes_unmatured_horizon(self) -> None:
         summary = self.tuner.pd.DataFrame(

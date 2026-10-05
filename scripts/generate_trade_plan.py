@@ -1,10 +1,14 @@
-"""Generate an actionable trade plan from the latest two-style observation scan.
+"""Generate a compact manual-review reference from the latest two-style observation scan.
 
 Reads the most recent risk_off + risk_on scan artifacts (ranked low_value +
 momentum CSVs), the live QQQ breaker state, and produces:
 
-- outputs/trade_plan_<UTC>.csv  (machine-readable positions)
-- outputs/trade_plan_<UTC>.md   (human-readable plan with risk rules)
+- outputs/trade_plan_<UTC>.csv  (machine-readable reference allocation)
+- outputs/trade_plan_<UTC>.md   (human-readable shortlist with risk context)
+
+Despite the historical "trade_plan" filename, this tool does not place orders,
+read broker positions, or maintain account state. Its output is a convenience
+summary for human review of the scanner results.
 
 Position model (see docs/live_pilot_protocol.md):
 - Two sleeves: risk_on (default 60% capital) + risk_off (40%).
@@ -483,7 +487,7 @@ def main() -> None:
                 "composite_score": round(float(r["composite_score"]), 4),
                 "triage": r["triage_label"],
                 "conviction": float(r["weight_mult"]),
-                "entry_rule": "next market open",
+                "entry_rule": "reference: next market open; manual decision required",
                 "holding_rule": "120 trading days (staggered cohort)",
                 "stop_rule": "-25% from entry price",
             })
@@ -552,7 +556,7 @@ def main() -> None:
     # no auto-delay, no reserved cash, no re-entry machinery. Whether to sit
     # out an imminent report is an explicit operator decision.
     earnings_status: dict[str, dict] = {}
-    plan["execution"] = "execute_now"
+    plan["execution"] = "manual_review"
     for idx, r in plan.iterrows():
         info = earnings_window(str(r["symbol"]), sec_client, args.earnings_buffer_days)
         earnings_status[str(r["symbol"])] = info
@@ -575,7 +579,7 @@ def main() -> None:
     if breaker_overridden:
         breaker_txt += "（⚠ 已用 --allow-no-breaker 绕过熔断检查）"
     lines = [
-        f"# Trade Plan — {now.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"# Trade Plan Reference — {now.strftime('%Y-%m-%d %H:%M UTC')}",
         "",
         f"- 扫描来源: risk_off={off_ts} / risk_on={on_ts}",
         f"- 熔断器: {breaker_txt}（as of {breaker['asof']}）",
@@ -583,10 +587,10 @@ def main() -> None:
         f"- 资金模式: 单一置信池（跨风格合并后按分层倍数分配）；risk_on/off {(args.risk_on_alloc):.0%}/{(args.risk_off_alloc):.0%} 仅作为观察与监控的镜头，不是资金分割",
         f"- 持有期: 120 个交易日（分批滚动，每月一个新 cohort）",
         "",
-        "## 生效规则（见 docs/live_pilot_protocol.md）",
+        "## 参考规则（供人工复核；非订单/非自动交易）",
         "",
         "1. **熔断**: QQQ < SMA200 → 停止一切新开仓（现有 cohort 按止损/到期处理）",
-        "2. **入场**: 次日开盘；watch 分级半仓，keep/momentum 全仓；**财报提示**：报告下方",
+        "2. **入场参考**: 协议基准为次日开盘；实际是否交易由人工决定。watch 分级半仓，keep/momentum 全仓；**财报提示**：报告下方",
         f"   “财报临近提示”段所列标的预期财报临近（SEC 申报历史推算，窗口前后各 {args.earnings_buffer_days} 天），是否避开由操作人决定，本计划不做自动延迟",
         "3. **止损**: 单仓位 -25%；组合自启动 -15% → 暂停新开仓 + 人工复盘",
         "4. **验证**: 每周 `validate_ttm_population.py` 必须 PASS，连续 FAIL 暂停开仓",
@@ -661,7 +665,9 @@ def main() -> None:
         "| risk_off low_value | -2.6pp（设计目标为绝对收益+熔断保护；分年看 2024 起转正）| 31% | -1.95 |",
         "| risk_off momentum | +2.9pp | 50% | +1.80 |",
         "",
-        "**定位提醒**: 这是一个受控的实盘实验。截面排名能力经重叠校正后仍然显著",
+        "**定位提醒**: 本文件只是选股结果的快速参考，不是交易指令，也不连接券商账户。"
+        "\n"
+        "这是一个受控的研究/人工交易参考流程。截面排名能力经重叠校正后仍然显著",
         "（IC t_nw=2.7~4.6，60/120d），但组合级超额 t≈2 未达显著（n=36 月度事件）；",
         "负超额集中在 2023（QQQ 强动量年），2024-2026 两风格超额均为正。",
         "按试点协议分级放量，不承诺已证明的收益优势。",

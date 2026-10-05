@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ai_value_scanner.backtest import BacktestConfig, run_backtest
+from ai_value_scanner.backtest import BacktestConfig, run_backtest, summarize_backtest
 
 
 DEFAULT_HORIZONS = [20, 60, 120]
@@ -81,6 +81,7 @@ class CandidateScore:
     research_pool_avg_excess_vs_qqq: float
     research_pool_avg_win_rate: float
     window_failure_summary: str
+    window_metrics_json: str
     constraints_passed: bool
     failure_reason: str
     deltas_json: str
@@ -110,6 +111,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-prefix", default=None, help="Optional fixed prefix for tuning artifacts.")
     p.add_argument("--work-dir", default="outputs/tuner_work")
     p.add_argument("--windows", default=",".join(default_windows_tokens()))
+    p.add_argument(
+        "--selection-mode",
+        default="walk_forward",
+        choices=["walk_forward", "pooled"],
+        help="walk_forward selects candidates using only prior windows; pooled is research-only and cannot promote.",
+    )
     p.add_argument("--horizons", default="20,60,120")
     p.add_argument("--list-types", default="low_value,industry_trend,momentum,research_pool")
     p.add_argument(
@@ -399,6 +406,307 @@ def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
         if valid_counts
         else 1.0,
         "worst_max_drawdown": float(min(drawdowns)) if drawdowns else -1.0,
+    }
+
+
+def validate_walk_forward_windows(windows: list[TuneWindow]) -> None:
+    """Require chronological, non-overlapping windows for OOS selection."""
+    if len(windows) < 2:
+        raise ValueError("walk_forward selection requires at least two windows")
+    previous_end: pd.Timestamp | None = None
+    for window in windows:
+        start = pd.Timestamp(window.start_date)
+        end = pd.Timestamp(window.end_date)
+        if start > end:
+            raise ValueError(f"window {window.label} starts after it ends")
+        if previous_end is not None and start <= previous_end:
+            raise ValueError(
+                f"walk_forward windows must be chronological and non-overlapping: "
+                f"{window.label} starts {start.date()} <= prior end {previous_end.date()}"
+            )
+        previous_end = end
+
+
+def _window_metrics(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def aggregate_regime_stats(stats: list[dict[str, Any]]) -> dict[str, Any]:
+    # Empty regime windows carry sentinel drawdown=-1.0; exclude them from
+    # aggregation rather than letting a no-event year look like a 100% loss.
+    usable = [
+        s for s in stats
+        if isinstance(s, dict) and int(s.get("n_valid", 0) or 0) > 0
+    ]
+    n_valid = sum(int(s.get("n_valid", 0) or 0) for s in usable)
+    n_periods = sum(int(s.get("n_periods", 0) or 0) for s in usable)
+
+    def weighted(key: str) -> float:
+        pairs: list[tuple[float, int]] = []
+        for s in usable:
+            val = safe_float(s.get(key))
+            n = int(s.get("n_valid", 0) or 0)
+            if np.isfinite(val) and n > 0:
+                pairs.append((val, n))
+        denom = sum(n for _, n in pairs)
+        return float(sum(v * n for v, n in pairs) / denom) if denom else float("nan")
+
+    dds = [
+        safe_float(s.get("worst_dd"))
+        for s in usable
+        if np.isfinite(safe_float(s.get("worst_dd")))
+    ]
+    return {
+        "n_valid": n_valid,
+        "n_periods": n_periods,
+        "participation": float(n_valid / n_periods) if n_periods else 0.0,
+        "avg_ret": weighted("avg_ret"),
+        "avg_ex": weighted("avg_ex"),
+        "win_rate": weighted("win_rate"),
+        "series_std": weighted("series_std"),
+        "worst_dd": float(min(dds)) if dds else -1.0,
+    }
+
+
+def score_training_subset(
+    row: pd.Series,
+    train_labels: list[str],
+    profile: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Score one candidate using ONLY the named training windows."""
+    metrics = [
+        m for m in _window_metrics(row.get("window_metrics_json"))
+        if str(m.get("label")) in set(train_labels)
+    ]
+    if not metrics:
+        return {"rank_score": float("-inf"), "constraints_passed": False, "failure_reason": "no_training_metrics"}
+
+    primary_evals = [
+        (m.get("purged_primary") if m.get("purged_primary") is not None else m.get("primary")) or {}
+        for m in metrics
+    ]
+    strict_evals = [
+        (m.get("purged_strict") if m.get("purged_strict") is not None else m.get("strict")) or {}
+        for m in metrics
+        if (m.get("purged_strict") is not None or m.get("strict") is not None)
+    ]
+    primary = aggregate_window_evals(primary_evals)
+    strict = aggregate_window_evals(strict_evals)
+
+    scores = [safe_float(e.get("score")) for e in primary_evals]
+    scores = [x for x in scores if np.isfinite(x)]
+    excesses = [safe_float(e.get("avg_excess_vs_qqq")) for e in primary_evals]
+    excesses = [x for x in excesses if np.isfinite(x)]
+    objective = float(np.mean(scores)) if scores else float("-inf")
+    stability = float(statistics.pstdev(scores)) if len(scores) > 1 else 0.0
+    positive_score_ratio = (
+        float(sum(x > 0.0 for x in scores) / len(scores)) if scores else 0.0
+    )
+    positive_excess_ratio = (
+        float(sum(x > 0.0 for x in excesses) / len(excesses)) if excesses else 0.0
+    )
+
+    penalty, failures = candidate_constraint_penalty(
+        total_valid=int(primary.get("total_valid_events", 0) or 0),
+        min_window_valid=int(primary.get("min_window_valid_events", 0) or 0),
+        coverage_ratio=float(primary.get("coverage_ratio", 0.0) or 0.0),
+        worst_dd=float(primary.get("worst_max_drawdown", -1.0) or -1.0),
+        window_stability_std=stability,
+        positive_window_score_ratio=positive_score_ratio,
+        positive_excess_window_ratio=positive_excess_ratio,
+        empty_window_ratio=float(primary.get("empty_window_ratio", 1.0) or 0.0),
+        avg_ret=float(primary.get("avg_return", float("nan"))),
+        avg_ex=float(primary.get("avg_excess_vs_qqq", float("nan"))),
+        avg_win=float(primary.get("avg_win_rate", float("nan"))),
+        args=args,
+    )
+    if strict_evals:
+        if int(args.min_strict_total_valid_events) > 0 and int(strict["total_valid_events"]) < int(args.min_strict_total_valid_events):
+            penalty += 0.6
+            failures.append("strict_total_valid_events_too_low")
+        if float(args.strict_coverage_ratio_floor) > 0.0 and float(strict["coverage_ratio"]) < float(args.strict_coverage_ratio_floor):
+            penalty += 0.5
+            failures.append("strict_coverage_ratio_too_low")
+        strict_win = safe_float(strict.get("avg_win_rate"))
+        if float(args.min_strict_avg_win_rate) > 0.0 and (
+            not np.isfinite(strict_win) or strict_win < float(args.min_strict_avg_win_rate)
+        ):
+            penalty += 0.5
+            failures.append("strict_avg_win_rate_too_low")
+
+    objective_score = objective - penalty
+    constraints_passed = len(failures) == 0 and np.isfinite(objective_score)
+
+    up = aggregate_regime_stats([
+        (m.get("purged_up_stats") if m.get("purged_up_stats") is not None else m.get("up_stats")) or {}
+        for m in metrics
+    ])
+    down = aggregate_regime_stats([
+        (m.get("purged_down_stats") if m.get("purged_down_stats") is not None else m.get("down_stats")) or {}
+        for m in metrics
+    ])
+    coverage = float(primary.get("coverage_ratio", 0.0) or 0.0)
+    avg_ret = safe_float(primary.get("avg_return"))
+    avg_ex = safe_float(primary.get("avg_excess_vs_qqq"))
+    avg_win = safe_float(primary.get("avg_win_rate"))
+    avg_std = safe_float(primary.get("avg_std_return"))
+    worst_dd = float(primary.get("worst_max_drawdown", -1.0) or -1.0)
+
+    if profile == "risk_on" and up["n_valid"] > 0:
+        rank_score = (
+            0.45 * (up["avg_ex"] if np.isfinite(up["avg_ex"]) else 0.0)
+            + 0.25 * (up["win_rate"] - 0.5)
+            + 0.15 * up["participation"]
+            - 0.15 * (up["series_std"] if np.isfinite(up["series_std"]) else 0.0)
+        )
+    elif profile == "risk_off" and down["n_valid"] > 0:
+        rank_score = (
+            0.45 * (down["avg_ex"] if np.isfinite(down["avg_ex"]) else 0.0)
+            + 0.35 * (down["win_rate"] - 0.5)
+            - 0.20 * max(0.0, abs(down["worst_dd"]) - 0.15)
+        )
+    elif profile == "risk_on":
+        rank_score = (
+            objective_score
+            + 0.35 * coverage
+            + 0.45 * (avg_ret if np.isfinite(avg_ret) else 0.0)
+            + 0.20 * (avg_ex if np.isfinite(avg_ex) else 0.0)
+        )
+    elif profile == "risk_off":
+        rank_score = (
+            objective_score
+            + 0.35 * (avg_win if np.isfinite(avg_win) else 0.0)
+            - 0.45 * abs(min(0.0, worst_dd))
+            - 0.20 * (avg_std if np.isfinite(avg_std) else 0.0)
+        )
+    else:
+        rank_score = objective_score
+
+    return {
+        "rank_score": float(rank_score),
+        "objective_score": float(objective_score),
+        "constraints_passed": bool(constraints_passed),
+        "failure_reason": ";".join(failures),
+        "coverage_ratio": coverage,
+        "avg_return": avg_ret,
+        "avg_excess_vs_qqq": avg_ex,
+        "avg_win_rate": avg_win,
+        "drawdown_diagnostic": worst_dd,
+    }
+
+
+def heldout_validation(
+    row: pd.Series,
+    label: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Evaluate the already-selected candidate on one untouched window."""
+    metrics = [
+        m for m in _window_metrics(row.get("window_metrics_json"))
+        if str(m.get("label")) == label
+    ]
+    if not metrics:
+        return {"passed": False, "reason": "heldout_metrics_missing"}
+    primary = metrics[0].get("primary") or {}
+    score = safe_float(primary.get("score"))
+    avg_ret = safe_float(primary.get("avg_return"))
+    avg_ex = safe_float(primary.get("avg_excess_vs_qqq"))
+    avg_win = safe_float(primary.get("avg_win_rate"))
+    coverage = safe_float(primary.get("coverage_ratio"))
+    valid = int(primary.get("total_valid_events", 0) or 0)
+    reasons: list[str] = []
+    if not np.isfinite(score):
+        reasons.append("heldout_score_missing")
+    if valid < int(args.min_window_valid_events):
+        reasons.append("heldout_valid_events_too_low")
+    if not np.isfinite(coverage) or coverage < float(args.coverage_ratio_floor):
+        reasons.append("heldout_coverage_too_low")
+    if not np.isfinite(avg_ret) or avg_ret < float(args.min_avg_return):
+        reasons.append("heldout_avg_return_too_low")
+    if not np.isfinite(avg_ex) or avg_ex < float(args.min_avg_excess_vs_qqq):
+        reasons.append("heldout_avg_excess_too_low")
+    if not np.isfinite(avg_win) or avg_win < float(args.min_avg_win_rate):
+        reasons.append("heldout_avg_win_rate_too_low")
+    return {
+        "passed": not reasons,
+        "reason": ";".join(reasons),
+        "score": score,
+        "avg_return": avg_ret,
+        "avg_excess_vs_qqq": avg_ex,
+        "avg_win_rate": avg_win,
+        "coverage_ratio": coverage,
+        "valid_events": valid,
+    }
+
+
+def walk_forward_profile_selection(
+    scores_df: pd.DataFrame,
+    windows: list[TuneWindow],
+    profile: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Anchored walk-forward selection: prior windows select, next window validates."""
+    validate_walk_forward_windows(windows)
+    folds: list[dict[str, Any]] = []
+    for idx in range(1, len(windows)):
+        train_labels = [w.label for w in windows[:idx]]
+        validation_label = windows[idx].label
+        ranked: list[tuple[float, str, bool, str]] = []
+        for _, row in scores_df.iterrows():
+            train = score_training_subset(row, train_labels, profile, args)
+            ranked.append(
+                (
+                    float(train["rank_score"]),
+                    str(row["cid"]),
+                    bool(train["constraints_passed"]),
+                    str(train["failure_reason"]),
+                )
+            )
+        eligible = [x for x in ranked if x[2] and np.isfinite(x[0])]
+        pool = eligible if eligible else [x for x in ranked if np.isfinite(x[0])]
+        if not pool:
+            folds.append(
+                {
+                    "train_labels": train_labels,
+                    "validation_label": validation_label,
+                    "selected_cid": None,
+                    "training_constraints_passed": False,
+                    "training_failure_reason": "no_finite_candidate",
+                    "validation": {"passed": False, "reason": "no_selected_candidate"},
+                }
+            )
+            continue
+        best = max(pool, key=lambda x: (x[0], x[1]))
+        selected = scores_df[scores_df["cid"] == best[1]].iloc[0]
+        validation = heldout_validation(selected, validation_label, args)
+        folds.append(
+            {
+                "train_labels": train_labels,
+                "validation_label": validation_label,
+                "selected_cid": best[1],
+                "training_rank_score": best[0],
+                "training_constraints_passed": best[2],
+                "training_failure_reason": best[3],
+                "validation": validation,
+            }
+        )
+    final = folds[-1] if folds else {}
+    return {
+        "profile": profile,
+        "folds": folds,
+        "final_candidate": final.get("selected_cid"),
+        "promotion_eligible": bool(
+            final.get("selected_cid")
+            and final.get("training_constraints_passed")
+            and (final.get("validation") or {}).get("passed")
+        ),
     }
 
 
@@ -782,10 +1090,11 @@ def run_candidate(
     strict_window_evals: list[dict[str, Any]] = []
     research_pool_window_evals: list[dict[str, Any]] = []
     primary_window_evals: list[dict[str, Any]] = []
+    window_metrics: list[dict[str, Any]] = []
     strict_list_types = [t for t in list_types if t != "research_pool"]
     research_pool_list_types = [t for t in list_types if t == "research_pool"]
 
-    for window in windows:
+    for window_idx, window in enumerate(windows):
         prefix = f"{output_stem}_{candidate.cid}_{window.label}"
         cfg = BacktestConfig(
             mode="historical_replay",
@@ -839,40 +1148,130 @@ def run_candidate(
             horizon_weights=horizon_weights,
         )
         primary_window_evals.append(primary_eval)
+        strict_eval_for_window: dict[str, Any] | None = None
+        research_eval_for_window: dict[str, Any] | None = None
         if strict_list_types:
             strict_horizons = (
                 mature_horizons_from_summary(summary, strict_list_types, horizons) or window_horizons
             )
-            strict_window_evals.append(
-                evaluate_window(
-                    summary=summary,
-                    events=events,
-                    list_types=strict_list_types,
-                    horizons=strict_horizons,
-                    objective_weights=objective_weights,
-                    scenario_weights=scenario_weights,
-                    list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
-                    horizon_weights=horizon_weights,
-                )
+            strict_eval_for_window = evaluate_window(
+                summary=summary,
+                events=events,
+                list_types=strict_list_types,
+                horizons=strict_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
+                horizon_weights=horizon_weights,
             )
+            strict_window_evals.append(strict_eval_for_window)
         if research_pool_list_types:
             research_pool_horizons = (
                 mature_horizons_from_summary(summary, research_pool_list_types, horizons)
                 or window_horizons
             )
-            research_pool_window_evals.append(
-                evaluate_window(
-                    summary=summary,
-                    events=events,
-                    list_types=research_pool_list_types,
-                    horizons=research_pool_horizons,
+            research_eval_for_window = evaluate_window(
+                summary=summary,
+                events=events,
+                list_types=research_pool_list_types,
+                horizons=research_pool_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={"research_pool": 1.0},
+                horizon_weights=horizon_weights,
+            )
+            research_pool_window_evals.append(research_eval_for_window)
+
+        up_for_window = regime_stats(events, window_benchmarks, "up", list_types, horizons)
+        down_for_window = regime_stats(events, window_benchmarks, "down", list_types, horizons)
+
+        # R03/R04: when a window later serves as training data, purge every
+        # forward-return label whose actual/fallback label end crosses into
+        # the next chronological window. Signal-date separation alone leaks
+        # future prices for 60d/120d labels near year-end.
+        purged_primary: dict[str, Any] | None = None
+        purged_strict: dict[str, Any] | None = None
+        purged_up: dict[str, Any] | None = None
+        purged_down: dict[str, Any] | None = None
+        purged_events_count: int | None = None
+        purged_cutoff: str | None = None
+        if window_idx + 1 < len(windows):
+            next_start = pd.Timestamp(windows[window_idx + 1].start_date)
+            if next_start.tzinfo is None:
+                next_start = next_start.tz_localize("UTC")
+            else:
+                next_start = next_start.tz_convert("UTC")
+            purged_cutoff = next_start.date().isoformat()
+            if "label_end_date" not in events.columns or "label_end_date" not in window_benchmarks.columns:
+                raise RuntimeError(
+                    "walk-forward requires label_end_date in events/benchmarks; "
+                    "rebuild with the current backtest engine"
+                )
+            event_label_end = pd.to_datetime(events["label_end_date"], utc=True, errors="coerce")
+            bench_label_end = pd.to_datetime(
+                window_benchmarks["label_end_date"], utc=True, errors="coerce"
+            )
+            train_events = events[event_label_end < next_start].copy()
+            train_benchmarks = window_benchmarks[bench_label_end < next_start].copy()
+            purged_events_count = len(train_events)
+            train_summary = summarize_backtest(train_events, train_benchmarks)
+            train_horizons = (
+                mature_horizons_from_summary(train_summary, primary_list_types, horizons)
+                or horizons
+            )
+            purged_primary = evaluate_window(
+                summary=train_summary,
+                events=train_events,
+                list_types=primary_list_types,
+                horizons=train_horizons,
+                objective_weights=objective_weights,
+                scenario_weights=scenario_weights,
+                list_weights={k: list_weights.get(k, 1.0) for k in primary_list_types},
+                horizon_weights=horizon_weights,
+            )
+            if strict_list_types:
+                strict_train_horizons = (
+                    mature_horizons_from_summary(train_summary, strict_list_types, horizons)
+                    or train_horizons
+                )
+                purged_strict = evaluate_window(
+                    summary=train_summary,
+                    events=train_events,
+                    list_types=strict_list_types,
+                    horizons=strict_train_horizons,
                     objective_weights=objective_weights,
                     scenario_weights=scenario_weights,
-                    list_weights={"research_pool": 1.0},
+                    list_weights={k: list_weights.get(k, 0.0) for k in strict_list_types},
                     horizon_weights=horizon_weights,
                 )
+            purged_up = regime_stats(
+                train_events, train_benchmarks, "up", list_types, horizons
             )
-        window_failure_reasons.append(classify_window_failure(primary_eval, events))
+            purged_down = regime_stats(
+                train_events, train_benchmarks, "down", list_types, horizons
+            )
+
+        window_failure = classify_window_failure(primary_eval, events)
+        window_failure_reasons.append(window_failure)
+        window_metrics.append(
+            {
+                "label": window.label,
+                "start_date": window.start_date,
+                "end_date": window.end_date,
+                "primary": primary_eval,
+                "strict": strict_eval_for_window,
+                "research_pool": research_eval_for_window,
+                "up_stats": up_for_window,
+                "down_stats": down_for_window,
+                "purged_primary": purged_primary,
+                "purged_strict": purged_strict,
+                "purged_up_stats": purged_up,
+                "purged_down_stats": purged_down,
+                "purged_cutoff": purged_cutoff,
+                "purged_event_rows": purged_events_count,
+                "failure_reason": window_failure,
+            }
+        )
         if bool(args.prune_backtest_artifacts and not args.no_prune_backtest_artifacts):
             maybe_prune_backtest_artifacts(bt_result)
 
@@ -1047,6 +1446,7 @@ def run_candidate(
             ensure_ascii=False,
             sort_keys=True,
         ),
+        window_metrics_json=json.dumps(window_metrics, ensure_ascii=False, sort_keys=True),
         constraints_passed=bool(constraints_passed),
         failure_reason=failure_reason,
         deltas_json=json.dumps(candidate.deltas, ensure_ascii=False, sort_keys=True),
@@ -1097,6 +1497,7 @@ def write_tuning_report(
     windows: list[TuneWindow],
     scores_df: pd.DataFrame,
     picks: dict[str, str],
+    walk_forward: dict[str, Any] | None = None,
 ) -> None:
     lines: list[str] = []
     lines.append("# Parameter Tuning Report")
@@ -1109,7 +1510,8 @@ def write_tuning_report(
     lines.append(f"- primary_list_types: `{args.primary_list_types}`")
     lines.append(f"- windows: `{', '.join(f'{w.label}:{w.start_date}->{w.end_date}' for w in windows)}`")
     lines.append(f"- candidate_count: {len(scores_df)}")
-    lines.append(f"- constraints_passed: {int((scores_df['constraints_passed'] == True).sum())}")
+    lines.append(f"- selection_mode: `{args.selection_mode}`")
+    lines.append(f"- constraints_passed (pooled diagnostic): {int((scores_df['constraints_passed'] == True).sum())}")
     lines.append(
         "- guardrails: "
         f"min_avg_return={args.min_avg_return}, "
@@ -1119,6 +1521,41 @@ def write_tuning_report(
         f"min_positive_excess_window_ratio={args.min_positive_excess_window_ratio}, "
         f"max_empty_window_ratio={args.max_empty_window_ratio}"
     )
+    if walk_forward:
+        lines.append("")
+        lines.append("## Anchored Walk-Forward OOS")
+        lines.append("")
+        lines.append(
+            "Each fold selects a candidate using only the preceding windows; "
+            "the next window is held out until after selection. The final candidate "
+            "is the one selected before the last window, not a candidate re-ranked on that held-out data."
+        )
+        lines.append("")
+        for profile in ("risk_on", "risk_off"):
+            result = walk_forward.get(profile) or {}
+            lines.append(f"### {profile}")
+            lines.append("")
+            for fold in result.get("folds", []):
+                selected = fold.get("selected_cid") or "none"
+                validation = fold.get("validation") or {}
+                train = "+".join(fold.get("train_labels") or [])
+                valid_label = fold.get("validation_label")
+                lines.append(
+                    f"- train=`{train}` → held-out=`{valid_label}` | selected=`{selected}` "
+                    f"| train_pass={bool(fold.get('training_constraints_passed'))} "
+                    f"| OOS_pass={bool(validation.get('passed'))} "
+                    f"| OOS_score={safe_float(validation.get('score')):.4f} "
+                    f"| OOS_excess={safe_float(validation.get('avg_excess_vs_qqq')):.4f}"
+                )
+                if fold.get("training_failure_reason"):
+                    lines.append(f"  training_failure: `{fold['training_failure_reason']}`")
+                if validation.get("reason"):
+                    lines.append(f"  OOS_failure: `{validation['reason']}`")
+            lines.append(
+                f"- final_candidate: `{result.get('final_candidate') or 'none'}` "
+                f"| promotion_eligible={bool(result.get('promotion_eligible'))}"
+            )
+            lines.append("")
     lines.append("")
     lines.append("## Profile Picks")
     lines.append("")
@@ -1127,17 +1564,29 @@ def write_tuning_report(
         if not cid:
             lines.append(f"- {name}: none")
             continue
-        row = scores_df[scores_df["cid"] == cid].iloc[0]
-        lines.append(
-            f"- {name}: `{cid}` | objective={row['objective_score']:.4f} "
-            f"| coverage={row['coverage_ratio']:.3f} | dd={row['worst_max_drawdown']:.3f} "
-            f"| strict_valid={int(row.get('strict_total_valid_events', 0) or 0)} "
-            f"| research_valid={int(row.get('research_pool_total_valid_events', 0) or 0)} "
-            f"| pos_excess_windows={row['positive_excess_window_ratio']:.3f} "
-            f"| empty_windows={row['empty_window_ratio']:.3f}"
-        )
+        if walk_forward and (walk_forward.get(name) or {}).get("folds"):
+            final_fold = walk_forward[name]["folds"][-1]
+            validation = final_fold.get("validation") or {}
+            lines.append(
+                f"- {name}: `{cid}` | selected_on="
+                f"`{'+'.join(final_fold.get('train_labels') or [])}` "
+                f"| train_rank={safe_float(final_fold.get('training_rank_score')):.4f} "
+                f"| held_out=`{final_fold.get('validation_label')}` "
+                f"| OOS_pass={bool(validation.get('passed'))} "
+                f"| OOS_score={safe_float(validation.get('score')):.4f} "
+                f"| OOS_excess={safe_float(validation.get('avg_excess_vs_qqq')):.4f}"
+            )
+        else:
+            row = scores_df[scores_df["cid"] == cid].iloc[0]
+            lines.append(
+                f"- {name}: `{cid}` | pooled_objective={row['objective_score']:.4f} "
+                f"| pooled_coverage={row['coverage_ratio']:.3f} "
+                f"| nonoverlap_dd_diagnostic={row['worst_max_drawdown']:.3f}"
+            )
     lines.append("")
-    lines.append("## Top 10 Candidates (Balanced Rank)")
+    lines.append(
+        "## Top 10 Candidates (Pooled Diagnostic; not used for walk-forward selection)"
+    )
     lines.append("")
     top = scores_df.sort_values(by="balanced_rank_score", ascending=False).head(10)
     for row in top.itertuples(index=False):
@@ -1202,6 +1651,7 @@ def main() -> None:
     )
     log(f"tuning_run_id={stamp}")
     log(f"search_mode={args.search_mode} candidates={len(candidates)}")
+    log(f"selection_mode={args.selection_mode}")
     log(f"list_types={','.join(list_types)} primary_list_types={','.join(primary_list_types)}")
 
     objective_weights = dict(DEFAULT_OBJECTIVE_WEIGHTS)
@@ -1257,7 +1707,21 @@ def main() -> None:
     results_csv = outputs_dir / f"{stamp}_results.csv"
     scores_df.sort_values(by="balanced_rank_score", ascending=False).to_csv(results_csv, index=False)
 
-    picks = pick_profile_candidates(scores_df)
+    walk_forward: dict[str, Any] | None = None
+    if args.selection_mode == "walk_forward":
+        validate_walk_forward_windows(windows)
+        walk_forward = {
+            profile: walk_forward_profile_selection(scores_df, windows, profile, args)
+            for profile in ("risk_on", "risk_off")
+        }
+        picks = {
+            profile: str(result["final_candidate"])
+            for profile, result in walk_forward.items()
+            if result.get("final_candidate")
+        }
+    else:
+        picks = pick_profile_candidates(scores_df)
+
     report_path = outputs_dir / f"{stamp}_report.md"
     write_tuning_report(
         path=report_path,
@@ -1266,9 +1730,15 @@ def main() -> None:
         windows=windows,
         scores_df=scores_df,
         picks=picks,
+        walk_forward=walk_forward,
     )
 
     if bool(args.promote and not args.no_promote):
+        if args.selection_mode != "walk_forward":
+            raise SystemExit(
+                "--promote requires --selection-mode walk_forward. "
+                "Pooled ranking uses validation windows during selection and is research-only."
+            )
         profile = promotion_profile_from_base_config(args.base_config)
         if profile is None:
             raise SystemExit(
@@ -1276,17 +1746,21 @@ def main() -> None:
                 "configs/config.risk_on.json or configs/config.risk_off.json; "
                 "a tuning run may only promote back into its own style."
             )
-        target_path = Path(
-            args.risk_on_config_path if profile == "risk_on" else args.risk_off_config_path
-        )
-        cid = picks.get(profile)
-        if cid:
-            picked = scores_df[scores_df["cid"] == cid]
-            if picked.empty or not bool(picked.iloc[0]["constraints_passed"]):
-                log(f"skipped promotion for {profile}: {cid} did not pass constraints")
-            else:
-                write_json(target_path, candidate_map[cid].config)
-                log(f"promoted {profile}: {cid} -> {target_path}")
+        wf_profile = (walk_forward or {}).get(profile) or {}
+        cid = wf_profile.get("final_candidate")
+        if not cid:
+            log(f"skipped promotion for {profile}: no final walk-forward candidate")
+        elif not bool(wf_profile.get("promotion_eligible")):
+            log(
+                f"skipped promotion for {profile}: {cid} was selected without the final held-out "
+                "window, but its OOS validation did not pass"
+            )
+        else:
+            target_path = Path(
+                args.risk_on_config_path if profile == "risk_on" else args.risk_off_config_path
+            )
+            write_json(target_path, candidate_map[str(cid)].config)
+            log(f"promoted {profile}: {cid} -> {target_path} (walk-forward OOS validated)")
 
     summary_json = outputs_dir / f"{stamp}_summary.json"
     payload = {
@@ -1295,8 +1769,10 @@ def main() -> None:
         "param_space": args.param_space,
         "list_types": list_types,
         "primary_list_types": primary_list_types,
+        "selection_mode": args.selection_mode,
         "candidates": len(candidates),
         "picks": picks,
+        "walk_forward": walk_forward,
         "results_csv": str(results_csv),
         "report_path": str(report_path),
     }

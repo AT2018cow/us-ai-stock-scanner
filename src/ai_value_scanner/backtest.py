@@ -4,6 +4,7 @@ import argparse
 import bisect
 import copy
 import json
+import math
 import os
 import re
 import time
@@ -3244,6 +3245,26 @@ def forward_return_with_exit(
     return (exit_px / entry) - 1.0 - roundtrip_cost, exit_date
 
 
+def fallback_label_end_date(signal_date: str, horizon: int) -> pd.Timestamp | None:
+    """Conservative label end when an exact trading-day exit is unavailable.
+
+    Used for leakage purging only. The horizon is in trading days, so convert
+    with a 7/5 calendar factor plus a small holiday/data buffer. Over-purging a
+    boundary event is preferable to letting a forward-return label cross into
+    the held-out window.
+    """
+    try:
+        dt = pd.Timestamp(signal_date)
+        if dt.tzinfo is None:
+            dt = dt.tz_localize("UTC")
+        else:
+            dt = dt.tz_convert("UTC")
+    except (TypeError, ValueError):
+        return None
+    days = int(math.ceil(max(1, int(horizon)) * 7.0 / 5.0)) + 10
+    return dt + pd.Timedelta(days=days)
+
+
 def forward_return(
     price_frame: pd.DataFrame,
     signal_date: str,
@@ -3314,8 +3335,10 @@ def event_backtest(
         symbols: list[str] = list(row.symbols) if isinstance(row.symbols, list) else []
         for horizon in horizons:
             returns: list[float] = []
+            label_end_dates: list[pd.Timestamp] = []
             priced = 0
             assumed_delist = 0
+            fallback_end = fallback_label_end_date(row.signal_date, horizon)
             for sym in symbols:
                 price_frame = prices_by_symbol.get(sym.upper())
                 if price_frame is None:
@@ -3333,8 +3356,10 @@ def event_backtest(
                         returns.append(float(delist_return_assumption) - roundtrip_cost)
                         priced += 1
                         assumed_delist += 1
+                        if fallback_end is not None:
+                            label_end_dates.append(fallback_end)
                     continue
-                ret = forward_return(
+                ret, exit_date = forward_return_with_exit(
                     price_frame,
                     row.signal_date,
                     horizon,
@@ -3349,6 +3374,11 @@ def event_backtest(
                     continue
                 priced += 1
                 returns.append(float(ret))
+                if exit_date is not None:
+                    label_end_dates.append(exit_date)
+                elif fallback_end is not None:
+                    # Delist-assumption path has no market exit timestamp.
+                    label_end_dates.append(fallback_end)
             portfolio_return = float(np.mean(returns)) if returns else np.nan
             if not symbols:
                 event_status = "no_signal"
@@ -3358,12 +3388,16 @@ def event_backtest(
                 event_status = "partial_valid"
             else:
                 event_status = "valid"
+            label_end = max(label_end_dates) if label_end_dates else fallback_end
             event_rows.append(
                 {
                     "scenario": row.scenario,
                     "run_stem": row.run_stem,
                     "run_ts_utc": row.run_ts_utc,
                     "signal_date": row.signal_date,
+                    "label_end_date": (
+                        label_end.date().isoformat() if label_end is not None else None
+                    ),
                     "list_type": row.list_type,
                     "horizon_days": horizon,
                     "n_selected": int(row.n_selected),
@@ -3378,10 +3412,11 @@ def event_backtest(
             for bench in benchmark_symbols:
                 price_frame = prices_by_symbol.get(bench.upper())
                 ret = None
+                bench_exit = fallback_end
                 if price_frame is not None:
                     # Benchmarks pay the same roundtrip cost: excess_vs_QQQ
                     # must compare cost-loaded returns on both sides.
-                    ret = forward_return(
+                    ret, exact_exit = forward_return_with_exit(
                         price_frame,
                         row.signal_date,
                         horizon,
@@ -3392,11 +3427,16 @@ def event_backtest(
                         delist_return_assumption=None,
                         delist_detection_buffer_days=delist_detection_buffer_days,
                     )
+                    if exact_exit is not None:
+                        bench_exit = exact_exit
                 benchmark_rows.append(
                     {
                         "scenario": row.scenario,
                         "run_stem": row.run_stem,
                         "signal_date": row.signal_date,
+                        "label_end_date": (
+                            bench_exit.date().isoformat() if bench_exit is not None else None
+                        ),
                         "horizon_days": horizon,
                         "benchmark": bench.upper(),
                         "benchmark_return": ret,
