@@ -12,7 +12,7 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -461,6 +461,9 @@ def default_low_coverage_soft_score_weights() -> dict[str, float]:
 
 @dataclass
 class ScanConfig:
+    # Explicit identity for production two-style configs. None is valid for
+    # theme/venture/calibration configs that are not one of the two AI styles.
+    strategy_style: str | None = None
     max_symbols: int | None = None
     max_workers: int = 8
     alpaca_max_requests_per_sec: float = 2.5
@@ -616,16 +619,253 @@ class ScanConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ScanConfig":
+        if not isinstance(raw, dict):
+            raise ValueError("ScanConfig must be loaded from a JSON object")
         base = cls()
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(k for k in raw if k not in known and not str(k).startswith("_"))
+        if unknown:
+            raise ValueError(
+                "Unknown ScanConfig keys (possible typo): " + ", ".join(repr(k) for k in unknown)
+            )
         for key, value in raw.items():
-            if hasattr(base, key):
+            # Metadata blocks (_theme_meta/_venture_meta) are documentation
+            # provenance, not runtime configuration.
+            if key in known:
                 setattr(base, key, value)
-            else:
-                # Unknown keys are ignored for forward compatibility, but a
-                # typo'd threshold name would silently run on stale values —
-                # always surface it so config edits are verifiable.
-                print(f"[config] WARNING: unknown ScanConfig key ignored: {key!r}")
+        base.validate()
         return base
+
+    def validate(self) -> None:
+        """Fail fast on config type/range/cross-field errors.
+
+        This intentionally validates semantics that would otherwise be
+        silently coerced by downstream float()/bool() calls. It is not a
+        separate configuration framework; ScanConfig remains the source of
+        truth for runtime fields.
+        """
+        errors: list[str] = []
+
+        def err(name: str, message: str) -> None:
+            errors.append(f"{name}: {message}")
+
+        def require_bool(name: str) -> None:
+            if not isinstance(getattr(self, name), bool):
+                err(name, "must be boolean")
+
+        def require_int(name: str, *, minimum: int | None = None, allow_none: bool = False) -> None:
+            value = getattr(self, name)
+            if value is None and allow_none:
+                return
+            if isinstance(value, bool) or not isinstance(value, int):
+                err(name, "must be an integer" + (" or null" if allow_none else ""))
+                return
+            if minimum is not None and value < minimum:
+                err(name, f"must be >= {minimum}")
+
+        def require_number(
+            name: str,
+            *,
+            minimum: float | None = None,
+            maximum: float | None = None,
+            allow_none: bool = False,
+        ) -> None:
+            value = getattr(self, name)
+            if value is None and allow_none:
+                return
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                err(name, "must be numeric" + (" or null" if allow_none else ""))
+                return
+            val = float(value)
+            if not np.isfinite(val):
+                err(name, "must be finite")
+                return
+            if minimum is not None and val < minimum:
+                err(name, f"must be >= {minimum}")
+            if maximum is not None and val > maximum:
+                err(name, f"must be <= {maximum}")
+
+        if self.strategy_style not in (None, "risk_on", "risk_off"):
+            err("strategy_style", "must be null, 'risk_on', or 'risk_off'")
+
+        for name in (
+            "alpaca_cache_enabled",
+            "archive_watchlist_snapshots",
+            "require_positive_revenue",
+            "require_positive_net_income",
+            "require_positive_operating_cash_flow",
+            "require_positive_free_cash_flow",
+            "require_positive_ebit",
+            "use_adjusted_quality_metrics",
+            "use_ttm_metrics",
+            "force_hard_filter_low_coverage_metrics",
+            "require_channel_bucket_match",
+            "enforce_unique_symbol_per_list",
+            "enforce_unique_symbol_across_lists",
+        ):
+            require_bool(name)
+
+        for name in (
+            "max_workers",
+            "chunk_size",
+            "request_timeout_sec",
+            "watchlist_fetch_timeout_sec",
+            "ai_link_etf_count_saturation",
+            "ai_link_disclosure_keyword_cap",
+            "own_history_valuation_window_days",
+            "price_lookback_days",
+            "benchmark_trend_filter_sma_days",
+            "top_n_per_channel_low_value",
+            "top_n_per_channel_trend",
+            "top_n_per_channel_momentum",
+            "research_pool_top_n",
+        ):
+            require_int(name, minimum=1)
+        require_int("max_symbols", minimum=1, allow_none=True)
+        require_int("min_days_below_sma200", minimum=0, allow_none=True)
+        require_int("max_per_sector_per_list", minimum=1, allow_none=True)
+        require_int("max_per_watchlist_etf_source_per_list", minimum=1, allow_none=True)
+        for name in (
+            "alpaca_cache_ttl_assets_sec",
+            "alpaca_cache_ttl_snapshots_sec",
+            "alpaca_cache_ttl_bars_sec",
+            "sec_cache_ttl_submissions_sec",
+        ):
+            require_int(name, minimum=0)
+
+        for name in ("alpaca_max_requests_per_sec", "sec_max_requests_per_sec"):
+            require_number(name, minimum=0.000001)
+        for name in (
+            "min_price",
+            "min_market_cap",
+            "min_dollar_volume",
+            "assumed_position_usd",
+            "research_pool_min_score",
+        ):
+            require_number(name, minimum=0.0)
+        for name in (
+            "max_adv_participation",
+            "pe_cash_backing_haircut",
+            "score_winsor_lower_q",
+            "score_winsor_upper_q",
+        ):
+            require_number(name, minimum=0.0, maximum=1.0)
+        for name in (
+            "max_ps_percentile_in_sic",
+            "max_pe_percentile_in_sic",
+            "max_ps_hist_percentile",
+            "max_pe_hist_percentile",
+            "min_drawdown_percentile",
+            "min_avg_dollar_volume_20d_percentile",
+            "max_60d_volatility_percentile",
+            "min_fundamental_quality_score",
+        ):
+            require_number(name, minimum=0.0, maximum=1.0, allow_none=True)
+        if (
+            isinstance(self.score_winsor_lower_q, (int, float))
+            and isinstance(self.score_winsor_upper_q, (int, float))
+            and float(self.score_winsor_lower_q) >= float(self.score_winsor_upper_q)
+        ):
+            err("score_winsor_lower_q/score_winsor_upper_q", "must satisfy lower < upper")
+
+        if self.filter_mode not in {"hard", "scored"}:
+            err("filter_mode", "must be 'hard' or 'scored'")
+        if self.metric_hard_filter_coverage_mode not in {
+            "high_coverage_only",
+            "balanced",
+            "all_metrics",
+        }:
+            err(
+                "metric_hard_filter_coverage_mode",
+                "must be high_coverage_only, balanced, or all_metrics",
+            )
+
+        if not isinstance(self.channel_profiles, dict) or not self.channel_profiles:
+            err("channel_profiles", "must be a non-empty object")
+        else:
+            allowed_profile_keys = {
+                "require_positive_revenue", "require_positive_net_income",
+                "require_positive_operating_cash_flow", "require_positive_free_cash_flow",
+                "require_positive_ebit", "require_channel_bucket_match",
+                "min_watchlist_etf_count", "min_ai_link_score", "min_avg_dollar_volume_20d",
+                "min_net_margin", "min_revenue", "min_net_income", "min_operating_cash_flow",
+                "min_free_cash_flow", "min_ebit", "max_ev_to_ebit", "max_ps", "max_pe",
+                "min_fcf_yield", "max_ps_percentile_in_sic", "max_pe_percentile_in_sic",
+                "min_revenue_yoy", "min_net_income_yoy", "min_fundamental_quality_score",
+                "max_net_debt_to_ebitda", "min_interest_coverage", "max_current_debt_ratio",
+                "min_current_ratio", "min_ocf_to_net_income", "max_accrual_ratio",
+                "max_receivables_growth_gap", "max_inventory_growth_gap", "max_shares_yoy",
+                "max_ps_hist_percentile", "max_pe_hist_percentile", "min_expectation_proxy",
+                "min_cycle_proxy", "max_adv_participation", "max_estimated_slippage_bps",
+                "min_ps_discount", "min_pe_discount", "min_drawdown_from_52w_high",
+                "max_range_position_52w", "min_range_position_52w", "max_price_to_sma200",
+                "min_price_to_sma200", "min_days_below_sma200", "min_return_20d",
+                "min_return_60d", "max_20d_return", "max_60d_volatility",
+                "min_drawdown_percentile", "min_avg_dollar_volume_20d_percentile",
+                "max_60d_volatility_percentile", "hard_filter_current_debt_ratio",
+                "hard_filter_inventory_growth_gap", "score_weights",
+                "trend_min_return_60d", "trend_max_60d_volatility",
+                "trend_min_avg_dollar_volume_20d", "trend_min_watchlist_etf_count",
+                "trend_score_weights", "momentum_min_return_20d",
+                "momentum_min_return_60d", "momentum_min_price_to_sma200",
+                "momentum_max_drawdown_from_52w_high", "momentum_max_60d_volatility",
+                "momentum_min_avg_dollar_volume_20d", "momentum_min_watchlist_etf_count",
+                "momentum_score_weights",
+            }
+            for channel, profile in self.channel_profiles.items():
+                if not isinstance(channel, str) or not channel.strip():
+                    err("channel_profiles", "channel names must be non-empty strings")
+                    continue
+                if not isinstance(profile, dict):
+                    err(f"channel_profiles.{channel}", "must be an object")
+                    continue
+                extra = sorted(set(profile) - allowed_profile_keys)
+                if extra:
+                    err(
+                        f"channel_profiles.{channel}",
+                        "unknown keys: " + ", ".join(extra),
+                    )
+                for weight_key in ("score_weights", "trend_score_weights", "momentum_score_weights"):
+                    weights = profile.get(weight_key)
+                    if weights is None:
+                        continue
+                    if not isinstance(weights, dict) or not weights:
+                        err(f"channel_profiles.{channel}.{weight_key}", "must be a non-empty object")
+                        continue
+                    for metric, weight in weights.items():
+                        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)):
+                            err(
+                                f"channel_profiles.{channel}.{weight_key}.{metric}",
+                                "must be a finite numeric weight",
+                            )
+
+                for pct_key in (
+                    "min_ai_link_score", "min_fundamental_quality_score",
+                    "max_ps_percentile_in_sic", "max_pe_percentile_in_sic",
+                    "max_ps_hist_percentile", "max_pe_hist_percentile",
+                    "min_drawdown_percentile", "min_avg_dollar_volume_20d_percentile",
+                    "max_60d_volatility_percentile", "min_range_position_52w",
+                    "max_range_position_52w",
+                ):
+                    value = profile.get(pct_key)
+                    if value is not None and (
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not np.isfinite(float(value))
+                        or float(value) < 0.0
+                        or float(value) > 1.0
+                    ):
+                        err(f"channel_profiles.{channel}.{pct_key}", "must be within [0, 1] or null")
+
+        if not isinstance(self.low_coverage_soft_score_weights, dict):
+            err("low_coverage_soft_score_weights", "must be an object")
+        else:
+            for metric, weight in self.low_coverage_soft_score_weights.items():
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not np.isfinite(float(weight)) or float(weight) < 0:
+                    err(f"low_coverage_soft_score_weights.{metric}", "must be a finite non-negative number")
+
+        if errors:
+            raise ValueError("Invalid ScanConfig:\n- " + "\n- ".join(errors))
 
 
 @dataclass
@@ -656,6 +896,7 @@ class NetworkMonitor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stats: dict[str, ServiceNetworkStats] = {}
+        self._data_provenance: dict[str, dict[str, dict[str, Any]]] = {}
 
     def _bucket(self, service: str) -> ServiceNetworkStats:
         if service not in self._stats:
@@ -720,6 +961,33 @@ class NetworkMonitor:
             else:
                 s.cache_misses += 1
 
+    def record_data_source(
+        self,
+        service: str,
+        namespace: str,
+        source: str,
+        cache_age_sec: float | None = None,
+    ) -> None:
+        """Record where a returned dataset came from and how old it was."""
+        with self._lock:
+            service_map = self._data_provenance.setdefault(service, {})
+            row = service_map.setdefault(
+                namespace,
+                {
+                    "counts": {},
+                    "max_cache_age_sec": None,
+                    "stale_fallback_used": False,
+                },
+            )
+            counts = row["counts"]
+            counts[source] = int(counts.get(source, 0)) + 1
+            if cache_age_sec is not None and np.isfinite(float(cache_age_sec)):
+                age = max(0.0, float(cache_age_sec))
+                previous = row.get("max_cache_age_sec")
+                row["max_cache_age_sec"] = age if previous is None else max(float(previous), age)
+            if source in {"stale_cache_fallback", "stale_cross_key_fallback"}:
+                row["stale_fallback_used"] = True
+
     def to_dict(self) -> dict[str, Any]:
         with self._lock:
             services = {}
@@ -757,8 +1025,16 @@ class NetworkMonitor:
                 )
                 services[service] = row
                 any_issue = any_issue or row["had_rate_limit_or_network_issue"]
+            provenance = json.loads(json.dumps(self._data_provenance))
+            stale_market_data = any(
+                bool(row.get("stale_fallback_used"))
+                for service_map in provenance.values()
+                for row in service_map.values()
+            )
             return {
                 "had_rate_limit_or_network_issue": any_issue,
+                "stale_market_data_fallback_used": stale_market_data,
+                "data_provenance": provenance,
                 "services": services,
             }
 
