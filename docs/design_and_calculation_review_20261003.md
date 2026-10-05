@@ -565,3 +565,18 @@ PY
 - 维度级 IC（H=60）：risk_off `pe_discount` +0.0336（t=2.68，保持显著）；risk_on `ps_discount` +0.0749（t=2.49，改善）；`fcf_yield` 在 risk_off 仍为负（-0.104，价值陷阱结论不变）。
 - 权重决策：**不更换**。1000 候选中 37%/28% 超过基线验证分，但 top5-by-train 与 top5-by-valid 零重合——单次运行选权重不可靠，与既往多种子共识流程一致；基线稳定处于中位之上。若需新权重，应跑多种子共识后再评估。
 - 旧数据集与旧 sweep 报告保留为历史产物（`*_rebuilt_20261001*`、`*_haircut_rebuild*`）。
+
+
+2026-10-05（续3）：PR #2 已合并（merge `7e6387dd`），**R03** 完成 anchored OOS walk-forward：候选只用前序窗口选择，下一窗口 held-out；训练事件按 `label_end_date` purge 跨验证边界的 20/60/120d 标签，pooled 模式降级为研究诊断且禁止 promote。R05 仍明确为 non-overlapping sampling diagnostic，不宣称账户 NAV 回撤。
+
+2026-10-05（续4）：**E02 / D03 correctness 修复进入 PR**。
+
+- **E02 配置契约**：
+  - `ScanConfig.from_dict` 对所有 dataclass 顶层字段按类型注解 fail-fast；未知运行时 key 不再警告后忽略（以下划线开头的 theme/venture 文档元数据除外）。
+  - 增加关键范围/交叉约束验证（并发/TTL/quantile、百分位、winsor lower<upper、min/max range/SMA、channel profile 类型与未知 key、score weight 数值等）。
+  - `config.risk_on.json` / `config.risk_off.json` 增加显式 `strategy_style`；加载时文件身份与字段必须匹配。扫描报告输出 `Strategy-Style:`，trade-plan reference 与 tuner promotion 优先使用显式身份，文件名仅作为旧报告兼容回退。
+- **D03 行情 freshness/provenance**：
+  - `NetworkMonitor` 记录 Alpaca assets/snapshots/bars 的来源（network / fresh_cache / stale fallback / cross-key enrichment）、最大 cache age 与 stale-fallback 总标记；scan/backtest network JSON 可机器读取，扫描 Markdown 同步摘要。
+  - 修复 bars 网络失败后的关键问题：stale/cross-key fallback 数据不再重新写入 exact-key cache，因此不会通过刷新 mtime 把旧行情伪装成 TTL 内新鲜数据。
+  - cross-key bars provenance 只统计最终被采用的缓存候选，避免把扫描过但未采用的文件年龄误报为实际数据来源。
+- 新增回归测试覆盖：全部现有 runtime config 均可加载、未知/类型/范围/嵌套 typo fail-fast、显式 style 身份、stale bars fallback 保留原 mtime、fresh/stale provenance 标记。
