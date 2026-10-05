@@ -42,8 +42,6 @@ class TestTradePlanReportPairSafety(unittest.TestCase):
             root = Path(td)
             self._report(root, "20261005T010000Z", "risk_off")
             self._report(root, "20261005T020000Z", "risk_on")
-            with mock.patch.object(os, "getcwd", wraps=os.getcwd), mock.patch("os.chdir"):
-                pass
             old = Path.cwd()
             try:
                 os.chdir(root)
