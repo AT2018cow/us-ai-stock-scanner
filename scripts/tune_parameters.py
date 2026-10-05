@@ -150,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         default="data/watchlist_history",
         help="PIT watchlist snapshot directory; override with a frozen copy for refactor baselines.",
     )
+    p.add_argument(
+        "--watchlist-csv-path",
+        default=None,
+        help="Optional current-pool CSV override; use a frozen copy for refactor baselines.",
+    )
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
     p.add_argument(
@@ -1123,6 +1128,7 @@ def run_candidate(
             ),
             pre_snapshot_universe=args.pre_snapshot_universe,
             watchlist_history_dir=args.watchlist_history_dir,
+            watchlist_csv_path=args.watchlist_csv_path,
             enable_perturbation=bool(args.enable_perturbation and not args.no_perturbation),
         )
         log(f"{candidate.cid} | window={window.label} | backtest start")
