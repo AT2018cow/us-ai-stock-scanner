@@ -304,6 +304,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 | 参数 | 默认值（risk_off） | 作用 |
 |---|---:|---|
+| `config_schema_version` | `1` | 配置契约版本；缺省按 v1 兼容读取，显式出现未知版本会 fail-fast。 |
 | `strategy_style` | `risk_off` | 生产双风格显式身份（risk_on/risk_off）；主题、venture、校准配置可为 `null`。 |
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
