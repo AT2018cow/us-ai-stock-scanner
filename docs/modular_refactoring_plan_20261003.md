@@ -140,7 +140,7 @@ raw bars 继续作为原始数据；价格变化和前向收益按用途修正�
 
 PR #5A 提供固定实验协议和机器可比 manifest，见 [E01 重构前基线实验协议](refactor_baseline_protocol.md)。基线必须冻结当前 watchlist 与 watchlist-history，使用固定成熟窗口、固定输出前缀和不可 promote 的小型 walk-forward smoke。
 
-测试基线由 PR #4 的 258 项继续向上累积；PR #5A 新增 baseline-tool 与 calculation characterization 用例。为审查确认的错误继续保留独立正确答案。行为保持基线用于纯搬迁，正确性用例用于修复，两者目的不同。
+PR #5A 当前 CI 为 **269 项离线测试通过**，这是 E01 正式迁移的测试基线；其中新增 baseline-tool、冻结 universe 输入和 calculation characterization 用例。为审查确认的错误继续保留独立正确答案。行为保持基线用于纯搬迁，正确性用例用于修复，两者目的不同。
 
 交付：固定输入副本、risk_off/risk_on deterministic artifacts、tuner smoke、baseline manifest，以及后续 `compare` 零漂移门。动态 network/report timestamp 不做 byte-level gate，但 provenance 必须保存。
 
