@@ -57,24 +57,25 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _git(*args: str) -> str | None:
+def _git(*args: str, cwd: Path | None = None) -> str | None:
     try:
         result = subprocess.run(
             ["git", *args],
             check=True,
             capture_output=True,
             text=True,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except (OSError, subprocess.CalledProcessError):
         return None
     return result.stdout.strip()
 
 
-def git_context() -> dict[str, Any]:
-    status = _git("status", "--porcelain")
+def git_context(root: Path | None = None) -> dict[str, Any]:
+    status = _git("status", "--porcelain", cwd=root)
     return {
-        "commit": _git("rev-parse", "HEAD"),
-        "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+        "commit": _git("rev-parse", "HEAD", cwd=root),
+        "branch": _git("rev-parse", "--abbrev-ref", "HEAD", cwd=root),
         "dirty": bool(status),
         "dirty_paths": status.splitlines() if status else [],
     }
@@ -204,6 +205,8 @@ def directory_contract(path: Path, pattern: str = "*.csv") -> dict[str, Any]:
     if not path.exists() or not path.is_dir():
         raise FileNotFoundError(path)
     files = sorted(p for p in path.glob(pattern) if p.is_file())
+    if not files:
+        raise ValueError(f"no snapshot CSV files found in {path}")
     records = [
         {
             "name": p.name,
@@ -300,7 +303,7 @@ def tuning_contract(outputs_dir: Path, prefix: str) -> dict[str, Any]:
 def capture_manifest(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.repo_root).resolve()
     outputs = (root / args.outputs_dir).resolve()
-    ctx = git_context()
+    ctx = git_context(root)
     if args.require_clean and ctx["dirty"]:
         raise SystemExit(
             "Refusing to capture a refactor baseline from a dirty worktree. "
@@ -326,6 +329,7 @@ def capture_manifest(args: argparse.Namespace) -> dict[str, Any]:
             ],
             "theme_source": "rules_proxy",
             "pre_snapshot_universe": "union",
+            "watchlist_csv_path": args.watchlist,
             "watchlist_history_dir": args.watchlist_history_dir,
             "allow_latest_watchlist_fallback": False,
             "promote": False,
