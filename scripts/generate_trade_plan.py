@@ -174,9 +174,10 @@ def latest_scan_pair(
 ) -> tuple[str, str]:
     """Return a fresh, style-verified risk_off/risk_on report pair.
 
-    Executable plans must never silently combine a fresh report from one style
-    with a stale report from the other. Legacy reports without style-identifying headers
-    are therefore rejected instead of being paired by mtime.
+    Manual-review references must never silently combine a fresh report from
+    one style with a stale report from the other. Explicit Strategy-Style
+    metadata is authoritative; legacy Config headers remain a compatibility
+    fallback. Reports with neither identity are rejected.
     """
     reports = sorted(
         glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
