@@ -1697,12 +1697,18 @@ class AlpacaClient:
                 self.monitor.record_cache("alpaca", hit=True)
         if best_rows:
             if self.monitor:
+                degraded_reason = (
+                    "network/request failed; alternate bars cache used"
+                    if provenance_source == "stale_cross_key_fallback"
+                    else None
+                )
                 for symbol in sorted(best_rows):
-                    self.monitor.record_data_source(
-                        "alpaca",
+                    self._record_market_source(
                         "bars",
                         provenance_source,
+                        {symbol: best_rows[symbol]},
                         best_age_sec.get(symbol),
+                        degraded_reason=degraded_reason,
                     )
             return best_rows
         if self.monitor:
