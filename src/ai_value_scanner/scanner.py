@@ -1257,8 +1257,12 @@ class NetworkMonitor:
         namespace: str,
         source: str,
         cache_age_sec: float | None = None,
+        *,
+        data_asof_utc: str | None = None,
+        feed: str | None = None,
+        degraded_reason: str | None = None,
     ) -> None:
-        """Record where a returned dataset came from and how old it was."""
+        """Record returned-data provenance separately from cache file age."""
         with self._lock:
             service_map = self._data_provenance.setdefault(service, {})
             row = service_map.setdefault(
@@ -1266,15 +1270,30 @@ class NetworkMonitor:
                 {
                     "counts": {},
                     "max_cache_age_sec": None,
+                    "latest_data_asof_utc": None,
+                    "feed": None,
+                    "degraded_reasons": [],
+                    "last_observed_at_utc": None,
                     "stale_fallback_used": False,
                 },
             )
             counts = row["counts"]
             counts[source] = int(counts.get(source, 0)) + 1
+            row["last_observed_at_utc"] = datetime.now(timezone.utc).isoformat()
             if cache_age_sec is not None and np.isfinite(float(cache_age_sec)):
                 age = max(0.0, float(cache_age_sec))
                 previous = row.get("max_cache_age_sec")
                 row["max_cache_age_sec"] = age if previous is None else max(float(previous), age)
+            if data_asof_utc:
+                previous_asof = row.get("latest_data_asof_utc")
+                if previous_asof is None or str(data_asof_utc) > str(previous_asof):
+                    row["latest_data_asof_utc"] = str(data_asof_utc)
+            if feed:
+                row["feed"] = str(feed)
+            if degraded_reason:
+                reasons = row["degraded_reasons"]
+                if degraded_reason not in reasons:
+                    reasons.append(str(degraded_reason))
             if source in {"stale_cache_fallback", "stale_cross_key_fallback"}:
                 row["stale_fallback_used"] = True
 
@@ -1430,6 +1449,46 @@ class AlpacaClient:
         ).hexdigest()
         return self.cache_dir / f"{namespace}_{digest}.json"
 
+    @staticmethod
+    def _payload_data_asof(namespace: str, payload: Any) -> str | None:
+        timestamps: list[str] = []
+        if namespace == "bars" and isinstance(payload, dict):
+            for rows in payload.values():
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if isinstance(row, dict) and row.get("t"):
+                        timestamps.append(str(row["t"]))
+        elif namespace == "snapshots" and isinstance(payload, dict):
+            for snap in payload.values():
+                if not isinstance(snap, dict):
+                    continue
+                for key in ("latestTrade", "latestQuote", "minuteBar", "dailyBar", "prevDailyBar"):
+                    item = snap.get(key)
+                    if isinstance(item, dict) and item.get("t"):
+                        timestamps.append(str(item["t"]))
+        return max(timestamps) if timestamps else None
+
+    def _record_market_source(
+        self,
+        namespace: str,
+        source: str,
+        payload: Any,
+        cache_age_sec: float | None = None,
+        degraded_reason: str | None = None,
+    ) -> None:
+        if not self.monitor:
+            return
+        self.monitor.record_data_source(
+            "alpaca",
+            namespace,
+            source,
+            cache_age_sec,
+            data_asof_utc=self._payload_data_asof(namespace, payload),
+            feed=self.feed,
+            degraded_reason=degraded_reason,
+        )
+
     def _load_cache(
         self, namespace: str, key_payload: dict[str, Any], ttl_sec: int
     ) -> Any | None:
@@ -1449,7 +1508,7 @@ class AlpacaClient:
             payload = json.loads(cache_path.read_text())
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
-                self.monitor.record_data_source("alpaca", namespace, "fresh_cache", age)
+                self._record_market_source(namespace, "fresh_cache", payload, age)
             return payload
         except Exception:
             if self.monitor:
@@ -1469,8 +1528,12 @@ class AlpacaClient:
             if self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
                 age = time.time() - cache_path.stat().st_mtime
-                self.monitor.record_data_source(
-                    "alpaca", namespace, "stale_cache_fallback", age
+                self._record_market_source(
+                    namespace,
+                    "stale_cache_fallback",
+                    payload,
+                    age,
+                    degraded_reason="network/request failed; exact-key stale cache used",
                 )
             return payload
         except Exception:
@@ -1502,11 +1565,12 @@ class AlpacaClient:
                     hit = True
             if hit and self.monitor:
                 self.monitor.record_cache("alpaca", hit=True)
-                self.monitor.record_data_source(
-                    "alpaca",
+                self._record_market_source(
                     "snapshots",
                     "stale_cross_key_fallback",
+                    {symbol: out[symbol] for symbol in out if symbol in payload},
                     time.time() - path.stat().st_mtime,
+                    degraded_reason="network/request failed; alternate snapshot cache used",
                 )
         if out:
             return out
@@ -1663,7 +1727,7 @@ class AlpacaClient:
             payload = resp.json()
             self._save_cache("assets", cache_key, payload)
             if self.monitor:
-                self.monitor.record_data_source("alpaca", "assets", "network")
+                self._record_market_source("assets", "network", payload)
             return payload
         except Exception:
             stale = self._load_cache_stale("assets", cache_key)
@@ -1697,7 +1761,7 @@ class AlpacaClient:
                         payload = {}
                     self._save_cache("snapshots", cache_key, payload)
                     if self.monitor:
-                        self.monitor.record_data_source("alpaca", "snapshots", "network")
+                        self._record_market_source("snapshots", "network", payload)
                 except Exception:
                     stale = self._load_cache_stale("snapshots", cache_key)
                     if isinstance(stale, dict):
@@ -1844,7 +1908,7 @@ class AlpacaClient:
                         break
                 fetched_from_network = True
                 if self.monitor:
-                    self.monitor.record_data_source("alpaca", "bars", "network")
+                    self._record_market_source("bars", "network", batch_bars)
             except Exception:
                 stale = self._load_cache_stale("bars", cache_key)
                 if isinstance(stale, dict):
@@ -6478,8 +6542,13 @@ def build_run_report_markdown(
             counts = row.get("counts", {})
             age = row.get("max_cache_age_sec")
             age_text = "n/a" if age is None else f"{float(age):.0f}s"
+            data_asof = row.get("latest_data_asof_utc") or "n/a"
+            feed = row.get("feed") or "n/a"
+            degraded = row.get("degraded_reasons") or []
             lines.append(
-                f"- alpaca {namespace} provenance: {counts} | max_cache_age={age_text}"
+                f"- alpaca {namespace} provenance: {counts} | feed={feed} "
+                f"| data_asof={data_asof} | max_cache_age={age_text}"
+                + (f" | degraded={degraded}" if degraded else "")
             )
     if sec_cache_summary:
         lines.append(f"- sec cache: {sec_cache_summary}")
