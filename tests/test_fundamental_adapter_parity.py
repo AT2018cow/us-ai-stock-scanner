@@ -54,7 +54,8 @@ class TestScannerReplayReconstructionParity(unittest.TestCase):
             scanner.QUARTERLY_FORMS,
         )
         replay_series = backtest.build_flow_ttm_or_annual_series(records)
-        replay_pair = backtest.latest_and_year_ago_flow(
+        replay_pair = backtest.flow_pair_asof(
+            records,
             replay_series,
             pd.Timestamp("2026-03-01", tz="UTC"),
         )
@@ -98,6 +99,50 @@ class TestScannerReplayReconstructionParity(unittest.TestCase):
         self.assertEqual(before, 100.0)
         self.assertEqual(after, 102.0)
 
+    def test_amendment_can_update_only_year_ago_base_after_filing(self) -> None:
+        entries = [
+            _flow_entry("2024-01-01", "2024-03-31", 10, "2024-05-01", accn="0001"),
+            _flow_entry("2024-04-01", "2024-06-30", 20, "2024-08-01", accn="0002"),
+            _flow_entry("2024-07-01", "2024-09-30", 30, "2024-11-01", accn="0003"),
+            _flow_entry("2024-10-01", "2024-12-31", 40, "2025-02-15", accn="0004"),
+            _flow_entry("2025-01-01", "2025-03-31", 11, "2025-05-01", accn="0005"),
+            _flow_entry("2025-04-01", "2025-06-30", 21, "2025-08-01", accn="0006"),
+            _flow_entry("2025-07-01", "2025-09-30", 31, "2025-11-01", accn="0007"),
+            _flow_entry("2025-10-01", "2025-12-31", 41, "2026-02-15", accn="0008"),
+            # Filed after the latest 2025 TTM is already known. This revision
+            # changes only the year-ago TTM base (100 -> 102), not latest=104.
+            _flow_entry(
+                "2024-01-01",
+                "2024-03-31",
+                12,
+                "2026-03-01",
+                accn="0009",
+                form="10-Q/A",
+            ),
+        ]
+        facts = _companyfacts("Revenues", "USD", entries)
+        records = backtest.extract_metric_points(
+            facts,
+            ["Revenues"],
+            "USD",
+            scanner.QUARTERLY_FORMS,
+        )
+        series = backtest.build_flow_ttm_or_annual_series(records)
+
+        before = backtest.flow_pair_asof(
+            records,
+            series,
+            pd.Timestamp("2026-02-20", tz="UTC"),
+        )
+        after = backtest.flow_pair_asof(
+            records,
+            series,
+            pd.Timestamp("2026-03-02", tz="UTC"),
+        )
+
+        self.assertEqual(before, (104.0, 100.0))
+        self.assertEqual(after, (104.0, 102.0))
+
     def test_level_year_ago_matches_and_rejects_adjacent_quarter(self) -> None:
         entries = [
             {
@@ -137,7 +182,8 @@ class TestScannerReplayReconstructionParity(unittest.TestCase):
             scanner.QUARTERLY_FORMS,
         )
         series = backtest.build_level_series(records)
-        replay_pair = backtest.latest_and_year_ago_level(
+        replay_pair = backtest.level_pair_asof(
+            records,
             series,
             pd.Timestamp("2026-03-01", tz="UTC"),
         )
