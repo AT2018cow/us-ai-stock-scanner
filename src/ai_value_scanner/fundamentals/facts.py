@@ -213,6 +213,22 @@ def collapse_fact_revisions(
     )
 
 
+
+def collapse_fact_records_by_end(
+    records: Iterable[FactRecord],
+    cutoff: VisibilityCutoff | None = None,
+) -> list[FactRecord]:
+    """Keep the latest visible fact version for each report period end."""
+    best: dict[tuple[str, date], FactRecord] = {}
+    for record in records:
+        if not is_visible(record, cutoff):
+            continue
+        key = (record.unit, record.period_end)
+        prev = best.get(key)
+        if prev is None or record.revision_key > prev.revision_key:
+            best[key] = record
+    return sorted(best.values(), key=lambda r: (r.period_end, r.tag_priority))
+
 def visibility_cutoffs(records: Iterable[FactRecord]) -> list[VisibilityCutoff]:
     """Return ordered filing/accession states represented by records."""
 
