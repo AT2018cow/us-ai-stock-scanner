@@ -371,7 +371,9 @@ def build_flow_visibility_series(
     """
     by_date: dict[date, list[FactRecord]] = {}
     for record in records:
-        by_date.setdefault(record.visible_on, []).append(record)
+        if record.filed is None:
+            continue
+        by_date.setdefault(record.filed, []).append(record)
 
     current: dict[tuple[str, date | None, date], FactRecord] = {}
     out: list[PeriodValue] = []
@@ -413,7 +415,9 @@ def build_level_visibility_series(
     """Build an end-of-filing-day PIT staircase for level facts."""
     by_date: dict[date, list[FactRecord]] = {}
     for record in records:
-        by_date.setdefault(record.visible_on, []).append(record)
+        if record.filed is None:
+            continue
+        by_date.setdefault(record.filed, []).append(record)
 
     current: dict[tuple[str, date], FactRecord] = {}
     out: list[PeriodValue] = []
