@@ -174,6 +174,11 @@ def extract_fact_records(
 def is_visible(record: FactRecord, cutoff: VisibilityCutoff | None) -> bool:
     if cutoff is None:
         return True
+    # Current-view may use a fact without filing provenance, but PIT replay
+    # cannot prove when it became public. Using period_end as a fallback here
+    # would introduce look-ahead between period end and the actual filing.
+    if record.filed is None:
+        return False
     if record.visible_on < cutoff.filed_through:
         return True
     if record.visible_on > cutoff.filed_through:
@@ -232,7 +237,11 @@ def collapse_fact_records_by_end(
 def visibility_cutoffs(records: Iterable[FactRecord]) -> list[VisibilityCutoff]:
     """Return ordered filing/accession states represented by records."""
 
-    keys = sorted({(r.visible_on, r.accession or "") for r in records})
+    keys = sorted(
+        (r.filed, r.accession or "")
+        for r in records
+        if r.filed is not None
+    )
     return [
         VisibilityCutoff(filed_through=day, accession_through=(accession or None))
         for day, accession in keys
