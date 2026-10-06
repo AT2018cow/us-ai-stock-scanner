@@ -1,0 +1,127 @@
+{
+  "had_rate_limit_or_network_issue": false,
+  "stale_market_data_fallback_used": false,
+  "data_provenance": {
+    "alpaca": {
+      "bars": {
+        "counts": {
+          "network": 2
+        },
+        "max_cache_age_sec": null,
+        "latest_data_asof_utc": "2026-10-05T04:00:00Z",
+        "feed": "iex",
+        "degraded_reasons": [],
+        "last_observed_at_utc": "2026-10-05T20:33:21.392728+00:00",
+        "stale_fallback_used": false
+      }
+    }
+  },
+  "services": {
+    "alpaca": {
+      "requests_started": 32,
+      "responses": 32,
+      "http_2xx": 32,
+      "http_3xx": 0,
+      "http_4xx": 0,
+      "http_429": 0,
+      "http_5xx": 0,
+      "retries": 0,
+      "retry_429": 0,
+      "retry_5xx": 0,
+      "retry_other": 0,
+      "exceptions_total": 0,
+      "exceptions_timeout": 0,
+      "exceptions_connection": 0,
+      "exceptions_http_error": 0,
+      "exceptions_other": 0,
+      "limiter_wait_calls": 3,
+      "limiter_wait_seconds": 0.0696,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "cache_hit_rate": 0.0,
+      "had_rate_limit_or_network_issue": false
+    }
+  },
+  "replay_build_phase": {
+    "had_rate_limit_or_network_issue": false,
+    "stale_market_data_fallback_used": false,
+    "data_provenance": {
+      "alpaca": {
+        "assets": {
+          "counts": {
+            "network": 1,
+            "fresh_cache": 2
+          },
+          "max_cache_age_sec": 2273.7119817733765,
+          "latest_data_asof_utc": null,
+          "feed": "iex",
+          "degraded_reasons": [],
+          "last_observed_at_utc": "2026-10-05T20:05:49.611956+00:00",
+          "stale_fallback_used": false
+        },
+        "bars": {
+          "counts": {
+            "fresh_cache": 4,
+            "cross_key_cache_enrichment": 693
+          },
+          "max_cache_age_sec": 342458.9439096451,
+          "latest_data_asof_utc": "2026-10-02T04:00:00Z",
+          "feed": "iex",
+          "degraded_reasons": [],
+          "last_observed_at_utc": "2026-10-05T19:31:00.137683+00:00",
+          "stale_fallback_used": false
+        }
+      }
+    },
+    "services": {
+      "alpaca": {
+        "requests_started": 2,
+        "responses": 2,
+        "http_2xx": 2,
+        "http_3xx": 0,
+        "http_4xx": 0,
+        "http_429": 0,
+        "http_5xx": 0,
+        "retries": 0,
+        "retry_429": 0,
+        "retry_5xx": 0,
+        "retry_other": 0,
+        "exceptions_total": 0,
+        "exceptions_timeout": 0,
+        "exceptions_connection": 0,
+        "exceptions_http_error": 0,
+        "exceptions_other": 0,
+        "limiter_wait_calls": 0,
+        "limiter_wait_seconds": 0.0,
+        "cache_hits": 586,
+        "cache_misses": 1,
+        "cache_hit_rate": 0.9983,
+        "had_rate_limit_or_network_issue": false
+      },
+      "sec": {
+        "requests_started": 1343,
+        "responses": 1343,
+        "http_2xx": 1343,
+        "http_3xx": 0,
+        "http_4xx": 0,
+        "http_429": 0,
+        "http_5xx": 0,
+        "retries": 2,
+        "retry_429": 0,
+        "retry_5xx": 0,
+        "retry_other": 2,
+        "exceptions_total": 0,
+        "exceptions_timeout": 0,
+        "exceptions_connection": 0,
+        "exceptions_http_error": 0,
+        "exceptions_other": 0,
+        "limiter_wait_calls": 1323,
+        "limiter_wait_seconds": 1751.5024,
+        "cache_hits": 21,
+        "cache_misses": 1340,
+        "cache_hit_rate": 0.0154,
+        "had_rate_limit_or_network_issue": false
+      }
+    }
+  }
+}

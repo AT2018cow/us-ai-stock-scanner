@@ -1,0 +1,267 @@
+# Backtest Report
+
+- generated UTC: 2026-10-05T21:40:57.781292+00:00
+- mode: historical_replay
+- signal rows: 468
+- list types: low_value, industry_trend, momentum, research_pool
+- horizons: 20, 60, 120
+- top_n: 10
+- per_channel_top_n: True
+- trading_cost_bps(one-way): 15.0
+- entry_price_mode: next_open
+- exit_price_mode: close
+- rebalance_frequency: monthly
+- replay_max_symbols: 800
+- replay_asset_status: all
+- use_historical_watchlist: True
+- watchlist_history_dir: outputs/pre_e01_f39d06f_watchlist_history
+- watchlist_csv_path_override: outputs/pre_e01_f39d06f_ai_watchlist.csv
+- allow_latest_watchlist_fallback: False
+- disclosure_lookback_days: 720
+- theme_source: rules_proxy
+- allow_lookahead_theme_source: False
+- delist_return_assumption: -0.55
+- delist_detection_buffer_days: 7
+- perturbation_enabled: True
+
+## Summary
+
+- base | industry_trend | H=20 | n=36/39 | avg=0.0168 | win=66.67% | excess_vs_QQQ=0.0033 | no_signal=3 | unpriced=0
+- base | industry_trend | H=60 | n=36/39 | avg=0.0607 | win=83.33% | excess_vs_QQQ=0.0053 | no_signal=3 | unpriced=0
+- base | industry_trend | H=120 | n=36/39 | avg=0.1391 | win=88.89% | excess_vs_QQQ=0.0240 | no_signal=3 | unpriced=0
+- base | low_value | H=20 | n=36/39 | avg=0.0208 | win=63.89% | excess_vs_QQQ=0.0072 | no_signal=3 | unpriced=0
+- base | low_value | H=60 | n=36/39 | avg=0.0585 | win=75.00% | excess_vs_QQQ=0.0031 | no_signal=3 | unpriced=0
+- base | low_value | H=120 | n=36/39 | avg=0.1720 | win=91.67% | excess_vs_QQQ=0.0569 | no_signal=3 | unpriced=0
+- base | momentum | H=20 | n=36/39 | avg=0.0237 | win=66.67% | excess_vs_QQQ=0.0102 | no_signal=3 | unpriced=0
+- base | momentum | H=60 | n=36/39 | avg=0.0777 | win=86.11% | excess_vs_QQQ=0.0223 | no_signal=3 | unpriced=0
+- base | momentum | H=120 | n=36/39 | avg=0.1736 | win=94.44% | excess_vs_QQQ=0.0585 | no_signal=3 | unpriced=0
+- base | research_pool | H=20 | n=39/39 | avg=0.0174 | win=69.23% | excess_vs_QQQ=-0.0008 | no_signal=0 | unpriced=0
+- base | research_pool | H=60 | n=39/39 | avg=0.0728 | win=74.36% | excess_vs_QQQ=0.0076 | no_signal=0 | unpriced=0
+- base | research_pool | H=120 | n=39/39 | avg=0.1400 | win=92.31% | excess_vs_QQQ=0.0125 | no_signal=0 | unpriced=0
+- loose | industry_trend | H=20 | n=36/39 | avg=0.0168 | win=66.67% | excess_vs_QQQ=0.0033 | no_signal=3 | unpriced=0
+- loose | industry_trend | H=60 | n=36/39 | avg=0.0607 | win=83.33% | excess_vs_QQQ=0.0053 | no_signal=3 | unpriced=0
+- loose | industry_trend | H=120 | n=36/39 | avg=0.1391 | win=88.89% | excess_vs_QQQ=0.0240 | no_signal=3 | unpriced=0
+- loose | low_value | H=20 | n=36/39 | avg=0.0206 | win=63.89% | excess_vs_QQQ=0.0071 | no_signal=3 | unpriced=0
+- loose | low_value | H=60 | n=36/39 | avg=0.0581 | win=75.00% | excess_vs_QQQ=0.0027 | no_signal=3 | unpriced=0
+- loose | low_value | H=120 | n=36/39 | avg=0.1723 | win=91.67% | excess_vs_QQQ=0.0572 | no_signal=3 | unpriced=0
+- loose | momentum | H=20 | n=36/39 | avg=0.0237 | win=66.67% | excess_vs_QQQ=0.0102 | no_signal=3 | unpriced=0
+- loose | momentum | H=60 | n=36/39 | avg=0.0779 | win=86.11% | excess_vs_QQQ=0.0225 | no_signal=3 | unpriced=0
+- loose | momentum | H=120 | n=36/39 | avg=0.1734 | win=94.44% | excess_vs_QQQ=0.0583 | no_signal=3 | unpriced=0
+- loose | research_pool | H=20 | n=39/39 | avg=0.0174 | win=69.23% | excess_vs_QQQ=-0.0008 | no_signal=0 | unpriced=0
+- loose | research_pool | H=60 | n=39/39 | avg=0.0728 | win=74.36% | excess_vs_QQQ=0.0076 | no_signal=0 | unpriced=0
+- loose | research_pool | H=120 | n=39/39 | avg=0.1400 | win=92.31% | excess_vs_QQQ=0.0125 | no_signal=0 | unpriced=0
+- strict | industry_trend | H=20 | n=36/39 | avg=0.0168 | win=66.67% | excess_vs_QQQ=0.0033 | no_signal=3 | unpriced=0
+- strict | industry_trend | H=60 | n=36/39 | avg=0.0607 | win=83.33% | excess_vs_QQQ=0.0053 | no_signal=3 | unpriced=0
+- strict | industry_trend | H=120 | n=36/39 | avg=0.1391 | win=88.89% | excess_vs_QQQ=0.0240 | no_signal=3 | unpriced=0
+- strict | low_value | H=20 | n=36/39 | avg=0.0207 | win=63.89% | excess_vs_QQQ=0.0072 | no_signal=3 | unpriced=0
+- strict | low_value | H=60 | n=36/39 | avg=0.0569 | win=75.00% | excess_vs_QQQ=0.0015 | no_signal=3 | unpriced=0
+- strict | low_value | H=120 | n=36/39 | avg=0.1704 | win=91.67% | excess_vs_QQQ=0.0553 | no_signal=3 | unpriced=0
+- strict | momentum | H=20 | n=36/39 | avg=0.0235 | win=66.67% | excess_vs_QQQ=0.0100 | no_signal=3 | unpriced=0
+- strict | momentum | H=60 | n=36/39 | avg=0.0774 | win=86.11% | excess_vs_QQQ=0.0220 | no_signal=3 | unpriced=0
+- strict | momentum | H=120 | n=36/39 | avg=0.1753 | win=94.44% | excess_vs_QQQ=0.0602 | no_signal=3 | unpriced=0
+- strict | research_pool | H=20 | n=39/39 | avg=0.0174 | win=69.23% | excess_vs_QQQ=-0.0008 | no_signal=0 | unpriced=0
+- strict | research_pool | H=60 | n=39/39 | avg=0.0728 | win=74.36% | excess_vs_QQQ=0.0076 | no_signal=0 | unpriced=0
+- strict | research_pool | H=120 | n=39/39 | avg=0.1400 | win=92.31% | excess_vs_QQQ=0.0125 | no_signal=0 | unpriced=0
+
+## Segments
+
+- base | 2023 | industry_trend | H=20 | n=12/12 | avg=0.0140 | win=58.33% | excess_vs_QQQ=-0.0072 | no_signal=0 | unpriced=0
+- base | 2023 | industry_trend | H=60 | n=12/12 | avg=0.0672 | win=83.33% | excess_vs_QQQ=-0.0202 | no_signal=0 | unpriced=0
+- base | 2023 | industry_trend | H=120 | n=12/12 | avg=0.1660 | win=100.00% | excess_vs_QQQ=-0.0002 | no_signal=0 | unpriced=0
+- base | 2023 | low_value | H=20 | n=12/12 | avg=0.0154 | win=66.67% | excess_vs_QQQ=-0.0059 | no_signal=0 | unpriced=0
+- base | 2023 | low_value | H=60 | n=12/12 | avg=0.0710 | win=66.67% | excess_vs_QQQ=-0.0164 | no_signal=0 | unpriced=0
+- base | 2023 | low_value | H=120 | n=12/12 | avg=0.2037 | win=100.00% | excess_vs_QQQ=0.0375 | no_signal=0 | unpriced=0
+- base | 2023 | momentum | H=20 | n=12/12 | avg=0.0134 | win=50.00% | excess_vs_QQQ=-0.0078 | no_signal=0 | unpriced=0
+- base | 2023 | momentum | H=60 | n=12/12 | avg=0.0745 | win=83.33% | excess_vs_QQQ=-0.0129 | no_signal=0 | unpriced=0
+- base | 2023 | momentum | H=120 | n=12/12 | avg=0.1876 | win=100.00% | excess_vs_QQQ=0.0214 | no_signal=0 | unpriced=0
+- base | 2023 | research_pool | H=20 | n=12/12 | avg=0.0093 | win=50.00% | excess_vs_QQQ=-0.0120 | no_signal=0 | unpriced=0
+- base | 2023 | research_pool | H=60 | n=12/12 | avg=0.0671 | win=58.33% | excess_vs_QQQ=-0.0203 | no_signal=0 | unpriced=0
+- base | 2023 | research_pool | H=120 | n=12/12 | avg=0.1464 | win=100.00% | excess_vs_QQQ=-0.0198 | no_signal=0 | unpriced=0
+- base | 2024 | industry_trend | H=20 | n=12/12 | avg=0.0255 | win=75.00% | excess_vs_QQQ=0.0074 | no_signal=0 | unpriced=0
+- base | 2024 | industry_trend | H=60 | n=12/12 | avg=0.0458 | win=83.33% | excess_vs_QQQ=0.0081 | no_signal=0 | unpriced=0
+- base | 2024 | industry_trend | H=120 | n=12/12 | avg=0.0798 | win=66.67% | excess_vs_QQQ=0.0056 | no_signal=0 | unpriced=0
+- base | 2024 | low_value | H=20 | n=12/12 | avg=0.0270 | win=58.33% | excess_vs_QQQ=0.0089 | no_signal=0 | unpriced=0
+- base | 2024 | low_value | H=60 | n=12/12 | avg=0.0307 | win=75.00% | excess_vs_QQQ=-0.0069 | no_signal=0 | unpriced=0
+- base | 2024 | low_value | H=120 | n=12/12 | avg=0.0802 | win=75.00% | excess_vs_QQQ=0.0061 | no_signal=0 | unpriced=0
+- base | 2024 | momentum | H=20 | n=12/12 | avg=0.0345 | win=83.33% | excess_vs_QQQ=0.0163 | no_signal=0 | unpriced=0
+- base | 2024 | momentum | H=60 | n=12/12 | avg=0.0584 | win=83.33% | excess_vs_QQQ=0.0207 | no_signal=0 | unpriced=0
+- base | 2024 | momentum | H=120 | n=12/12 | avg=0.0893 | win=83.33% | excess_vs_QQQ=0.0152 | no_signal=0 | unpriced=0
+- base | 2024 | research_pool | H=20 | n=12/12 | avg=0.0267 | win=83.33% | excess_vs_QQQ=0.0086 | no_signal=0 | unpriced=0
+- base | 2024 | research_pool | H=60 | n=12/12 | avg=0.0600 | win=75.00% | excess_vs_QQQ=0.0223 | no_signal=0 | unpriced=0
+- base | 2024 | research_pool | H=120 | n=12/12 | avg=0.1038 | win=75.00% | excess_vs_QQQ=0.0296 | no_signal=0 | unpriced=0
+- base | 2025 | industry_trend | H=20 | n=10/12 | avg=0.0171 | win=70.00% | excess_vs_QQQ=0.0072 | no_signal=2 | unpriced=0
+- base | 2025 | industry_trend | H=60 | n=10/12 | avg=0.0522 | win=80.00% | excess_vs_QQQ=0.0304 | no_signal=2 | unpriced=0
+- base | 2025 | industry_trend | H=120 | n=10/12 | avg=0.1650 | win=100.00% | excess_vs_QQQ=0.0677 | no_signal=2 | unpriced=0
+- base | 2025 | low_value | H=20 | n=10/12 | avg=0.0258 | win=70.00% | excess_vs_QQQ=0.0159 | no_signal=2 | unpriced=0
+- base | 2025 | low_value | H=60 | n=10/12 | avg=0.0672 | win=80.00% | excess_vs_QQQ=0.0454 | no_signal=2 | unpriced=0
+- base | 2025 | low_value | H=120 | n=10/12 | avg=0.2512 | win=100.00% | excess_vs_QQQ=0.1540 | no_signal=2 | unpriced=0
+- base | 2025 | momentum | H=20 | n=10/12 | avg=0.0293 | win=70.00% | excess_vs_QQQ=0.0194 | no_signal=2 | unpriced=0
+- base | 2025 | momentum | H=60 | n=10/12 | avg=0.0834 | win=90.00% | excess_vs_QQQ=0.0616 | no_signal=2 | unpriced=0
+- base | 2025 | momentum | H=120 | n=10/12 | avg=0.2468 | win=100.00% | excess_vs_QQQ=0.1495 | no_signal=2 | unpriced=0
+- base | 2025 | research_pool | H=20 | n=12/12 | avg=0.0151 | win=75.00% | excess_vs_QQQ=-0.0004 | no_signal=0 | unpriced=0
+- base | 2025 | research_pool | H=60 | n=12/12 | avg=0.0611 | win=83.33% | excess_vs_QQQ=0.0148 | no_signal=0 | unpriced=0
+- base | 2025 | research_pool | H=120 | n=12/12 | avg=0.1471 | win=100.00% | excess_vs_QQQ=0.0205 | no_signal=0 | unpriced=0
+- base | 2026YTD | industry_trend | H=20 | n=2/3 | avg=-0.0197 | win=50.00% | excess_vs_QQQ=0.0223 | no_signal=1 | unpriced=0
+- base | 2026YTD | industry_trend | H=60 | n=2/3 | avg=0.1528 | win=100.00% | excess_vs_QQQ=0.0149 | no_signal=1 | unpriced=0
+- base | 2026YTD | industry_trend | H=120 | n=2/3 | avg=0.2051 | win=100.00% | excess_vs_QQQ=0.0615 | no_signal=1 | unpriced=0
+- base | 2026YTD | low_value | H=20 | n=2/3 | avg=-0.0092 | win=50.00% | excess_vs_QQQ=0.0328 | no_signal=1 | unpriced=0
+- base | 2026YTD | low_value | H=60 | n=2/3 | avg=0.1061 | win=100.00% | excess_vs_QQQ=-0.0318 | no_signal=1 | unpriced=0
+- base | 2026YTD | low_value | H=120 | n=2/3 | avg=0.1367 | win=100.00% | excess_vs_QQQ=-0.0069 | no_signal=1 | unpriced=0
+- base | 2026YTD | momentum | H=20 | n=2/3 | avg=-0.0074 | win=50.00% | excess_vs_QQQ=0.0346 | no_signal=1 | unpriced=0
+- base | 2026YTD | momentum | H=60 | n=2/3 | avg=0.1838 | win=100.00% | excess_vs_QQQ=0.0458 | no_signal=1 | unpriced=0
+- base | 2026YTD | momentum | H=120 | n=2/3 | avg=0.2298 | win=100.00% | excess_vs_QQQ=0.0862 | no_signal=1 | unpriced=0
+- base | 2026YTD | research_pool | H=20 | n=3/3 | avg=0.0216 | win=66.67% | excess_vs_QQQ=0.0047 | no_signal=0 | unpriced=0
+- base | 2026YTD | research_pool | H=60 | n=3/3 | avg=0.1943 | win=100.00% | excess_vs_QQQ=0.0322 | no_signal=0 | unpriced=0
+- base | 2026YTD | research_pool | H=120 | n=3/3 | avg=0.2309 | win=100.00% | excess_vs_QQQ=0.0411 | no_signal=0 | unpriced=0
+- loose | 2023 | industry_trend | H=20 | n=12/12 | avg=0.0140 | win=58.33% | excess_vs_QQQ=-0.0072 | no_signal=0 | unpriced=0
+- loose | 2023 | industry_trend | H=60 | n=12/12 | avg=0.0672 | win=83.33% | excess_vs_QQQ=-0.0202 | no_signal=0 | unpriced=0
+- loose | 2023 | industry_trend | H=120 | n=12/12 | avg=0.1660 | win=100.00% | excess_vs_QQQ=-0.0002 | no_signal=0 | unpriced=0
+- loose | 2023 | low_value | H=20 | n=12/12 | avg=0.0154 | win=66.67% | excess_vs_QQQ=-0.0059 | no_signal=0 | unpriced=0
+- loose | 2023 | low_value | H=60 | n=12/12 | avg=0.0710 | win=66.67% | excess_vs_QQQ=-0.0164 | no_signal=0 | unpriced=0
+- loose | 2023 | low_value | H=120 | n=12/12 | avg=0.2037 | win=100.00% | excess_vs_QQQ=0.0375 | no_signal=0 | unpriced=0
+- loose | 2023 | momentum | H=20 | n=12/12 | avg=0.0134 | win=50.00% | excess_vs_QQQ=-0.0078 | no_signal=0 | unpriced=0
+- loose | 2023 | momentum | H=60 | n=12/12 | avg=0.0745 | win=83.33% | excess_vs_QQQ=-0.0129 | no_signal=0 | unpriced=0
+- loose | 2023 | momentum | H=120 | n=12/12 | avg=0.1876 | win=100.00% | excess_vs_QQQ=0.0214 | no_signal=0 | unpriced=0
+- loose | 2023 | research_pool | H=20 | n=12/12 | avg=0.0093 | win=50.00% | excess_vs_QQQ=-0.0120 | no_signal=0 | unpriced=0
+- loose | 2023 | research_pool | H=60 | n=12/12 | avg=0.0671 | win=58.33% | excess_vs_QQQ=-0.0203 | no_signal=0 | unpriced=0
+- loose | 2023 | research_pool | H=120 | n=12/12 | avg=0.1464 | win=100.00% | excess_vs_QQQ=-0.0198 | no_signal=0 | unpriced=0
+- loose | 2024 | industry_trend | H=20 | n=12/12 | avg=0.0255 | win=75.00% | excess_vs_QQQ=0.0074 | no_signal=0 | unpriced=0
+- loose | 2024 | industry_trend | H=60 | n=12/12 | avg=0.0458 | win=83.33% | excess_vs_QQQ=0.0081 | no_signal=0 | unpriced=0
+- loose | 2024 | industry_trend | H=120 | n=12/12 | avg=0.0798 | win=66.67% | excess_vs_QQQ=0.0056 | no_signal=0 | unpriced=0
+- loose | 2024 | low_value | H=20 | n=12/12 | avg=0.0270 | win=58.33% | excess_vs_QQQ=0.0089 | no_signal=0 | unpriced=0
+- loose | 2024 | low_value | H=60 | n=12/12 | avg=0.0307 | win=75.00% | excess_vs_QQQ=-0.0069 | no_signal=0 | unpriced=0
+- loose | 2024 | low_value | H=120 | n=12/12 | avg=0.0802 | win=75.00% | excess_vs_QQQ=0.0061 | no_signal=0 | unpriced=0
+- loose | 2024 | momentum | H=20 | n=12/12 | avg=0.0345 | win=83.33% | excess_vs_QQQ=0.0163 | no_signal=0 | unpriced=0
+- loose | 2024 | momentum | H=60 | n=12/12 | avg=0.0591 | win=83.33% | excess_vs_QQQ=0.0214 | no_signal=0 | unpriced=0
+- loose | 2024 | momentum | H=120 | n=12/12 | avg=0.0886 | win=83.33% | excess_vs_QQQ=0.0145 | no_signal=0 | unpriced=0
+- loose | 2024 | research_pool | H=20 | n=12/12 | avg=0.0267 | win=83.33% | excess_vs_QQQ=0.0086 | no_signal=0 | unpriced=0
+- loose | 2024 | research_pool | H=60 | n=12/12 | avg=0.0600 | win=75.00% | excess_vs_QQQ=0.0223 | no_signal=0 | unpriced=0
+- loose | 2024 | research_pool | H=120 | n=12/12 | avg=0.1038 | win=75.00% | excess_vs_QQQ=0.0296 | no_signal=0 | unpriced=0
+- loose | 2025 | industry_trend | H=20 | n=10/12 | avg=0.0171 | win=70.00% | excess_vs_QQQ=0.0072 | no_signal=2 | unpriced=0
+- loose | 2025 | industry_trend | H=60 | n=10/12 | avg=0.0522 | win=80.00% | excess_vs_QQQ=0.0304 | no_signal=2 | unpriced=0
+- loose | 2025 | industry_trend | H=120 | n=10/12 | avg=0.1650 | win=100.00% | excess_vs_QQQ=0.0677 | no_signal=2 | unpriced=0
+- loose | 2025 | low_value | H=20 | n=10/12 | avg=0.0253 | win=70.00% | excess_vs_QQQ=0.0154 | no_signal=2 | unpriced=0
+- loose | 2025 | low_value | H=60 | n=10/12 | avg=0.0657 | win=80.00% | excess_vs_QQQ=0.0440 | no_signal=2 | unpriced=0
+- loose | 2025 | low_value | H=120 | n=10/12 | avg=0.2522 | win=100.00% | excess_vs_QQQ=0.1549 | no_signal=2 | unpriced=0
+- loose | 2025 | momentum | H=20 | n=10/12 | avg=0.0293 | win=70.00% | excess_vs_QQQ=0.0194 | no_signal=2 | unpriced=0
+- loose | 2025 | momentum | H=60 | n=10/12 | avg=0.0834 | win=90.00% | excess_vs_QQQ=0.0616 | no_signal=2 | unpriced=0
+- loose | 2025 | momentum | H=120 | n=10/12 | avg=0.2468 | win=100.00% | excess_vs_QQQ=0.1495 | no_signal=2 | unpriced=0
+- loose | 2025 | research_pool | H=20 | n=12/12 | avg=0.0151 | win=75.00% | excess_vs_QQQ=-0.0004 | no_signal=0 | unpriced=0
+- loose | 2025 | research_pool | H=60 | n=12/12 | avg=0.0611 | win=83.33% | excess_vs_QQQ=0.0148 | no_signal=0 | unpriced=0
+- loose | 2025 | research_pool | H=120 | n=12/12 | avg=0.1471 | win=100.00% | excess_vs_QQQ=0.0205 | no_signal=0 | unpriced=0
+- loose | 2026YTD | industry_trend | H=20 | n=2/3 | avg=-0.0197 | win=50.00% | excess_vs_QQQ=0.0223 | no_signal=1 | unpriced=0
+- loose | 2026YTD | industry_trend | H=60 | n=2/3 | avg=0.1528 | win=100.00% | excess_vs_QQQ=0.0149 | no_signal=1 | unpriced=0
+- loose | 2026YTD | industry_trend | H=120 | n=2/3 | avg=0.2051 | win=100.00% | excess_vs_QQQ=0.0615 | no_signal=1 | unpriced=0
+- loose | 2026YTD | low_value | H=20 | n=2/3 | avg=-0.0092 | win=50.00% | excess_vs_QQQ=0.0328 | no_signal=1 | unpriced=0
+- loose | 2026YTD | low_value | H=60 | n=2/3 | avg=0.1061 | win=100.00% | excess_vs_QQQ=-0.0318 | no_signal=1 | unpriced=0
+- loose | 2026YTD | low_value | H=120 | n=2/3 | avg=0.1367 | win=100.00% | excess_vs_QQQ=-0.0069 | no_signal=1 | unpriced=0
+- loose | 2026YTD | momentum | H=20 | n=2/3 | avg=-0.0074 | win=50.00% | excess_vs_QQQ=0.0346 | no_signal=1 | unpriced=0
+- loose | 2026YTD | momentum | H=60 | n=2/3 | avg=0.1838 | win=100.00% | excess_vs_QQQ=0.0458 | no_signal=1 | unpriced=0
+- loose | 2026YTD | momentum | H=120 | n=2/3 | avg=0.2298 | win=100.00% | excess_vs_QQQ=0.0862 | no_signal=1 | unpriced=0
+- loose | 2026YTD | research_pool | H=20 | n=3/3 | avg=0.0216 | win=66.67% | excess_vs_QQQ=0.0047 | no_signal=0 | unpriced=0
+- loose | 2026YTD | research_pool | H=60 | n=3/3 | avg=0.1943 | win=100.00% | excess_vs_QQQ=0.0322 | no_signal=0 | unpriced=0
+- loose | 2026YTD | research_pool | H=120 | n=3/3 | avg=0.2309 | win=100.00% | excess_vs_QQQ=0.0411 | no_signal=0 | unpriced=0
+- strict | 2023 | industry_trend | H=20 | n=12/12 | avg=0.0140 | win=58.33% | excess_vs_QQQ=-0.0072 | no_signal=0 | unpriced=0
+- strict | 2023 | industry_trend | H=60 | n=12/12 | avg=0.0672 | win=83.33% | excess_vs_QQQ=-0.0202 | no_signal=0 | unpriced=0
+- strict | 2023 | industry_trend | H=120 | n=12/12 | avg=0.1660 | win=100.00% | excess_vs_QQQ=-0.0002 | no_signal=0 | unpriced=0
+- strict | 2023 | low_value | H=20 | n=12/12 | avg=0.0150 | win=66.67% | excess_vs_QQQ=-0.0063 | no_signal=0 | unpriced=0
+- strict | 2023 | low_value | H=60 | n=12/12 | avg=0.0699 | win=66.67% | excess_vs_QQQ=-0.0175 | no_signal=0 | unpriced=0
+- strict | 2023 | low_value | H=120 | n=12/12 | avg=0.2027 | win=100.00% | excess_vs_QQQ=0.0365 | no_signal=0 | unpriced=0
+- strict | 2023 | momentum | H=20 | n=12/12 | avg=0.0133 | win=50.00% | excess_vs_QQQ=-0.0079 | no_signal=0 | unpriced=0
+- strict | 2023 | momentum | H=60 | n=12/12 | avg=0.0728 | win=83.33% | excess_vs_QQQ=-0.0146 | no_signal=0 | unpriced=0
+- strict | 2023 | momentum | H=120 | n=12/12 | avg=0.1873 | win=100.00% | excess_vs_QQQ=0.0212 | no_signal=0 | unpriced=0
+- strict | 2023 | research_pool | H=20 | n=12/12 | avg=0.0093 | win=50.00% | excess_vs_QQQ=-0.0120 | no_signal=0 | unpriced=0
+- strict | 2023 | research_pool | H=60 | n=12/12 | avg=0.0671 | win=58.33% | excess_vs_QQQ=-0.0203 | no_signal=0 | unpriced=0
+- strict | 2023 | research_pool | H=120 | n=12/12 | avg=0.1464 | win=100.00% | excess_vs_QQQ=-0.0198 | no_signal=0 | unpriced=0
+- strict | 2024 | industry_trend | H=20 | n=12/12 | avg=0.0255 | win=75.00% | excess_vs_QQQ=0.0074 | no_signal=0 | unpriced=0
+- strict | 2024 | industry_trend | H=60 | n=12/12 | avg=0.0458 | win=83.33% | excess_vs_QQQ=0.0081 | no_signal=0 | unpriced=0
+- strict | 2024 | industry_trend | H=120 | n=12/12 | avg=0.0798 | win=66.67% | excess_vs_QQQ=0.0056 | no_signal=0 | unpriced=0
+- strict | 2024 | low_value | H=20 | n=12/12 | avg=0.0269 | win=58.33% | excess_vs_QQQ=0.0088 | no_signal=0 | unpriced=0
+- strict | 2024 | low_value | H=60 | n=12/12 | avg=0.0325 | win=75.00% | excess_vs_QQQ=-0.0052 | no_signal=0 | unpriced=0
+- strict | 2024 | low_value | H=120 | n=12/12 | avg=0.0815 | win=75.00% | excess_vs_QQQ=0.0074 | no_signal=0 | unpriced=0
+- strict | 2024 | momentum | H=20 | n=12/12 | avg=0.0345 | win=83.33% | excess_vs_QQQ=0.0163 | no_signal=0 | unpriced=0
+- strict | 2024 | momentum | H=60 | n=12/12 | avg=0.0584 | win=83.33% | excess_vs_QQQ=0.0207 | no_signal=0 | unpriced=0
+- strict | 2024 | momentum | H=120 | n=12/12 | avg=0.0893 | win=83.33% | excess_vs_QQQ=0.0152 | no_signal=0 | unpriced=0
+- strict | 2024 | research_pool | H=20 | n=12/12 | avg=0.0267 | win=83.33% | excess_vs_QQQ=0.0086 | no_signal=0 | unpriced=0
+- strict | 2024 | research_pool | H=60 | n=12/12 | avg=0.0600 | win=75.00% | excess_vs_QQQ=0.0223 | no_signal=0 | unpriced=0
+- strict | 2024 | research_pool | H=120 | n=12/12 | avg=0.1038 | win=75.00% | excess_vs_QQQ=0.0296 | no_signal=0 | unpriced=0
+- strict | 2025 | industry_trend | H=20 | n=10/12 | avg=0.0171 | win=70.00% | excess_vs_QQQ=0.0072 | no_signal=2 | unpriced=0
+- strict | 2025 | industry_trend | H=60 | n=10/12 | avg=0.0522 | win=80.00% | excess_vs_QQQ=0.0304 | no_signal=2 | unpriced=0
+- strict | 2025 | industry_trend | H=120 | n=10/12 | avg=0.1650 | win=100.00% | excess_vs_QQQ=0.0677 | no_signal=2 | unpriced=0
+- strict | 2025 | low_value | H=20 | n=10/12 | avg=0.0260 | win=70.00% | excess_vs_QQQ=0.0161 | no_signal=2 | unpriced=0
+- strict | 2025 | low_value | H=60 | n=10/12 | avg=0.0633 | win=80.00% | excess_vs_QQQ=0.0415 | no_signal=2 | unpriced=0
+- strict | 2025 | low_value | H=120 | n=10/12 | avg=0.2459 | win=100.00% | excess_vs_QQQ=0.1486 | no_signal=2 | unpriced=0
+- strict | 2025 | momentum | H=20 | n=10/12 | avg=0.0289 | win=70.00% | excess_vs_QQQ=0.0190 | no_signal=2 | unpriced=0
+- strict | 2025 | momentum | H=60 | n=10/12 | avg=0.0846 | win=90.00% | excess_vs_QQQ=0.0628 | no_signal=2 | unpriced=0
+- strict | 2025 | momentum | H=120 | n=10/12 | avg=0.2531 | win=100.00% | excess_vs_QQQ=0.1558 | no_signal=2 | unpriced=0
+- strict | 2025 | research_pool | H=20 | n=12/12 | avg=0.0151 | win=75.00% | excess_vs_QQQ=-0.0004 | no_signal=0 | unpriced=0
+- strict | 2025 | research_pool | H=60 | n=12/12 | avg=0.0611 | win=83.33% | excess_vs_QQQ=0.0148 | no_signal=0 | unpriced=0
+- strict | 2025 | research_pool | H=120 | n=12/12 | avg=0.1471 | win=100.00% | excess_vs_QQQ=0.0205 | no_signal=0 | unpriced=0
+- strict | 2026YTD | industry_trend | H=20 | n=2/3 | avg=-0.0197 | win=50.00% | excess_vs_QQQ=0.0223 | no_signal=1 | unpriced=0
+- strict | 2026YTD | industry_trend | H=60 | n=2/3 | avg=0.1528 | win=100.00% | excess_vs_QQQ=0.0149 | no_signal=1 | unpriced=0
+- strict | 2026YTD | industry_trend | H=120 | n=2/3 | avg=0.2051 | win=100.00% | excess_vs_QQQ=0.0615 | no_signal=1 | unpriced=0
+- strict | 2026YTD | low_value | H=20 | n=2/3 | avg=-0.0083 | win=50.00% | excess_vs_QQQ=0.0337 | no_signal=1 | unpriced=0
+- strict | 2026YTD | low_value | H=60 | n=2/3 | avg=0.0932 | win=100.00% | excess_vs_QQQ=-0.0448 | no_signal=1 | unpriced=0
+- strict | 2026YTD | low_value | H=120 | n=2/3 | avg=0.1323 | win=100.00% | excess_vs_QQQ=-0.0113 | no_signal=1 | unpriced=0
+- strict | 2026YTD | momentum | H=20 | n=2/3 | avg=-0.0074 | win=50.00% | excess_vs_QQQ=0.0346 | no_signal=1 | unpriced=0
+- strict | 2026YTD | momentum | H=60 | n=2/3 | avg=0.1838 | win=100.00% | excess_vs_QQQ=0.0458 | no_signal=1 | unpriced=0
+- strict | 2026YTD | momentum | H=120 | n=2/3 | avg=0.2298 | win=100.00% | excess_vs_QQQ=0.0862 | no_signal=1 | unpriced=0
+- strict | 2026YTD | research_pool | H=20 | n=3/3 | avg=0.0216 | win=66.67% | excess_vs_QQQ=0.0047 | no_signal=0 | unpriced=0
+- strict | 2026YTD | research_pool | H=60 | n=3/3 | avg=0.1943 | win=100.00% | excess_vs_QQQ=0.0322 | no_signal=0 | unpriced=0
+- strict | 2026YTD | research_pool | H=120 | n=3/3 | avg=0.2309 | win=100.00% | excess_vs_QQQ=0.0411 | no_signal=0 | unpriced=0
+
+## Signal Diagnostics
+
+- base | industry_trend | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=positive_operating_cash_flow
+- base | industry_trend | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=positive_operating_cash_flow
+- base | industry_trend | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=positive_operating_cash_flow
+- base | low_value | ai_enabler | avg_selected=9.23 | avg_ranked=72.26 | common_first_fail=positive_operating_cash_flow
+- base | low_value | ai_peripheral | avg_selected=8.74 | avg_ranked=35.08 | common_first_fail=positive_operating_cash_flow
+- base | low_value | core_ai | avg_selected=8.64 | avg_ranked=24.18 | common_first_fail=positive_operating_cash_flow
+- base | momentum | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=min_fcf_yield
+- base | momentum | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=min_fcf_yield
+- base | momentum | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=min_fcf_yield
+- base | research_pool | ai_enabler | avg_selected=10.00 | avg_ranked=71.62 | common_first_fail=
+- base | research_pool | ai_peripheral | avg_selected=10.00 | avg_ranked=46.72 | common_first_fail=
+- base | research_pool | core_ai | avg_selected=10.00 | avg_ranked=44.85 | common_first_fail=
+- loose | industry_trend | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=positive_operating_cash_flow
+- loose | industry_trend | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=positive_operating_cash_flow
+- loose | industry_trend | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=positive_operating_cash_flow
+- loose | low_value | ai_enabler | avg_selected=9.23 | avg_ranked=72.26 | common_first_fail=positive_operating_cash_flow
+- loose | low_value | ai_peripheral | avg_selected=8.74 | avg_ranked=35.08 | common_first_fail=positive_operating_cash_flow
+- loose | low_value | core_ai | avg_selected=8.64 | avg_ranked=24.18 | common_first_fail=positive_operating_cash_flow
+- loose | momentum | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=min_fcf_yield
+- loose | momentum | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=min_fcf_yield
+- loose | momentum | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=min_fcf_yield
+- loose | research_pool | ai_enabler | avg_selected=10.00 | avg_ranked=71.62 | common_first_fail=
+- loose | research_pool | ai_peripheral | avg_selected=10.00 | avg_ranked=46.72 | common_first_fail=
+- loose | research_pool | core_ai | avg_selected=10.00 | avg_ranked=44.85 | common_first_fail=
+- strict | industry_trend | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=positive_operating_cash_flow
+- strict | industry_trend | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=positive_operating_cash_flow
+- strict | industry_trend | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=positive_operating_cash_flow
+- strict | low_value | ai_enabler | avg_selected=9.23 | avg_ranked=72.26 | common_first_fail=positive_operating_cash_flow
+- strict | low_value | ai_peripheral | avg_selected=8.74 | avg_ranked=35.08 | common_first_fail=positive_operating_cash_flow
+- strict | low_value | core_ai | avg_selected=8.64 | avg_ranked=24.18 | common_first_fail=positive_operating_cash_flow
+- strict | momentum | ai_enabler | avg_selected=9.23 | avg_ranked=274.26 | common_first_fail=min_fcf_yield
+- strict | momentum | ai_peripheral | avg_selected=9.23 | avg_ranked=129.13 | common_first_fail=min_fcf_yield
+- strict | momentum | core_ai | avg_selected=9.23 | avg_ranked=91.69 | common_first_fail=min_fcf_yield
+- strict | research_pool | ai_enabler | avg_selected=10.00 | avg_ranked=71.62 | common_first_fail=
+- strict | research_pool | ai_peripheral | avg_selected=10.00 | avg_ranked=46.72 | common_first_fail=
+- strict | research_pool | core_ai | avg_selected=10.00 | avg_ranked=44.85 | common_first_fail=
+
+## Artifacts
+
+- events: outputs/pre_e01_f39d06f_risk_on_events.csv
+- summary: outputs/pre_e01_f39d06f_risk_on_summary.csv
+- benchmarks: outputs/pre_e01_f39d06f_risk_on_benchmarks.csv
+- segment summary: outputs/pre_e01_f39d06f_risk_on_segments.csv
+- signal diagnostics: outputs/pre_e01_f39d06f_risk_on_events_signal_diagnostics.csv
+- signal channel summary: outputs/pre_e01_f39d06f_risk_on_events_signal_channel_summary.csv
+
+## Notes
+
+- `historical_replay` remains an approximation; survivorship bias is reduced but not fully eliminated.
+- Default theme source is `rules_proxy` (metadata keyword scoring), stable and reproducible.
+- `theme_source=latest_scan` and `theme_source=historical_news` are optional comparison modes.
+- This is useful for relative validation before long live accumulation, not a perfect PIT backtest.
+
