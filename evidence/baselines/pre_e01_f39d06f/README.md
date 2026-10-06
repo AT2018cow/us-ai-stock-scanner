@@ -1,6 +1,6 @@
 # E01 基线 pre_e01_f39d06f
 
-按照 docs/refactor_baseline_protocol.md在干净的 main
+按照 docs/refactor_baseline_protocol.md 在干净的 main
 （commit f39d06fe, PR #5 合并后）上捕获的 post-correctness / pre-E01 零漂移基线。
 
 - 回放窗口 2023-01-01 → 2026-03-31（月度），冻结候选池 `pre_e01_f39d06f_ai_watchlist.csv`
