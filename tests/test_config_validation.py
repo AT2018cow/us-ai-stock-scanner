@@ -5,10 +5,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_value_scanner.scanner import ScanConfig, load_config, partition_filter_steps
+from ai_value_scanner.config import ScanConfig, load_config
+import ai_value_scanner.config as config_module
+import ai_value_scanner.scanner as scanner_module
+from ai_value_scanner.scanner import partition_filter_steps
 
 
 class TestScanConfigValidation(unittest.TestCase):
+    def test_scanner_facade_reexports_canonical_config_api(self) -> None:
+        self.assertIs(scanner_module.ScanConfig, config_module.ScanConfig)
+        self.assertIs(scanner_module.load_config, config_module.load_config)
+        self.assertIs(
+            scanner_module.resolve_channel_profile,
+            config_module.resolve_channel_profile,
+        )
+        self.assertIs(
+            scanner_module.default_channel_profiles,
+            config_module.default_channel_profiles,
+        )
+
     def test_all_runtime_configs_load(self) -> None:
         root = Path(__file__).resolve().parents[1] / "configs"
         paths = sorted(root.glob("config.*.json"))
