@@ -148,6 +148,8 @@ PR #5A 当前 CI 为 **269 项离线测试通过**，这是 E01 正式迁移的�
 
 ### 第二批：抽取配置与数据基础设施
 
+> 2026-10-06 最小必要重构路线调整：先只抽配置契约，不立即展开完整 data/http/cache 客户端迁移。配置第一 PR 将 `ScanConfig`、默认 profiles/triage、validation、`load_config` 和 channel resolution 移到 `config.py`；`scanner.py` 保留兼容 re-export，`backtest.py` 改为直接依赖 canonical config module。完成后下一优先级是共享 fundamentals/accounting，而不是为了架构完整性继续拆 data/reporting/workflow。
+
 先迁移配置、默认 profile、HTTP／限流／网络监控，再迁移客户端、缓存和股票池。修正脚本从回测入口导入客户端的依赖。
 
 首批配置搬迁必须**原样保持 PR #3 已落地的契约**：`config_schema_version=1`、显式 `strategy_style`、unknown/type/range fail-fast、null 禁用语义、`channel_profiles` 整体替换以及 CLI 覆盖。这里不再新增配置行为，只做机械迁移与兼容 re-export。
