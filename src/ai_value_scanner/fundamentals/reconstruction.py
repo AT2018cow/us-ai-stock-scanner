@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable
 
-from .facts import FactRecord, PeriodValue, VisibilityCutoff, collapse_fact_revisions
+from .facts import (
+    FactRecord,
+    PeriodValue,
+    VisibilityCutoff,
+    collapse_fact_records_by_end,
+    collapse_fact_revisions,
+)
 
 DEFAULT_ANNUAL_FORMS = frozenset({"10-K", "20-F", "40-F"})
 
@@ -334,3 +340,92 @@ def latest_and_year_ago_level(
             best_gap = gap
             best = point
     return latest.value, (best.value if best is not None else None)
+
+
+def current_ttm_pair(
+    records: Iterable[FactRecord],
+    cutoff: VisibilityCutoff | None = None,
+    *,
+    require_rolling_window: bool = False,
+) -> tuple[float | None, float | None]:
+    """Return latest TTM and a genuine year-ago TTM from visible facts."""
+    flows = reconstruct_flow_periods(records, cutoff)
+    rolling = rolling_ttm_points(flows.quarters)
+    if require_rolling_window and not rolling:
+        return None, None
+    points = ttm_points_with_annual_fallback(flows)
+    return latest_and_year_ago_ttm(points)
+
+
+def build_flow_visibility_series(
+    records: Iterable[FactRecord],
+) -> tuple[PeriodValue, ...]:
+    """Build an end-of-filing-day PIT staircase using the canonical core.
+
+    Each distinct filing date is evaluated as a complete visible state. Later
+    amendments/restatements therefore replace earlier versions only from their
+    filing date forward, while historical states remain unchanged.
+    """
+    materialized = tuple(records)
+    dates = sorted({record.visible_on for record in materialized})
+    out: list[PeriodValue] = []
+    last_state: tuple[date, float] | None = None
+    for visible_on in dates:
+        flows = reconstruct_flow_periods(
+            materialized,
+            VisibilityCutoff(filed_through=visible_on),
+        )
+        points = ttm_points_with_annual_fallback(flows)
+        if not points:
+            continue
+        latest = max(points, key=lambda p: p.period_end)
+        state = (latest.period_end, float(latest.value))
+        if state == last_state:
+            continue
+        out.append(
+            PeriodValue(
+                value=float(latest.value),
+                period_end=latest.period_end,
+                period_start=latest.period_start,
+                available_on=visible_on,
+                accession=latest.accession,
+                form=latest.form,
+                derived=latest.derived,
+            )
+        )
+        last_state = state
+    return tuple(out)
+
+
+def build_level_visibility_series(
+    records: Iterable[FactRecord],
+) -> tuple[PeriodValue, ...]:
+    """Build an end-of-filing-day PIT staircase for level facts."""
+    materialized = tuple(records)
+    dates = sorted({record.visible_on for record in materialized})
+    out: list[PeriodValue] = []
+    last_state: tuple[date, float] | None = None
+    for visible_on in dates:
+        visible = collapse_fact_records_by_end(
+            materialized,
+            VisibilityCutoff(filed_through=visible_on),
+        )
+        if not visible:
+            continue
+        latest = max(visible, key=lambda record: record.period_end)
+        state = (latest.period_end, float(latest.value))
+        if state == last_state:
+            continue
+        out.append(
+            PeriodValue(
+                value=float(latest.value),
+                period_end=latest.period_end,
+                period_start=latest.period_start,
+                available_on=visible_on,
+                accession=latest.accession,
+                form=latest.normalized_form,
+                derived=False,
+            )
+        )
+        last_state = state
+    return tuple(out)
