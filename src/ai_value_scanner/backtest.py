@@ -20,6 +20,11 @@ from dotenv import load_dotenv
 
 from ai_value_scanner.config import ScanConfig, load_config, resolve_channel_profile
 
+from ai_value_scanner.fundamentals.accounting import (
+    compute_adjusted_metrics,
+    derive_accounting_metrics,
+)
+
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
     ANNUAL_FORMS,
@@ -1265,54 +1270,6 @@ def latest_and_prev_asof(
     return latest, prev
 
 
-def compute_adjusted_metrics(
-    net_income: float | None,
-    ebit: float | None,
-    da: float | None,
-    revenue: float | None,
-    revenue_prev: float | None,
-    addback: float | None,
-    gain: float | None,
-    addback_prev: float | None,
-    gain_prev: float | None,
-    cap_ratio: float | None,
-    net_income_prev: float | None = None,
-    ebit_prev: float | None = None,
-) -> dict[str, float | None]:
-    """Mirror the scanner's non-recurring adjustments (C05).
-
-    Same semantics as load_one_fundamental: addback is capped at
-    cap_ratio * revenue (per period), the net adjustment (addback - gain)
-    is applied exactly once to net income and EBIT, and EBITDA is
-    adjusted_ebit + raw D&A (C01 — no double-counted adjustment).
-    """
-    if cap_ratio is not None:
-        if addback is not None and revenue is not None and revenue > 0:
-            addback = min(float(addback), float(revenue) * float(cap_ratio))
-        if addback_prev is not None and revenue_prev is not None and revenue_prev > 0:
-            addback_prev = min(float(addback_prev), float(revenue_prev) * float(cap_ratio))
-
-    def _adjust(value: float | None, adj_add: float | None, adj_gain: float | None) -> float | None:
-        if value is None:
-            return None
-        return float(value) + float(adj_add or 0.0) - float(adj_gain or 0.0)
-
-    adjusted_net_income = _adjust(net_income, addback, gain)
-    adjusted_ebit = _adjust(ebit, addback, gain)
-    adjusted_net_income_prev = _adjust(net_income_prev, addback_prev, gain_prev)
-    adjusted_ebit_prev = _adjust(ebit_prev, addback_prev, gain_prev)
-    adjusted_ebitda = (
-        float(adjusted_ebit) + float(da or 0.0) if adjusted_ebit is not None else None
-    )
-    return {
-        "adjusted_net_income": adjusted_net_income,
-        "adjusted_ebit": adjusted_ebit,
-        "adjusted_ebitda": adjusted_ebitda,
-        "adjusted_net_income_prev": adjusted_net_income_prev,
-        "adjusted_ebit_prev": adjusted_ebit_prev,
-    }
-
-
 def compute_ai_link_score(
     config: Any,
     ai_etf_score: float | None,
@@ -2339,19 +2296,6 @@ def build_cross_section_asof(
             f.da_series, asof
         )
 
-        capex = abs(capex_raw) if capex_raw is not None else None
-        free_cash_flow = (
-            float(operating_cash_flow) - float(capex)
-            if operating_cash_flow is not None and capex is not None
-            else None
-        )
-        total_debt = None
-        if debt_long_term is not None or debt_current is not None:
-            total_debt = float(debt_long_term or 0.0) + float(debt_current or 0.0)
-        net_debt = None
-        if total_debt is not None or cash_and_equivalents is not None:
-            net_debt = float(total_debt or 0.0) - float(cash_and_equivalents or 0.0)
-
         # C05: apply the scan's non-recurring adjustments (sum of positive
         # latest values across tags, capped by nonrecurring_addback_revenue_cap).
         def _nonrecurring_sums(series_map: dict[str, list[tuple]]) -> tuple[float | None, float | None]:
@@ -2398,86 +2342,66 @@ def build_cross_section_asof(
         adjusted_net_income_prev = adjusted["adjusted_net_income_prev"]
         adjusted_ebit_prev = adjusted["adjusted_ebit_prev"]
 
-        revenue_yoy = safe_yoy(revenue, revenue_prev)
-        net_income_yoy = safe_yoy(net_income, net_income_prev)
-        adjusted_net_income_yoy = safe_yoy(adjusted_net_income, adjusted_net_income_prev)
-        ebit_yoy = safe_yoy(ebit, ebit_prev)
-        adjusted_ebit_yoy = safe_yoy(adjusted_ebit, adjusted_ebit_prev)
-        operating_cash_flow_yoy = safe_yoy(operating_cash_flow, operating_cash_flow_prev)
-        shares_yoy = safe_yoy(shares, shares_prev)
-        receivables_yoy = safe_yoy(receivables_current, receivables_prev)
-        inventory_yoy = safe_yoy(inventory_current, inventory_prev)
-        da_yoy = safe_yoy(depreciation_and_amortization, depreciation_and_amortization_prev)
-
-        interest_expense_abs = abs(float(interest_expense)) if interest_expense is not None else None
-        interest_coverage = None
-        if adjusted_ebit is not None and interest_expense_abs not in (None, 0):
-            interest_coverage = float(adjusted_ebit) / float(interest_expense_abs)
-
-        net_debt_to_ebitda = None
-        if net_debt is not None and adjusted_ebitda not in (None, 0):
-            net_debt_to_ebitda = float(net_debt) / float(adjusted_ebitda)
-
-        current_ratio = None
-        if current_assets is not None and current_liabilities not in (None, 0):
-            current_ratio = float(current_assets) / float(current_liabilities)
-
-        current_debt_ratio_reported = None
-        current_debt_ratio_inferred = None
-        current_debt_ratio = None
-        current_debt_ratio_source = "missing"
-        if debt_current is not None and current_assets not in (None, 0):
-            current_debt_ratio_reported = float(debt_current) / float(current_assets)
-            current_debt_ratio = current_debt_ratio_reported
-            current_debt_ratio_source = "reported"
-        elif current_assets not in (None, 0):
-            if total_debt is not None and total_debt <= 0:
-                current_debt_ratio_inferred = 0.0
-                current_debt_ratio = 0.0
-                current_debt_ratio_source = "inferred_zero_nonpositive_total_debt"
-            elif total_debt is not None and current_liabilities not in (None, 0):
-                inferred_current_debt = min(max(float(total_debt), 0.0), float(current_liabilities))
-                current_debt_ratio_inferred = inferred_current_debt / float(current_assets)
-                current_debt_ratio = current_debt_ratio_inferred
-                current_debt_ratio_source = "inferred_total_debt_capped_by_current_liabilities"
-
-        ocf_to_net_income = None
-        if operating_cash_flow is not None and adjusted_net_income not in (None, 0):
-            ocf_to_net_income = float(operating_cash_flow) / float(adjusted_net_income)
-
-        accrual_ratio = None
-        if adjusted_net_income is not None and operating_cash_flow is not None and current_assets not in (None, 0):
-            accrual_ratio = (float(adjusted_net_income) - float(operating_cash_flow)) / float(current_assets)
-
-        receivables_growth_gap = None
-        if receivables_yoy is not None and revenue_yoy is not None:
-            receivables_growth_gap = float(receivables_yoy) - float(revenue_yoy)
-
-        inventory_growth_gap_reported = None
-        inventory_growth_gap_inferred = None
-        inventory_growth_gap = None
-        inventory_growth_gap_source = "missing"
-        if inventory_yoy is not None and revenue_yoy is not None:
-            inventory_growth_gap_reported = float(inventory_yoy) - float(revenue_yoy)
-            inventory_growth_gap = inventory_growth_gap_reported
-            inventory_growth_gap_source = "reported"
-        elif revenue_yoy is not None:
-            inventory_not_applicable = (
-                (inventory_current is None and inventory_prev is None)
-                or ((inventory_current in (0, 0.0)) and (inventory_prev in (0, 0.0)))
-            )
-            if inventory_not_applicable:
-                inventory_growth_gap_inferred = 0.0
-                inventory_growth_gap = 0.0
-                inventory_growth_gap_source = "inferred_inventory_not_applicable"
-
-        quality_score = fundamental_quality_score_from_metrics(
-            net_debt_to_ebitda=net_debt_to_ebitda,
-            interest_coverage=interest_coverage,
-            current_ratio=current_ratio,
-            ocf_to_net_income=ocf_to_net_income,
-            accrual_ratio=accrual_ratio,
+        accounting = derive_accounting_metrics(
+            revenue=revenue,
+            revenue_prev=revenue_prev,
+            net_income=net_income,
+            net_income_prev=net_income_prev,
+            operating_cash_flow=operating_cash_flow,
+            operating_cash_flow_prev=operating_cash_flow_prev,
+            capex_raw=capex_raw,
+            ebit=ebit,
+            ebit_prev=ebit_prev,
+            shares=shares,
+            shares_prev=shares_prev,
+            cash_and_equivalents=cash_and_equivalents,
+            debt_long_term=debt_long_term,
+            debt_current=debt_current,
+            current_assets=current_assets,
+            current_liabilities=current_liabilities,
+            receivables_current=receivables_current,
+            receivables_prev=receivables_prev,
+            inventory_current=inventory_current,
+            inventory_prev=inventory_prev,
+            interest_expense=interest_expense,
+            depreciation_and_amortization=depreciation_and_amortization,
+            depreciation_and_amortization_prev=depreciation_and_amortization_prev,
+            adjusted_net_income=adjusted_net_income,
+            adjusted_net_income_prev=adjusted_net_income_prev,
+            adjusted_ebit=adjusted_ebit,
+            adjusted_ebit_prev=adjusted_ebit_prev,
+            adjusted_ebitda=adjusted_ebitda,
         )
+        capex = accounting["capex"]
+        free_cash_flow = accounting["free_cash_flow"]
+        total_debt = accounting["total_debt"]
+        net_debt = accounting["net_debt"]
+        revenue_yoy = accounting["revenue_yoy"]
+        net_income_yoy = accounting["net_income_yoy"]
+        adjusted_net_income_yoy = accounting["adjusted_net_income_yoy"]
+        ebit_yoy = accounting["ebit_yoy"]
+        adjusted_ebit_yoy = accounting["adjusted_ebit_yoy"]
+        operating_cash_flow_yoy = accounting["operating_cash_flow_yoy"]
+        shares_yoy = accounting["shares_yoy"]
+        receivables_yoy = accounting["receivables_yoy"]
+        inventory_yoy = accounting["inventory_yoy"]
+        da_yoy = accounting["da_yoy"]
+        interest_expense_abs = accounting["interest_expense"]
+        interest_coverage = accounting["interest_coverage"]
+        net_debt_to_ebitda = accounting["net_debt_to_ebitda"]
+        current_ratio = accounting["current_ratio"]
+        current_debt_ratio_reported = accounting["current_debt_ratio_reported"]
+        current_debt_ratio_inferred = accounting["current_debt_ratio_inferred"]
+        current_debt_ratio = accounting["current_debt_ratio"]
+        current_debt_ratio_source = accounting["current_debt_ratio_source"]
+        ocf_to_net_income = accounting["ocf_to_net_income"]
+        accrual_ratio = accounting["accrual_ratio"]
+        receivables_growth_gap = accounting["receivables_growth_gap"]
+        inventory_growth_gap = accounting["inventory_growth_gap"]
+        inventory_growth_gap_reported = accounting["inventory_growth_gap_reported"]
+        inventory_growth_gap_inferred = accounting["inventory_growth_gap_inferred"]
+        inventory_growth_gap_source = accounting["inventory_growth_gap_source"]
+        quality_score = accounting["fundamental_quality_score"]
 
         watch_bucket, watch_etf_count, watch_etfs = watchlist_by_symbol.get(symbol, ("", 0, ""))
         theme_ai, theme_enabler = theme_scores.get(symbol, (0.0, 0.0))
