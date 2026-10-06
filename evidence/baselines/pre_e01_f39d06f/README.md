@@ -1,16 +1,84 @@
 # E01 基线 pre_e01_f39d06f
 
-按照 docs/refactor_baseline_protocol.md 在干净的 main
-（commit f39d06fe, PR #5 合并后）上捕获的 post-correctness / pre-E01 零漂移基线。
+按照 `docs/refactor_baseline_protocol.md` 在干净的 `main`
+（commit `f39d06fe`, PR #5 合并后）上捕获的 post-correctness / pre-E01 零漂移基线。
 
-- 回放窗口 2023-01-01 → 2026-03-31（月度），冻结候选池 `pre_e01_f39d06f_ai_watchlist.csv`
-  （实际文件名为 pre_e01_f39d06f_ai_watchlist.csv）与冻结快照目录
-  `pre_e01_f39d06f_watchlist_history/`；
+- 回放窗口：2023-01-01 → 2026-03-31，monthly；
+- 冻结候选池：`pre_e01_f39d06f_ai_watchlist.csv`；
+- 冻结快照目录：`pre_e01_f39d06f_watchlist_history/`（32 个 snapshot）；
 - risk_off / risk_on 两次历史回放均无 latest-watchlist fallback；
-- tuner smoke：walk_forward，folds [2023]→2024、[2023+2024]→2025，训练使用
-  label-end purge，未晋级，生产配置未修改；
-- 完整清单、输入/输出哈希与实验契约见 pre_e01_f39d06f_manifest.json。
+- tuner smoke：`walk_forward`，folds `[2023]→2024`、`[2023+2024]→2025`，训练使用 label-end purge，未晋级，生产配置未修改；
+- 完整输入/输出 hash、summary/signal contract、network provenance 与 tuner folds 见 `pre_e01_f39d06f_manifest.json`。
 
-E1 迁移 PR 的验收方式：使用本目录中的冻结输入（不要重新复制 data/ 下的动态文件）、
-相同窗口与参数重跑同一实验，然后运行 scripts/refactor_baseline.py compare，
-输出 BASELINE_MATCH 才可合并。详见 docs/refactor_baseline_protocol.md 第 9 节。
+## 后续 E01 使用方式
+
+本目录现在是 canonical baseline input/evidence。**不要重新复制 `data/` 下的动态 watchlist。**
+
+从仓库根目录定义：
+
+```bash
+BASE_DIR="evidence/baselines/pre_e01_f39d06f"
+BASE_MANIFEST="$BASE_DIR/pre_e01_f39d06f_manifest.json"
+WATCHLIST="$BASE_DIR/pre_e01_f39d06f_ai_watchlist.csv"
+HIST="$BASE_DIR/pre_e01_f39d06f_watchlist_history"
+NEW="e01_config_$(git rev-parse --short HEAD)"
+```
+
+按 `docs/refactor_baseline_protocol.md` 第 4–6 节重跑 risk_off、risk_on 和 tuner smoke，只把 output prefix 换成 `$NEW`，并始终传：
+
+```text
+--watchlist-csv-path "$WATCHLIST"
+--watchlist-history-dir "$HIST"
+```
+
+然后比较：
+
+```bash
+.venv/bin/python scripts/refactor_baseline.py compare \
+  --baseline "$BASE_MANIFEST" \
+  --risk-off-prefix "${NEW}_risk_off" \
+  --risk-on-prefix "${NEW}_risk_on" \
+  --tuning-prefix "${NEW}_tuner_risk_off" \
+  --watchlist "$WATCHLIST" \
+  --watchlist-history-dir "$HIST" \
+  --replay-start 2023-01-01 \
+  --replay-end 2026-03-31 \
+  --rebalance-frequency monthly
+```
+
+成功结果必须是：
+
+```text
+BASELINE_MATCH
+```
+
+baseline manifest 保留了最初 capture 时的 `outputs/...` 路径作为 provenance；比较时**路径位置本身不属于语义 identity**。输入身份由 watchlist/watchlist-history/config/param-space 的 SHA256 保证，因此把同一冻结文件从 `outputs/` 移到本 evidence 目录不会产生假 mismatch。
+
+## 归档完整性说明
+
+原实验的 manifest 将每种风格下列 7 类 CSV 都纳入 deterministic hash gate：
+
+- `events_signals`
+- `events`
+- `summary`
+- `benchmarks`
+- `segments`
+- `events_signal_diagnostics`
+- `events_signal_channel_summary`
+
+当前仓库 evidence 已归档 `events / summary / benchmarks`，但原始提交时没有一并保存以下 8 个 diagnostic CSV：
+
+```text
+pre_e01_f39d06f_risk_off_events_signals.csv
+pre_e01_f39d06f_risk_off_segments.csv
+pre_e01_f39d06f_risk_off_events_signal_diagnostics.csv
+pre_e01_f39d06f_risk_off_events_signal_channel_summary.csv
+pre_e01_f39d06f_risk_on_events_signals.csv
+pre_e01_f39d06f_risk_on_segments.csv
+pre_e01_f39d06f_risk_on_events_signal_diagnostics.csv
+pre_e01_f39d06f_risk_on_events_signal_channel_summary.csv
+```
+
+这**不影响 baseline gate**：它们的 SHA256、signal contract 和 shape 已冻结在 manifest 中，后续重跑仍会被严格比较。影响仅在 mismatch 后的人工诊断——当前无法直接打开旧版这 8 个文件做逐行 diff。
+
+如果原始本地 outputs 仍存在，可以以后补归档，但只有在每个文件 SHA256 与 manifest 的对应 `deterministic_sha256` 完全一致时才能加入；不要重新生成文件冒充原始 evidence。

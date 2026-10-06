@@ -240,6 +240,75 @@ class TestRefactorBaselineTool(unittest.TestCase):
         )
         self.assertEqual(manifest["tuning_smoke"]["selection_mode"], "walk_forward")
 
+    def test_compare_manifest_ignores_input_location_paths(self) -> None:
+        base = {
+            "schema_version": 1,
+            "experiment_contract": {
+                "historical_replay_start": "2023-01-01",
+                "historical_replay_end": "2026-03-31",
+                "rebalance_frequency": "monthly",
+                "watchlist_csv_path": "outputs/base_watchlist.csv",
+                "watchlist_history_dir": "outputs/base_history",
+            },
+            "inputs": {
+                key: {"sha256": "same"}
+                for key in (
+                    "risk_off_config",
+                    "risk_on_config",
+                    "tuner_param_space",
+                    "watchlist",
+                    "watchlist_history",
+                )
+            },
+            "runs": {
+                style: {
+                    "deterministic_sha256": {"summary": "aaa"},
+                    "summary_contract": [{"avg_return": 0.1}],
+                    "signals_contract": {"rows": 1},
+                }
+                for style in ("risk_off", "risk_on")
+            },
+        }
+        current = json.loads(json.dumps(base))
+        current["experiment_contract"]["watchlist_csv_path"] = (
+            "evidence/baselines/pre_e01/base_watchlist.csv"
+        )
+        current["experiment_contract"]["watchlist_history_dir"] = (
+            "evidence/baselines/pre_e01/base_history"
+        )
+        self.assertEqual(baseline.compare_manifest(base, current), [])
+
+    def test_compare_manifest_still_checks_semantic_experiment_settings(self) -> None:
+        base = {
+            "schema_version": 1,
+            "experiment_contract": {
+                "rebalance_frequency": "monthly",
+                "watchlist_csv_path": "outputs/base.csv",
+            },
+            "inputs": {
+                key: {"sha256": "same"}
+                for key in (
+                    "risk_off_config",
+                    "risk_on_config",
+                    "tuner_param_space",
+                    "watchlist",
+                    "watchlist_history",
+                )
+            },
+            "runs": {
+                style: {
+                    "deterministic_sha256": {"summary": "aaa"},
+                    "summary_contract": [{"avg_return": 0.1}],
+                    "signals_contract": {"rows": 1},
+                }
+                for style in ("risk_off", "risk_on")
+            },
+        }
+        current = json.loads(json.dumps(base))
+        current["experiment_contract"]["rebalance_frequency"] = "weekly"
+        diffs = baseline.compare_manifest(base, current)
+        self.assertTrue(any("experiment_contract" in x for x in diffs))
+
     def test_compare_manifest_detects_deterministic_output_drift(self) -> None:
         base = {
             "schema_version": 1,
