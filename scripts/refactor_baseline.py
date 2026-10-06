@@ -48,6 +48,11 @@ TUNING_SUFFIXES = {
     "report": "_report.md",
 }
 
+EXPERIMENT_LOCATION_KEYS = {
+    "watchlist_csv_path",
+    "watchlist_history_dir",
+}
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -359,6 +364,19 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     )
 
 
+def semantic_experiment_contract(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return only behavior-defining experiment settings.
+
+    Input locations are provenance, not identity. Frozen input identity is
+    enforced separately by SHA256, so moving the same baseline files from
+    outputs/ into evidence/ must not create a false mismatch.
+    """
+    contract = dict(manifest.get("experiment_contract") or {})
+    for key in EXPERIMENT_LOCATION_KEYS:
+        contract.pop(key, None)
+    return contract
+
+
 def compare_values(path: str, expected: Any, actual: Any, diffs: list[str]) -> None:
     if expected != actual:
         diffs.append(f"{path}: baseline={expected!r} current={actual!r}")
@@ -377,8 +395,8 @@ def compare_manifest(
     )
     compare_values(
         "experiment_contract",
-        baseline.get("experiment_contract"),
-        current.get("experiment_contract"),
+        semantic_experiment_contract(baseline),
+        semantic_experiment_contract(current),
         diffs,
     )
     for key in (
