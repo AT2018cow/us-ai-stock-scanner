@@ -1,7 +1,8 @@
 # 工作交接：PR #8 后的最小必要重构与选股研究路线
 
 日期：2026-10-06  
-当前主分支基线：`main@9e730a5a319f0e38ba9e4dbd61f1703449996eda`  
+PR #8 代码基线：`9e730a5a319f0e38ba9e4dbd61f1703449996eda`  
+交接文档加入后的当前 `main` HEAD：`b9baaa0154d7d6b5a420052258060eb71401f805`  
 当前测试基线：**276 tests / OK**  
 项目：`AT2018cow/us-ai-stock-scanner`
 
