@@ -93,6 +93,84 @@ class PeriodValue:
         return (self.period_end - self.period_start).days
 
 
+
+STANDARD_TAXONOMIES = ("us-gaap", "ifrs-full", "dei")
+
+
+def merged_standard_taxonomy_facts(companyfacts: dict) -> dict:
+    """Merge the standard SEC taxonomies used by scanner and replay."""
+    raw_facts = companyfacts.get("facts", {})
+    merged: dict = {}
+    for taxonomy in STANDARD_TAXONOMIES:
+        facts = raw_facts.get(taxonomy, {})
+        if not isinstance(facts, dict):
+            continue
+        for key, value in facts.items():
+            if key not in merged:
+                merged[key] = value
+    return merged
+
+
+def _parse_sec_date(value: object) -> date | None:
+    if value is None:
+        return None
+    token = str(value).strip()
+    if not token:
+        return None
+    try:
+        return date.fromisoformat(token[:10])
+    except ValueError:
+        return None
+
+
+def extract_fact_records(
+    companyfacts: dict,
+    tags: Iterable[str],
+    unit: str,
+    allowed_forms: Iterable[str],
+) -> list[FactRecord]:
+    """Parse SEC companyfacts rows without discarding filing-version metadata."""
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    allowed = {normalize_form(form) for form in allowed_forms}
+    out: list[FactRecord] = []
+    for tag_priority, tag in enumerate(tags):
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        entries = units.get(unit, []) if isinstance(units, dict) else []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            form = normalize_form(item.get("form"))
+            if form not in allowed:
+                continue
+            period_end = _parse_sec_date(item.get("end"))
+            if period_end is None or item.get("val") is None:
+                continue
+            try:
+                value = float(item["val"])
+            except (TypeError, ValueError):
+                continue
+            if not isfinite(value):
+                continue
+            period_start = _parse_sec_date(item.get("start"))
+            filed = _parse_sec_date(item.get("filed"))
+            accession_raw = item.get("accn") or item.get("accession")
+            accession = str(accession_raw).strip() if accession_raw else None
+            out.append(
+                FactRecord(
+                    tag=str(tag),
+                    unit=unit,
+                    value=value,
+                    period_end=period_end,
+                    period_start=period_start,
+                    filed=filed,
+                    accession=accession,
+                    form=form,
+                    tag_priority=tag_priority,
+                )
+            )
+    return out
+
 def is_visible(record: FactRecord, cutoff: VisibilityCutoff | None) -> bool:
     if cutoff is None:
         return True
