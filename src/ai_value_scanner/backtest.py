@@ -919,15 +919,12 @@ def latest_and_year_ago_flow(
 
 
 def latest_and_year_ago_level(
-    series: list[tuple], asof: pd.Timestamp, min_age_days: int = 300
+    series: list[tuple],
+    asof: pd.Timestamp,
+    min_age_days: int = 320,
+    max_age_days: int = 410,
 ) -> tuple[float | None, float | None]:
-    """Latest level value plus its comparison base (C02/C04).
-
-    Mirrors the scanner's pick_latest_and_year_ago_with_forms: prefer the
-    newest report period at least min_age_days older than the latest period;
-    fall back to the second-newest entry. Legacy 2-tuple entries degrade to
-    the adjacent-entry fallback.
-    """
+    """Latest visible level plus a genuine year-ago comparison period."""
     if not series:
         return None, None
     entries = sorted((x for x in series if x[0] <= asof), key=lambda x: x[0])
@@ -940,23 +937,27 @@ def latest_and_year_ago_level(
         return None, None
     latest_end = latest[2] if len(latest) > 2 else None
     if latest_end is None:
+        # Legacy synthetic 2-tuples do not carry a report period end; keep
+        # their compatibility behavior without weakening production PIT data.
         prev = float(entries[-2][1]) if len(entries) > 1 else None
         return latest_value, prev
-    threshold = latest_end - pd.Timedelta(days=min_age_days)
-    best_end: pd.Timestamp | None = None
+
+    best_gap: int | None = None
     prev: float | None = None
     for entry in entries[:-1]:
         end = entry[2] if len(entry) > 2 else None
-        if end is None or end > threshold:
+        if end is None:
             continue
-        if best_end is None or end > best_end:
-            best_end = end
+        gap_days = int((latest_end - end).days)
+        if not min_age_days <= gap_days <= max_age_days:
+            continue
+        distance = abs(gap_days - 365)
+        if best_gap is None or distance < best_gap:
+            best_gap = distance
             try:
                 prev = float(entry[1])
             except (TypeError, ValueError):
                 prev = None
-    if prev is None and len(entries) > 1:
-        prev = float(entries[-2][1])
     return latest_value, prev
 
 
