@@ -37,7 +37,6 @@ from ai_value_scanner.fundamentals.reconstruction import (
 
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
-    ANNUAL_FORMS,
     ASSETS_CURRENT_TAGS,
     BACKLOG_TAGS,
     CAPEX_TAGS,
@@ -57,7 +56,6 @@ from ai_value_scanner.scanner import (
     RECEIVABLES_CURRENT_TAGS,
     REVENUE_TAGS,
     SHARES_TAGS,
-    _merged_standard_taxonomy_facts,
     AlpacaClient,
     NetworkMonitor,
     RequestRateLimiter,
