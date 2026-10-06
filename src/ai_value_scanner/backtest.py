@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+from ai_value_scanner.config import ScanConfig, load_config, resolve_channel_profile
+
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
     ANNUAL_FORMS,
@@ -44,7 +46,6 @@ from ai_value_scanner.scanner import (
     AlpacaClient,
     NetworkMonitor,
     RequestRateLimiter,
-    ScanConfig,
     SecClient,
     ai_disclosure_score_from_submissions,
     ai_etf_consensus_score,
@@ -60,10 +61,8 @@ from ai_value_scanner.scanner import (
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
     first_fail_concentration,
-    load_config,
     load_watchlist_scores,
     watchlist_rows_to_scores,
-    resolve_channel_profile,
     safe_divide,
     safe_yoy,
     score_and_rank,
