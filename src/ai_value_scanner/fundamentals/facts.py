@@ -100,8 +100,13 @@ def is_visible(record: FactRecord, cutoff: VisibilityCutoff | None) -> bool:
         return True
     if record.visible_on > cutoff.filed_through:
         return False
-    if cutoff.accession_through is None or record.accession is None:
+    if cutoff.accession_through is None:
         return True
+    # An intra-day accession cutoff represents a specific filing state.
+    # A same-day fact without accession provenance cannot safely be ordered,
+    # so treating it as visible would permit look-ahead.
+    if record.accession is None:
+        return False
     return record.accession <= cutoff.accession_through
 
 
