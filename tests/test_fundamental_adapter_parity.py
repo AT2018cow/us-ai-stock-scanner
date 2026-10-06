@@ -143,6 +143,97 @@ class TestScannerReplayReconstructionParity(unittest.TestCase):
         self.assertEqual(before, (104.0, 100.0))
         self.assertEqual(after, (104.0, 102.0))
 
+    def test_cross_section_prefers_raw_fact_state_over_legacy_series(self) -> None:
+        entries = [
+            _flow_entry("2024-01-01", "2024-03-31", 10, "2024-05-01", accn="0001"),
+            _flow_entry("2024-04-01", "2024-06-30", 20, "2024-08-01", accn="0002"),
+            _flow_entry("2024-07-01", "2024-09-30", 30, "2024-11-01", accn="0003"),
+            _flow_entry("2024-10-01", "2024-12-31", 40, "2025-02-15", accn="0004"),
+            _flow_entry("2025-01-01", "2025-03-31", 11, "2025-05-01", accn="0005"),
+            _flow_entry("2025-04-01", "2025-06-30", 21, "2025-08-01", accn="0006"),
+            _flow_entry("2025-07-01", "2025-09-30", 31, "2025-11-01", accn="0007"),
+            _flow_entry("2025-10-01", "2025-12-31", 41, "2026-02-15", accn="0008"),
+        ]
+        facts = _companyfacts("Revenues", "USD", entries)
+        records = backtest.extract_metric_points(
+            facts,
+            ["Revenues"],
+            "USD",
+            scanner.QUARTERLY_FORMS,
+        )
+        stale_series = [
+            (
+                pd.Timestamp("2026-02-15", tz="UTC"),
+                999.0,
+                pd.Timestamp("2025-12-31", tz="UTC"),
+            )
+        ]
+        fundamental = backtest.FundamentalPointInTime(
+            sic=None,
+            sic_description=None,
+            revenue_series=stale_series,
+            net_income_series=[],
+            shares_series=[],
+            operating_cash_flow_series=[],
+            capex_series=[],
+            ebit_series=[],
+            cash_series=[],
+            long_term_debt_series=[],
+            current_debt_series=[],
+            current_assets_series=[],
+            current_liabilities_series=[],
+            receivables_series=[],
+            inventory_series=[],
+            interest_expense_series=[],
+            da_series=[],
+            backlog_series=[],
+            disclosure_series=[],
+            ai_disclosure_score=0.0,
+            ai_backlog_signal=0.0,
+            fact_records={"revenue": records},
+        )
+        asof = pd.Timestamp("2026-03-01", tz="UTC")
+        bars = pd.DataFrame(
+            [
+                {
+                    "date": asof,
+                    "open": 10.0,
+                    "close": 10.0,
+                    "high": 10.0,
+                    "low": 10.0,
+                    "volume": 1_000_000.0,
+                }
+            ]
+        ).set_index("date")
+        bars["sma200"] = float("nan")
+        universe = pd.DataFrame(
+            [
+                {
+                    "symbol": "TEST",
+                    "name": "Test",
+                    "exchange": "NASDAQ",
+                    "company_name": "Test",
+                }
+            ]
+        )
+
+        out = backtest.build_cross_section_asof(
+            asof=asof,
+            universe=universe,
+            bar_db={"TEST": bars},
+            fundamentals={"TEST": fundamental},
+            theme_scores={},
+            watchlist_by_symbol={"TEST": ("", 0, "")},
+            benchmark_return_20d=None,
+            benchmark_return_60d=None,
+            disclosure_lookback_days=720,
+            scan_config=scanner.ScanConfig(price_lookback_days=30),
+        )
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(float(out.iloc[0]["revenue"]), 104.0)
+        self.assertAlmostEqual(float(out.iloc[0]["revenue_yoy"]), 0.04, places=12)
+
     def test_level_year_ago_matches_and_rejects_adjacent_quarter(self) -> None:
         entries = [
             {
