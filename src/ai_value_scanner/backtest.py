@@ -28,11 +28,14 @@ from ai_value_scanner.fundamentals.accounting import (
 )
 from ai_value_scanner.fundamentals.facts import (
     FactRecord,
+    VisibilityCutoff,
     extract_fact_records,
 )
 from ai_value_scanner.fundamentals.reconstruction import (
     build_flow_visibility_series,
     build_level_visibility_series,
+    current_ttm_pair,
+    latest_and_year_ago_level as shared_latest_and_year_ago_level,
 )
 
 from ai_value_scanner.scanner import (
@@ -165,6 +168,12 @@ class FundamentalPointInTime:
     nonrecurring_gain_series: dict[str, list[tuple[pd.Timestamp, float, pd.Timestamp]]] = field(
         default_factory=dict
     )
+    # Canonical raw facts are retained so production replay can reconstruct
+    # the complete visible state at each asof, including amendments that only
+    # change a historical YoY base rather than the latest TTM value.
+    fact_records: dict[str, list[FactRecord]] = field(default_factory=dict)
+    nonrecurring_expense_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
+    nonrecurring_gain_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -957,6 +966,50 @@ def latest_and_year_ago_level(
             except (TypeError, ValueError):
                 prev = None
     return latest_value, prev
+
+
+def flow_pair_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> tuple[float | None, float | None]:
+    """Canonical PIT flow pair, with legacy-series fallback for synthetic callers."""
+    if records:
+        return current_ttm_pair(
+            records,
+            VisibilityCutoff(filed_through=pd.Timestamp(asof).date()),
+        )
+    return latest_and_year_ago_flow(series, asof)
+
+
+def level_pair_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> tuple[float | None, float | None]:
+    """Canonical PIT level pair, with legacy-series fallback for synthetic callers."""
+    if records:
+        return shared_latest_and_year_ago_level(
+            records,
+            VisibilityCutoff(filed_through=pd.Timestamp(asof).date()),
+        )
+    return latest_and_year_ago_level(series, asof)
+
+
+def flow_value_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> float | None:
+    return flow_pair_asof(records, series, asof)[0]
+
+
+def level_value_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> float | None:
+    return level_pair_asof(records, series, asof)[0]
 
 
 def latest_and_prev_asof(
