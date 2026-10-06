@@ -158,6 +158,8 @@ PR #5A 当前 CI 为 **269 项离线测试通过**，这是 E01 正式迁移的�
 
 ### 第三批：统一事实和特征计算
 
+> 2026-10-06 最小必要重构 PR #8：先抽“事实已经选好之后”的纯 accounting/derived-metrics 层，不碰 SEC 请求、cache/accession、filing visibility、quarter/TTM reconstruction。共享范围包括 YoY、adjusted NI/EBIT/EBITDA 算术、FCF/债务、coverage/current-ratio/accrual、应收/库存增长差和 fundamental-quality score。scanner/backtest 保留各自的事实选择/PIT 适配，下一 PR 再处理 fact reconstruction/TTM/PIT 契约。
+
 引入保留期间与披露版本的事实结构，提取季度／TTM 和 PIT 选择，统一同比、利润调整、财务比率、估值与主题权重。将 `build_cross_section_asof` 收缩为输入适配和公共特征调用。
 
 结构调整和公式修正分成不同提交；已知错误应先有正确答案用例，再修复。共享后的结果用于新策略验证以前，必须完成相关正确性修复，不能以“先搬迁”为由继续把错误指标当成可信证据。
