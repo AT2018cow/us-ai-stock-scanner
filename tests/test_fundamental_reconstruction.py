@@ -144,6 +144,28 @@ class TestRevisionAndPitSemantics(unittest.TestCase):
         self.assertEqual(first.quarters[0].value, 10)
         self.assertEqual(second.quarters[0].value, 11)
 
+    def test_same_day_missing_accession_is_not_visible_to_accession_cutoff(self) -> None:
+        rows = [
+            fact(10, "2025-03-31", start="2025-01-01", filed="2025-05-01", accession="0001"),
+            fact(99, "2025-03-31", start="2025-01-01", filed="2025-05-01"),
+        ]
+        state = reconstruct_flow_periods(
+            rows, VisibilityCutoff(date(2025, 5, 1), accession_through="0001")
+        )
+        self.assertEqual(state.quarters[0].value, 10)
+
+    def test_duplicate_exact_facts_are_idempotent(self) -> None:
+        row = fact(
+            10,
+            "2025-03-31",
+            start="2025-01-01",
+            filed="2025-05-01",
+            accession="0001",
+        )
+        flows = reconstruct_flow_periods([row, row])
+        self.assertEqual(len(flows.quarters), 1)
+        self.assertEqual(flows.quarters[0].value, 10)
+
     def test_tag_priority_breaks_exact_version_tie(self) -> None:
         rows = [
             fact(10, "2025-03-31", start="2025-01-01", filed="2025-05-01", accession="0001", tag="Preferred", priority=0),
@@ -180,6 +202,16 @@ class TestYearAgoSelection(unittest.TestCase):
         )
         self.assertEqual(latest, 140)
         self.assertIsNone(prev)
+
+    def test_level_year_ago_uses_320_to_410_day_window(self) -> None:
+        rows = [
+            fact(80, "2024-12-31", filed="2025-02-15", tag="Assets"),
+            fact(90, "2025-02-19", filed="2025-04-01", tag="Assets"),
+            fact(100, "2025-12-31", filed="2026-02-15", tag="Assets"),
+        ]
+        latest, prev = latest_and_year_ago_level(rows)
+        self.assertEqual(latest, 100)
+        self.assertEqual(prev, 80)
 
     def test_level_year_ago_requires_real_year_ago_period(self) -> None:
         rows = [
