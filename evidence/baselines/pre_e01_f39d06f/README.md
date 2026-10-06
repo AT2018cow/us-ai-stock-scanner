@@ -82,3 +82,18 @@ pre_e01_f39d06f_risk_on_events_signal_channel_summary.csv
 这**不影响 baseline gate**：它们的 SHA256、signal contract 和 shape 已冻结在 manifest 中，后续重跑仍会被严格比较。影响仅在 mismatch 后的人工诊断——当前无法直接打开旧版这 8 个文件做逐行 diff。
 
 如果原始本地 outputs 仍存在，可以以后补归档，但只有在每个文件 SHA256 与 manifest 的对应 `deterministic_sha256` 完全一致时才能加入；不要重新生成文件冒充原始 evidence。
+
+## 数据漂移警告（2026-10-06 首次 E1 对比实验发现）
+
+SEC EDGAR 是活数据：2026-10-06 10:00 UTC 的落盘使 661 家公司 facts 被重取
+（GOOGL 新申报 accession 0001193125-26-412669 处于 pending 状态），其 per-date
+特征随之变化，导致 risk_on 选股集合翻转（301/468 行差异中 288 行涉及 GOOGL）。
+因此**跨天比较全窗口确定性哈希必然 mismatch，且不能归因于代码变更**。
+
+判定代码等价的方法（本次已验证）：
+1. 同一数据状态下新旧代码背靠背运行，events CSV 必须逐字节一致（已通过：
+   短窗口 risk_on eqtest 新旧代码完全一致）；
+2. risk_off 全窗口在新旧代码+跨落盘窗口下汇总完全一致（辅助证据）。
+
+后续 E1 迁移 PR 应在**同一数据窗口内**完成新旧代码的背靠背对比，而不是与
+基线 manifest 跨天比对哈希；manifest 比较仅用于验证输入契约未变。
