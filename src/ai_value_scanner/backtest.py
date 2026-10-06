@@ -1116,87 +1116,90 @@ def close_history_from_frame_asof(
     return out
 
 
-def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[str, FundamentalPointInTime]:
+def load_symbol_fundamental_pti(
+    sec: SecClient,
+    symbol: str,
+    cik: str,
+) -> tuple[str, FundamentalPointInTime]:
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
-    revenue_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, REVENUE_TAGS, "USD", QUARTERLY_FORMS)
+    fact_records: dict[str, list[FactRecord]] = {}
+
+    def flow_metric(name: str, tags: list[str], unit: str = "USD") -> list[tuple]:
+        records = extract_metric_points(companyfacts, tags, unit, QUARTERLY_FORMS)
+        fact_records[name] = records
+        return build_flow_ttm_or_annual_series(records)
+
+    def level_metric(name: str, tags: list[str], unit: str = "USD") -> list[tuple]:
+        records = extract_metric_points(companyfacts, tags, unit, QUARTERLY_FORMS)
+        fact_records[name] = records
+        return build_level_series(records)
+
+    revenue_series = flow_metric("revenue", REVENUE_TAGS)
+    net_income_series = flow_metric("net_income", NET_INCOME_TAGS)
+    shares_series = level_metric("shares", SHARES_TAGS, "shares")
+    operating_cash_flow_series = flow_metric(
+        "operating_cash_flow",
+        OPERATING_CASH_FLOW_TAGS,
     )
-    net_income_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS)
+    capex_series = flow_metric("capex", CAPEX_TAGS)
+    ebit_series = flow_metric("ebit", EBIT_TAGS)
+    cash_series = level_metric("cash", CASH_AND_EQUIVALENTS_TAGS)
+    long_term_debt_series = level_metric("long_term_debt", LONG_TERM_DEBT_TAGS)
+    current_debt_series = level_metric("current_debt", CURRENT_DEBT_TAGS)
+    current_assets_series = level_metric("current_assets", ASSETS_CURRENT_TAGS)
+    current_liabilities_series = level_metric(
+        "current_liabilities",
+        LIABILITIES_CURRENT_TAGS,
     )
-    shares_series = build_level_series(
-        extract_metric_points(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
-    )
-    operating_cash_flow_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, OPERATING_CASH_FLOW_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    capex_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, CAPEX_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    ebit_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, EBIT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    cash_series = build_level_series(
-        extract_metric_points(companyfacts, CASH_AND_EQUIVALENTS_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    long_term_debt_series = build_level_series(
-        extract_metric_points(companyfacts, LONG_TERM_DEBT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_debt_series = build_level_series(
-        extract_metric_points(companyfacts, CURRENT_DEBT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_assets_series = build_level_series(
-        extract_metric_points(companyfacts, ASSETS_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_liabilities_series = build_level_series(
-        extract_metric_points(companyfacts, LIABILITIES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    receivables_series = build_level_series(
-        extract_metric_points(companyfacts, RECEIVABLES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    inventory_series = build_level_series(
-        extract_metric_points(companyfacts, INVENTORY_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    interest_expense_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, INTEREST_EXPENSE_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    da_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, DA_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    backlog_series = build_level_series(
-        extract_metric_points(companyfacts, BACKLOG_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    # C05: per-tag TTM series for the scan's non-recurring adjustment set.
-    nonrecurring_expense_series = {
-        tag: build_flow_ttm_or_annual_series(
-            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
-        )
+    receivables_series = level_metric("receivables", RECEIVABLES_CURRENT_TAGS)
+    inventory_series = level_metric("inventory", INVENTORY_TAGS)
+    interest_expense_series = flow_metric("interest_expense", INTEREST_EXPENSE_TAGS)
+    da_series = flow_metric("da", DA_TAGS)
+    backlog_series = level_metric("backlog", BACKLOG_TAGS)
+
+    # C05: keep both raw facts and compatibility staircases for each adjustment
+    # tag. Raw facts drive production asof reconstruction below.
+    nonrecurring_expense_facts = {
+        tag: extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
         for tag in NONRECURRING_EXPENSE_TAGS
     }
-    nonrecurring_gain_series = {
-        tag: build_flow_ttm_or_annual_series(
-            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
-        )
+    nonrecurring_gain_facts = {
+        tag: extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
         for tag in NONRECURRING_GAIN_TAGS
     }
+    nonrecurring_expense_series = {
+        tag: build_flow_ttm_or_annual_series(records)
+        for tag, records in nonrecurring_expense_facts.items()
+    }
+    nonrecurring_gain_series = {
+        tag: build_flow_ttm_or_annual_series(records)
+        for tag, records in nonrecurring_gain_facts.items()
+    }
+
     disclosure_series = build_disclosure_series_from_submissions(submissions)
     ai_disclosure_score, _, _ = ai_disclosure_score_from_submissions(
         submissions,
         disclosure_keyword_cap=6,
     )
-    revenue_for_backlog = latest_asof(revenue_series, pd.Timestamp.now(tz="UTC").normalize())
-    backlog_latest = latest_asof(backlog_series, pd.Timestamp.now(tz="UTC").normalize())
+    revenue_for_backlog = latest_asof(
+        revenue_series,
+        pd.Timestamp.now(tz="UTC").normalize(),
+    )
+    backlog_latest = latest_asof(
+        backlog_series,
+        pd.Timestamp.now(tz="UTC").normalize(),
+    )
     ai_backlog_signal = 0.0
     if backlog_latest is not None and revenue_for_backlog not in (None, 0):
         ai_backlog_signal = float(
             np.clip(
-                (float(backlog_latest) / float(revenue_for_backlog))
-                / 0.20,
+                (float(backlog_latest) / float(revenue_for_backlog)) / 0.20,
                 0.0,
                 1.0,
             )
         )
+
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -1221,6 +1224,9 @@ def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[
         ai_backlog_signal=float(ai_backlog_signal or 0.0),
         nonrecurring_expense_series=nonrecurring_expense_series,
         nonrecurring_gain_series=nonrecurring_gain_series,
+        fact_records=fact_records,
+        nonrecurring_expense_facts=nonrecurring_expense_facts,
+        nonrecurring_gain_facts=nonrecurring_gain_facts,
     )
     return symbol, f
 
