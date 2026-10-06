@@ -308,8 +308,8 @@ def latest_and_year_ago_level(
     records: Iterable[FactRecord],
     cutoff: VisibilityCutoff | None = None,
     *,
-    min_gap_days: int = 300,
-    max_gap_days: int = 430,
+    min_gap_days: int = 320,
+    max_gap_days: int = 410,
 ) -> tuple[float | None, float | None]:
     """Return latest visible level fact and a genuine year-ago comparison.
 
