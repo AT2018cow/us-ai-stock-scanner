@@ -149,6 +149,10 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
         self.assertEqual(
             staircase,
             [
+                # PIT correctness: the FY24 annual is already visible here.
+                # The legacy precomputed-series implementation suppressed it
+                # merely because enough quarters appeared later in history.
+                ("2024-10-11", 390.0),
                 ("2025-06-17", 435.0),
                 ("2025-10-10", 460.0),
                 ("2025-12-18", 500.0),
@@ -182,7 +186,8 @@ class TestBacktestFlowSeriesPit(unittest.TestCase):
             staircase,
             [
                 ("2025-08-01", 390.0),   # Q4'24..Q2'25 window
-                ("2025-08-15", 390.0),   # FY2025 annual (same TTM, own filing)
+                # The 2025-08-15 annual has the same period end and value, so
+                # it does not create a second PIT economic state.
                 ("2026-08-17", 460.0),   # FY2026 annual supersedes stale windows
             ],
         )
