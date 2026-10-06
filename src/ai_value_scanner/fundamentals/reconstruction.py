@@ -323,7 +323,10 @@ def latest_and_year_ago_level(
     when no valid year-ago balance-sheet period exists.
     """
 
-    points = [_period_from_fact(record) for record in collapse_fact_revisions(records, cutoff)]
+    points = [
+        _period_from_fact(record)
+        for record in collapse_fact_records_by_end(records, cutoff)
+    ]
     if not points:
         return None, None
     latest = max(points, key=lambda p: p.period_end)
@@ -362,19 +365,26 @@ def build_flow_visibility_series(
 ) -> tuple[PeriodValue, ...]:
     """Build an end-of-filing-day PIT staircase using the canonical core.
 
-    Each distinct filing date is evaluated as a complete visible state. Later
-    amendments/restatements therefore replace earlier versions only from their
-    filing date forward, while historical states remain unchanged.
+    Facts are applied incrementally by filing date. The current logical-period
+    map keeps only the newest visible revision, so each date reconstructs from
+    the compact visible state rather than rescanning the full filing history.
     """
-    materialized = tuple(records)
-    dates = sorted({record.visible_on for record in materialized})
+    by_date: dict[date, list[FactRecord]] = {}
+    for record in records:
+        by_date.setdefault(record.visible_on, []).append(record)
+
+    current: dict[tuple[str, date | None, date], FactRecord] = {}
     out: list[PeriodValue] = []
     last_state: tuple[date, float] | None = None
-    for visible_on in dates:
-        flows = reconstruct_flow_periods(
-            materialized,
-            VisibilityCutoff(filed_through=visible_on),
-        )
+
+    for visible_on in sorted(by_date):
+        for record in by_date[visible_on]:
+            key = (record.unit, record.period_start, record.period_end)
+            prev = current.get(key)
+            if prev is None or record.revision_key > prev.revision_key:
+                current[key] = record
+
+        flows = reconstruct_flow_periods(current.values())
         points = ttm_points_with_annual_fallback(flows)
         if not points:
             continue
@@ -401,18 +411,27 @@ def build_level_visibility_series(
     records: Iterable[FactRecord],
 ) -> tuple[PeriodValue, ...]:
     """Build an end-of-filing-day PIT staircase for level facts."""
-    materialized = tuple(records)
-    dates = sorted({record.visible_on for record in materialized})
+    by_date: dict[date, list[FactRecord]] = {}
+    for record in records:
+        by_date.setdefault(record.visible_on, []).append(record)
+
+    current: dict[tuple[str, date], FactRecord] = {}
     out: list[PeriodValue] = []
     last_state: tuple[date, float] | None = None
-    for visible_on in dates:
-        visible = collapse_fact_records_by_end(
-            materialized,
-            VisibilityCutoff(filed_through=visible_on),
-        )
-        if not visible:
+
+    for visible_on in sorted(by_date):
+        for record in by_date[visible_on]:
+            key = (record.unit, record.period_end)
+            prev = current.get(key)
+            if prev is None or record.revision_key > prev.revision_key:
+                current[key] = record
+
+        if not current:
             continue
-        latest = max(visible, key=lambda record: record.period_end)
+        latest = max(
+            current.values(),
+            key=lambda record: (record.period_end, record.revision_key),
+        )
         state = (latest.period_end, float(latest.value))
         if state == last_state:
             continue
@@ -429,3 +448,4 @@ def build_level_visibility_series(
         )
         last_state = state
     return tuple(out)
+
