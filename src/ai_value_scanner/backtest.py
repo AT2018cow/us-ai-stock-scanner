@@ -2038,35 +2038,95 @@ def build_cross_section_asof(
         if f is None:
             continue
 
-        revenue, revenue_prev = latest_and_year_ago_flow(f.revenue_series, asof)
-        net_income, net_income_prev = latest_and_year_ago_flow(f.net_income_series, asof)
-        shares, shares_prev = latest_and_year_ago_level(f.shares_series, asof)
-        operating_cash_flow, operating_cash_flow_prev = latest_and_year_ago_flow(
-            f.operating_cash_flow_series, asof
+        raw = f.fact_records
+        revenue, revenue_prev = flow_pair_asof(
+            raw.get("revenue", []),
+            f.revenue_series,
+            asof,
         )
-        capex_raw, _ = series_value_asof(f.capex_series, asof)
-        ebit, ebit_prev = latest_and_year_ago_flow(f.ebit_series, asof)
-        cash_and_equivalents, _ = series_value_asof(f.cash_series, asof)
-        debt_long_term, _ = series_value_asof(f.long_term_debt_series, asof)
-        debt_current, _ = series_value_asof(f.current_debt_series, asof)
-        current_assets, _ = series_value_asof(f.current_assets_series, asof)
-        current_liabilities, _ = series_value_asof(f.current_liabilities_series, asof)
-        receivables_current, receivables_prev = latest_and_year_ago_level(f.receivables_series, asof)
-        inventory_current, inventory_prev = latest_and_year_ago_level(f.inventory_series, asof)
-        interest_expense, _ = series_value_asof(f.interest_expense_series, asof)
-        depreciation_and_amortization, depreciation_and_amortization_prev = latest_and_year_ago_flow(
-            f.da_series, asof
+        net_income, net_income_prev = flow_pair_asof(
+            raw.get("net_income", []),
+            f.net_income_series,
+            asof,
+        )
+        shares, shares_prev = level_pair_asof(
+            raw.get("shares", []),
+            f.shares_series,
+            asof,
+        )
+        operating_cash_flow, operating_cash_flow_prev = flow_pair_asof(
+            raw.get("operating_cash_flow", []),
+            f.operating_cash_flow_series,
+            asof,
+        )
+        capex_raw = flow_value_asof(raw.get("capex", []), f.capex_series, asof)
+        ebit, ebit_prev = flow_pair_asof(
+            raw.get("ebit", []),
+            f.ebit_series,
+            asof,
+        )
+        cash_and_equivalents = level_value_asof(
+            raw.get("cash", []),
+            f.cash_series,
+            asof,
+        )
+        debt_long_term = level_value_asof(
+            raw.get("long_term_debt", []),
+            f.long_term_debt_series,
+            asof,
+        )
+        debt_current = level_value_asof(
+            raw.get("current_debt", []),
+            f.current_debt_series,
+            asof,
+        )
+        current_assets = level_value_asof(
+            raw.get("current_assets", []),
+            f.current_assets_series,
+            asof,
+        )
+        current_liabilities = level_value_asof(
+            raw.get("current_liabilities", []),
+            f.current_liabilities_series,
+            asof,
+        )
+        receivables_current, receivables_prev = level_pair_asof(
+            raw.get("receivables", []),
+            f.receivables_series,
+            asof,
+        )
+        inventory_current, inventory_prev = level_pair_asof(
+            raw.get("inventory", []),
+            f.inventory_series,
+            asof,
+        )
+        interest_expense = flow_value_asof(
+            raw.get("interest_expense", []),
+            f.interest_expense_series,
+            asof,
+        )
+        depreciation_and_amortization, depreciation_and_amortization_prev = flow_pair_asof(
+            raw.get("da", []),
+            f.da_series,
+            asof,
         )
 
         # C05: apply the scan's non-recurring adjustments (sum of positive
         # latest values across tags, capped by nonrecurring_addback_revenue_cap).
-        def _nonrecurring_sums(series_map: dict[str, list[tuple]]) -> tuple[float | None, float | None]:
+        def _nonrecurring_sums(
+            series_map: dict[str, list[tuple]],
+            facts_map: dict[str, list[FactRecord]],
+        ) -> tuple[float | None, float | None]:
             latest_sum = 0.0
             prev_sum = 0.0
             has_latest = False
             has_prev = False
-            for tag_series in series_map.values():
-                latest, prev = latest_and_year_ago_flow(tag_series, asof)
+            for tag in set(series_map).union(facts_map):
+                latest, prev = flow_pair_asof(
+                    facts_map.get(tag, []),
+                    series_map.get(tag, []),
+                    asof,
+                )
                 if latest is None:
                     continue
                 latest_val = max(0.0, float(latest))
@@ -2078,8 +2138,14 @@ def build_cross_section_asof(
                     has_prev = has_prev or prev_val > 0
             return (latest_sum if has_latest else None, prev_sum if has_prev else None)
 
-        addback, addback_prev = _nonrecurring_sums(f.nonrecurring_expense_series)
-        gain, gain_prev = _nonrecurring_sums(f.nonrecurring_gain_series)
+        addback, addback_prev = _nonrecurring_sums(
+            f.nonrecurring_expense_series,
+            f.nonrecurring_expense_facts,
+        )
+        gain, gain_prev = _nonrecurring_sums(
+            f.nonrecurring_gain_series,
+            f.nonrecurring_gain_facts,
+        )
         adjusted = compute_adjusted_metrics(
             net_income=net_income,
             ebit=ebit,
@@ -2173,7 +2239,11 @@ def build_cross_section_asof(
             lookback_days=disclosure_lookback_days,
             disclosure_keyword_cap=scan_config.ai_link_disclosure_keyword_cap,
         )
-        backlog_latest = latest_asof(f.backlog_series, asof)
+        backlog_latest = level_value_asof(
+            raw.get("backlog", []),
+            f.backlog_series,
+            asof,
+        )
         asof_backlog = 0.0
         if backlog_latest is not None and revenue not in (None, 0) and scan_config.ai_link_backlog_ratio_cap > 0:
             asof_backlog = float(
