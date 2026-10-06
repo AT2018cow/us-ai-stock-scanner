@@ -209,6 +209,21 @@ outputs/${BASE}_manifest.json
 
 ## 9. E01 后如何比较
 
+### 9.1 使用仓库中已冻结的 canonical baseline
+
+`pre_e01_f39d06f` 已归档到 `evidence/baselines/pre_e01_f39d06f/`。后续 E01 不应重新复制动态 `data/` 输入，而应直接使用这份冻结 evidence：
+
+```bash
+BASE_DIR="evidence/baselines/pre_e01_f39d06f"
+BASE_MANIFEST="$BASE_DIR/pre_e01_f39d06f_manifest.json"
+WATCHLIST="$BASE_DIR/pre_e01_f39d06f_ai_watchlist.csv"
+HIST="$BASE_DIR/pre_e01_f39d06f_watchlist_history"
+```
+
+manifest 会保留最初 capture 时的文件路径作为 provenance，但 `compare` 不把 watchlist/watchlist-history 的**位置字符串**当成语义 identity。相同文件移动到 `evidence/` 后由 SHA256 继续严格校验；窗口、rebalance、horizons、list types、theme source、fallback/promotion 等行为参数仍严格比较。
+
+### 9.2 重跑并比较
+
 每个纯结构迁移 PR 完成后，使用**相同输入、相同窗口、相同参数**重新生成一组不同前缀的产物，例如：
 
 ```bash
@@ -219,7 +234,7 @@ NEW="e01_config_$(git rev-parse --short HEAD)"
 
 ```bash
 .venv/bin/python scripts/refactor_baseline.py compare \
-  --baseline "outputs/${BASE}_manifest.json" \
+  --baseline "$BASE_MANIFEST" \
   --risk-off-prefix "${NEW}_risk_off" \
   --risk-on-prefix "${NEW}_risk_on" \
   --tuning-prefix "${NEW}_tuner_risk_off" \
@@ -247,3 +262,5 @@ BASELINE_MATCH
 报告 Markdown 和 network JSON 带有运行时 provenance/timestamp，因此保存用于人工审查，但不要求整个文件 byte-for-byte 相同。
 
 任何 `BASELINE_MISMATCH` 都应先解释，再合并机械重构 PR；不要为了让比较通过而更新 baseline。只有明确批准的行为变化才能建立新 baseline。
+
+当前 canonical evidence 没有归档原始 risk_off/risk_on 的 `events_signals / segments / events_signal_diagnostics / events_signal_channel_summary` 8 个 CSV 内容，但 manifest 已冻结其 SHA256 与相应 contract/shape，因此 compare gate 仍完整。缺失只降低 mismatch 后逐行诊断能力；不要通过重跑来补造这些旧 evidence。
