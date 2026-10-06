@@ -23,6 +23,8 @@ from ai_value_scanner.config import ScanConfig, load_config, resolve_channel_pro
 from ai_value_scanner.fundamentals.accounting import (
     compute_adjusted_metrics,
     derive_accounting_metrics,
+    fundamental_quality_score_from_metrics,
+    safe_yoy,
 )
 
 from ai_value_scanner.scanner import (
@@ -69,9 +71,7 @@ from ai_value_scanner.scanner import (
     load_watchlist_scores,
     watchlist_rows_to_scores,
     safe_divide,
-    safe_yoy,
     score_and_rank,
-    fundamental_quality_score_from_metrics,
     summarize_diagnostics_by_layer,
     summarize_first_fail_reasons,
     theme_score_from_news,
