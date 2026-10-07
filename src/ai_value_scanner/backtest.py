@@ -38,6 +38,12 @@ from ai_value_scanner.fundamentals.reconstruction import (
     latest_and_year_ago_level as shared_latest_and_year_ago_level,
 )
 
+from ai_value_scanner.features.ai_link import (
+    compute_ai_link_score,
+)
+from ai_value_scanner.features.valuation import (
+)
+
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
     ASSETS_CURRENT_TAGS,
@@ -1024,30 +1030,6 @@ def latest_and_prev_asof(
     latest = float(series[idx][1])
     prev = float(series[idx - 1][1]) if idx - 1 >= 0 else None
     return latest, prev
-
-
-def compute_ai_link_score(
-    config: Any,
-    ai_etf_score: float | None,
-    ai_disclosure_score: float | None,
-    ai_market_score: float | None,
-    ai_backlog_signal: float | None,
-) -> float:
-    """Weighted AI-link score using the config's weights (C06).
-
-    The replay previously hardcoded 0.40/0.35/0.15/0.10 and ignored
-    per-style/theme configurations (e.g. themes with disclosure weight 0).
-    """
-    return float(
-        np.clip(
-            float(config.ai_link_weight_etf_consensus) * float(ai_etf_score or 0.0)
-            + float(config.ai_link_weight_disclosure) * float(ai_disclosure_score or 0.0)
-            + float(config.ai_link_weight_market_link) * float(ai_market_score or 0.0)
-            + float(config.ai_link_weight_backlog) * float(ai_backlog_signal or 0.0),
-            0.0,
-            1.0,
-        )
-    )
 
 
 def series_up_to_asof(
