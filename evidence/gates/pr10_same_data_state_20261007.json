@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "gate_id": "pr10_same_data_state_20261007",
+  "gate_type": "same_data_state_old_new_historical_replay",
+  "status": "pass",
+  "repository": "AT2018cow/us-ai-stock-scanner",
+  "pull_request": 10,
+  "executed_date": "2026-10-07",
+  "commits": {
+    "base": "4c68a4cf0d8fa823216a3b67204312adcef42a95",
+    "head": "a15d7e2373ced0b1e25ea8c57e8f98c534c679c9",
+    "merge": "7f0bfa5f24dd7168812e7c131eaa5152c0f5eabd",
+    "gate_record": "72361044f6501e17c05cfa2bceabf545215e16a3"
+  },
+  "inputs": {
+    "watchlist": "evidence/baselines/pre_e01_f39d06f/pre_e01_f39d06f_ai_watchlist.csv",
+    "watchlist_history": "evidence/baselines/pre_e01_f39d06f/pre_e01_f39d06f_watchlist_history",
+    "configs_and_replay_args": "identical between base and head",
+    "cache_mode": "shared live cache via symlink",
+    "cache_snapshot_sha256": null,
+    "cache_archived": false,
+    "cache_audit_note": "The two versions used the same shared cache state during the back-to-back gate, but the cache snapshot itself was not archived or hashed in the repository."
+  },
+  "coverage": {
+    "full_replay": {
+      "start": "2023-01-01",
+      "end": "2026-03-31",
+      "styles": [
+        "risk_off",
+        "risk_on"
+      ]
+    },
+    "feature_matrix": {
+      "window": "6 months",
+      "rows_per_side_approx": 5300,
+      "columns": 91
+    }
+  },
+  "unchanged_layers": [
+    {
+      "name": "market_data_columns",
+      "count": 10,
+      "comparison": "byte_identical"
+    },
+    {
+      "name": "benchmarks.csv",
+      "styles": [
+        "risk_off",
+        "risk_on"
+      ],
+      "comparison": "byte_identical"
+    },
+    {
+      "name": "watchlist_etf_count",
+      "comparison": "identical"
+    }
+  ],
+  "intentional_differences": [
+    {
+      "change_id": 1,
+      "name": "annual_fallback_future_dependency_removed",
+      "observations": {
+        "operating_cash_flow_none_to_value_rows": 4688,
+        "flow_yoy_none_to_value_rows": {
+          "revenue": 105,
+          "net_income": 116,
+          "operating_cash_flow": 4814
+        }
+      },
+      "spot_checks": [
+        "AAPL 2023-01-31 OCF matched FY2022 annual 122.151B",
+        "IBM revenue changed from broken partial 47.1B to annual 60.5B"
+      ]
+    },
+    {
+      "change_id": 2,
+      "name": "amendments_are_point_in_time",
+      "observations": {
+        "adjustment_term_changed_rows": 2059
+      }
+    },
+    {
+      "change_id": 3,
+      "name": "genuine_year_ago_level_window",
+      "observations": {
+        "level_yoy_value_changes_approx": 1600,
+        "level_yoy_value_to_none_rows": 170,
+        "window_days": [
+          320,
+          410
+        ]
+      }
+    },
+    {
+      "change_id": 5,
+      "name": "missing_filing_provenance_is_conservative",
+      "observations": {
+        "pattern": "value_to_none",
+        "count": null,
+        "count_note": "Observed as part of the value-to-None patterns above; no separate exact count was preserved in the pushed summary."
+      }
+    }
+  ],
+  "downstream_attribution": [
+    "PE changes were fully traced to adjusted net income, with 99.8% of adjusted-net-income changes traced to non-recurring adjustment terms.",
+    "AI link score changes were fully traced through backlog to revenue.",
+    "Survivor flips including AAL out / ADP in were traced to OCF availability."
+  ],
+  "summary_effects": {
+    "avg_return_delta_percentage_points": {
+      "risk_off": -0.04,
+      "risk_on": -0.07
+    },
+    "direction": "mixed",
+    "interpretation": "consistent with data-correction effects rather than an unexplained systematic strategy tilt"
+  },
+  "unexplained_differences": {
+    "found": false,
+    "count": 0
+  },
+  "tests": {
+    "unit_tests": 298,
+    "result": "OK"
+  },
+  "raw_artifacts": {
+    "local_pattern": "outputs/gate10_{base,pr10}_{risk_off,risk_on}_*",
+    "archived_in_repository": false,
+    "sha256_recorded": false,
+    "independent_replay_from_repository_alone": false,
+    "note": "This manifest is a structured transcription of the gate evidence recorded in the merge commit and baseline README. It is not a cryptographic archive of the local raw outputs."
+  },
+  "provenance": [
+    "merge commit 7f0bfa5f24dd7168812e7c131eaa5152c0f5eabd",
+    "evidence/baselines/pre_e01_f39d06f/README.md at gate record commit 72361044f6501e17c05cfa2bceabf545215e16a3"
+  ]
+}
