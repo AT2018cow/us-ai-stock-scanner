@@ -114,3 +114,21 @@ SEC EDGAR 是活数据：2026-10-06 10:00 UTC 的落盘使 661 家公司 facts �
   属数据修正而非系统性偏差
 - 结构化 gate 记录：`evidence/gates/pr10_same_data_state_20261007.json`
 - 原始证据文件：`outputs/gate10_{base,pr10}_{risk_off,risk_on}_*`（仅本地保留，未归档/未记录 SHA256；此限制已在 gate manifest 中显式标注）
+
+## PR #12 gate 记录（2026-10-08）
+
+方法：复制缓存到 /tmp/frozen_cache 并将全部 680 个 facts_meta 标记为 covered
+（跳过 D02 pending refetch），base 72c437 vs head df4a9c6 顺序执行、共享冻结缓存。
+
+- 特征矩阵提取（6 个月，~5374 行 × 113 列）：**逐字节一致** (f8dabfe03b13)
+- 全量回放 events/benchmarks/summary/events_signals：**全部逐字节一致**
+- rank_and_pick_symbols_with_diagnostics 全部 624 次调用：**输出逐字节一致** (f44860c47128e4abb0a68a5229d05ede)
+- score_and_rank 全部 1404 次调用：**输出逐字节一致**
+- 结论：**零漂移，PR #12 为纯行为无关重构**
+
+### 重要教训：D02 pending 与并发运行
+
+D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运行时，各进程
+在缓存处于不同状态时读取数据，导致结果不可复现（如 SNOW/PSX 出现在一侧）。
+**解决方法**：在 gate 运行前复制缓存并将全部 facts_meta 标记为 covered，
+使所有进程读取同一冻结状态。此方法已记录为标准 gate 流程。
