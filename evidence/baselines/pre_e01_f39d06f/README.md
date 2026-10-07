@@ -97,3 +97,19 @@ SEC EDGAR 是活数据：2026-10-06 10:00 UTC 的落盘使 661 家公司 facts �
 
 后续 E1 迁移 PR 应在**同一数据窗口内**完成新旧代码的背靠背对比，而不是与
 基线 manifest 跨天比对哈希；manifest 比较仅用于验证输入契约未变。
+
+## PR #10 gate 记录（2026-10-07）
+
+按"同数据状态背靠背"方法验证 PR #10（base 4c68a4c vs head a15d7e2，共享缓存、
+相同冻结输入与参数，全标准窗口双风格 + 6 个月特征矩阵对比，各约 5300 行 × 91 列）：
+
+- 市场数据 10 列、benchmarks.csv（双风格）、watchlist_etf_count：逐字节一致
+- 全部差异归因于 PR #10 声明的 intentional changes：#1 年报回退（OCF None→value
+  4688 行，AAPL/IBM 抽查为正确值）、#2 修正案 PIT（调整项变化 2059 行）、
+  #3 真实年度同比（level YoY 约 1600 行变化 + 170 行转 None）、#5 缺失申报来源
+  保守处理（value→None）
+- 因果链闭环：pe 100% ← adjusted_NI ← 99.8% 调整项；ai_link 100% ← backlog ←
+  revenue；survivor 翻转（AAL 出 / ADP 入）← OCF 可得性
+- 无未解释差异；summary 偏移方向不一致（avg_return 均值 -0.04pp / -0.07pp），
+  属数据修正而非系统性偏差
+- 证据文件：outputs/gate10_{base,pr10}_{risk_off,risk_on}_*（本地保留）
