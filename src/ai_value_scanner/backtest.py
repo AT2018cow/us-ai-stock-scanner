@@ -39,9 +39,13 @@ from ai_value_scanner.fundamentals.reconstruction import (
 )
 
 from ai_value_scanner.features.ai_link import (
+    ai_etf_consensus_score,
+    ai_market_link_score,
     compute_ai_link_score,
 )
 from ai_value_scanner.features.valuation import (
+    compute_historical_valuation_percentile,
+    safe_divide,
 )
 
 from ai_value_scanner.scanner import (
