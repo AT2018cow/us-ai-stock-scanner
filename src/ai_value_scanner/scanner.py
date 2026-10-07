@@ -47,6 +47,20 @@ from ai_value_scanner.fundamentals.accounting import (
     fundamental_quality_score_from_metrics,
     safe_yoy,
 )
+from ai_value_scanner.fundamentals.facts import (
+    PeriodValue,
+    collapse_fact_records_by_end,
+    extract_fact_records,
+    merged_standard_taxonomy_facts,
+)
+from ai_value_scanner.fundamentals.reconstruction import (
+    ReconstructedFlows,
+    current_ttm_pair,
+    latest_and_year_ago_level as shared_latest_and_year_ago_level,
+    reconstruct_flow_periods,
+    rolling_ttm_points,
+    ttm_points_with_annual_fallback,
+)
 
 
 ANNUAL_FORMS = {"10-K", "20-F", "40-F"}
@@ -1243,56 +1257,20 @@ def chunks(seq: list[str], size: int) -> Iterable[list[str]]:
 
 
 def _merged_standard_taxonomy_facts(companyfacts: dict[str, Any]) -> dict[str, Any]:
-    raw_facts = companyfacts.get("facts", {})
-    merged: dict[str, Any] = {}
-    # Include the "dei" taxonomy (e.g. EntityCommonStockSharesOutstanding),
-    # which is the primary source for current share counts. Skipping it can
-    # fall back to a stale us-gaap share tag and distort market-cap-derived
-    # valuation metrics by orders of magnitude.
-    for taxonomy in ("us-gaap", "ifrs-full", "dei"):
-        facts = raw_facts.get(taxonomy, {})
-        if not isinstance(facts, dict):
-            continue
-        for key, value in facts.items():
-            if key not in merged:
-                merged[key] = value
-    return merged
+    """Compatibility facade for the shared SEC taxonomy merger."""
+    return merged_standard_taxonomy_facts(companyfacts)
 
 
 def pick_facts_with_forms(
     companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
 ) -> list[tuple[str, float, str]]:
-    facts = _merged_standard_taxonomy_facts(companyfacts)
-    all_candidates: list[tuple[str, float, str, str, int]] = []
-    for tag_index, tag in enumerate(tags):
-        if tag not in facts:
-            continue
-        units = facts[tag].get("units", {})
-        entries = units.get(unit, [])
-        for item in entries:
-            form = item.get("form")
-            if form not in allowed_forms:
-                continue
-            if "val" not in item:
-                continue
-            end = item.get("end")
-            if not end:
-                continue
-            filed = item.get("filed") or ""
-            all_candidates.append((end, float(item["val"]), str(form), str(filed), tag_index))
-    if not all_candidates:
-        return []
-    # Keep one observation per fiscal period end, preferring the most recently
-    # filed value; ties break toward the earlier tag in `tags` (e.g. dei
-    # EntityCommonStockSharesOutstanding over a stale us-gaap fallback).
-    by_end: dict[str, tuple[float, str, str, int]] = {}
-    for end, val, form, filed, tag_index in all_candidates:
-        prev = by_end.get(end)
-        if prev is None or (filed, -tag_index) > (prev[2], -prev[3]):
-            by_end[end] = (val, form, filed, tag_index)
-    collapsed = [(end, val, form) for end, (val, form, _, _) in by_end.items()]
-    collapsed.sort(key=lambda x: x[0], reverse=True)
-    return collapsed
+    """Current-view period-end facts using the shared filing-version model."""
+    records = extract_fact_records(companyfacts, tags, unit, allowed_forms)
+    collapsed = collapse_fact_records_by_end(records)
+    return [
+        (record.period_end.isoformat(), float(record.value), record.normalized_form)
+        for record in reversed(collapsed)
+    ]
 
 
 def reconcile_share_unit_scale(
@@ -1334,219 +1312,43 @@ def reconcile_share_unit_scale(
     return shares, shares_end
 
 
-def _duration_days(start: Any, end: Any) -> int:
-    if not start or not end:
-        return 0
-    start_dt = pd.to_datetime(start, errors="coerce")
-    end_dt = pd.to_datetime(end, errors="coerce")
-    if pd.isna(start_dt) or pd.isna(end_dt):
-        return 0
-    return int((end_dt - start_dt).days)
-
-
-def _flow_observations(
-    companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
-) -> list[tuple[str, str, float, str, str]]:
-    """Collapse flow facts to one observation per (start, end) period.
-
-    10-Q/10-K filings report cumulative columns (6M/9M YTD, annual FY) that share
-    the `end` date of true single-quarter periods. Collapsing by `end` alone (as
-    pick_facts_with_forms does) lets YTD/annual values shadow quarters, which
-    corrupted TTM sums. Keying on (start, end) keeps those periods distinct so
-    the TTM builders can separate quarters from YTD and annual durations.
-
-    Returns a list of (start, end, val, filed, form), most recent periods first.
-    """
-    facts = _merged_standard_taxonomy_facts(companyfacts)
-    by_period: dict[tuple[str, str], tuple[float, str, str, int]] = {}
-    for tag_index, tag in enumerate(tags):
-        if tag not in facts:
-            continue
-        units = facts[tag].get("units", {})
-        entries = units.get(unit, [])
-        for item in entries:
-            form = item.get("form")
-            if form not in allowed_forms:
-                continue
-            if "val" not in item:
-                continue
-            start = item.get("start") or ""
-            end = item.get("end")
-            if not end:
-                continue
-            filed = item.get("filed") or ""
-            key = (str(start), str(end))
-            prev = by_period.get(key)
-            if prev is None or (filed, -tag_index) > (prev[1], -prev[3]):
-                by_period[key] = (float(item["val"]), filed, str(form), tag_index)
-    out = [
-        (start, end, val, filed, form)
-        for (start, end), (val, filed, form, _) in by_period.items()
-    ]
-    out.sort(key=lambda x: x[1], reverse=True)
-    return out
-
-
-def _days_between(start: Any, end: Any) -> int:
-    start_dt = pd.to_datetime(start, errors="coerce")
-    end_dt = pd.to_datetime(end, errors="coerce")
-    if pd.isna(start_dt) or pd.isna(end_dt):
-        return 0
-    return int((end_dt - start_dt).days)
-
-
 def _reconstruct_flow_periods(
     companyfacts: dict[str, Any], tags: list[str], unit: str
 ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
-    """Rebuild clean single-quarter and annual flow series from companyfacts.
+    """Compatibility facade over the canonical flow reconstruction core."""
+    flows = reconstruct_flow_periods(
+        extract_fact_records(companyfacts, tags, unit, QUARTERLY_FORMS)
+    )
+    quarters = [(p.period_end.isoformat(), float(p.value)) for p in flows.quarters]
+    annuals = [(p.period_end.isoformat(), float(p.value)) for p in flows.annuals]
+    return quarters, annuals
 
-    Direct quarterly entries (duration ~3 months) are preferred. Missing
-    quarters are derived from cumulative columns (H1 - Q2 -> Q1, 9M - H1 ->
-    Q3, annual - 9M -> Q4). Some 10-Ks mis-tag the annual value with a Q4-ish
-    duration (SEC frames then carry e.g. CY2025Q4 = the annual value); a
-    fiscal-year-end "quarter" that is >= 85% of the preceding 9M YTD is
-    treated as such a mis-tag and replaced by the internally consistent
-    annual - 9M derivation.
 
-    Returns (quarters, annuals), each a chronologically sorted list of
-    (end, value) pairs.
-    """
-    obs = _flow_observations(companyfacts, tags, unit, QUARTERLY_FORMS)
-    quarters: dict[str, tuple[float, str, str]] = {}
-    annuals: list[tuple[str, str, float, str]] = []
-    ytd_9m_by_start: dict[str, tuple[str, float, str]] = {}
-    ytd_by_end: dict[str, tuple[str, float, int, str]] = {}
-    ytds_by_start: dict[str, list[tuple[str, float, int, str]]] = {}
-    for start, end, val, filed, form in obs:
-        dur = _duration_days(start, end)
-        # Entries without a start (legacy/synthetic data) are treated as
-        # single quarters unless the form is an annual report.
-        is_quarter = (not start and form not in ANNUAL_FORMS) or (
-            bool(start) and 40 <= dur <= 120
+def _legacy_period_values(points: list[tuple[str, float]]) -> tuple[PeriodValue, ...]:
+    out: list[PeriodValue] = []
+    for end, value in points:
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if pd.isna(end_dt):
+            continue
+        day = end_dt.date()
+        out.append(
+            PeriodValue(
+                value=float(value),
+                period_end=day,
+                period_start=None,
+                available_on=day,
+            )
         )
-        if is_quarter:
-            prev = quarters.get(end)
-            if prev is None or filed >= prev[1]:
-                quarters[end] = (val, filed, start)
-        elif start and dur >= 300 and form in ANNUAL_FORMS:
-            annuals.append((start, end, val, filed))
-        elif start and 150 <= dur <= 290:
-            cur = ytd_by_end.get(end)
-            if cur is None or dur > cur[2]:
-                ytd_by_end[end] = (start, val, dur, filed)
-            ytds_by_start.setdefault(start, []).append((end, val, dur, filed))
-            if 200 <= dur <= 290:
-                prev_y = ytd_9m_by_start.get(start)
-                if prev_y is None or (filed, end) > (prev_y[2], prev_y[0]):
-                    ytd_9m_by_start[start] = (end, val, filed)
-
-    # Mis-tagged annual guard (see docstring). The fiscal geometry check
-    # (9M ends ~91d before the quarter end, fiscal start ~365d before it)
-    # keeps genuine quarters and mid-year mis-tags out of scope.
-    for q_end in sorted(quarters):
-        q_val, q_filed, _ = quarters[q_end]
-        ytd = None
-        for y_start, (y_end, y_val, _) in ytd_9m_by_start.items():
-            if (
-                80 <= _days_between(y_end, q_end) <= 100
-                and 300 <= _days_between(y_start, q_end) <= 380
-            ):
-                ytd = (y_start, y_end, y_val)
-                break
-        if ytd is None:
-            continue
-        y_start, y_end, y_val = ytd
-        if y_val == 0 or q_val * y_val <= 0 or abs(q_val) < 0.85 * abs(y_val):
-            continue
-        annual_at_end = next((a for a in annuals if a[1] == q_end), None)
-        if annual_at_end is not None:
-            quarters[q_end] = (annual_at_end[2] - y_val, q_filed, None)
-        else:
-            quarters[q_end] = (q_val - y_val, q_filed, None)
-            annuals.append((y_start, q_end, q_val, q_filed))
-
-    # Derive missing quarters from cumulative columns.
-    # (a) same end: H1 - Q2 implies the earlier quarter (ends at Q2.start - 1).
-    for end, (y_start, y_val, y_dur, _) in ytd_by_end.items():
-        q = quarters.get(end)
-        if q is None or not y_start or q[2] is None:
-            continue
-        q_val, q_filed, q_start = q
-        q_dur = _duration_days(q_start, end)
-        if not (60 <= y_dur - q_dur <= 120):
-            continue
-        implied_end = (
-            pd.to_datetime(q_start) - pd.Timedelta(days=1)
-        ).strftime("%Y-%m-%d")
-        if implied_end not in quarters:
-            quarters[implied_end] = (y_val - q_val, q_filed, None)
-    # (b) same fiscal start: 9M - H1 implies the quarter ending at the 9M end.
-    for start, ytds in ytds_by_start.items():
-        ytds = sorted(ytds, key=lambda x: x[2])
-        for i in range(1, len(ytds)):
-            long_end, long_val, long_dur, long_filed = ytds[i]
-            short_end, short_val, short_dur, _ = ytds[i - 1]
-            if not (60 <= long_dur - short_dur <= 120):
-                continue
-            if long_end not in quarters:
-                quarters[long_end] = (long_val - short_val, long_filed, None)
-    # (b2) same fiscal start: H1 - Q1(discrete) implies the quarter ending at
-    # the H1 end. Cash-flow statements are cumulative-only for many filers
-    # (AAPL, GOOGL, AMD, MU, ...): no discrete Q2 entry exists, rule (a)
-    # cannot fire, and the missing Q2 breaks the rolling TTM window for
-    # OCF/capex/D&A. Q1 shares the fiscal start with the H1 entry, so the
-    # diff yields Q2 directly. The duration gate (60..120 days vs Q1) keeps
-    # 9M-vs-Q1 blobs (6-month spans) out.
-    for end, (y_start, y_val, y_dur, _) in ytd_by_end.items():
-        if end in quarters or not y_start:
-            continue
-        for q_end, (q_val, q_filed, q_start) in quarters.items():
-            if not q_start or q_start != y_start or q_end >= end:
-                continue
-            q_dur = _duration_days(q_start, q_end)
-            if not (60 <= y_dur - q_dur <= 120):
-                continue
-            quarters[end] = (y_val - q_val, q_filed, None)
-            break
-
-    # Missing Q4 at fiscal-year ends: annual minus the 9M YTD (or the year's
-    # other three quarters).
-    for a_start, a_end, a_val, a_filed in annuals:
-        if a_end in quarters:
-            continue
-        within = sorted(e for e in quarters if a_start < e < a_end)
-        if len(within) == 3:
-            quarters[a_end] = (a_val - sum(quarters[e][0] for e in within), a_filed, None)
-            continue
-        ytd = ytd_9m_by_start.get(a_start)
-        if ytd and ytd[0] < a_end:
-            quarters[a_end] = (a_val - ytd[1], a_filed, None)
-
-    quarter_series = sorted((end, v[0]) for end, v in quarters.items())
-    annual_series = sorted((end, val) for _, end, val, _ in annuals)
-    return quarter_series, annual_series
+    return tuple(out)
 
 
 def _rolling_ttm_windows(
     quarters: list[tuple[str, float]],
 ) -> list[tuple[str, float]]:
-    """Contiguous four-quarter rolling sums with a fiscal-span guard.
-
-    A window whose end-to-end span falls outside ~9 months crosses a reporting
-    gap (missing or unresolvable quarters) and must not be summed.
-    """
-    windows: list[tuple[str, float]] = []
-    for i in range(3, len(quarters)):
-        e0 = pd.to_datetime(quarters[i - 3][0], errors="coerce")
-        e3 = pd.to_datetime(quarters[i][0], errors="coerce")
-        if pd.isna(e0) or pd.isna(e3):
-            continue
-        span = int((e3 - e0).days)
-        if not (240 <= span <= 310):
-            continue
-        ttm = float(sum(v for _, v in quarters[i - 3 : i + 1]))
-        windows.append((quarters[i][0], ttm))
-    return windows
+    return [
+        (point.period_end.isoformat(), float(point.value))
+        for point in rolling_ttm_points(_legacy_period_values(quarters))
+    ]
 
 
 def pick_latest_fact(
@@ -1595,69 +1397,30 @@ def pick_sum_latest_and_prev_facts(
 def pick_latest_and_year_ago_with_forms(
     companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
 ) -> tuple[float | None, float | None]:
-    values = pick_facts_with_forms(companyfacts, tags, unit, allowed_forms)
-    if not values:
-        return None, None
-    latest_end = pd.to_datetime(values[0][0], errors="coerce")
-    latest = float(values[0][1])
-    if pd.isna(latest_end):
-        prev = float(values[1][1]) if len(values) > 1 else None
-        return latest, prev
-    # Prefer a year-ago point for balance-sheet metrics; fallback to second latest.
-    year_ago = latest_end - pd.Timedelta(days=300)
-    for end, val, _ in values[1:]:
-        end_dt = pd.to_datetime(end, errors="coerce")
-        if not pd.isna(end_dt) and end_dt <= year_ago:
-            return latest, float(val)
-    prev = float(values[1][1]) if len(values) > 1 else None
-    return latest, prev
+    records = extract_fact_records(companyfacts, tags, unit, allowed_forms)
+    return shared_latest_and_year_ago_level(records)
 
 
 def _ttm_points_with_annuals(
     quarters: list[tuple[str, float]], annuals: list[tuple[str, float]]
 ) -> list[tuple[str, float]]:
-    """Rolling TTM windows, superseded by a fresher annual when present.
-
-    When the latest 10-K annual is newer than the latest derivable quarter
-    window (recent 10-Qs missing from facts, or mid-gap companies), the
-    fiscal-year value IS the trailing twelve months at its own end date; it
-    becomes the latest TTM point, with the prior annual as the YoY base.
-    """
-    points = _rolling_ttm_windows(quarters)
-    if points and annuals and annuals[-1][0] > points[-1][0]:
-        points = points + [annuals[-1]]
-        if len(annuals) >= 2:
-            points = points + [annuals[-2]]
-        points = sorted(points, key=lambda x: x[0])
-    return points
+    flows = ReconstructedFlows(
+        quarters=_legacy_period_values(quarters),
+        annuals=_legacy_period_values(annuals),
+    )
+    return [
+        (point.period_end.isoformat(), float(point.value))
+        for point in ttm_points_with_annual_fallback(flows)
+    ]
 
 
 def pick_latest_and_prev_ttm(
     companyfacts: dict[str, Any], tags: list[str], unit: str
 ) -> tuple[float | None, float | None]:
-    quarters, annuals = _reconstruct_flow_periods(companyfacts, tags, unit)
-    points = _ttm_points_with_annuals(quarters, annuals)
-    if not points:
-        return None, None
-    latest_end, latest_ttm = points[-1]
-    latest_dt = pd.to_datetime(latest_end, errors="coerce")
-    prev_ttm = None
-    if not pd.isna(latest_dt):
-        # The YoY base is the TTM ending ~one year earlier (same fiscal
-        # position), not the immediately preceding quarter window.
-        best_gap: int | None = None
-        for end_str, ttm in points[:-1]:
-            end_dt = pd.to_datetime(end_str, errors="coerce")
-            if pd.isna(end_dt):
-                continue
-            offset = int((latest_dt - end_dt).days)
-            if not (320 <= offset <= 410):
-                continue
-            gap = abs(offset - 365)
-            if best_gap is None or gap < best_gap:
-                best_gap = gap
-                prev_ttm = ttm
-    return latest_ttm, prev_ttm
+    records = extract_fact_records(companyfacts, tags, unit, QUARTERLY_FORMS)
+    # Scanner preserves its public fallback contract: if no genuine rolling
+    # four-quarter window exists, load_one_fundamental falls back to annual.
+    return current_ttm_pair(records, require_rolling_window=True)
 
 
 def build_ttm_history(
@@ -1666,23 +1429,13 @@ def build_ttm_history(
     unit: str,
     max_points: int = 16,
 ) -> list[tuple[str, float]]:
-    quarters, annuals = _reconstruct_flow_periods(companyfacts, tags, unit)
-    points = _ttm_points_with_annuals(quarters, annuals)
-    if points:
-        return points[-int(max(1, max_points)) :]
-
-    annual_values = pick_facts_with_forms(companyfacts, tags, unit, ANNUAL_FORMS)
-    annual: list[tuple[pd.Timestamp, float]] = []
-    for end, val, _ in annual_values:
-        end_dt = pd.to_datetime(end, errors="coerce")
-        if pd.isna(end_dt):
-            continue
-        annual.append((end_dt, float(val)))
-    annual.sort(key=lambda x: x[0])
-    out: list[tuple[str, float]] = []
-    for end_dt, value in annual:
-        out.append((end_dt.strftime("%Y-%m-%d"), float(value)))
-    return out[-int(max(1, max_points)) :]
+    records = extract_fact_records(companyfacts, tags, unit, QUARTERLY_FORMS)
+    flows = reconstruct_flow_periods(records)
+    points = ttm_points_with_annual_fallback(flows)
+    return [
+        (point.period_end.isoformat(), float(point.value))
+        for point in points[-int(max(1, max_points)) :]
+    ]
 
 
 def build_fact_history(
@@ -2752,7 +2505,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 3
+PARSED_FUND_CACHE_VERSION = 4
 
 
 def _parsed_fund_cache_meta(

@@ -144,6 +144,16 @@ class TestRevisionAndPitSemantics(unittest.TestCase):
         self.assertEqual(first.quarters[0].value, 10)
         self.assertEqual(second.quarters[0].value, 11)
 
+    def test_missing_filing_date_is_not_visible_in_pit(self) -> None:
+        rows = [
+            fact(10, "2025-03-31", start="2025-01-01"),
+        ]
+        state = reconstruct_flow_periods(
+            rows,
+            VisibilityCutoff(date(2025, 12, 31)),
+        )
+        self.assertEqual(state.quarters, ())
+
     def test_same_day_missing_accession_is_not_visible_to_accession_cutoff(self) -> None:
         rows = [
             fact(10, "2025-03-31", start="2025-01-01", filed="2025-05-01", accession="0001"),

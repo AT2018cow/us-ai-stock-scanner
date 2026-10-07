@@ -26,10 +26,20 @@ from ai_value_scanner.fundamentals.accounting import (
     fundamental_quality_score_from_metrics,
     safe_yoy,
 )
+from ai_value_scanner.fundamentals.facts import (
+    FactRecord,
+    VisibilityCutoff,
+    extract_fact_records,
+)
+from ai_value_scanner.fundamentals.reconstruction import (
+    build_flow_visibility_series,
+    build_level_visibility_series,
+    current_ttm_pair,
+    latest_and_year_ago_level as shared_latest_and_year_ago_level,
+)
 
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
-    ANNUAL_FORMS,
     ASSETS_CURRENT_TAGS,
     BACKLOG_TAGS,
     CAPEX_TAGS,
@@ -49,7 +59,6 @@ from ai_value_scanner.scanner import (
     RECEIVABLES_CURRENT_TAGS,
     REVENUE_TAGS,
     SHARES_TAGS,
-    _merged_standard_taxonomy_facts,
     AlpacaClient,
     NetworkMonitor,
     RequestRateLimiter,
@@ -159,6 +168,12 @@ class FundamentalPointInTime:
     nonrecurring_gain_series: dict[str, list[tuple[pd.Timestamp, float, pd.Timestamp]]] = field(
         default_factory=dict
     )
+    # Canonical raw facts are retained so production replay can reconstruct
+    # the complete visible state at each asof, including amendments that only
+    # change a historical YoY base rather than the latest TTM value.
+    fact_records: dict[str, list[FactRecord]] = field(default_factory=dict)
+    nonrecurring_expense_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
+    nonrecurring_gain_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -374,31 +389,44 @@ def resolve_watchlist_asof(
     return {}, "none"
 
 
-def form_matches_allowed(form: Any, allowed_forms: set[str]) -> bool:
-    token = str(form or "").strip().upper()
-    if not token:
-        return False
-    if token in allowed_forms:
-        return True
-    if "/" in token:
-        base = token.split("/", 1)[0]
-        if base in allowed_forms:
-            return True
-    if token.endswith("A") and len(token) > 1:
-        if token[:-1] in allowed_forms:
-            return True
-    return False
-
-
-def normalize_form_token(form: Any) -> str:
-    token = str(form or "").strip().upper()
-    if not token:
-        return ""
-    if "/" in token:
-        token = token.split("/", 1)[0]
-    if token.endswith("A") and token[:-1] in ANNUAL_FORMS.union(QUARTERLY_FORMS):
-        token = token[:-1]
-    return token
+def _coerce_fact_records(points: list[Any]) -> list[FactRecord]:
+    """Accept canonical FactRecord rows plus legacy dict points used by tests."""
+    out: list[FactRecord] = []
+    for index, point in enumerate(points):
+        if isinstance(point, FactRecord):
+            out.append(point)
+            continue
+        if not isinstance(point, dict):
+            continue
+        end_raw = point.get("end")
+        value_raw = point.get("value")
+        if end_raw is None or value_raw is None:
+            continue
+        try:
+            end_ts = pd.Timestamp(end_raw)
+            start_raw = point.get("start")
+            start_ts = pd.Timestamp(start_raw) if start_raw is not None else None
+            visible_ts = pd.Timestamp(point.get("visible") or end_raw)
+            value = float(value_raw)
+        except Exception:
+            continue
+        if not np.isfinite(value):
+            continue
+        accession_raw = point.get("accession") or point.get("accn")
+        out.append(
+            FactRecord(
+                tag=str(point.get("tag") or f"legacy_{index}"),
+                unit=str(point.get("unit") or ""),
+                value=value,
+                period_end=end_ts.date(),
+                period_start=start_ts.date() if start_ts is not None else None,
+                filed=visible_ts.date(),
+                accession=str(accession_raw) if accession_raw else None,
+                form=str(point.get("form") or ""),
+                tag_priority=int(point.get("tag_priority") or index),
+            )
+        )
+    return out
 
 
 def extract_metric_points(
@@ -406,358 +434,41 @@ def extract_metric_points(
     tags: list[str],
     unit: str,
     allowed_forms: set[str],
-) -> list[dict[str, Any]]:
-    # Collect points from ALL tags (dei + us-gaap merged upstream); the
-    # caller collapses duplicates per period end (latest visible wins, tag
-    # order breaks ties). Returning the first tag with data would replay the
-    # stale-share-count bug (e.g. RTX picking a 2009 us-gaap value while
-    # dei carries the current count).
-    facts = _merged_standard_taxonomy_facts(companyfacts)
-    points: list[dict[str, Any]] = []
-    for tag in tags:
-        tag_obj = facts.get(tag, {})
-        units = tag_obj.get("units", {})
-        entries = units.get(unit, [])
-        for item in entries:
-            if not form_matches_allowed(item.get("form"), allowed_forms):
-                continue
-            end = item.get("end")
-            filed = item.get("filed")
-            val = item.get("val")
-            if val is None or end is None:
-                continue
-            visible = filed or end
-            try:
-                end_dt = pd.Timestamp(end, tz="UTC").normalize()
-                vis_dt = pd.Timestamp(visible, tz="UTC").normalize()
-                fv = float(val)
-            except Exception:
-                continue
-            if not np.isfinite(fv):
-                continue
-            start_raw = item.get("start")
-            try:
-                start_dt = (
-                    pd.Timestamp(start_raw, tz="UTC").normalize()
-                    if start_raw
-                    else None
-                )
-            except Exception:
-                start_dt = None
-            points.append(
-                {
-                    "end": end_dt,
-                    "start": start_dt,
-                    "visible": vis_dt,
-                    "value": fv,
-                    "form": str(item.get("form") or "").upper(),
-                }
-            )
-    return points
+) -> list[FactRecord]:
+    """Parse metric facts through the canonical SEC fact model."""
+    return extract_fact_records(companyfacts, tags, unit, allowed_forms)
 
 
-def collapse_points_by_end(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not points:
-        return []
-    best_by_end: dict[pd.Timestamp, dict[str, Any]] = {}
-    for point in points:
-        end = point["end"]
-        prev = best_by_end.get(end)
-        if prev is None or point["visible"] > prev["visible"]:
-            best_by_end[end] = point
-    out = list(best_by_end.values())
-    out.sort(key=lambda x: x["end"])
-    return out
+def collapse_points_by_end(points: list[Any]) -> list[FactRecord]:
+    """Compatibility helper retaining canonical fact records."""
+    from ai_value_scanner.fundamentals.facts import collapse_fact_records_by_end
+
+    return collapse_fact_records_by_end(_coerce_fact_records(points))
 
 
-def build_level_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
-    """Level series as (visible, value, report_period_end).
-
-    C04: when several points share the same disclosure date (an annual file
-    carries the current period plus prior-year comparatives), the LATEST
-    report period must win — not the first point encountered. Ties on
-    (visible, end) keep the caller's tag-priority order (first wins).
-    """
-    if not points:
-        return []
-    best_by_visible: dict[pd.Timestamp, tuple[pd.Timestamp, float]] = {}
-    for point in points:
-        vis = point["visible"]
-        end = point.get("end", vis)
-        cand = (end, float(point["value"]))
-        prev = best_by_visible.get(vis)
-        if prev is None or end > prev[0]:
-            best_by_visible[vis] = cand
-    out = [
-        (vis, value, end)
-        for vis, (end, value) in sorted(best_by_visible.items())
-    ]
-    return out
+def _period_value_to_series_tuple(point: Any) -> tuple[pd.Timestamp, float, pd.Timestamp]:
+    return (
+        pd.Timestamp(point.available_on, tz="UTC"),
+        float(point.value),
+        pd.Timestamp(point.period_end, tz="UTC"),
+    )
 
 
-def _point_duration_days(point: dict[str, Any]) -> int:
-    start = point.get("start")
-    if start is None:
-        return 0
-    try:
-        return int((point["end"] - start).days)
-    except Exception:
-        return 0
-
-
-def build_flow_ttm_or_annual_series(points: list[dict[str, Any]]) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
-    """PIT flow series as (visible, value, window_period_end).
-
-    Mirrors the scanner's quarter reconstruction: single-quarter entries are
-    preferred, missing Q4s are derived from annual minus YTD (or annual minus
-    the year's other quarters), and rolling 4-quarter windows carry a span
-    guard. Each window is keyed by the latest visibility date of its parts so
-    a TTM value only becomes available once its last input filing is visible.
-    The window's period end is kept for the YoY lookup (C02). Legacy points
-    without a `start` are treated as single quarters.
-    """
-    if not points:
-        return []
-    annual = [p for p in points if normalize_form_token(p.get("form")) in ANNUAL_FORMS]
-    quarterly = [p for p in points if normalize_form_token(p.get("form")) not in ANNUAL_FORMS]
-
-    def period_key(point: dict[str, Any]) -> tuple[str, pd.Timestamp]:
-        start = point.get("start")
-        return (str(start) if start is not None else "", point["end"])
-
-    def collapse(plist: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        best: dict[tuple[str, pd.Timestamp], dict[str, Any]] = {}
-        for point in plist:
-            prev = best.get(period_key(point))
-            # PIT: earliest visible wins — the first time a period was
-            # reported is when it becomes available for replay.
-            if prev is None or point["visible"] < prev["visible"]:
-                best[period_key(point)] = point
-        return list(best.values())
-
-    annual = collapse(annual)
-
-    # Group the raw quarterly points by end: quarter candidates keep the
-    # restatement semantics (latest visible wins), while YTD candidates keep
-    # the earliest visible copy, because the first time a cumulative period
-    # was reported drives the availability of any quarter derived from it.
-    by_end: dict[pd.Timestamp, list[dict[str, Any]]] = {}
-    for point in quarterly:
-        by_end.setdefault(point["end"], []).append(point)
-    quarters: dict[pd.Timestamp, dict[str, Any]] = {}
-    ytd_9m: dict[pd.Timestamp, dict[str, Any]] = {}
-    ytd_by_end: dict[pd.Timestamp, dict[str, Any]] = {}
-    ytds_by_start: dict[pd.Timestamp, list[dict[str, Any]]] = {}
-    for end, plist in by_end.items():
-        best_q: dict[str, Any] | None = None
-        for point in plist:
-            dur = _point_duration_days(point)
-            if point.get("start") is None or 40 <= dur <= 120:
-                # PIT: keep the FIRST visible copy — that is when the data
-                # first became available. Restated comparatives filed in later
-                # 10-Qs share the same period-end but carry a later visible
-                # date; keeping them would create phantom gaps where the
-                # quarter is "not yet visible" between its original filing
-                # and the restatement.
-                if best_q is None or point["visible"] < best_q["visible"]:
-                    best_q = point
-            elif 150 <= dur <= 290:
-                cur_y = ytd_by_end.get(end)
-                if cur_y is None or _point_duration_days(point) > _point_duration_days(cur_y):
-                    ytd_by_end[end] = point
-                if point.get("start") is not None:
-                    ytds_by_start.setdefault(point["start"], []).append(point)
-                if 200 <= dur <= 290:
-                    cur_9 = ytd_9m.get(end)
-                    if cur_9 is None or point["visible"] < cur_9["visible"]:
-                        ytd_9m[end] = point
-        if best_q is not None:
-            quarters[end] = best_q
-
-    # Mis-tagged annual guard (mirrors the scanner): some 10-Ks tag the FY
-    # value into a Q4-ish duration. A fiscal-year-end "quarter" that is >= 85%
-    # of the preceding 9M YTD (same sign, matching fiscal geometry) is
-    # replaced by the internally consistent annual - 9M derivation.
-    for q_end in sorted(quarters):
-        q_point = quarters[q_end]
-        ytd = None
-        for y_end, y_point in ytd_9m.items():
-            y_start = y_point.get("start")
-            if y_start is None:
-                continue
-            if (
-                80 <= int((q_end - y_end).days) <= 100
-                and 300 <= int((q_end - y_start).days) <= 380
-            ):
-                ytd = y_point
-                break
-        if ytd is None:
-            continue
-        y_val = float(ytd["value"])
-        q_val = float(q_point["value"])
-        if y_val == 0 or q_val * y_val <= 0 or abs(q_val) < 0.85 * abs(y_val):
-            continue
-        annual_at_end = next(
-            (
-                a
-                for a in annual
-                if a["end"] == q_end
-                and a.get("start") is not None
-                and _point_duration_days(a) >= 300
-            ),
-            None,
-        )
-        derived = dict(q_point)
-        if annual_at_end is not None:
-            derived["value"] = float(annual_at_end["value"]) - y_val
-            derived["visible"] = max(q_point["visible"], ytd["visible"])
-        else:
-            derived["value"] = q_val - y_val
-            derived["visible"] = max(q_point["visible"], ytd["visible"])
-            reclassified = dict(q_point)
-            reclassified["value"] = q_val
-            reclassified["start"] = ytd.get("start")
-            annual.append(reclassified)
-        quarters[q_end] = derived
-
-    # Same guard for mis-tagged entries that landed in the annual list (form
-    # 10-K but quarter-length duration): they can never be fiscal-year values
-    # as-is. When the magnitude test says the value IS the annual, derive the
-    # true Q4 from it and register it as the fiscal-year point.
-    for point in list(annual):
-        start = point.get("start")
-        if start is None:
-            continue
-        dur = _point_duration_days(point)
-        if not (40 <= dur <= 120):
-            continue
-        q_end = point["end"]
-        if q_end in quarters:
-            continue
-        ytd = None
-        for y_end, y_point in ytd_9m.items():
-            y_start = y_point.get("start")
-            if y_start is None:
-                continue
-            if (
-                80 <= int((q_end - y_end).days) <= 100
-                and 300 <= int((q_end - y_start).days) <= 380
-            ):
-                ytd = y_point
-                break
-        if ytd is None:
-            continue
-        y_val = float(ytd["value"])
-        q_val = float(point["value"])
-        if y_val == 0 or q_val * y_val <= 0 or abs(q_val) < 0.85 * abs(y_val):
-            continue
-        derived = dict(point)
-        derived["value"] = q_val - y_val
-        derived["visible"] = max(point["visible"], ytd["visible"])
-        quarters[q_end] = derived
-        reclassified = dict(point)
-        reclassified["start"] = ytd.get("start")
-        annual.append(reclassified)
-
-    # Derive missing quarters from cumulative columns (PIT availability =
-    # once all inputs are visible).
-    # (a) same end: H1 - Q2 implies the earlier quarter (ends at Q2.start - 1).
-    for end, y_point in ytd_by_end.items():
-        q_point = quarters.get(end)
-        if q_point is None or q_point.get("start") is None or y_point.get("start") is None:
-            continue
-        if not (60 <= _point_duration_days(y_point) - _point_duration_days(q_point) <= 120):
-            continue
-        implied_end = q_point["start"] - pd.Timedelta(days=1)
-        if implied_end not in quarters:
-            derived = dict(q_point)
-            derived["value"] = float(y_point["value"]) - float(q_point["value"])
-            derived["visible"] = max(q_point["visible"], y_point["visible"])
-            quarters[implied_end] = derived
-    # (b) same fiscal start: 9M - H1 implies the quarter ending at the 9M end.
-    for start, ytds in ytds_by_start.items():
-        ytds = sorted(ytds, key=lambda p: _point_duration_days(p))
-        for i in range(1, len(ytds)):
-            long_p, short_p = ytds[i], ytds[i - 1]
-            if not (
-                60 <= _point_duration_days(long_p) - _point_duration_days(short_p) <= 120
-            ):
-                continue
-            if long_p["end"] not in quarters:
-                derived = dict(long_p)
-                derived["value"] = float(long_p["value"]) - float(short_p["value"])
-                derived["visible"] = max(long_p["visible"], short_p["visible"])
-                quarters[long_p["end"]] = derived
-
-    for point in annual:
-        start = point.get("start")
-        if start is None:
-            continue
-        if _point_duration_days(point) < 300:
-            continue
-        end = point["end"]
-        if end in quarters:
-            continue
-        y9_end = None
-        for y_end, y_point in ytd_9m.items():
-            if y_point.get("start") == start and y_end < end:
-                if y9_end is None or y_end > y9_end:
-                    y9_end = y_end
-        if y9_end is not None:
-            derived = dict(point)
-            derived["value"] = float(point["value"]) - float(ytd_9m[y9_end]["value"])
-            derived["visible"] = max(point["visible"], ytd_9m[y9_end]["visible"])
-            quarters[end] = derived
-            continue
-        within = sorted(e for e in quarters if start < e < end)
-        if len(within) == 3:
-            derived = dict(point)
-            derived["value"] = float(point["value"]) - sum(
-                float(quarters[e]["value"]) for e in within
-            )
-            quarters[end] = derived
-
-    if len(quarters) < 4:
-        return build_level_series(collapse_points_by_end(annual))
-
-    ends = sorted(quarters)
-    # Each entry is (value, window_end): the YoY lookup needs the TTM
-    # window's period end, not just its visibility date (C02).
-    by_visible: dict[pd.Timestamp, tuple[float, pd.Timestamp]] = {}
-    for idx in range(3, len(ends)):
-        e0, e3 = ends[idx - 3], ends[idx]
-        span = int((e3 - e0).days)
-        if not (240 <= span <= 310):
-            continue
-        window = [quarters[e] for e in ends[idx - 3 : idx + 1]]
-        visible = max(p["visible"] for p in window)
-        value = float(sum(float(p["value"]) for p in window))
-        by_visible[visible] = (value, e3)
-
-    # A fresher 10-K annual supersedes stale quarter windows: the fiscal year
-    # IS the trailing twelve months at its own end date (recent 10-Q data
-    # missing from facts, or mid-gap filers). Keyed by the filing's
-    # visibility date for PIT replay.
-    annual_candidates = [
-        a
-        for a in annual
-        if a.get("start") is not None and _point_duration_days(a) >= 300
-    ]
-    annual_candidates.sort(key=lambda p: p["end"])
-    if annual_candidates and (
-        not ends or annual_candidates[-1]["end"] > ends[-1]
-    ):
-        latest_a = annual_candidates[-1]
-        by_visible[latest_a["visible"]] = (float(latest_a["value"]), latest_a["end"])
-        if len(annual_candidates) >= 2:
-            prev_a = annual_candidates[-2]
-            # Restated comparatives often share the latest 10-K's visibility
-            # date; never let the prior year overwrite the latest annual.
-            if prev_a["visible"] < latest_a["visible"]:
-                by_visible[prev_a["visible"]] = (float(prev_a["value"]), prev_a["end"])
+def build_level_series(points: list[Any]) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
+    """PIT level series built from the shared filing-version core."""
     return [
-        (vis, value, end)
-        for vis, (value, end) in sorted(by_visible.items(), key=lambda x: x[0])
+        _period_value_to_series_tuple(point)
+        for point in build_level_visibility_series(_coerce_fact_records(points))
+    ]
+
+
+def build_flow_ttm_or_annual_series(
+    points: list[Any],
+) -> list[tuple[pd.Timestamp, float, pd.Timestamp]]:
+    """PIT TTM/annual staircase built from the shared reconstruction core."""
+    return [
+        _period_value_to_series_tuple(point)
+        for point in build_flow_visibility_series(_coerce_fact_records(points))
     ]
 
 
@@ -1215,15 +926,12 @@ def latest_and_year_ago_flow(
 
 
 def latest_and_year_ago_level(
-    series: list[tuple], asof: pd.Timestamp, min_age_days: int = 300
+    series: list[tuple],
+    asof: pd.Timestamp,
+    min_age_days: int = 320,
+    max_age_days: int = 410,
 ) -> tuple[float | None, float | None]:
-    """Latest level value plus its comparison base (C02/C04).
-
-    Mirrors the scanner's pick_latest_and_year_ago_with_forms: prefer the
-    newest report period at least min_age_days older than the latest period;
-    fall back to the second-newest entry. Legacy 2-tuple entries degrade to
-    the adjacent-entry fallback.
-    """
+    """Latest visible level plus a genuine year-ago comparison period."""
     if not series:
         return None, None
     entries = sorted((x for x in series if x[0] <= asof), key=lambda x: x[0])
@@ -1236,24 +944,72 @@ def latest_and_year_ago_level(
         return None, None
     latest_end = latest[2] if len(latest) > 2 else None
     if latest_end is None:
+        # Legacy synthetic 2-tuples do not carry a report period end; keep
+        # their compatibility behavior without weakening production PIT data.
         prev = float(entries[-2][1]) if len(entries) > 1 else None
         return latest_value, prev
-    threshold = latest_end - pd.Timedelta(days=min_age_days)
-    best_end: pd.Timestamp | None = None
+
+    best_gap: int | None = None
     prev: float | None = None
     for entry in entries[:-1]:
         end = entry[2] if len(entry) > 2 else None
-        if end is None or end > threshold:
+        if end is None:
             continue
-        if best_end is None or end > best_end:
-            best_end = end
+        gap_days = int((latest_end - end).days)
+        if not min_age_days <= gap_days <= max_age_days:
+            continue
+        distance = abs(gap_days - 365)
+        if best_gap is None or distance < best_gap:
+            best_gap = distance
             try:
                 prev = float(entry[1])
             except (TypeError, ValueError):
                 prev = None
-    if prev is None and len(entries) > 1:
-        prev = float(entries[-2][1])
     return latest_value, prev
+
+
+def flow_pair_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> tuple[float | None, float | None]:
+    """Canonical PIT flow pair, with legacy-series fallback for synthetic callers."""
+    if records:
+        return current_ttm_pair(
+            records,
+            VisibilityCutoff(filed_through=pd.Timestamp(asof).date()),
+        )
+    return latest_and_year_ago_flow(series, asof)
+
+
+def level_pair_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> tuple[float | None, float | None]:
+    """Canonical PIT level pair, with legacy-series fallback for synthetic callers."""
+    if records:
+        return shared_latest_and_year_ago_level(
+            records,
+            VisibilityCutoff(filed_through=pd.Timestamp(asof).date()),
+        )
+    return latest_and_year_ago_level(series, asof)
+
+
+def flow_value_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> float | None:
+    return flow_pair_asof(records, series, asof)[0]
+
+
+def level_value_asof(
+    records: list[FactRecord],
+    series: list[tuple],
+    asof: pd.Timestamp,
+) -> float | None:
+    return level_pair_asof(records, series, asof)[0]
 
 
 def latest_and_prev_asof(
@@ -1360,87 +1116,90 @@ def close_history_from_frame_asof(
     return out
 
 
-def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[str, FundamentalPointInTime]:
+def load_symbol_fundamental_pti(
+    sec: SecClient,
+    symbol: str,
+    cik: str,
+) -> tuple[str, FundamentalPointInTime]:
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
-    revenue_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, REVENUE_TAGS, "USD", QUARTERLY_FORMS)
+    fact_records: dict[str, list[FactRecord]] = {}
+
+    def flow_metric(name: str, tags: list[str], unit: str = "USD") -> list[tuple]:
+        records = extract_metric_points(companyfacts, tags, unit, QUARTERLY_FORMS)
+        fact_records[name] = records
+        return build_flow_ttm_or_annual_series(records)
+
+    def level_metric(name: str, tags: list[str], unit: str = "USD") -> list[tuple]:
+        records = extract_metric_points(companyfacts, tags, unit, QUARTERLY_FORMS)
+        fact_records[name] = records
+        return build_level_series(records)
+
+    revenue_series = flow_metric("revenue", REVENUE_TAGS)
+    net_income_series = flow_metric("net_income", NET_INCOME_TAGS)
+    shares_series = level_metric("shares", SHARES_TAGS, "shares")
+    operating_cash_flow_series = flow_metric(
+        "operating_cash_flow",
+        OPERATING_CASH_FLOW_TAGS,
     )
-    net_income_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS)
+    capex_series = flow_metric("capex", CAPEX_TAGS)
+    ebit_series = flow_metric("ebit", EBIT_TAGS)
+    cash_series = level_metric("cash", CASH_AND_EQUIVALENTS_TAGS)
+    long_term_debt_series = level_metric("long_term_debt", LONG_TERM_DEBT_TAGS)
+    current_debt_series = level_metric("current_debt", CURRENT_DEBT_TAGS)
+    current_assets_series = level_metric("current_assets", ASSETS_CURRENT_TAGS)
+    current_liabilities_series = level_metric(
+        "current_liabilities",
+        LIABILITIES_CURRENT_TAGS,
     )
-    shares_series = build_level_series(
-        extract_metric_points(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
-    )
-    operating_cash_flow_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, OPERATING_CASH_FLOW_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    capex_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, CAPEX_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    ebit_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, EBIT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    cash_series = build_level_series(
-        extract_metric_points(companyfacts, CASH_AND_EQUIVALENTS_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    long_term_debt_series = build_level_series(
-        extract_metric_points(companyfacts, LONG_TERM_DEBT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_debt_series = build_level_series(
-        extract_metric_points(companyfacts, CURRENT_DEBT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_assets_series = build_level_series(
-        extract_metric_points(companyfacts, ASSETS_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    current_liabilities_series = build_level_series(
-        extract_metric_points(companyfacts, LIABILITIES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    receivables_series = build_level_series(
-        extract_metric_points(companyfacts, RECEIVABLES_CURRENT_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    inventory_series = build_level_series(
-        extract_metric_points(companyfacts, INVENTORY_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    interest_expense_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, INTEREST_EXPENSE_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    da_series = build_flow_ttm_or_annual_series(
-        extract_metric_points(companyfacts, DA_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    backlog_series = build_level_series(
-        extract_metric_points(companyfacts, BACKLOG_TAGS, "USD", QUARTERLY_FORMS)
-    )
-    # C05: per-tag TTM series for the scan's non-recurring adjustment set.
-    nonrecurring_expense_series = {
-        tag: build_flow_ttm_or_annual_series(
-            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
-        )
+    receivables_series = level_metric("receivables", RECEIVABLES_CURRENT_TAGS)
+    inventory_series = level_metric("inventory", INVENTORY_TAGS)
+    interest_expense_series = flow_metric("interest_expense", INTEREST_EXPENSE_TAGS)
+    da_series = flow_metric("da", DA_TAGS)
+    backlog_series = level_metric("backlog", BACKLOG_TAGS)
+
+    # C05: keep both raw facts and compatibility staircases for each adjustment
+    # tag. Raw facts drive production asof reconstruction below.
+    nonrecurring_expense_facts = {
+        tag: extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
         for tag in NONRECURRING_EXPENSE_TAGS
     }
-    nonrecurring_gain_series = {
-        tag: build_flow_ttm_or_annual_series(
-            extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
-        )
+    nonrecurring_gain_facts = {
+        tag: extract_metric_points(companyfacts, [tag], "USD", QUARTERLY_FORMS)
         for tag in NONRECURRING_GAIN_TAGS
     }
+    nonrecurring_expense_series = {
+        tag: build_flow_ttm_or_annual_series(records)
+        for tag, records in nonrecurring_expense_facts.items()
+    }
+    nonrecurring_gain_series = {
+        tag: build_flow_ttm_or_annual_series(records)
+        for tag, records in nonrecurring_gain_facts.items()
+    }
+
     disclosure_series = build_disclosure_series_from_submissions(submissions)
     ai_disclosure_score, _, _ = ai_disclosure_score_from_submissions(
         submissions,
         disclosure_keyword_cap=6,
     )
-    revenue_for_backlog = latest_asof(revenue_series, pd.Timestamp.now(tz="UTC").normalize())
-    backlog_latest = latest_asof(backlog_series, pd.Timestamp.now(tz="UTC").normalize())
+    revenue_for_backlog = latest_asof(
+        revenue_series,
+        pd.Timestamp.now(tz="UTC").normalize(),
+    )
+    backlog_latest = latest_asof(
+        backlog_series,
+        pd.Timestamp.now(tz="UTC").normalize(),
+    )
     ai_backlog_signal = 0.0
     if backlog_latest is not None and revenue_for_backlog not in (None, 0):
         ai_backlog_signal = float(
             np.clip(
-                (float(backlog_latest) / float(revenue_for_backlog))
-                / 0.20,
+                (float(backlog_latest) / float(revenue_for_backlog)) / 0.20,
                 0.0,
                 1.0,
             )
         )
+
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -1465,6 +1224,9 @@ def load_symbol_fundamental_pti(sec: SecClient, symbol: str, cik: str) -> tuple[
         ai_backlog_signal=float(ai_backlog_signal or 0.0),
         nonrecurring_expense_series=nonrecurring_expense_series,
         nonrecurring_gain_series=nonrecurring_gain_series,
+        fact_records=fact_records,
+        nonrecurring_expense_facts=nonrecurring_expense_facts,
+        nonrecurring_gain_facts=nonrecurring_gain_facts,
     )
     return symbol, f
 
@@ -2276,35 +2038,95 @@ def build_cross_section_asof(
         if f is None:
             continue
 
-        revenue, revenue_prev = latest_and_year_ago_flow(f.revenue_series, asof)
-        net_income, net_income_prev = latest_and_year_ago_flow(f.net_income_series, asof)
-        shares, shares_prev = latest_and_year_ago_level(f.shares_series, asof)
-        operating_cash_flow, operating_cash_flow_prev = latest_and_year_ago_flow(
-            f.operating_cash_flow_series, asof
+        raw = f.fact_records
+        revenue, revenue_prev = flow_pair_asof(
+            raw.get("revenue", []),
+            f.revenue_series,
+            asof,
         )
-        capex_raw, _ = series_value_asof(f.capex_series, asof)
-        ebit, ebit_prev = latest_and_year_ago_flow(f.ebit_series, asof)
-        cash_and_equivalents, _ = series_value_asof(f.cash_series, asof)
-        debt_long_term, _ = series_value_asof(f.long_term_debt_series, asof)
-        debt_current, _ = series_value_asof(f.current_debt_series, asof)
-        current_assets, _ = series_value_asof(f.current_assets_series, asof)
-        current_liabilities, _ = series_value_asof(f.current_liabilities_series, asof)
-        receivables_current, receivables_prev = latest_and_year_ago_level(f.receivables_series, asof)
-        inventory_current, inventory_prev = latest_and_year_ago_level(f.inventory_series, asof)
-        interest_expense, _ = series_value_asof(f.interest_expense_series, asof)
-        depreciation_and_amortization, depreciation_and_amortization_prev = latest_and_year_ago_flow(
-            f.da_series, asof
+        net_income, net_income_prev = flow_pair_asof(
+            raw.get("net_income", []),
+            f.net_income_series,
+            asof,
+        )
+        shares, shares_prev = level_pair_asof(
+            raw.get("shares", []),
+            f.shares_series,
+            asof,
+        )
+        operating_cash_flow, operating_cash_flow_prev = flow_pair_asof(
+            raw.get("operating_cash_flow", []),
+            f.operating_cash_flow_series,
+            asof,
+        )
+        capex_raw = flow_value_asof(raw.get("capex", []), f.capex_series, asof)
+        ebit, ebit_prev = flow_pair_asof(
+            raw.get("ebit", []),
+            f.ebit_series,
+            asof,
+        )
+        cash_and_equivalents = level_value_asof(
+            raw.get("cash", []),
+            f.cash_series,
+            asof,
+        )
+        debt_long_term = level_value_asof(
+            raw.get("long_term_debt", []),
+            f.long_term_debt_series,
+            asof,
+        )
+        debt_current = level_value_asof(
+            raw.get("current_debt", []),
+            f.current_debt_series,
+            asof,
+        )
+        current_assets = level_value_asof(
+            raw.get("current_assets", []),
+            f.current_assets_series,
+            asof,
+        )
+        current_liabilities = level_value_asof(
+            raw.get("current_liabilities", []),
+            f.current_liabilities_series,
+            asof,
+        )
+        receivables_current, receivables_prev = level_pair_asof(
+            raw.get("receivables", []),
+            f.receivables_series,
+            asof,
+        )
+        inventory_current, inventory_prev = level_pair_asof(
+            raw.get("inventory", []),
+            f.inventory_series,
+            asof,
+        )
+        interest_expense = flow_value_asof(
+            raw.get("interest_expense", []),
+            f.interest_expense_series,
+            asof,
+        )
+        depreciation_and_amortization, depreciation_and_amortization_prev = flow_pair_asof(
+            raw.get("da", []),
+            f.da_series,
+            asof,
         )
 
         # C05: apply the scan's non-recurring adjustments (sum of positive
         # latest values across tags, capped by nonrecurring_addback_revenue_cap).
-        def _nonrecurring_sums(series_map: dict[str, list[tuple]]) -> tuple[float | None, float | None]:
+        def _nonrecurring_sums(
+            series_map: dict[str, list[tuple]],
+            facts_map: dict[str, list[FactRecord]],
+        ) -> tuple[float | None, float | None]:
             latest_sum = 0.0
             prev_sum = 0.0
             has_latest = False
             has_prev = False
-            for tag_series in series_map.values():
-                latest, prev = latest_and_year_ago_flow(tag_series, asof)
+            for tag in set(series_map).union(facts_map):
+                latest, prev = flow_pair_asof(
+                    facts_map.get(tag, []),
+                    series_map.get(tag, []),
+                    asof,
+                )
                 if latest is None:
                     continue
                 latest_val = max(0.0, float(latest))
@@ -2316,8 +2138,14 @@ def build_cross_section_asof(
                     has_prev = has_prev or prev_val > 0
             return (latest_sum if has_latest else None, prev_sum if has_prev else None)
 
-        addback, addback_prev = _nonrecurring_sums(f.nonrecurring_expense_series)
-        gain, gain_prev = _nonrecurring_sums(f.nonrecurring_gain_series)
+        addback, addback_prev = _nonrecurring_sums(
+            f.nonrecurring_expense_series,
+            f.nonrecurring_expense_facts,
+        )
+        gain, gain_prev = _nonrecurring_sums(
+            f.nonrecurring_gain_series,
+            f.nonrecurring_gain_facts,
+        )
         adjusted = compute_adjusted_metrics(
             net_income=net_income,
             ebit=ebit,
@@ -2411,7 +2239,11 @@ def build_cross_section_asof(
             lookback_days=disclosure_lookback_days,
             disclosure_keyword_cap=scan_config.ai_link_disclosure_keyword_cap,
         )
-        backlog_latest = latest_asof(f.backlog_series, asof)
+        backlog_latest = level_value_asof(
+            raw.get("backlog", []),
+            f.backlog_series,
+            asof,
+        )
         asof_backlog = 0.0
         if backlog_latest is not None and revenue not in (None, 0) and scan_config.ai_link_backlog_ratio_cap > 0:
             asof_backlog = float(
