@@ -62,6 +62,18 @@ from ai_value_scanner.fundamentals.reconstruction import (
     ttm_points_with_annual_fallback,
 )
 
+from ai_value_scanner.features.ai_link import (
+    ai_etf_consensus_score,
+    ai_market_link_score,
+    compute_ai_link_score,
+)
+from ai_value_scanner.features.valuation import (
+    compute_historical_valuation_percentile,
+    lookup_close_on_or_before,
+    lookup_value_on_or_before,
+    safe_divide,
+)
+
 
 ANNUAL_FORMS = {"10-K", "20-F", "40-F"}
 QUARTERLY_FORMS = {"10-Q", "10-K", "20-F", "40-F"}
@@ -1526,85 +1538,6 @@ def extract_close_history_from_bars(bars: list[dict[str, Any]]) -> list[tuple[pd
     return out
 
 
-def lookup_value_on_or_before(
-    points: list[tuple[pd.Timestamp, float]], target_ts: pd.Timestamp
-) -> float | None:
-    if not points:
-        return None
-    value: float | None = None
-    for ts, val in points:
-        if ts <= target_ts:
-            value = float(val)
-        else:
-            break
-    return value
-
-
-def lookup_close_on_or_before(
-    closes: list[tuple[pd.Timestamp, float]],
-    target_ts: pd.Timestamp,
-    max_gap_days: int = 14,
-) -> float | None:
-    if not closes:
-        return None
-    max_gap = max(0, int(max_gap_days))
-    for ts, close in reversed(closes):
-        if ts <= target_ts:
-            if max_gap <= 0:
-                return float(close)
-            gap_days = int((target_ts - ts).days)
-            if gap_days <= max_gap:
-                return float(close)
-            return None
-    return None
-
-
-def compute_historical_valuation_percentile(
-    current_multiple: float | None,
-    closes: list[tuple[pd.Timestamp, float]],
-    denominator_history: list[tuple[pd.Timestamp, float]],
-    shares_history: list[tuple[pd.Timestamp, float]],
-    current_shares: float | None,
-    window_days: int,
-    min_observations: int = 3,
-) -> tuple[float | None, int]:
-    if current_multiple is None or not np.isfinite(current_multiple) or current_multiple <= 0:
-        return None, 0
-    if not closes or not denominator_history:
-        return None, 0
-
-    latest_ts = closes[-1][0]
-    start_ts = latest_ts - pd.Timedelta(days=max(30, int(window_days)))
-    samples: list[float] = []
-
-    for end_ts, denom in denominator_history:
-        if end_ts < start_ts:
-            continue
-        if not np.isfinite(denom) or denom <= 0:
-            continue
-        close = lookup_close_on_or_before(closes, end_ts, max_gap_days=14)
-        if close is None:
-            continue
-        shares = lookup_value_on_or_before(shares_history, end_ts)
-        if shares is None and current_shares is not None and np.isfinite(current_shares):
-            shares = float(current_shares)
-        if shares is None or not np.isfinite(shares) or shares <= 0:
-            continue
-        multiple = float(close) * float(shares) / float(denom)
-        if np.isfinite(multiple) and multiple > 0:
-            samples.append(multiple)
-
-    obs = len(samples)
-    if obs < int(max(1, min_observations)):
-        return None, obs
-
-    arr = np.asarray(samples, dtype="float64")
-    pct = float(np.mean(arr <= float(current_multiple)))
-    if not np.isfinite(pct):
-        return None, obs
-    return round(pct, 6), obs
-
-
 def pick_latest_and_prev_with_forms(
     companyfacts: dict[str, Any], tags: list[str], unit: str, allowed_forms: set[str]
 ) -> tuple[float | None, float | None]:
@@ -1922,17 +1855,6 @@ def ai_backlog_signal_from_companyfacts(
     return round(clamp01(ratio / float(cap_ratio)), 6)
 
 
-def ai_etf_consensus_score(watchlist_etf_count: float | int | None, etf_count_saturation: int) -> float:
-    if watchlist_etf_count is None:
-        return 0.0
-    try:
-        count = float(watchlist_etf_count)
-    except (TypeError, ValueError):
-        return 0.0
-    saturation = max(1.0, float(etf_count_saturation))
-    return round(clamp01(count / saturation), 6)
-
-
 def bars_return_from_lookback(bars: list[dict[str, Any]], lookback_days: int) -> float | None:
     if not bars or lookback_days <= 0:
         return None
@@ -1981,25 +1903,6 @@ def bars_sma_from_lookback(bars: list[dict[str, Any]], sma_days: int) -> float |
         return None
     window = closes[-int(sma_days):]
     return float(np.mean(window))
-
-
-def ai_market_link_score(
-    symbol_return_20d: float | None,
-    symbol_return_60d: float | None,
-    benchmark_return_20d: float | None,
-    benchmark_return_60d: float | None,
-    tol_20d: float,
-    tol_60d: float,
-) -> float:
-    score_20 = 0.5
-    if symbol_return_20d is not None and benchmark_return_20d is not None and tol_20d > 0:
-        score_20 = clamp01(1.0 - (abs(symbol_return_20d - benchmark_return_20d) / tol_20d))
-
-    score_60 = 0.5
-    if symbol_return_60d is not None and benchmark_return_60d is not None and tol_60d > 0:
-        score_60 = clamp01(1.0 - (abs(symbol_return_60d - benchmark_return_60d) / tol_60d))
-
-    return round(clamp01(0.4 * score_20 + 0.6 * score_60), 6)
 
 
 def normalize_equity_symbol(raw: Any) -> str:
@@ -2248,15 +2151,6 @@ def robust_normalize_score(series: pd.Series, lower_q: float, upper_q: float) ->
     norm = 1.0 / (1.0 + np.exp(-z))
     # Missing inputs should be neutral, not NaN, to keep composite scores stable.
     return pd.to_numeric(norm, errors="coerce").fillna(0.5)
-
-
-def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-    num = pd.to_numeric(numerator, errors="coerce").astype(float)
-    den = pd.to_numeric(denominator, errors="coerce").astype(float)
-    out = pd.Series(np.nan, index=num.index, dtype=float)
-    valid = den.notna() & (den != 0) & num.notna()
-    out.loc[valid] = num.loc[valid] / den.loc[valid]
-    return out
 
 
 HIGH_COVERAGE_HARD_FILTER_METRICS = {
@@ -5426,12 +5320,16 @@ def run_scan(
         df["ai_backlog_signal"] = 0.0
     df["ai_disclosure_score"] = pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
     df["ai_backlog_signal"] = pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
-    df["ai_link_score"] = (
-        float(config.ai_link_weight_etf_consensus) * pd.to_numeric(df["ai_etf_consensus_score"], errors="coerce").fillna(0.0)
-        + float(config.ai_link_weight_disclosure) * pd.to_numeric(df["ai_disclosure_score"], errors="coerce").fillna(0.0)
-        + float(config.ai_link_weight_market_link) * pd.to_numeric(df["ai_market_link_score"], errors="coerce").fillna(0.0)
-        + float(config.ai_link_weight_backlog) * pd.to_numeric(df["ai_backlog_signal"], errors="coerce").fillna(0.0)
-    ).clip(lower=0.0, upper=1.0)
+    df["ai_link_score"] = df.apply(
+        lambda row: compute_ai_link_score(
+            config,
+            ai_etf_score=row.get("ai_etf_consensus_score"),
+            ai_disclosure_score=row.get("ai_disclosure_score"),
+            ai_market_score=row.get("ai_market_link_score"),
+            ai_backlog_signal=row.get("ai_backlog_signal"),
+        ),
+        axis=1,
+    )
     df["news_count"] = 0
 
     watchlist_counts: dict[str, int] = {}
