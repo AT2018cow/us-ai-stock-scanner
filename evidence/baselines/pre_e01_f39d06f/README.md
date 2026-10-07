@@ -112,4 +112,5 @@ SEC EDGAR 是活数据：2026-10-06 10:00 UTC 的落盘使 661 家公司 facts �
   revenue；survivor 翻转（AAL 出 / ADP 入）← OCF 可得性
 - 无未解释差异；summary 偏移方向不一致（avg_return 均值 -0.04pp / -0.07pp），
   属数据修正而非系统性偏差
-- 证据文件：outputs/gate10_{base,pr10}_{risk_off,risk_on}_*（本地保留）
+- 结构化 gate 记录：`evidence/gates/pr10_same_data_state_20261007.json`
+- 原始证据文件：`outputs/gate10_{base,pr10}_{risk_off,risk_on}_*`（仅本地保留，未归档/未记录 SHA256；此限制已在 gate manifest 中显式标注）
