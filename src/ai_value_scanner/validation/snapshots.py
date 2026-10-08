@@ -36,8 +36,37 @@ def _canonical_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_feature_snapshot(path: str | Path) -> pd.DataFrame:
-    """Load one frozen cross-section snapshot without touching live data."""
-    return pd.read_csv(Path(path), low_memory=False)
+    """Load one frozen cross-section snapshot without touching live data.
+
+    Object/string columns are restored from the bundle manifest so values such
+    as ticker NA or a SIC with leading zeroes are not reinterpreted by the
+    CSV parser.
+    """
+    snapshot_path = Path(path)
+    dtype_map: dict[str, str] = {}
+    manifest_path = snapshot_path.parent / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        record = next(
+            (
+                item
+                for item in manifest.get("snapshots", [])
+                if item.get("path") == snapshot_path.name
+            ),
+            None,
+        )
+        if record is not None:
+            dtype_map = {
+                str(column): "object"
+                for column in record.get("object_columns", [])
+            }
+    return pd.read_csv(
+        snapshot_path,
+        low_memory=False,
+        keep_default_na=False,
+        na_values=[""],
+        dtype=dtype_map or None,
+    )
 
 
 def load_snapshot_manifest(root: str | Path) -> dict[str, Any]:
@@ -72,7 +101,7 @@ def compare_snapshot_manifests(
     for key in sorted(baseline_records):
         left = baseline_records[key]
         right = current_records[key]
-        for field_name in ("sha256", "rows", "columns"):
+        for field_name in ("sha256", "rows", "columns", "object_columns"):
             if left.get(field_name) != right.get(field_name):
                 diffs.append(
                     f"snapshots[{key}].{field_name}: "
@@ -131,6 +160,12 @@ class FeatureSnapshotWriter:
             "asof": date_token,
             "rows": int(len(canonical)),
             "columns": list(canonical.columns),
+            "object_columns": [
+                str(column)
+                for column in canonical.columns
+                if pd.api.types.is_object_dtype(canonical[column].dtype)
+                or pd.api.types.is_string_dtype(canonical[column].dtype)
+            ],
             "sha256": _sha256_file(path),
             "bytes": int(path.stat().st_size),
         }
