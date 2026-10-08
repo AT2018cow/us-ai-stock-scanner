@@ -146,10 +146,10 @@ The runner checks this and aborts on mismatch.
 ```bash
 RUN_ID=post_pr23_baseline_202610
 
-# Use the configured Modal profile. In environments with a named profile:
-# export MODAL_PROFILE=<profile>
-
-.venv/bin/python -m modal run scripts/modal_baseline_executor.py \
+# Test/experiment environment: always target the infi Modal workspace/profile
+# explicitly; do not rely on the host's current/default Modal profile.
+MODAL_PROFILE=infi .venv/bin/python -m modal run \
+  scripts/modal_baseline_executor.py \
   --run-id "$RUN_ID" \
   --stage replay \
   --styles risk_off,risk_on
@@ -178,14 +178,15 @@ the checkpoint tree merely to continue a run; resume reads it directly from the
 persistent Volume.
 
 ```bash
-.venv/bin/python -m modal volume ls ai-scanner-research "/$RUN_ID"
+MODAL_PROFILE=infi .venv/bin/python -m modal volume ls \
+  ai-scanner-research "/$RUN_ID"
 ```
 
 After both replay styles finish, copy back the final replay artifacts:
 
 ```bash
 mkdir -p "$EXP/modal_download/replay"
-.venv/bin/python -m modal volume get \
+MODAL_PROFILE=infi .venv/bin/python -m modal volume get \
   --force \
   ai-scanner-research \
   "/$RUN_ID/replay" \
@@ -196,7 +197,7 @@ After the dataset stage finishes, copy back the survivor datasets and metadata:
 
 ```bash
 mkdir -p "$EXP/modal_download/datasets"
-.venv/bin/python -m modal volume get \
+MODAL_PROFILE=infi .venv/bin/python -m modal volume get \
   --force \
   ai-scanner-research \
   "/$RUN_ID/datasets" \
@@ -214,7 +215,8 @@ To retain the foreground Modal launcher log without detaching, use
 ```bash
 mkdir -p "$EXP/logs"
 set -o pipefail
-.venv/bin/python -m modal run scripts/modal_baseline_executor.py \
+MODAL_PROFILE=infi .venv/bin/python -m modal run \
+  scripts/modal_baseline_executor.py \
   --run-id "$RUN_ID" \
   --stage replay \
   --styles risk_off,risk_on \
@@ -243,7 +245,8 @@ After the first successful full replay, inspect actual Modal resource/billing
 metrics before changing the envelope. For example:
 
 ```bash
-.venv/bin/python -m modal billing report --for today --show-resources
+MODAL_PROFILE=infi .venv/bin/python -m modal billing report \
+  --for today --show-resources
 ```
 
 If memory usage stays comfortably below the request, lower the request on the
@@ -278,7 +281,8 @@ On an 8 GB launcher host, generate both survivor datasets on Modal after the
 replay stage:
 
 ```bash
-.venv/bin/python -m modal run scripts/modal_baseline_executor.py \
+MODAL_PROFILE=infi .venv/bin/python -m modal run \
+  scripts/modal_baseline_executor.py \
   --run-id "$RUN_ID" \
   --stage dataset \
   --styles risk_off,risk_on
@@ -338,6 +342,8 @@ Use:
 with the same windows, seed, frozen inputs and no-promotion rules.
 
 ### Modal for the anchored tuner
+
+In the test/experiment environment, the tuner must also use the `infi` Modal workspace/profile. Set `MODAL_PROFILE=infi` on the foreground tuner command; do not rely on a globally active/default profile.
 
 The retrospective replay/dataset stages use
 `scripts/modal_baseline_executor.py` above. The anchored tuner has a separate
