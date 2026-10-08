@@ -37,6 +37,7 @@ from ai_value_scanner.fundamentals.reconstruction import (
     current_ttm_pair,
     latest_and_year_ago_level as shared_latest_and_year_ago_level,
 )
+from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
 from ai_value_scanner.features.ai_link import (
@@ -59,6 +60,7 @@ from ai_value_scanner.scanner import (
     CURRENT_DEBT_TAGS,
     DA_TAGS,
     EBIT_TAGS,
+    EPS_TAGS,
     INTEREST_EXPENSE_TAGS,
     INVENTORY_TAGS,
     LIABILITIES_CURRENT_TAGS,
@@ -1126,6 +1128,12 @@ def load_symbol_fundamental_pti(
     revenue_series = flow_metric("revenue", REVENUE_TAGS)
     net_income_series = flow_metric("net_income", NET_INCOME_TAGS)
     shares_series = level_metric("shares", SHARES_TAGS, "shares")
+    fact_records["eps"] = extract_metric_points(
+        companyfacts,
+        EPS_TAGS,
+        "USD/shares",
+        QUARTERLY_FORMS,
+    )
     operating_cash_flow_series = flow_metric(
         "operating_cash_flow",
         OPERATING_CASH_FLOW_TAGS,
@@ -2022,11 +2030,44 @@ def build_cross_section_asof(
             f.net_income_series,
             asof,
         )
-        shares, shares_prev = level_pair_asof(
-            raw.get("shares", []),
+        share_records = raw.get("shares", [])
+        _shares_raw, shares_prev = level_pair_asof(
+            share_records,
             f.shares_series,
             asof,
         )
+        if share_records:
+            share_integrity = assess_share_count_integrity(
+                share_records=share_records,
+                eps_records=raw.get("eps", []),
+                net_income_records=raw.get("net_income", []),
+                metric_record_groups=(
+                    raw.get("revenue", []),
+                    raw.get("net_income", []),
+                ),
+                cutoff=VisibilityCutoff(
+                    filed_through=pd.Timestamp(asof).date(),
+                ),
+            )
+            shares = share_integrity.value
+            shares_asof_end = (
+                share_integrity.period_end.isoformat()
+                if share_integrity.period_end is not None
+                else None
+            )
+            shares_stale = bool(share_integrity.stale)
+        else:
+            # Legacy/synthetic callers may provide only the compatibility
+            # series. Preserve their pre-15A behavior; production replay
+            # carries raw FactRecord rows and uses the integrity path above.
+            shares = _shares_raw
+            _, legacy_shares_end = series_value_asof(f.shares_series, asof)
+            shares_asof_end = (
+                pd.Timestamp(legacy_shares_end).date().isoformat()
+                if legacy_shares_end is not None
+                else None
+            )
+            shares_stale = False
         operating_cash_flow, operating_cash_flow_prev = flow_pair_asof(
             raw.get("operating_cash_flow", []),
             f.operating_cash_flow_series,
@@ -2269,6 +2310,8 @@ def build_cross_section_asof(
                 "return_60d": price_feat["return_60d"],
                 "volatility_60d": price_feat["volatility_60d"],
                 "shares_outstanding": shares,
+                "shares_asof_end": shares_asof_end,
+                "shares_stale": shares_stale,
                 "revenue": revenue,
                 "net_income": net_income,
                 "operating_cash_flow": operating_cash_flow,

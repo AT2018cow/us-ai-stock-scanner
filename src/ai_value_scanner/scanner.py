@@ -60,6 +60,7 @@ from ai_value_scanner.fundamentals.reconstruction import (
     rolling_ttm_points,
     ttm_points_with_annual_fallback,
 )
+from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
 from ai_value_scanner.features.ai_link import (
@@ -1292,41 +1293,27 @@ def pick_facts_with_forms(
 def reconcile_share_unit_scale(
     companyfacts: dict[str, Any], shares: float | None
 ) -> tuple[float | None, str | None]:
-    """Detect thousands/millions unit misreporting in share counts.
-
-    Some filers report share counts in thousands or millions while EPS and
-    net income use full units (e.g. Tempus AI reports ~179K shares, actual
-    ~179M). Cross-check EPS for the same period end: implied shares =
-    |net_income / EPS| should match the reported count; a consistent ~1000x
-    (or ~1e6x) gap means the count carries a scaled unit.
-    """
+    """Compatibility facade for the canonical share-unit reconciliation."""
     if shares is None or shares <= 0:
         return shares, None
-    share_points = pick_facts_with_forms(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
-    if not share_points:
+    assessment = assess_share_count_integrity(
+        share_records=extract_fact_records(
+            companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS
+        ),
+        eps_records=extract_fact_records(
+            companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS
+        ),
+        net_income_records=extract_fact_records(
+            companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
+        ),
+        metric_record_groups=(),
+    )
+    if assessment.period_end is None:
         return shares, None
-    shares_end = share_points[0][0]
-    eps_points = pick_facts_with_forms(companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS)
-    ni_points = pick_facts_with_forms(companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS)
-    eps_by_end = {end: val for end, val, _ in eps_points}
-    ni_by_end = {end: val for end, val, _ in ni_points}
-    eps = eps_by_end.get(shares_end)
-    ni = ni_by_end.get(shares_end)
-    if eps is None or ni is None or float(eps) == 0:
-        return shares, shares_end
-    implied = abs(float(ni) / float(eps))
-    if implied <= 0:
-        return shares, shares_end
-    ratio = implied / float(shares)
-    # reported count is in thousands (x1e3) or millions (x1e6) of shares.
-    for factor, lo, hi in (
-        (1_000_000.0, 500_000.0, 2_000_000.0),
-        (1_000.0, 500.0, 2_000.0),
-    ):
-        if lo <= ratio <= hi:
-            return float(shares) * factor, shares_end
-    return shares, shares_end
-
+    return (
+        float(shares) * float(assessment.scale_factor),
+        assessment.period_end.isoformat(),
+    )
 
 def _reconstruct_flow_periods(
     companyfacts: dict[str, Any], tags: list[str], unit: str
@@ -2473,34 +2460,32 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
 
     shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
-    shares, shares_unit_reconciled_end = reconcile_share_unit_scale(companyfacts, shares)
-    shares_asof_end = shares_unit_reconciled_end
-    shares_stale = False
-    if shares is not None and shares_asof_end:
-        # Flag share counts that lag the latest reported period by a wide
-        # margin (e.g. BIDU's 20-F stopped reporting share counts in 2010).
-        # Stale counts distort market cap and peer medians; they are excluded
-        # from peer-relative metrics downstream.
-        latest_metric_end: str | None = None
-        for tags in (REVENUE_TAGS, NET_INCOME_TAGS):
-            points = pick_facts_with_forms(companyfacts, tags, "USD", QUARTERLY_FORMS)
-            if points:
-                latest_metric_end = points[0][0]
-                break
-        if latest_metric_end:
-            try:
-                asof = pd.to_datetime(shares_asof_end, errors="coerce")
-                metric = pd.to_datetime(latest_metric_end, errors="coerce")
-                if pd.notna(asof) and pd.notna(metric) and (metric - asof).days > 400:
-                    shares_stale = True
-                    # 宁缺毋滥: a stale count produces an untrustworthy market
-                    # cap, and every signal derived from it (ps/pe/fcf/discount)
-                    # would be fiction. Null the count so the symbol drops out
-                    # of all market-cap-dependent metrics and filters, while
-                    # the as-of date and stale flag stay for diagnostics.
-                    shares = None
-            except Exception:
-                shares_stale = False
+    share_integrity = assess_share_count_integrity(
+        share_records=extract_fact_records(
+            companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS
+        ),
+        eps_records=extract_fact_records(
+            companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS
+        ),
+        net_income_records=extract_fact_records(
+            companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
+        ),
+        metric_record_groups=(
+            extract_fact_records(
+                companyfacts, REVENUE_TAGS, "USD", QUARTERLY_FORMS
+            ),
+            extract_fact_records(
+                companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
+            ),
+        ),
+    )
+    shares = share_integrity.value
+    shares_asof_end = (
+        share_integrity.period_end.isoformat()
+        if share_integrity.period_end is not None
+        else None
+    )
+    shares_stale = bool(share_integrity.stale)
     revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
     shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
