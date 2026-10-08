@@ -26,6 +26,8 @@ import modal
 
 app = modal.App("ai-value-post-pr23-baseline")
 
+REQUIRED_MODAL_PROFILE = "infi"
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -398,6 +400,16 @@ def _verify_frozen_inputs(
         )
 
 
+def _require_experiment_modal_profile() -> None:
+    profile = os.getenv("MODAL_PROFILE", "").strip()
+    if profile != REQUIRED_MODAL_PROFILE:
+        raise RuntimeError(
+            "post-PR23 research runs must explicitly target the infi Modal "
+            "workspace/profile. Prefix the command with MODAL_PROFILE=infi; "
+            f"got {profile!r}."
+        )
+
+
 def _current_git_sha() -> str:
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -419,6 +431,7 @@ def main(
     resume: bool = True,
 ) -> None:
     """Launch heavy baseline stages on Modal."""
+    _require_experiment_modal_profile()
     run_id = _validate_token(run_id, "run_id")
     style_list = [x.strip() for x in styles.split(",") if x.strip()]
     if not style_list or any(x not in {"risk_on", "risk_off"} for x in style_list):
