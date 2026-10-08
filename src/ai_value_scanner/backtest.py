@@ -46,6 +46,7 @@ from ai_value_scanner.features.ai_link import (
     compute_ai_link_score,
 )
 from ai_value_scanner.features.price import compute_price_history_features
+from ai_value_scanner.features.peer_valuation import compute_peer_relative_valuation
 from ai_value_scanner.features.valuation import (
     compute_historical_valuation_percentile,
     safe_divide,
@@ -2512,28 +2513,10 @@ def build_cross_section_asof(
     df["ps_hist_percentile_source"] = ps_hist_sources
     df["pe_hist_percentile_source"] = pe_hist_sources
 
-    peer_ps = (
-        df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0)]
-        .groupby("sic", dropna=True)["ps"]
-        .median()
-        .rename("peer_median_ps")
-    )
-    peer_pe = (
-        df.loc[np.isfinite(df["pe"]) & (df["pe"] > 0)]
-        .groupby("sic", dropna=True)["pe"]
-        .median()
-        .rename("peer_median_pe")
-    )
-    df = df.merge(peer_ps, left_on="sic", right_index=True, how="left")
-    df = df.merge(peer_pe, left_on="sic", right_index=True, how="left")
-    df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
-    df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
-    df["ps_percentile_in_sic"] = (
-        df.groupby("sic", dropna=False)["ps"].rank(pct=True, method="average")
-    )
-    df["pe_percentile_in_sic"] = (
-        df.groupby("sic", dropna=False)["pe"].rank(pct=True, method="average")
-    )
+    peer_features = compute_peer_relative_valuation(df, min_peer_count=5)
+    for name, values in peer_features.items():
+        df[name] = values
+
     df["watchlist_bucket"] = df["watchlist_bucket"].fillna("").astype(str)
     df["watchlist_etfs"] = df["watchlist_etfs"].fillna("").astype(str)
     if benchmark_trend_ok is not None:

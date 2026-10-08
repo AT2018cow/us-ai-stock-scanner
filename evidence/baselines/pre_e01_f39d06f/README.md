@@ -154,7 +154,7 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 - 回放 events/benchmarks/summary/events_signals：全部逐字节一致
 - 结论：**零漂移，PR #14 为纯行为无关重构**
 
-## PR #15 gate 记录（2025-11-06）
+## PR #15 gate 记录（2026-10-08）
 
 方法：frozen cache，base 8bea7a1 vs head ac859d1，顺序执行。
 
