@@ -12,13 +12,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
 from ai_value_scanner.config import ScanConfig, load_config, resolve_channel_profile
+from ai_value_scanner.replay_checkpoint import SignalDateCheckpointStore, path_sha256
 
 from ai_value_scanner.fundamentals.accounting import (
     compute_adjusted_metrics,
@@ -187,6 +188,13 @@ class BacktestConfig:
     feature_snapshot_dir: str | None = None
     feature_snapshot_dates: list[str] | None = None
     feature_snapshot_only: bool = False
+    signal_checkpoint_dir: str | None = None
+    resume_signal_checkpoints: bool = False
+    signal_checkpoint_commit: Callable[[], None] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 @dataclass
@@ -282,6 +290,45 @@ def bt_log(message: str, scope: str = "backtest", started_at_monotonic: float | 
     if started_at_monotonic is not None:
         elapsed = f" +{_format_elapsed(time.monotonic() - started_at_monotonic)}"
     print(f"[{scope} {ts}{elapsed}] {message}", flush=True)
+
+
+def build_signal_checkpoint_manifest(
+    cfg: BacktestConfig,
+    scan_config: ScanConfig,
+    scenario: str,
+) -> dict[str, Any]:
+    """Strict fingerprint for resumable historical-replay signal checkpoints."""
+    watchlist_csv_path = cfg.watchlist_csv_path or scan_config.watchlist_csv_path
+    return {
+        "scenario": str(scenario),
+        "strategy_style": str(scan_config.strategy_style or ""),
+        "scan_config_path": str(cfg.scan_config_path),
+        "scan_config_sha256": path_sha256(cfg.scan_config_path),
+        "start_date": cfg.start_date,
+        "end_date": cfg.end_date,
+        "rebalance_frequency": cfg.rebalance_frequency,
+        "replay_max_symbols": int(cfg.replay_max_symbols),
+        "replay_asset_status": cfg.replay_asset_status,
+        "theme_source": cfg.theme_source,
+        "disclosure_lookback_days": int(cfg.disclosure_lookback_days),
+        "list_types": list(cfg.list_types or VALID_LIST_TYPES),
+        "top_n": int(cfg.top_n),
+        "per_channel_top_n": bool(cfg.per_channel_top_n),
+        "include_channels": list(cfg.include_channels or []),
+        "horizons": list(cfg.horizons or [20, 60, 120]),
+        "benchmark_symbols": list(cfg.benchmark_symbols or []),
+        "trading_cost_bps": float(cfg.trading_cost_bps),
+        "entry_price_mode": cfg.entry_price_mode,
+        "exit_price_mode": cfg.exit_price_mode,
+        "delist_return_assumption": float(cfg.delist_return_assumption),
+        "delist_detection_buffer_days": int(cfg.delist_detection_buffer_days),
+        "watchlist_csv_path": str(watchlist_csv_path or ""),
+        "watchlist_csv_sha256": path_sha256(watchlist_csv_path),
+        "watchlist_history_dir": str(cfg.watchlist_history_dir),
+        "watchlist_history_sha256": path_sha256(cfg.watchlist_history_dir),
+        "allow_latest_watchlist_fallback": bool(cfg.allow_latest_watchlist_fallback),
+        "pre_snapshot_universe": cfg.pre_snapshot_universe,
+    }
 
 
 def keyword_list_from_groups(group_names: list[str]) -> list[str]:
@@ -2697,6 +2744,21 @@ def build_signal_events_historical_replay(
         started_at_monotonic=replay_start,
     )
 
+    checkpoint_store: SignalDateCheckpointStore | None = None
+    if cfg.signal_checkpoint_dir and not cfg.feature_snapshot_only:
+        checkpoint_store = SignalDateCheckpointStore(
+            Path(cfg.signal_checkpoint_dir) / scenario,
+            build_signal_checkpoint_manifest(cfg, scan_config, scenario),
+            resume=bool(cfg.resume_signal_checkpoints),
+            commit_callback=cfg.signal_checkpoint_commit,
+        )
+        bt_log(
+            f"signal checkpoints: {checkpoint_store.root} "
+            f"(resume={bool(cfg.resume_signal_checkpoints)})",
+            scope=f"replay:{scenario}",
+            started_at_monotonic=replay_start,
+        )
+
     rows: list[dict[str, Any]] = []
     watchlist_source_counts: dict[str, int] = {}
     last_heartbeat = 0.0
@@ -2709,6 +2771,30 @@ def build_signal_events_historical_replay(
                 started_at_monotonic=replay_start,
             )
             last_heartbeat = now_tick
+
+        signal_date = asof.date().isoformat()
+        if checkpoint_store is not None:
+            checkpoint = checkpoint_store.load(signal_date)
+            if checkpoint is not None:
+                checkpoint_rows = [
+                    dict(row) for row in checkpoint.get("rows", [])
+                ]
+                rows.extend(checkpoint_rows)
+                checkpoint_source = checkpoint.get("watchlist_source")
+                if checkpoint_source:
+                    source_key = str(checkpoint_source)
+                    watchlist_source_counts[source_key] = (
+                        watchlist_source_counts.get(source_key, 0) + 1
+                    )
+                bt_log(
+                    f"checkpoint hit: {i}/{len(dates)} "
+                    f"(asof={signal_date}, rows={len(checkpoint_rows)})",
+                    scope=f"replay:{scenario}",
+                    started_at_monotonic=replay_start,
+                )
+                continue
+        date_row_start = len(rows)
+
         benchmark_trailing_60d = benchmark_trailing_return_asof(
             bar_db, regime_symbol, asof, 60, split_events.get(regime_symbol)
         )
@@ -2725,6 +2811,8 @@ def build_signal_events_historical_replay(
         )
         watchlist_source_counts[watchlist_source] = watchlist_source_counts.get(watchlist_source, 0) + 1
         if not watchlist_by_symbol:
+            if checkpoint_store is not None:
+                checkpoint_store.save(signal_date, [], watchlist_source)
             continue
         if cfg.theme_source == "historical_news":
             theme_scores = build_theme_scores_historical_news_asof(
@@ -2793,6 +2881,8 @@ def build_signal_events_historical_replay(
             split_events=split_events,
         )
         if df.empty:
+            if checkpoint_store is not None:
+                checkpoint_store.save(signal_date, [], watchlist_source)
             continue
 
         snapshot_dates = set(cfg.feature_snapshot_dates or [])
@@ -2839,6 +2929,13 @@ def build_signal_events_historical_replay(
                     "source_csv": "",
                     "watchlist_source": watchlist_source,
                 }
+            )
+
+        if checkpoint_store is not None:
+            checkpoint_store.save(
+                signal_date,
+                rows[date_row_start:],
+                watchlist_source,
             )
 
     if watchlist_source_counts:
@@ -3013,6 +3110,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--delist-detection-buffer-days", type=int, default=7)
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
+    p.add_argument(
+        "--signal-checkpoint-dir",
+        default=None,
+        help=(
+            "Optional directory for per-signal-date replay checkpoints. "
+            "Use a persistent path for long research runs."
+        ),
+    )
+    p.add_argument(
+        "--resume-signal-checkpoints",
+        action="store_true",
+        default=False,
+        help=(
+            "Reuse completed signal-date checkpoints. The run is rejected "
+            "if the checkpoint manifest does not match the current inputs."
+        ),
+    )
     p.add_argument(
         "--feature-snapshot-dir",
         default=None,
@@ -3360,6 +3474,8 @@ def main() -> None:
         feature_snapshot_dir=args.feature_snapshot_dir,
         feature_snapshot_dates=parse_csv_list(args.feature_snapshot_dates),
         feature_snapshot_only=bool(args.feature_snapshot_only),
+        signal_checkpoint_dir=args.signal_checkpoint_dir,
+        resume_signal_checkpoints=bool(args.resume_signal_checkpoints),
     )
     run_backtest(cfg)
 
