@@ -47,6 +47,12 @@ research_volume = modal.Volume.from_name(
     create_if_missing=True,
 )
 
+# The launcher host OOM'd at 8 GB, but the true peak is not yet measured.
+# Request modest resources and allow bounded burst instead of reserving 24 GB
+# for the whole run. Raise MEMORY_LIMIT_MIB only after a reproducible OOM.
+CPU_REQUEST_LIMIT = (1.0, 2.0)
+MEMORY_REQUEST_LIMIT_MIB = (8192, 16384)
+
 _MODAL_ENV_KEYS = (
     "ALPACA_API_ENDPOINT",
     "ALPACA_API_KEY",
@@ -118,8 +124,8 @@ def _success_matches(path: Path, spec: dict[str, Any]) -> bool:
     },
     secrets=_modal_secrets(),
     timeout=12 * 3600,
-    cpu=2.0,
-    memory=24576,
+    cpu=CPU_REQUEST_LIMIT,
+    memory=MEMORY_REQUEST_LIMIT_MIB,
 )
 def run_replay_remote(payload_json: str) -> str:
     import sys
@@ -243,8 +249,8 @@ def run_replay_remote(payload_json: str) -> str:
     },
     secrets=_modal_secrets(),
     timeout=12 * 3600,
-    cpu=2.0,
-    memory=24576,
+    cpu=CPU_REQUEST_LIMIT,
+    memory=MEMORY_REQUEST_LIMIT_MIB,
 )
 def run_dataset_remote(payload_json: str) -> str:
     import sys
