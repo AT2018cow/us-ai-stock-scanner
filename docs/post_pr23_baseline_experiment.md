@@ -32,8 +32,9 @@ ca1baee60d617b07f013710c96c7e99a03195c60
 ```
 
 After this PR is merged, record the actual merge SHA as the experiment code
-SHA. The strategy/replay production path is intentionally unchanged by this
-PR; only offline research parity/tests/docs are changed.
+SHA. Strategy selection, pricing, labels and production parameters are
+unchanged. The replay engine now also supports per-signal-date checkpoints for
+long research runs; checkpointing must not change selected symbols or returns.
 
 Run first:
 
@@ -119,6 +120,78 @@ Do not interpret a higher aggregate return as proof that one style is better.
 The first review is paired by identical signal dates, benchmark/cost convention
 and mature labels.
 
+### Recommended executor for the retrospective replay
+
+The full 2023-2026 PIT replay can exceed an 8 GB host. For this experiment,
+prefer the dedicated Modal runner instead of running the commands above on the
+small launcher host.
+
+The Modal runner uses 2 vCPU / 24 GB RAM, mounts the existing
+`ai-scanner-cache` Volume, writes artifacts/checkpoints to the persistent
+`ai-scanner-research` Volume, and commits after every completed signal date.
+
+Before launch, repository-local `configs/`, `data/ai_watchlist.csv` and
+`data/watchlist_history` must still hash-identically to the frozen inputs.
+The runner checks this and aborts on mismatch.
+
+```bash
+RUN_ID=post_pr23_baseline_202610
+
+# Use the configured Modal profile. In environments with a named profile:
+# export MODAL_PROFILE=<profile>
+
+.venv/bin/python -m modal run scripts/modal_baseline_executor.py \
+  --run-id "$RUN_ID" \
+  --stage replay \
+  --styles risk_off,risk_on
+```
+
+The two styles run sequentially so they share one controlled cache state
+without competing writes.
+
+If a Modal container is interrupted or OOM-killed, rerun the **same command**.
+The runner resumes from committed signal-date checkpoints. It also stores a
+run-spec guard containing the code SHA/style/date range; a changed spec is
+rejected instead of silently reusing stale checkpoints.
+
+To intentionally discard the remote replay checkpoints and restart, run with
+`--no-resume`. Do this only when starting a new evidence run or after an
+explicitly documented invalidation.
+
+The partial local replay produced before checkpoint support cannot be imported
+as a valid checkpoint. For example, a run killed after `4/45` dates has no
+durable signal rows from those dates because the old replay wrote
+`*_signals.csv` only after all signal dates finished. Cached SEC/Alpaca files
+may still be reused, but the signal replay itself must restart.
+
+Remote files can be inspected and copied back with Modal's Volume CLI:
+
+```bash
+.venv/bin/python -m modal volume ls ai-scanner-research "/$RUN_ID"
+
+mkdir -p "$EXP/modal_download"
+.venv/bin/python -m modal volume get \
+  --force \
+  ai-scanner-research \
+  "/$RUN_ID" \
+  "$EXP/modal_download"
+```
+
+For a local replay on a sufficiently large host, checkpointing is also
+available directly:
+
+```bash
+# First attempt
+python run_backtest.py ... \
+  --signal-checkpoint-dir "$EXP/checkpoints/risk_off"
+
+# After interruption, rerun the identical command plus:
+# --resume-signal-checkpoints
+```
+
+A resume manifest mismatch is a hard error. Do not bypass it by copying old
+checkpoint files into a new run.
+
 ## 4. One-time survivor datasets for offline research
 
 Generate these **once** after the retrospective replay. Reuse them for IC,
@@ -141,6 +214,21 @@ Use the same command with the risk_on frozen config and
 `$EXP/weight_dataset_risk_on.csv`.
 
 The generated `.meta.json` files are part of the evidence and must be kept.
+
+On an 8 GB launcher host, generate both survivor datasets on Modal after the
+replay stage:
+
+```bash
+.venv/bin/python -m modal run scripts/modal_baseline_executor.py \
+  --run-id "$RUN_ID" \
+  --stage dataset \
+  --styles risk_off,risk_on
+```
+
+Or use `--stage all` to run replay first and then both datasets. Dataset
+extraction is stage-resumable: a completed dataset with a matching run spec is
+skipped. Unlike the replay stage it does not checkpoint individual signal
+dates, so an interrupted dataset extraction restarts that one dataset.
 
 ## 5. Offline sweep parity gate
 
@@ -190,13 +278,15 @@ Use:
 
 with the same windows, seed, frozen inputs and no-promotion rules.
 
-### Modal
+### Modal for the anchored tuner
 
-If local wall-clock cost is excessive, Modal may be used for candidate-level
-tuner parallelism. The current Modal image packages repository-local
-`configs/` and `data/`, but it does **not** package
-`outputs/<RUN_ID>/frozen_inputs`. Do not pass the `outputs/` frozen paths
-directly to remote candidates.
+The retrospective replay/dataset stages use
+`scripts/modal_baseline_executor.py` above. The anchored tuner has a separate
+existing candidate-level Modal executor.
+
+The tuner Modal image packages repository-local `configs/` and `data/`, but
+it does **not** package `outputs/<RUN_ID>/frozen_inputs`. Do not pass the
+`outputs/` frozen paths directly to remote candidates.
 
 Before a Modal run:
 
