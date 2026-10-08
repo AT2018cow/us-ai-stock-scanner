@@ -11,6 +11,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import extract_weight_dataset as extract_weight_dataset  # noqa: E402
 import sweep_score_weights as sweep  # noqa: E402
 
 from ai_value_scanner.config import ScanConfig  # noqa: E402
@@ -134,6 +135,25 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
         ).iloc[0]
         self.assertEqual(int(event["n_picked"]), 1)
         self.assertAlmostEqual(float(event["mean_ret"]), 0.1)
+
+    def test_weight_extractor_accepts_frozen_watchlist_override(self) -> None:
+        parser = extract_weight_dataset.build_parser()
+        args = parser.parse_args(
+            [
+                "--watchlist-csv-path",
+                "outputs/frozen/ai_watchlist.csv",
+                "--watchlist-history-dir",
+                "outputs/frozen/watchlist_history",
+            ]
+        )
+        self.assertEqual(
+            args.watchlist_csv_path,
+            "outputs/frozen/ai_watchlist.csv",
+        )
+        self.assertEqual(
+            args.watchlist_history_dir,
+            "outputs/frozen/watchlist_history",
+        )
 
     def test_channel_order_controls_cross_channel_dedup_source(self) -> None:
         def group(ret: float) -> dict:
