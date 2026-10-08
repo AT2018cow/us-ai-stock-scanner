@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,6 +89,11 @@ class TestSignalDateCheckpointStore(unittest.TestCase):
             (root / "a.txt").write_text("two")
             second = path_sha256(root)
             self.assertNotEqual(first, second)
+
+    def test_modal_baseline_runner_source_parses(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "modal_baseline_executor.py").read_text()
+        ast.parse(source)
 
     def test_backtest_parser_exposes_checkpoint_controls(self) -> None:
         args = build_parser().parse_args(
