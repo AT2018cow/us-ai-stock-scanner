@@ -132,3 +132,16 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 在缓存处于不同状态时读取数据，导致结果不可复现（如 SNOW/PSX 出现在一侧）。
 **解决方法**：在 gate 运行前复制缓存并将全部 facts_meta 标记为 covered，
 使所有进程读取同一冻结状态。此方法已记录为标准 gate 流程。
+
+## PR #13 gate 记录（2025-11-06）
+
+方法：PR #12 冻结缓存流程，base aed481 vs head e309430，顺序执行。
+
+- 特征矩阵：base 5374行 vs pr13 5339行（-35行 = SMA200 修正效果）
+- 差异1 SMA200修正：19个近期上市股票从base消失（APH/NBIS/FAST等），
+  共同行 price_to_sma200/days_below_sma200 零差异（0 val_diff）
+- 差异2 日历天窗口：drawdown 2772行值变化（max=0.593），
+  range 3451行值变化（max=0.706）
+- 下游效应（因果链闭合）：peer_median 99行、soft_pass_count 435行、
+  回放选择19行/25符号
+- 无未解释差异 → **合并**
