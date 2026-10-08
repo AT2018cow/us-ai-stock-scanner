@@ -116,6 +116,7 @@ def select_symbols_from_ranked_frames(
     *,
     top_n: int,
     per_channel_top_n: bool,
+    dedupe_best_channel: bool = False,
 ) -> tuple[list[str], dict[str, list[str]], dict[str, int]]:
     """Select symbols from already ranked/channel-labelled frames."""
     channel_symbols: dict[str, list[str]] = {}
@@ -124,29 +125,20 @@ def select_symbols_from_ranked_frames(
     if not non_empty:
         return [], channel_symbols, channel_counts
 
+    limit = max(1, int(top_n))
     if per_channel_top_n:
-        picks: list[str] = []
-        for part in non_empty:
-            channel = (
-                str(part["channel"].iloc[0])
-                if "channel" in part.columns
-                else ""
-            )
-            selected = (
-                part.head(max(1, int(top_n)))["symbol"]
-                .dropna()
-                .astype(str)
-                .tolist()
-            )
-            channel_symbols[channel] = selected
-            channel_counts[channel] = len(selected)
-            picks.extend(selected)
-        return normalize_symbol_list(picks), channel_symbols, channel_counts
+        selected_parts = [part.head(limit).copy() for part in non_empty]
+        selected = pd.concat(selected_parts, ignore_index=True)
+    else:
+        selected = pd.concat(non_empty, ignore_index=True)
+        selected = selected.sort_values(
+            "composite_score",
+            ascending=False,
+        ).head(limit).copy()
 
-    merged = pd.concat(non_empty, ignore_index=True)
-    merged = merged.sort_values("composite_score", ascending=False)
-    selected = merged.head(max(1, int(top_n))).copy()
-    picks = selected["symbol"].dropna().astype(str).tolist()
+    if dedupe_best_channel:
+        selected, _ = dedupe_symbol_by_best_channel(selected)
+
     if "channel" in selected.columns:
         for channel in sorted(
             selected["channel"].dropna().astype(str).unique().tolist()
@@ -159,4 +151,6 @@ def select_symbols_from_ranked_frames(
             )
             channel_symbols[channel] = symbols
             channel_counts[channel] = len(symbols)
+
+    picks = selected["symbol"].dropna().astype(str).tolist()
     return normalize_symbol_list(picks), channel_symbols, channel_counts
