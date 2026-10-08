@@ -38,6 +38,7 @@ from ai_value_scanner.fundamentals.reconstruction import (
     latest_and_year_ago_level as shared_latest_and_year_ago_level,
 )
 
+from ai_value_scanner.features.derived import compute_cross_section_derived_features
 from ai_value_scanner.features.ai_link import (
     ai_etf_consensus_score,
     ai_market_link_score,
@@ -2394,22 +2395,14 @@ def build_cross_section_asof(
     df["fcf_yield"] = safe_divide(df["free_cash_flow"], df["market_cap"])
     df["net_margin"] = safe_divide(df[earnings_col], df["revenue"])
 
-    df["expectation_proxy"] = (
-        0.5 * pd.to_numeric(df["revenue_yoy"], errors="coerce").fillna(0)
-        + 0.5 * pd.to_numeric(df[earnings_yoy_col], errors="coerce").fillna(0)
-        - 0.5 * pd.to_numeric(df["return_20d"], errors="coerce").fillna(0)
-        - 0.5 * pd.to_numeric(df["return_60d"], errors="coerce").fillna(0)
+    derived_features = compute_cross_section_derived_features(
+        df,
+        earnings_yoy_col=earnings_yoy_col,
+        assumed_position_usd=scan_config.assumed_position_usd,
     )
-    df["cycle_proxy"] = pd.to_numeric(df["adjusted_ebit_yoy"], errors="coerce").fillna(
-        pd.to_numeric(df["ebit_yoy"], errors="coerce")
-    ) - pd.to_numeric(df["revenue_yoy"], errors="coerce")
-    df["adv_participation"] = safe_divide(
-        pd.Series(float(scan_config.assumed_position_usd), index=df.index),
-        df["avg_dollar_volume_20d"],
-    )
-    df["estimated_slippage_bps"] = 200.0 * np.sqrt(
-        pd.to_numeric(df["adv_participation"], errors="coerce").clip(lower=0)
-    )
+    for name, values in derived_features.items():
+        df[name] = values
+
     ps_hist_values: list[float | None] = []
     pe_hist_values: list[float | None] = []
     ps_hist_obs: list[int] = []

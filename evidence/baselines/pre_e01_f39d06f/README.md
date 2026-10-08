@@ -133,9 +133,9 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 **解决方法**：在 gate 运行前复制缓存并将全部 facts_meta 标记为 covered，
 使所有进程读取同一冻结状态。此方法已记录为标准 gate 流程。
 
-## PR #13 gate 记录（2025-11-06）
+## PR #13 gate 记录（2026-10-08）
 
-方法：PR #12 冻结缓存流程，base aed481 vs head e309430，顺序执行。
+方法：PR #12 冻结缓存流程，base ae0d481 vs head e309430，顺序执行。
 
 - 特征矩阵：base 5374行 vs pr13 5339行（-35行 = SMA200 修正效果）
 - 差异1 SMA200修正：19个近期上市股票从base消失（APH/NBIS/FAST等），
