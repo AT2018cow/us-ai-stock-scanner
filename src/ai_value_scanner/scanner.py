@@ -68,6 +68,7 @@ from ai_value_scanner.features.ai_link import (
     ai_market_link_score,
     compute_ai_link_score,
 )
+from ai_value_scanner.features.peer_valuation import compute_peer_relative_valuation
 from ai_value_scanner.features.price import (
     compute_price_history_features,
     price_history_percentile_from_closes,
@@ -5134,44 +5135,9 @@ def run_scan(
     for name, values in derived_features.items():
         df[name] = values
 
-    # Exclude names whose share count is stale or missing: their market cap /
-    # valuation multiples would otherwise distort peer medians (e.g. BIDU).
-    stale_mask = pd.Series(
-        False, index=df.index
-    )
-    if "shares_stale" in df.columns:
-        stale_mask = pd.to_numeric(df["shares_stale"], errors="coerce").fillna(0).astype(bool)
-    stale_ps = df.loc[np.isfinite(df["ps"]) & (df["ps"] > 0) & ~stale_mask]
-    stale_pe = df.loc[np.isfinite(df["pe"]) & (df["pe"] > 0) & ~stale_mask]
-    peer_ps = (
-        stale_ps.groupby("sic", dropna=True)["ps"]
-        .median()
-        .rename("peer_median_ps")
-    )
-    peer_pe = (
-        stale_pe.groupby("sic", dropna=True)["pe"]
-        .median()
-        .rename("peer_median_pe")
-    )
-    df = df.merge(peer_ps, left_on="sic", right_index=True, how="left")
-    df = df.merge(peer_pe, left_on="sic", right_index=True, how="left")
-    df["ps_discount"] = 1 - safe_divide(df["ps"], df["peer_median_ps"])
-    df["pe_discount"] = 1 - safe_divide(df["pe"], df["peer_median_pe"])
-
-    # SIC-relative valuation percentile (lower is cheaper); fall back to neutral 0.5 for tiny cohorts.
-    df["ps_percentile_in_sic"] = 0.5
-    ps_valid = np.isfinite(df["ps"]) & (df["ps"] > 0) & df["sic"].notna() & ~stale_mask
-    ps_sizes = df.loc[ps_valid].groupby("sic")["ps"].transform("size")
-    ps_rank = df.loc[ps_valid].groupby("sic")["ps"].rank(method="average", pct=True)
-    ps_eligible_idx = ps_sizes[ps_sizes >= 5].index
-    df.loc[ps_eligible_idx, "ps_percentile_in_sic"] = ps_rank.loc[ps_eligible_idx]
-
-    df["pe_percentile_in_sic"] = 0.5
-    pe_valid = np.isfinite(df["pe"]) & (df["pe"] > 0) & df["sic"].notna() & ~stale_mask
-    pe_sizes = df.loc[pe_valid].groupby("sic")["pe"].transform("size")
-    pe_rank = df.loc[pe_valid].groupby("sic")["pe"].rank(method="average", pct=True)
-    pe_eligible_idx = pe_sizes[pe_sizes >= 5].index
-    df.loc[pe_eligible_idx, "pe_percentile_in_sic"] = pe_rank.loc[pe_eligible_idx]
+    peer_features = compute_peer_relative_valuation(df, min_peer_count=5)
+    for name, values in peer_features.items():
+        df[name] = values
 
     top_n_low_value = resolve_top_n(config.top_n_per_channel_low_value, 10)
     top_n_trend = resolve_top_n(config.top_n_per_channel_trend, 10)
