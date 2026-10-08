@@ -56,7 +56,10 @@ from ai_value_scanner.validation.snapshots import FeatureSnapshotWriter
 from ai_value_scanner.strategy.scoring import score_and_rank
 from ai_value_scanner.strategy.filtering import (
     apply_scored_or_hard_filters,
+    first_fail_concentration,
     near_miss_concentration,
+    summarize_diagnostics_by_layer,
+    summarize_first_fail_reasons,
 )
 from ai_value_scanner.strategy.selection import (
     apply_group_caps,
@@ -103,12 +106,9 @@ from ai_value_scanner.scanner import (
     build_session,
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
-    first_fail_concentration,
     load_watchlist_scores,
     watchlist_rows_to_scores,
     safe_divide,
-    summarize_diagnostics_by_layer,
-    summarize_first_fail_reasons,
     theme_score_from_news,
 )
 
