@@ -54,6 +54,16 @@ from ai_value_scanner.features.valuation import (
 
 from ai_value_scanner.validation.snapshots import FeatureSnapshotWriter
 from ai_value_scanner.strategy.scoring import score_and_rank
+from ai_value_scanner.strategy.rules import (
+    build_filter_steps,
+    build_industry_trend_steps,
+    build_momentum_steps,
+)
+from ai_value_scanner.strategy.research import (
+    apply_low_value_research_gate,
+    apply_research_assessment,
+    build_research_assessment,
+)
 from ai_value_scanner.strategy.filtering import (
     apply_scored_or_hard_filters,
     first_fail_concentration,
@@ -97,12 +107,6 @@ from ai_value_scanner.scanner import (
     ai_etf_consensus_score,
     ai_market_link_score,
     apply_split_adjustment,
-    build_filter_steps,
-    build_industry_trend_steps,
-    build_momentum_steps,
-    build_research_assessment,
-    apply_research_assessment,
-    apply_low_value_research_gate,
     build_session,
     compile_keyword_patterns,
     compute_historical_valuation_percentile,
