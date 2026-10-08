@@ -120,9 +120,9 @@ Do not use a full historical replay as the default equivalence test.
 
 ## Closure decision
 
-If PR #23 CI passes with the closure guard suite:
+PR #23 closure guard suite: **374 tests / OK**.
 
-> **The modular refactor is closed.**
+> **The modular refactor is closed once PR #23 is merged.**
 
 Further architecture-only splitting should stop. The next baseline should be a
 fresh current OOS stock-selection baseline from post-PR23 main, because the
