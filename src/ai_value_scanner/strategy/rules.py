@@ -101,6 +101,8 @@ def passes_sic_filters(
     sic = str(sic)
     if exclude_codes and sic in exclude_codes:
         return False
+    return True
+
 
 def append_professional_filter_steps(
     steps: list[tuple[str, Any]], cp: dict[str, Any], config: ScanConfig
