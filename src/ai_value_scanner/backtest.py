@@ -1862,36 +1862,24 @@ def rank_and_pick_symbols_with_diagnostics(
         "channel_symbols": {},
         "channel_counts": {},
     }
+
     for channel_name, channel_profile in channel_profiles.items():
         if include_channels and channel_name not in include_channels:
             continue
-        steps, weights = build_steps_and_weights(scan_config, channel_name, channel_profile, list_type)
-
-        # Mirror the scanner's two-layer scored architecture: core+structural
-        # hard gates, with remaining steps evaluated as soft scoring dims.
-        if str(getattr(scan_config, "filter_mode", "scored")).lower() == "scored":
-            from ai_value_scanner.scanner import partition_filter_steps
-
-            hard_steps, soft_steps = partition_filter_steps(
-                steps, channel_name, scan_config.strategy_style
-            )
-            filtered, step_diagnostics = apply_filters_with_diagnostics(df, hard_steps)
-            if not filtered.empty and soft_steps:
-                soft_matrix = pd.DataFrame(
-                    {name: mask_fn(filtered) for name, mask_fn in soft_steps},
-                    index=filtered.index,
-                )
-                filtered["soft_pass_count"] = soft_matrix.sum(axis=1)
-                filtered["soft_total"] = len(soft_steps)
-            else:
-                filtered["soft_pass_count"] = 0
-                filtered["soft_total"] = len(soft_steps) if soft_steps else 1
-        else:
-            filtered, step_diagnostics = apply_filters_with_diagnostics(df, steps)
-            filtered["soft_pass_count"] = np.nan
-            filtered["soft_total"] = np.nan
-
+        steps, weights = build_steps_and_weights(
+            scan_config,
+            channel_name,
+            channel_profile,
+            list_type,
+        )
+        filtered, step_diagnostics = apply_scored_or_hard_filters(
+            df,
+            steps,
+            channel_name,
+            scan_config,
+        )
         first_fail_summary = summarize_first_fail_reasons(df, steps)
+
         ranked = score_and_rank(
             filtered,
             weights,
@@ -1901,11 +1889,29 @@ def rank_and_pick_symbols_with_diagnostics(
             scan_config.score_penalty_deterioration,
             scan_config.pe_cash_backing_haircut,
         )
+
+        # Scanner low-value output applies research eligibility after scoring.
+        # Replay must use the same post-score gate or historical selections are
+        # not production-parity even when the feature matrix is identical.
+        if list_type == "low_value" and not ranked.empty:
+            ranked = apply_research_assessment(ranked, "low_value")
+            ranked = apply_low_value_research_gate(ranked, scan_config)
+
+        # Production scanner applies diversification caps per channel before
+        # top-N selection. These caps are active in risk_on/risk_off configs.
+        ranked = apply_group_caps(
+            ranked,
+            scan_config.max_per_sector_per_list,
+            scan_config.max_per_watchlist_etf_source_per_list,
+        )
+
         diagnostics["channels"][channel_name] = {
             "n_input": int(len(df)),
             "n_filtered": int(len(filtered)),
             "n_ranked": int(len(ranked)),
-            "layer_summary": summarize_diagnostics_by_layer(step_diagnostics),
+            "layer_summary": summarize_diagnostics_by_layer(
+                step_diagnostics
+            ),
             "first_fail": first_fail_concentration(first_fail_summary),
             "near_miss": near_miss_concentration(df, steps),
         }
@@ -1913,36 +1919,30 @@ def rank_and_pick_symbols_with_diagnostics(
             diagnostics["channel_symbols"][channel_name] = []
             diagnostics["channel_counts"][channel_name] = 0
             continue
+
         ranked = ranked.copy()
         ranked["channel"] = channel_name
         ranked_frames.append(ranked)
 
-    if not ranked_frames:
-        diagnostics["selected_symbols"] = []
-        return [], diagnostics
-
-    if per_channel_top_n:
-        picks: list[str] = []
-        for part in ranked_frames:
-            channel = str(part["channel"].iloc[0])
-            channel_picks = part.head(top_n)["symbol"].dropna().astype(str).tolist()
-            diagnostics["channel_symbols"][channel] = channel_picks
-            diagnostics["channel_counts"][channel] = len(channel_picks)
-            picks.extend(channel_picks)
-    else:
-        merged = pd.concat(ranked_frames, ignore_index=True)
-        merged = merged.sort_values("composite_score", ascending=False)
-        selected = merged.head(top_n).copy()
-        picks = selected["symbol"].dropna().astype(str).tolist()
-        for channel_name in diagnostics["channels"]:
-            part = selected[selected["channel"] == channel_name] if "channel" in selected.columns else pd.DataFrame()
-            channel_picks = part["symbol"].dropna().astype(str).tolist()
-            diagnostics["channel_symbols"][channel_name] = channel_picks
-            diagnostics["channel_counts"][channel_name] = len(channel_picks)
-    picks = normalize_symbol_list(picks)
+    picks, channel_symbols, channel_counts = select_symbols_from_ranked_frames(
+        ranked_frames,
+        top_n=top_n,
+        per_channel_top_n=per_channel_top_n,
+        dedupe_best_channel=bool(
+            scan_config.enforce_unique_symbol_per_list
+        ),
+    )
+    for channel_name in diagnostics["channels"]:
+        diagnostics["channel_symbols"][channel_name] = channel_symbols.get(
+            channel_name,
+            [],
+        )
+        diagnostics["channel_counts"][channel_name] = channel_counts.get(
+            channel_name,
+            0,
+        )
     diagnostics["selected_symbols"] = picks
     return picks, diagnostics
-
 
 def build_cross_section_asof(
     asof: pd.Timestamp,
