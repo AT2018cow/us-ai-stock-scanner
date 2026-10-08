@@ -287,11 +287,17 @@ def score_candidate(
     soft_weight_by_list: dict[str, float] | dict[tuple[str, str], float],
     horizons: list[int],
     top_n: int,
+    *,
+    max_per_sector: int | None = None,
+    max_per_watchlist_etf_source: int | None = None,
+    channel_order: list[str] | None = None,
 ) -> pd.DataFrame:
     """Returns DataFrame of portfolio events per (signal_date, list_type, horizon).
 
-    Mirrors production rank_and_pick_symbols_with_diagnostics EXACTLY:
-    - top_n per channel, channels iterated in group insertion order
+    Mirrors the current production selection path:
+    - low_value production research gate before diversification
+    - per-channel sector / watchlist-ETF caps before top-N
+    - channels concatenated in ScanConfig.channel_profiles order
     - cross-channel DEDUP keeping first occurrence (normalize_symbol_list)
     - portfolio = equal-weighted mean over UNIQUE picked symbols
 
@@ -325,19 +331,42 @@ def score_candidate(
                 return float(soft_weight_by_list.get((list_type, channel), 0.30))  # type: ignore[union-attr]
         return float(soft_weight_by_list[list_type])  # type: ignore[index]
 
-    for (signal_date, list_type, channel), g in groups.items():
+    group_items = list(groups.items())
+    if channel_order:
+        channel_rank = {str(ch): idx for idx, ch in enumerate(channel_order)}
+        group_items.sort(
+            key=lambda item: (
+                item[0][0],
+                item[0][1],
+                channel_rank.get(str(item[0][2]), len(channel_rank)),
+            )
+        )
+
+    for (signal_date, list_type, channel), g in group_items:
         mult = mult_by_axis[list_type]
         weights = np.array([mult.get(a, 1.0) for a in g["axes"]], dtype="float64")
         base_soft = _soft_w(list_type, channel)
         scores = g["norm"] @ weights + base_soft * g["soft_rate"] - g["ovp"] - g["det"]
-        order = np.argsort(-scores, kind="stable")
-        picked = order[:top_n]
+        picked = _select_ranked_indices_with_caps(
+            scores=scores,
+            gate_allowed=np.asarray(
+                g.get("gate_allowed", np.ones(len(scores), dtype=bool)),
+                dtype=bool,
+            ),
+            sic=list(g.get("sic", [""] * len(scores))),
+            watchlist_etfs=list(g.get("watchlist_etfs", [""] * len(scores))),
+            top_n=top_n,
+            max_per_sector=max_per_sector,
+            max_per_watchlist_etf_source=max_per_watchlist_etf_source,
+        )
         key = (signal_date, list_type)
         picks.setdefault(key, [])
         for j in picked:
             picks[key].append(g["symbols"][int(j)])
         fwd_by_key[(signal_date, list_type, channel)] = g["fwd"][picked]
-        syms_by_key[(signal_date, list_type, channel)] = [g["symbols"][int(j)] for j in picked]
+        syms_by_key[(signal_date, list_type, channel)] = [
+            g["symbols"][int(j)] for j in picked
+        ]
 
     # Stage 2: dedup + equal-weighted portfolio over unique symbols
     events: list[dict[str, Any]] = []
@@ -485,16 +514,25 @@ def main() -> None:
 
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
     list_types = [x.strip() for x in str(args.list_types).split(",") if x.strip()]
-    channels = [x.strip() for x in str(args.include_channels).split(",") if x.strip()]
+    requested_channels = [
+        x.strip() for x in str(args.include_channels).split(",") if x.strip()
+    ]
     split_date = str(args.split_date)
 
     dataset = pd.read_csv(args.dataset)
-    dataset = dataset[dataset["channel"].isin(channels) & dataset["list_type"].isin(list_types)].copy()
+    dataset = dataset[
+        dataset["channel"].isin(requested_channels)
+        & dataset["list_type"].isin(list_types)
+    ].copy()
     if dataset.empty:
         raise ValueError("Dataset empty after channel/list filtering.")
     log(f"dataset: {len(dataset)} rows | {dataset['signal_date'].nunique()} dates | channels={channels}")
 
     scan_config = load_config(args.scan_config)
+    configured_channels = list((scan_config.channel_profiles or {}).keys())
+    channels = [ch for ch in configured_channels if ch in requested_channels]
+    if not channels:
+        raise ValueError("No requested channels exist in scan_config.channel_profiles.")
     winsor_lower_q = scan_config.score_winsor_lower_q
     winsor_upper_q = scan_config.score_winsor_upper_q
     penalty_over = scan_config.score_penalty_overvaluation
@@ -507,7 +545,14 @@ def main() -> None:
             log(f"base weights {lt}/{ch}: " + json.dumps({k: round(v, 3) for k, v in sorted(base_weights[lt][ch].items(), key=lambda x: -x[1])}))
 
     log("precomputing normalized matrices per (date, list, channel) ...")
-    groups = precompute_groups(dataset, base_weights, horizons, pe_cash_backing_haircut)
+    groups = precompute_groups(
+        dataset,
+        base_weights,
+        horizons,
+        pe_cash_backing_haircut,
+        scan_config=scan_config,
+        channel_order=channels,
+    )
     log(f"groups: {len(groups)}")
 
     rng = np.random.default_rng(args.seed)
@@ -587,7 +632,16 @@ def main() -> None:
         return ev_tr, ev_va
 
     def evaluate(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> dict[str, Any]:
-        events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
+        events = score_candidate(
+            groups,
+            mults,
+            soft_w,
+            horizons,
+            args.top_n,
+            max_per_sector=scan_config.max_per_sector_per_list,
+            max_per_watchlist_etf_source=scan_config.max_per_watchlist_etf_source_per_list,
+            channel_order=channels,
+        )
         full = summarize(events, dataset, horizons)
         score_full = objective_from_summary(full, list_types, horizons)
         ev_tr, ev_va = _mask_events(events)
@@ -602,7 +656,16 @@ def main() -> None:
         }
 
     def evaluate_light(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> tuple[float, float, float]:
-        events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
+        events = score_candidate(
+            groups,
+            mults,
+            soft_w,
+            horizons,
+            args.top_n,
+            max_per_sector=scan_config.max_per_sector_per_list,
+            max_per_watchlist_etf_source=scan_config.max_per_watchlist_etf_source_per_list,
+            channel_order=channels,
+        )
         score_full = objective_from_summary(summarize(events, dataset, horizons), list_types, horizons)
         ev_tr, ev_va = _mask_events(events)
         s_tr = objective_from_summary(summarize(ev_tr, dataset, horizons), list_types, horizons)
