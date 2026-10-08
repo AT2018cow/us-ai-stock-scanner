@@ -250,6 +250,63 @@ class TestShareCountIntegrityCore(unittest.TestCase):
         self.assertIsNone(after.value)
 
 
+class TestScannerShareIntegrityCompatibility(unittest.TestCase):
+    def test_scanner_reconcile_facade_preserves_thousands_scale_result(self) -> None:
+        companyfacts = {
+            "facts": {
+                "us-gaap": {
+                    "EntityCommonStockSharesOutstanding": {
+                        "units": {
+                            "shares": [
+                                {
+                                    "end": "2025-03-31",
+                                    "val": 179_000.0,
+                                    "filed": "2025-05-01",
+                                    "accn": "0001",
+                                    "form": "10-Q",
+                                }
+                            ]
+                        }
+                    },
+                    "EarningsPerShareBasic": {
+                        "units": {
+                            "USD/shares": [
+                                {
+                                    "start": "2025-01-01",
+                                    "end": "2025-03-31",
+                                    "val": 1.0,
+                                    "filed": "2025-05-01",
+                                    "accn": "0001",
+                                    "form": "10-Q",
+                                }
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "start": "2025-01-01",
+                                    "end": "2025-03-31",
+                                    "val": 179_000_000.0,
+                                    "filed": "2025-05-01",
+                                    "accn": "0001",
+                                    "form": "10-Q",
+                                }
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        value, period_end = scanner.reconcile_share_unit_scale(
+            companyfacts,
+            179_000.0,
+        )
+        self.assertEqual(value, 179_000_000.0)
+        self.assertEqual(period_end, "2025-03-31")
+
+
 class TestReplayShareIntegrityIntegration(unittest.TestCase):
     def test_replay_scales_current_shares_before_market_cap(self) -> None:
         asof = pd.Timestamp("2025-05-02", tz="UTC")
