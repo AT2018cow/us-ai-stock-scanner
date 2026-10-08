@@ -122,6 +122,13 @@ from ai_value_scanner.strategy.selection import (
     dedupe_symbol_by_best_channel,
     drop_symbols,
 )
+from ai_value_scanner.reporting.scan import (
+    build_run_report_markdown,
+    default_run_stem,
+    log_status,
+    resolve_output_paths,
+    write_csv_atomic,
+)
 
 
 ANNUAL_FORMS = {"10-K", "20-F", "40-F"}
@@ -1882,20 +1889,6 @@ def fetch_stockanalysis_etf_symbols(
     if not out:
         return [], "no_symbols_parsed"
     return out, None
-
-
-def write_csv_atomic(df: "pd.DataFrame", path: str | Path) -> None:
-    """Write a DataFrame to CSV atomically via tmp-file + rename.
-
-    Production input files (watchlist, universes, cohort ledgers) must never
-    be left truncated if the process dies mid-write or another run reads a
-    half-written file.
-    """
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    df.to_csv(tmp, index=False)
-    os.replace(tmp, target)
 
 
 def refresh_watchlist_from_etfs(config: ScanConfig) -> pd.DataFrame:
@@ -3749,6 +3742,44 @@ def run_scan(
     print("=== End Research Pool ===")
     log_status(started_at, "INFO", "Scan completed successfully.")
     return out_path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Scan US listed companies for AI-related undervaluation candidates."
+    )
+    parser.add_argument(
+        "--config",
+        default="configs/config.risk_off.json",
+        help="JSON file path for filter configuration.",
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help="Limit the number of symbols for faster trial runs.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Output CSV path. Defaults to outputs/ai_value_scan_YYYYMMDDTHHMMSSZ_<scope>_ranked.csv",
+    )
+    parser.add_argument(
+        "--diagnostics-output",
+        default=None,
+        help="Optional CSV path for filter-step diagnostics.",
+    )
+    parser.add_argument(
+        "--network-report-output",
+        default=None,
+        help="Optional JSON path for network/rate-limit diagnostics.",
+    )
+    parser.add_argument(
+        "--report-output",
+        default=None,
+        help="Optional markdown path for detailed run analysis report.",
+    )
+    return parser
 
 
 def main() -> None:
