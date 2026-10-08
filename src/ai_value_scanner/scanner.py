@@ -82,6 +82,8 @@ from ai_value_scanner.features.valuation import (
 
 from ai_value_scanner.strategy.scoring import robust_normalize_score, score_and_rank
 from ai_value_scanner.strategy.filtering import (
+    CORE_FILTER_STEP_NAMES,
+    STYLE_STRUCTURAL_STEP_NAMES,
     apply_filters_with_diagnostics,
     apply_scored_or_hard_filters,
     classify_filter_step_layer,
