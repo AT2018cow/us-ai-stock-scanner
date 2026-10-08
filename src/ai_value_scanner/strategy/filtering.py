@@ -154,9 +154,7 @@ def apply_filters_with_diagnostics(
     ]
     for step_name, mask_fn in steps:
         before = len(out)
-        raw_mask = mask_fn(out)
-        mask = pd.Series(raw_mask, index=out.index).fillna(False).astype(bool)
-        out = out[mask]
+        out = out[mask_fn(out)]
         after = len(out)
         diagnostics.append(
             {
@@ -300,10 +298,7 @@ def apply_scored_or_hard_filters(
         if not filtered.empty and soft_steps:
             soft_matrix = pd.DataFrame(
                 {
-                    name: pd.Series(
-                        mask_fn(filtered),
-                        index=filtered.index,
-                    ).fillna(False).astype(bool)
+                    name: mask_fn(filtered)
                     for name, mask_fn in soft_steps
                 },
                 index=filtered.index,
