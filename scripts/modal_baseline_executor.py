@@ -8,6 +8,9 @@ Replay checkpoints and final artifacts live in the persistent
 ai-scanner-research Volume. The replay commits both research and cache Volumes
 after every completed signal date, so interruption resumes from the last
 completed date instead of restarting the full history.
+
+This runner is intentionally foreground-only. Launch it with "modal run" and
+do not use detached execution for research evidence runs.
 """
 
 from __future__ import annotations
