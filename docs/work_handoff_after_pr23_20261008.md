@@ -859,6 +859,8 @@ PR #17 之后，验证必须按风险分层。
 
 以 PR #23 后 main 为唯一代码基线。
 
+**必须区分两种证据：**固定现有配置跑多年 historical replay 得到的是 *current-config retrospective baseline*；它本身不保证该配置未在相同历史区间中被选择、调优或观察过，**不能仅因为按历史日期计算就标成 OOS**。只有严格采用 PR #2 的先前窗口选择参数、forward-label purge、后续窗口 held-out 评价，且 held-out 未被用于选型时，才能称为 *anchored OOS baseline*。两类结果应分别命名和保存，不能混在同一张“样本外”结论表里。
+
 分别运行：
 
 - risk_off；
@@ -1061,6 +1063,36 @@ scripts/fast_strategy_gate.py
 - momentum；
 - research gate；
 - regime switch。
+
+### 第一轮交付契约（新对话可直接执行）
+
+**入口与冻结规则**
+
+1. 只有 PR #23 实际合并后，才从最新 `main` 固定新基线的完整 commit SHA。旧的 `f80d8d7` 是 PR #22 后基线，不能误写成 PR #23 merge SHA。
+2. 开工先执行 `git status --short`、`git rev-parse HEAD`、`python -m unittest discover -s tests`；保留准确的 SHA 和测试结果。
+3. 优先检查是否已有**与该 SHA/配置/输入哈希一致**的风险风格基线；若没有，再在相同冻结数据状态下一次性计算 risk_off/risk_on。冻结 `configs/config.risk_off.json`、`configs/config.risk_on.json`、当前 watchlist、watchlist-history、theme source、历史窗口、rebalance frequency、交易成本、entry/exit 模式及 `max_symbols`。记录 SEC/Alpaca cache/data-asof/provenance；关闭 latest-watchlist fallback。
+4. 冻结 baseline **只需生成一次**并在后续假设实验中复用，不要每个权重/阈值候选重做全套 PIT。可复用 PR #17 snapshots 验证离线选股变化，但 snapshots 的 Fast Gate **不是前瞻收益或 OOS 有效性证明**。
+5. `AGENTS.md` 是完整运行说明；`docs/refactor_baseline_protocol.md` 的 replay 命令可作为 CLI 示例，但它是 **pre-E01 结构对照协议**，不得把它的旧收益或旧 SHA 当作新策略 OOS 证据。
+
+**必须保存的最小证据**
+
+- `baseline_manifest.json`：完整 SHA、dirty 状态、两个配置 hash、冻结候选池与历史快照 hash、feature/schema 版本、行情 feed、cache provenance、研究起止日期、信号日范围、价格标签成熟度、OOS fold 和 purge 边界。
+- `current_config_replay_summary`：当前固定参数的 retrospective 诊断；明确注明 **not automatically OOS**。
+- `anchored_oos_fold_summary`：按先前训练窗口选型、后续 held-out 评价；每个 fold 明确 `train_end`、`test_start/end`、purged label 数、实际有效样本量及 20/60/120d 标签是否成熟。
+- `selection_attribution`：按 `strategy_style × list_type × channel × horizon × regime × fold` 分组的选中数、可定价数、unpriced/no-signal、收益/excess vs QQQ、集中度和主要贡献/拖累股票；样本量太小时只报告描述统计，不做优胜宣称。
+- `research_decision.md`：数据覆盖/偏差说明、最值得验证的 1–2 个机制、下一步 ablation 假设；**不修改生产参数、不自动 promote**。
+
+这些是**建议的新阶段产物名称/契约**，不是声称仓库已经生成过这些文件。研究产物可先保存在 gitignored `outputs/`，再根据需要提交脱敏的 manifest/摘要作为 PR evidence，禁止编造缺失原始 artifact 的 hash。
+
+**不能忽略的研究边界**
+
+- historical universe 是 fixed-current pool / union approximation，存在 survivor/universe 偏差；ETF 成分及 watchlist 统计不自动变成历史 PIT 特征。
+- Alpaca IEX 交易量只是部分市场成交的代理，美元流动性、ADV/slippage 不应直接理解为全市场真实成交额或可下单容量；更换 feed 会改变过滤口径，必须单独验证。
+- 评价时分别报告无信号、unpriced、label 未成熟和 delist 假设；non-overlapping cumulative 只是取样诊断，**不是账户 NAV**。
+- 对两种风格做**配对**比较：使用相同冻结候选池、日期、成本、benchmark 和成熟标签；检查差异是否由少数 mega-cap 股票或单个年份驱动，不因汇总收益高就马上调参。
+- 如果数据不足以构造真正 held-out 的 anchored OOS，不要把 retrospective replay 冒称样本外；应明确标记证据等级和阻塞点。
+
+**第一个优化 PR 的 Definition of Done：**上述 manifest、双风格 baseline、按层归因、风险与数据限制、下一实验假设齐备；生产配置不变。评估有效性后再决定是否做 feature ablation/weights 调整，而不是再开一个纯架构 PR。
 
 ---
 
