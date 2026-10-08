@@ -90,6 +90,10 @@ def _style_config(style: str) -> str:
     return f"/root/configs/config.{style}.json"
 
 
+def _durable_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in spec.items() if key != "resume"}
+
+
 def _success_matches(path: Path, spec: dict[str, Any]) -> bool:
     if not path.exists():
         return False
@@ -97,7 +101,10 @@ def _success_matches(path: Path, spec: dict[str, Any]) -> bool:
         payload = json.loads(path.read_text())
     except Exception:
         return False
-    return payload.get("spec") == spec and payload.get("status") == "success"
+    return (
+        payload.get("spec") == _durable_spec(spec)
+        and payload.get("status") == "success"
+    )
 
 
 @app.function(
@@ -140,6 +147,20 @@ def run_replay_remote(payload_json: str) -> str:
                 "success": str(success_path),
             }
         )
+
+    durable_spec = _durable_spec(spec)
+    runner_spec_path = checkpoint_dir / "_RUN_SPEC.json"
+    if runner_spec_path.exists():
+        existing_spec = json.loads(runner_spec_path.read_text())
+        if resume and existing_spec != durable_spec:
+            raise RuntimeError(
+                "checkpoint run spec mismatch; use a new run_id or --no-resume"
+            )
+    if not resume or not runner_spec_path.exists():
+        runner_spec_path.write_text(
+            json.dumps(durable_spec, indent=2, sort_keys=True) + "\n"
+        )
+        research_volume.commit()
 
     checkpoint_manifest = checkpoint_dir / "base" / "manifest.json"
     resume_checkpoints = bool(resume and checkpoint_manifest.exists())
@@ -193,7 +214,7 @@ def run_replay_remote(payload_json: str) -> str:
     normalized = {key: str(value) for key, value in result.items()}
     success_payload = {
         "status": "success",
-        "spec": spec,
+        "spec": durable_spec,
         "result": normalized,
     }
     success_path.write_text(
@@ -291,7 +312,7 @@ def run_dataset_remote(payload_json: str) -> str:
         json.dumps(
             {
                 "status": "success",
-                "spec": spec,
+                "spec": _durable_spec(spec),
                 "output": str(output_path),
             },
             indent=2,
