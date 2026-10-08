@@ -5,6 +5,7 @@ from .ai_link import (
     ai_market_link_score,
     compute_ai_link_score,
 )
+from .derived import compute_cross_section_derived_features
 from .price import (
     compute_price_history_features,
     empty_price_history_features,
@@ -21,6 +22,7 @@ __all__ = [
     "ai_etf_consensus_score",
     "ai_market_link_score",
     "compute_ai_link_score",
+    "compute_cross_section_derived_features",
     "compute_historical_valuation_percentile",
     "compute_price_history_features",
     "empty_price_history_features",
