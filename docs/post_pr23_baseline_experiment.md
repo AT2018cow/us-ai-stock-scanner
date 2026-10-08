@@ -126,8 +126,13 @@ The full 2023-2026 PIT replay can exceed an 8 GB host. For this experiment,
 prefer the dedicated Modal runner instead of running the commands above on the
 small launcher host.
 
-The Modal runner uses 2 vCPU / 24 GB RAM, mounts the existing
-`ai-scanner-cache` Volume, writes artifacts/checkpoints to the persistent
+The Modal runner uses a bounded resource envelope instead of a large fixed
+reservation: `cpu=(1.0, 2.0)` and `memory=(8192, 16384)` MiB. The first
+value is the request and the second is the hard limit. This gives the replay
+room to exceed the 8 GB launcher that OOM-killed the local run without
+reserving 24 GB for the entire job. Raise the memory limit to 24 GiB only after
+a reproducible OOM at 16 GiB. It mounts the existing `ai-scanner-cache`
+Volume, writes artifacts/checkpoints to the persistent
 `ai-scanner-research` Volume, and commits after every completed signal date.
 
 Run Modal in the foreground. **Do not use `--detach` or any detached-app
@@ -233,6 +238,18 @@ python run_backtest.py ... \
 
 A resume manifest mismatch is a hard error. Do not bypass it by copying old
 checkpoint files into a new run.
+
+After the first successful full replay, inspect actual Modal resource/billing
+metrics before changing the envelope. For example:
+
+```bash
+.venv/bin/python -m modal billing report --for today --show-resources
+```
+
+If memory usage stays comfortably below the request, lower the request on the
+next evidence run. If the container hits the 16 GiB hard limit, raise only the
+memory limit (for example to 24 GiB) and rerun the same checkpointed command.
+Do not add CPU merely to address a memory OOM.
 
 ## 4. One-time survivor datasets for offline research
 
