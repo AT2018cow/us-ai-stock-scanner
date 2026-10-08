@@ -43,7 +43,8 @@ class TestFeatureSnapshotBundle(unittest.TestCase):
             right_dir = root / "right"
             frame = pd.DataFrame(
                 {
-                    "symbol": ["BBB", "AAA"],
+                    "symbol": ["NA", "AAA"],
+                    "sic": ["0010", "0020"],
                     "score_input": [2.5, 1.5],
                     "shares_stale": [False, True],
                 }
@@ -76,10 +77,11 @@ class TestFeatureSnapshotBundle(unittest.TestCase):
             )
             loaded = load_feature_snapshot(left_dir / left_record["path"])
 
-        self.assertEqual(loaded["symbol"].tolist(), ["AAA", "BBB"])
+        self.assertEqual(loaded["symbol"].tolist(), ["AAA", "NA"])
+        self.assertEqual(loaded["sic"].tolist(), ["0020", "0010"])
         self.assertEqual(
             loaded.columns.tolist(),
-            ["symbol", "score_input", "shares_stale"],
+            ["symbol", "score_input", "shares_stale", "sic"],
         )
 
     def test_manifest_compare_detects_feature_drift(self) -> None:
