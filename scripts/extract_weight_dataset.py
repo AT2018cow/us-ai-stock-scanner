@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--replay-max-symbols", type=int, default=800)
     p.add_argument("--replay-asset-status", default="all", choices=["all", "active", "inactive"])
     p.add_argument("--watchlist-history-dir", default="data/watchlist_history")
+    p.add_argument(
+        "--watchlist-csv-path",
+        default=None,
+        help="Optional current-pool CSV override; use a frozen copy for reproducible research.",
+    )
     p.add_argument("--allow-latest-watchlist-fallback", action="store_true", default=False)
     p.add_argument("--no-latest-watchlist-fallback", action="store_true")
     p.add_argument("--pre-snapshot-universe", default="union", choices=["union", "strict"],
@@ -124,6 +129,8 @@ def main() -> None:
     allow_fallback = args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
 
     scan_config = load_config(scan_config_path)
+    if args.watchlist_csv_path:
+        scan_config.watchlist_csv_path = str(args.watchlist_csv_path)
     scan_config.max_symbols = args.replay_max_symbols
 
     client, monitor = load_alpaca_client(scan_config)
@@ -478,6 +485,8 @@ def main() -> None:
         "disclosure_lookback_days": args.disclosure_lookback_days,
         "delist_return_assumption": args.delist_return_assumption,
         "allow_latest_watchlist_fallback": allow_fallback,
+        "watchlist_csv_path": str(scan_config.watchlist_csv_path),
+        "watchlist_history_dir": str(args.watchlist_history_dir),
         "pre_snapshot_universe": args.pre_snapshot_universe,
         "channels": sorted(channel_profiles.keys()),
         "n_rows": int(len(dataset)),
