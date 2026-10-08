@@ -153,3 +153,16 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 - 提取（6个月，5339行×113列）：逐字节一致 (ee60aea9ec5b)
 - 回放 events/benchmarks/summary/events_signals：全部逐字节一致
 - 结论：**零漂移，PR #14 为纯行为无关重构**
+
+## PR #15 gate 记录（2025-11-06）
+
+方法：frozen cache，base 8bea7a1 vs head ac859d1，顺序执行。
+
+- 份额完整性修复：24个幸存者减少（BIDU因stale shares移除，BKR因份额问题移除，
+  MBLY因单位修正加入）
+- benchmarks: IDENTICAL（市场数据层不受影响）
+- events n_selected: 0/216变化（选择数量不变，只是符号轮换）
+- signals: 10/72行变化，13个符号（BIDU移除导致排名变化）
+- summary avg_return: 18/36变化，max_diff=0.0066
+- 新增列: shares_asof_end, shares_stale
+- 无未解释差异 → **合并**
