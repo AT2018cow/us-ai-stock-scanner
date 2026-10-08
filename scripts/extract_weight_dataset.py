@@ -48,8 +48,6 @@ from ai_value_scanner.backtest import (
     build_universe_for_replay,
     build_union_watchlist_map,
     compute_price_features_asof,
-    forward_return,
-    forward_return_with_exit,
     load_alpaca_client,
     load_sec_client,
     load_watchlist_snapshots,
@@ -57,11 +55,15 @@ from ai_value_scanner.backtest import (
     parse_date_utc,
     resolve_watchlist_asof,
     union_watchlist_allowlist,
-    _hold_window_mature,
 )
-from ai_value_scanner.scanner import (
+from ai_value_scanner.config import load_config
+from ai_value_scanner.evaluation.backtest import (
+    _hold_window_mature,
+    forward_return,
+    forward_return_with_exit,
+)
+from ai_value_scanner.strategy.filtering import (
     apply_filters_with_diagnostics,
-    load_config,
     partition_filter_steps,
 )
 
