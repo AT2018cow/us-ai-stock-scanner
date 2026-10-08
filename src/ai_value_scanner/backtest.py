@@ -3813,6 +3813,11 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
         )
         frames.append(df)
     if snapshot_writer is not None:
+        if cfg.feature_snapshot_only and not snapshot_writer.records:
+            raise ValueError(
+                "feature snapshot capture produced zero cross sections; "
+                "check requested dates and watchlist coverage"
+            )
         snapshot_writer.finalize()
     signals = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return signals, monitor
@@ -3820,6 +3825,14 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
 
 def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     backtest_start = time.monotonic()
+    if cfg.feature_snapshot_only and not cfg.feature_snapshot_dir:
+        raise ValueError(
+            "feature_snapshot_only requires --feature-snapshot-dir"
+        )
+    if cfg.feature_snapshot_only and not cfg.feature_snapshot_dates:
+        raise ValueError(
+            "feature_snapshot_only requires --feature-snapshot-dates"
+        )
     scan_cfg = load_config(cfg.scan_config_path)
     if cfg.watchlist_csv_path:
         scan_cfg.watchlist_csv_path = cfg.watchlist_csv_path
