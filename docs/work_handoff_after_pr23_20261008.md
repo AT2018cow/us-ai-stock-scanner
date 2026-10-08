@@ -4,6 +4,7 @@
 PR #22 合并后的代码基线：`f80d8d735be343c7f6360f3af9ec4adeff631ae7`  
 PR #23：closure / handoff，仅文档与审计收尾  
 PR #22 合并后 GitHub Actions：**367 tests / OK**  
+PR #23 closure CI：**374 tests / OK**  
 项目：`AT2018cow/us-ai-stock-scanner`
 
 > **本文取代 `docs/work_handoff_after_pr8_20261006.md`，作为后续工作的主交接入口。**
