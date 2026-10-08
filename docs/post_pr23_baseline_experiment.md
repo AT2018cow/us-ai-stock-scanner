@@ -132,7 +132,7 @@ diagnostic lists until the first attribution says they are decision-relevant.
 ### risk_off dataset
 
 ```bash
-python scripts/extract_weight_dataset.py   --scan-config "$EXP/frozen_inputs/config.risk_off.json"   --output "$EXP/weight_dataset_risk_off.csv"   --list-types low_value,momentum   --start-date 2023-01-01   --end-date 2026-09-30   --rebalance-frequency monthly   --horizons 20,60,120   --trading-cost-bps 15   --entry-price-mode next_open   --exit-price-mode close   --watchlist-history-dir "$EXP/frozen_inputs/watchlist_history"   --pre-snapshot-universe union   --no-latest-watchlist-fallback   --theme-source rules_proxy   --include-channels core_ai,ai_enabler,ai_peripheral
+python scripts/extract_weight_dataset.py   --scan-config "$EXP/frozen_inputs/config.risk_off.json"   --output "$EXP/weight_dataset_risk_off.csv"   --list-types low_value,momentum   --start-date 2023-01-01   --end-date 2026-09-30   --rebalance-frequency monthly   --horizons 20,60,120   --trading-cost-bps 15   --entry-price-mode next_open   --exit-price-mode close   --watchlist-history-dir "$EXP/frozen_inputs/watchlist_history"   --watchlist-csv-path "$EXP/frozen_inputs/ai_watchlist.csv"   --pre-snapshot-universe union   --no-latest-watchlist-fallback   --theme-source rules_proxy   --include-channels core_ai,ai_enabler,ai_peripheral
 ```
 
 ### risk_on dataset
@@ -192,18 +192,35 @@ with the same windows, seed, frozen inputs and no-promotion rules.
 
 ### Modal
 
-If local wall-clock cost is excessive, replace the tuner executor with:
+If local wall-clock cost is excessive, Modal may be used for candidate-level
+tuner parallelism. The current Modal image packages repository-local
+`configs/` and `data/`, but it does **not** package
+`outputs/<RUN_ID>/frozen_inputs`. Do not pass the `outputs/` frozen paths
+directly to remote candidates.
+
+Before a Modal run:
+
+1. verify that repository-local `data/ai_watchlist.csv` and
+   `data/watchlist_history` still hash-identically to the frozen copies;
+2. keep those files unchanged for the whole batch;
+3. use repository-local data paths in the tuner arguments;
+4. add `--executor modal`.
+
+Use these substitutions:
 
 ```bash
+--watchlist-csv-path data/ai_watchlist.csv
+--watchlist-history-dir data/watchlist_history
 --executor modal
 ```
 
-Do not change candidate count, seed, windows, inputs or other experiment
-settings merely because the executor changes.
+Do not change candidate count, seed, windows or any other experiment setting.
+If the repository-local data paths no longer match the frozen hashes, do not
+use Modal until the frozen state is restored or explicitly staged into the
+Modal image.
 
 The current-config replay and survivor dataset should normally be generated
 once in the experiment environment where the canonical frozen caches live.
-Modal is primarily for candidate-level tuner parallelism.
 
 ## 7. Required review outputs
 
