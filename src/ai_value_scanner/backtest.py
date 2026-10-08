@@ -3228,6 +3228,11 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
 
 def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     backtest_start = time.monotonic()
+    if cfg.signal_checkpoint_dir and cfg.feature_snapshot_dir:
+        raise ValueError(
+            "signal-date checkpoints cannot be combined with feature snapshot capture; "
+            "resume would skip already-completed dates and produce an incomplete snapshot set"
+        )
     if cfg.feature_snapshot_only and not cfg.feature_snapshot_dir:
         raise ValueError(
             "feature_snapshot_only requires --feature-snapshot-dir"
