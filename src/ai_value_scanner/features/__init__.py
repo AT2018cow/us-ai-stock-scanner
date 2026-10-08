@@ -6,6 +6,7 @@ from .ai_link import (
     compute_ai_link_score,
 )
 from .derived import compute_cross_section_derived_features
+from .peer_valuation import compute_peer_relative_valuation
 from .price import (
     compute_price_history_features,
     empty_price_history_features,
@@ -24,6 +25,7 @@ __all__ = [
     "compute_ai_link_score",
     "compute_cross_section_derived_features",
     "compute_historical_valuation_percentile",
+    "compute_peer_relative_valuation",
     "compute_price_history_features",
     "empty_price_history_features",
     "lookup_close_on_or_before",
