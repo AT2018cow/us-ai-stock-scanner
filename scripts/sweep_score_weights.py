@@ -526,13 +526,16 @@ def main() -> None:
     ].copy()
     if dataset.empty:
         raise ValueError("Dataset empty after channel/list filtering.")
-    log(f"dataset: {len(dataset)} rows | {dataset['signal_date'].nunique()} dates | channels={channels}")
 
     scan_config = load_config(args.scan_config)
     configured_channels = list((scan_config.channel_profiles or {}).keys())
     channels = [ch for ch in configured_channels if ch in requested_channels]
     if not channels:
         raise ValueError("No requested channels exist in scan_config.channel_profiles.")
+    log(
+        f"dataset: {len(dataset)} rows | {dataset['signal_date'].nunique()} dates "
+        f"| channels={channels}"
+    )
     winsor_lower_q = scan_config.score_winsor_lower_q
     winsor_upper_q = scan_config.score_winsor_upper_q
     penalty_over = scan_config.score_penalty_overvaluation
