@@ -130,6 +130,10 @@ The Modal runner uses 2 vCPU / 24 GB RAM, mounts the existing
 `ai-scanner-cache` Volume, writes artifacts/checkpoints to the persistent
 `ai-scanner-research` Volume, and commits after every completed signal date.
 
+Run Modal in the foreground. **Do not use `--detach` or any detached-app
+mode** for this experiment. Foreground execution keeps logs/failures attached
+to the launcher and makes checkpoint/resume state unambiguous.
+
 Before launch, repository-local `configs/`, `data/ai_watchlist.csv` and
 `data/watchlist_history` must still hash-identically to the frozen inputs.
 The runner checks this and aborts on mismatch.
