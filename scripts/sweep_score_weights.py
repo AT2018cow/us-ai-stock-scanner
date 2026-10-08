@@ -44,6 +44,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.backtest import build_steps_and_weights
 from ai_value_scanner.scanner import load_config
+from ai_value_scanner.strategy.research import (
+    apply_low_value_research_gate,
+    apply_research_assessment,
+)
 
 DEFAULT_HORIZON_WEIGHTS: dict[int, float] = {20: 0.2, 60: 0.5, 120: 0.3}
 DEFAULT_LIST_WEIGHTS: dict[str, float] = {"low_value": 0.35, "momentum": 0.25}
@@ -109,17 +113,36 @@ def precompute_groups(
     base_weights: dict[str, dict[str, dict[str, float]]],
     horizons: list[int],
     pe_cash_backing_haircut: float = 1.0,
+    *,
+    scan_config: Any | None = None,
+    channel_order: list[str] | None = None,
 ) -> dict[tuple[str, str, str], dict[str, Any]]:
-    """Per (signal_date, list_type, channel): normalized axis matrix + penalties + fwd returns.
+    """Precompute weight-independent state per (date, list, channel).
 
-    Uses score_and_rank once (with base weights) to harvest the *_norm columns,
-    which are weight-independent. Candidate scoring is then pure linear algebra.
+    Besides normalized score axes and forward returns, cache the production
+    low-value research-gate eligibility and diversification metadata. Candidate
+    weights only change ordering within this frozen survivor set.
+
+    channel_order must follow ScanConfig.channel_profiles order because
+    production concatenates per-channel top-N frames in that order before
+    cross-channel symbol normalization.
     """
     from ai_value_scanner.scanner import score_and_rank
 
+    work = dataset.copy()
+    if channel_order:
+        rank = {str(ch): idx for idx, ch in enumerate(channel_order)}
+        work["_offline_channel_order"] = (
+            work["channel"].astype(str).map(rank).fillna(len(rank)).astype(int)
+        )
+        work = work.sort_values(
+            ["signal_date", "list_type", "_offline_channel_order"],
+            kind="stable",
+        )
+
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for (signal_date, list_type, channel), part in dataset.groupby(
-        ["signal_date", "list_type", "channel"], sort=True
+    for (signal_date, list_type, channel), part in work.groupby(
+        ["signal_date", "list_type", "channel"], sort=False
     ):
         base = base_weights.get(str(list_type), {}).get(str(channel), {})
         if not base:
@@ -135,15 +158,57 @@ def precompute_groups(
         )
         axes = [k for k in base.keys() if k != "soft_pass_rate"]
         norm_cols = [f"{a}_norm" for a in axes]
-        missing = [c for c in norm_cols if c not in ranked.columns]
-        for c in missing:
-            ranked[c] = 0.0
+        missing = [col for col in norm_cols if col not in ranked.columns]
+        for col in missing:
+            ranked[col] = 0.0
+
+        gate_allowed = np.ones(len(ranked), dtype=bool)
+        if str(list_type) == "low_value" and scan_config is not None and not ranked.empty:
+            assessed = apply_research_assessment(ranked, "low_value")
+            gated = apply_low_value_research_gate(assessed, scan_config)
+            allowed_index = set(gated.index.tolist())
+            gate_allowed = np.asarray(
+                [idx in allowed_index for idx in ranked.index],
+                dtype=bool,
+            )
+
         mat = ranked[norm_cols].to_numpy(dtype="float64")
-        soft_rate = pd.to_numeric(ranked.get("soft_pass_rate"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
-        ovp = penalty_over * pd.to_numeric(ranked.get("overvaluation_penalty"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
-        det = penalty_det * pd.to_numeric(ranked.get("deterioration_penalty"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
+        soft_rate = (
+            pd.to_numeric(ranked.get("soft_pass_rate"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
+        ovp = (
+            penalty_over
+            * pd.to_numeric(ranked.get("overvaluation_penalty"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
+        det = (
+            penalty_det
+            * pd.to_numeric(ranked.get("deterioration_penalty"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
         fwd = ranked[[f"fwd_ret_{h}" for h in horizons]].to_numpy(dtype="float64")
         symbols = ranked["symbol"].astype(str).tolist()
+        sic = (
+            ranked["sic"].fillna("").astype(str).tolist()
+            if "sic" in ranked.columns
+            else [""] * len(ranked)
+        )
+        watchlist_etfs = (
+            ranked["watchlist_etfs"].fillna("").astype(str).tolist()
+            if "watchlist_etfs" in ranked.columns
+            else [""] * len(ranked)
+        )
+        etf_count = (
+            pd.to_numeric(ranked["watchlist_etf_count"], errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+            if "watchlist_etf_count" in ranked.columns
+            else np.zeros(len(ranked), dtype="float64")
+        )
         groups[(str(signal_date), str(list_type), str(channel))] = {
             "axes": axes,
             "norm": mat,
@@ -152,8 +217,68 @@ def precompute_groups(
             "det": det,
             "fwd": fwd,
             "symbols": symbols,
+            "sic": sic,
+            "watchlist_etfs": watchlist_etfs,
+            "watchlist_etf_count": etf_count,
+            "gate_allowed": gate_allowed,
         }
     return groups
+
+
+def _select_ranked_indices_with_caps(
+    scores: np.ndarray,
+    gate_allowed: np.ndarray,
+    sic: list[str],
+    watchlist_etfs: list[str],
+    top_n: int,
+    max_per_sector: int | None,
+    max_per_watchlist_etf_source: int | None,
+) -> np.ndarray:
+    """Mirror production research-gate -> group-caps -> top-N ordering."""
+    order = np.argsort(-scores, kind="stable")
+    limit = max(1, int(top_n))
+    picked: list[int] = []
+    sector_count: dict[str, int] = {}
+    etf_count: dict[str, int] = {}
+
+    for raw_idx in order:
+        idx = int(raw_idx)
+        if idx >= len(gate_allowed) or not bool(gate_allowed[idx]):
+            continue
+
+        sector_key = str(sic[idx] or "")[:2] if idx < len(sic) else ""
+        if idx < len(watchlist_etfs):
+            etf_tokens = [
+                token
+                for token in str(watchlist_etfs[idx] or "").split(",")
+                if token
+            ]
+        else:
+            etf_tokens = []
+        primary_etf = sorted(etf_tokens)[0] if etf_tokens else ""
+
+        if (
+            max_per_sector is not None
+            and sector_key
+            and sector_count.get(sector_key, 0) >= int(max_per_sector)
+        ):
+            continue
+        if (
+            max_per_watchlist_etf_source is not None
+            and primary_etf
+            and etf_count.get(primary_etf, 0) >= int(max_per_watchlist_etf_source)
+        ):
+            continue
+
+        picked.append(idx)
+        if sector_key:
+            sector_count[sector_key] = sector_count.get(sector_key, 0) + 1
+        if primary_etf:
+            etf_count[primary_etf] = etf_count.get(primary_etf, 0) + 1
+        if len(picked) >= limit:
+            break
+
+    return np.asarray(picked, dtype=int)
 
 
 def score_candidate(
