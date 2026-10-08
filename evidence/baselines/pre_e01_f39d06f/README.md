@@ -166,3 +166,16 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 - summary avg_return: 18/36变化，max_diff=0.0066
 - 新增列: shares_asof_end, shares_stale
 - 无未解释差异 → **合并**
+
+## PR #16 gate 记录（2025-11-07）
+
+方法：frozen cache Medium gate（6个月窗口），base 7a933a1 vs head 8bbc0fd。
+
+- 六个peer valuation字段：peer_median/discount/原始值全部0差异；
+  percentile 1887+4233行值变化（cohort规则修正核心效果）+282行NaN→val
+- soft_pass_count: 2600行变化（percentile是soft filter的下游效应）
+- 幸存者数量不变（硬过滤未受影响）
+- 回放：benchmarks IDENTICAL；events n_selected 99/216变化；
+  summary avg_return 36/36变化，max_diff=0.0408
+- 因果链：cohort规则修正→percentile变化→composite score→排名→选择→收益
+- 无未解释差异 → **合并**
