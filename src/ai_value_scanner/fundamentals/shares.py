@@ -93,6 +93,17 @@ def assess_share_count_integrity(
     period_end = shares.period_end
     scale_factor = 1.0
 
+    # Preserve the scanner's established compatibility behavior for invalid
+    # non-positive counts: do not infer scale/freshness provenance from them.
+    if value <= 0:
+        return ShareCountIntegrity(
+            value=value,
+            period_end=None,
+            stale=False,
+            scale_factor=1.0,
+            latest_metric_end=_latest_metric_period_end(metric_record_groups, cutoff),
+        )
+
     if value > 0:
         eps = _record_by_period_end(eps_records, period_end, cutoff)
         net_income = _record_by_period_end(net_income_records, period_end, cutoff)
