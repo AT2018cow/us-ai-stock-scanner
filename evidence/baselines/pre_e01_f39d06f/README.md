@@ -167,7 +167,7 @@ D02 pending 机制使每次运行重取 ~661 个 facts。当多进程并发运�
 - 新增列: shares_asof_end, shares_stale
 - 无未解释差异 → **合并**
 
-## PR #16 gate 记录（2025-11-07）
+## PR #16 gate 记录（2026-10-08）
 
 方法：frozen cache Medium gate（6个月窗口），base 7a933a1 vs head 8bbc0fd。
 

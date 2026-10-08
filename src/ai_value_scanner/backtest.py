@@ -52,6 +52,8 @@ from ai_value_scanner.features.valuation import (
     safe_divide,
 )
 
+from ai_value_scanner.validation.snapshots import FeatureSnapshotWriter
+
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
     ASSETS_CURRENT_TAGS,
@@ -149,6 +151,9 @@ class BacktestConfig:
     entry_price_mode: str = "next_open"
     exit_price_mode: str = "close"
     allow_lookahead_theme_source: bool = False
+    feature_snapshot_dir: str | None = None
+    feature_snapshot_dates: list[str] | None = None
+    feature_snapshot_only: bool = False
 
 
 @dataclass
@@ -2532,6 +2537,7 @@ def build_signal_events_historical_replay(
     cfg: BacktestConfig,
     scenario: str,
     shared_cache: dict[str, Any] | None = None,
+    snapshot_writer: FeatureSnapshotWriter | None = None,
 ) -> pd.DataFrame:
     replay_start = time.monotonic()
     start_dt = parse_date_utc(cfg.start_date)
@@ -2690,9 +2696,27 @@ def build_signal_events_historical_replay(
     else:
         theme_scores_static = {}
 
-    dates = build_rebalance_dates(start_dt, end_dt, cfg.rebalance_frequency)
+    if cfg.feature_snapshot_only:
+        requested = cfg.feature_snapshot_dates or []
+        if not requested:
+            raise ValueError(
+                "feature_snapshot_only requires at least one --feature-snapshot-dates value"
+            )
+        dates = []
+        for token in requested:
+            ts = pd.Timestamp(token)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            else:
+                ts = ts.tz_convert("UTC")
+            if start_dt <= ts.to_pydatetime() <= end_dt:
+                dates.append(ts.normalize())
+        dates = sorted(set(dates))
+    else:
+        dates = build_rebalance_dates(start_dt, end_dt, cfg.rebalance_frequency)
     bt_log(
-        f"rebalance dates: {len(dates)}",
+        f"replay dates: {len(dates)}"
+        + (" (snapshot-only)" if cfg.feature_snapshot_only else ""),
         scope=f"replay:{scenario}",
         started_at_monotonic=replay_start,
     )
@@ -2794,6 +2818,25 @@ def build_signal_events_historical_replay(
         )
         if df.empty:
             continue
+
+        snapshot_dates = set(cfg.feature_snapshot_dates or [])
+        should_capture = (
+            snapshot_writer is not None
+            and (
+                not snapshot_dates
+                or asof.date().isoformat() in snapshot_dates
+            )
+        )
+        if should_capture:
+            snapshot_writer.write(
+                style=str(scan_config.strategy_style or "unknown"),
+                scenario=scenario,
+                asof=asof,
+                frame=df,
+            )
+        if cfg.feature_snapshot_only:
+            continue
+
         for list_type in (cfg.list_types or VALID_LIST_TYPES):
             symbols_selected, signal_diag = rank_and_pick_symbols_with_diagnostics(
                 df=df,
@@ -3665,6 +3708,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--delist-detection-buffer-days", type=int, default=7)
     p.add_argument("--enable-perturbation", action="store_true", default=True)
     p.add_argument("--no-perturbation", action="store_true")
+    p.add_argument(
+        "--feature-snapshot-dir",
+        default=None,
+        help="Optional directory for deterministic pre-strategy cross-section snapshots.",
+    )
+    p.add_argument(
+        "--feature-snapshot-dates",
+        default=None,
+        help="Comma-separated YYYY-MM-DD dates to capture. Required with --feature-snapshot-only.",
+    )
+    p.add_argument(
+        "--feature-snapshot-only",
+        action="store_true",
+        default=False,
+        help="Build only requested feature snapshots and skip ranking/event backtest.",
+    )
     return p
 
 
@@ -3718,9 +3777,28 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
 
     client, monitor = load_alpaca_client(scan_cfg)
     sec = load_sec_client(scan_cfg, monitor)
-    scenarios = ["base", "loose", "strict"] if cfg.enable_perturbation else ["base"]
+    scenarios = (
+        ["base"]
+        if cfg.feature_snapshot_only
+        else (["base", "loose", "strict"] if cfg.enable_perturbation else ["base"])
+    )
     frames: list[pd.DataFrame] = []
     scenario_cache: dict[str, Any] = {}
+    snapshot_writer: FeatureSnapshotWriter | None = None
+    if cfg.feature_snapshot_dir:
+        snapshot_writer = FeatureSnapshotWriter(
+            cfg.feature_snapshot_dir,
+            metadata={
+                "scan_config_path": cfg.scan_config_path,
+                "strategy_style": scan_cfg.strategy_style,
+                "start_date": cfg.start_date,
+                "end_date": cfg.end_date,
+                "replay_max_symbols": cfg.replay_max_symbols,
+                "theme_source": cfg.theme_source,
+                "snapshot_dates": sorted(cfg.feature_snapshot_dates or []),
+                "snapshot_only": bool(cfg.feature_snapshot_only),
+            },
+        )
     for scenario in scenarios:
         scenario_cfg = perturb_scan_config(scan_cfg, scenario)
         scenario_cfg.max_symbols = cfg.replay_max_symbols
@@ -3731,14 +3809,30 @@ def build_signals(cfg: BacktestConfig, scan_cfg: ScanConfig) -> tuple[pd.DataFra
             cfg=cfg,
             scenario=scenario,
             shared_cache=scenario_cache,
+            snapshot_writer=snapshot_writer,
         )
         frames.append(df)
+    if snapshot_writer is not None:
+        if cfg.feature_snapshot_only and not snapshot_writer.records:
+            raise ValueError(
+                "feature snapshot capture produced zero cross sections; "
+                "check requested dates and watchlist coverage"
+            )
+        snapshot_writer.finalize()
     signals = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return signals, monitor
 
 
 def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
     backtest_start = time.monotonic()
+    if cfg.feature_snapshot_only and not cfg.feature_snapshot_dir:
+        raise ValueError(
+            "feature_snapshot_only requires --feature-snapshot-dir"
+        )
+    if cfg.feature_snapshot_only and not cfg.feature_snapshot_dates:
+        raise ValueError(
+            "feature_snapshot_only requires --feature-snapshot-dates"
+        )
     scan_cfg = load_config(cfg.scan_config_path)
     if cfg.watchlist_csv_path:
         scan_cfg.watchlist_csv_path = cfg.watchlist_csv_path
@@ -3752,6 +3846,19 @@ def run_backtest(cfg: BacktestConfig) -> dict[str, Any]:
 
     bt_log("building signals...", started_at_monotonic=backtest_start)
     signals, build_monitor = build_signals(cfg, scan_cfg)
+    if cfg.feature_snapshot_only:
+        manifest = (
+            Path(cfg.feature_snapshot_dir) / "manifest.json"
+            if cfg.feature_snapshot_dir
+            else None
+        )
+        if manifest is None or not manifest.exists():
+            raise ValueError("feature snapshot capture produced no manifest")
+        bt_log(
+            f"feature snapshot manifest: {manifest}",
+            started_at_monotonic=backtest_start,
+        )
+        return {"feature_snapshot_manifest": manifest}
     if signals.empty:
         raise ValueError("No signals generated for selected mode/range.")
     bt_log(f"mode: {cfg.mode}", started_at_monotonic=backtest_start)
@@ -3961,6 +4068,9 @@ def main() -> None:
         historical_news_limit_per_symbol=args.historical_news_limit_per_symbol,
         delist_return_assumption=args.delist_return_assumption,
         delist_detection_buffer_days=args.delist_detection_buffer_days,
+        feature_snapshot_dir=args.feature_snapshot_dir,
+        feature_snapshot_dates=parse_csv_list(args.feature_snapshot_dates),
+        feature_snapshot_only=bool(args.feature_snapshot_only),
     )
     run_backtest(cfg)
 
