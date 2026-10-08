@@ -53,6 +53,7 @@ from ai_value_scanner.features.valuation import (
 )
 
 from ai_value_scanner.validation.snapshots import FeatureSnapshotWriter
+from ai_value_scanner.strategy.scoring import score_and_rank
 
 from ai_value_scanner.scanner import (
     AI_DISCLOSURE_KEYWORD_GROUPS,
@@ -97,7 +98,6 @@ from ai_value_scanner.scanner import (
     load_watchlist_scores,
     watchlist_rows_to_scores,
     safe_divide,
-    score_and_rank,
     summarize_diagnostics_by_layer,
     summarize_first_fail_reasons,
     theme_score_from_news,
