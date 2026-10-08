@@ -44,6 +44,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.backtest import build_steps_and_weights
 from ai_value_scanner.scanner import load_config
+from ai_value_scanner.strategy.research import (
+    apply_low_value_research_gate,
+    apply_research_assessment,
+)
 
 DEFAULT_HORIZON_WEIGHTS: dict[int, float] = {20: 0.2, 60: 0.5, 120: 0.3}
 DEFAULT_LIST_WEIGHTS: dict[str, float] = {"low_value": 0.35, "momentum": 0.25}
@@ -109,17 +113,36 @@ def precompute_groups(
     base_weights: dict[str, dict[str, dict[str, float]]],
     horizons: list[int],
     pe_cash_backing_haircut: float = 1.0,
+    *,
+    scan_config: Any | None = None,
+    channel_order: list[str] | None = None,
 ) -> dict[tuple[str, str, str], dict[str, Any]]:
-    """Per (signal_date, list_type, channel): normalized axis matrix + penalties + fwd returns.
+    """Precompute weight-independent state per (date, list, channel).
 
-    Uses score_and_rank once (with base weights) to harvest the *_norm columns,
-    which are weight-independent. Candidate scoring is then pure linear algebra.
+    Besides normalized score axes and forward returns, cache the production
+    low-value research-gate eligibility and diversification metadata. Candidate
+    weights only change ordering within this frozen survivor set.
+
+    channel_order must follow ScanConfig.channel_profiles order because
+    production concatenates per-channel top-N frames in that order before
+    cross-channel symbol normalization.
     """
     from ai_value_scanner.scanner import score_and_rank
 
+    work = dataset.copy()
+    if channel_order:
+        rank = {str(ch): idx for idx, ch in enumerate(channel_order)}
+        work["_offline_channel_order"] = (
+            work["channel"].astype(str).map(rank).fillna(len(rank)).astype(int)
+        )
+        work = work.sort_values(
+            ["signal_date", "list_type", "_offline_channel_order"],
+            kind="stable",
+        )
+
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for (signal_date, list_type, channel), part in dataset.groupby(
-        ["signal_date", "list_type", "channel"], sort=True
+    for (signal_date, list_type, channel), part in work.groupby(
+        ["signal_date", "list_type", "channel"], sort=False
     ):
         base = base_weights.get(str(list_type), {}).get(str(channel), {})
         if not base:
@@ -135,15 +158,57 @@ def precompute_groups(
         )
         axes = [k for k in base.keys() if k != "soft_pass_rate"]
         norm_cols = [f"{a}_norm" for a in axes]
-        missing = [c for c in norm_cols if c not in ranked.columns]
-        for c in missing:
-            ranked[c] = 0.0
+        missing = [col for col in norm_cols if col not in ranked.columns]
+        for col in missing:
+            ranked[col] = 0.0
+
+        gate_allowed = np.ones(len(ranked), dtype=bool)
+        if str(list_type) == "low_value" and scan_config is not None and not ranked.empty:
+            assessed = apply_research_assessment(ranked, "low_value")
+            gated = apply_low_value_research_gate(assessed, scan_config)
+            allowed_index = set(gated.index.tolist())
+            gate_allowed = np.asarray(
+                [idx in allowed_index for idx in ranked.index],
+                dtype=bool,
+            )
+
         mat = ranked[norm_cols].to_numpy(dtype="float64")
-        soft_rate = pd.to_numeric(ranked.get("soft_pass_rate"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
-        ovp = penalty_over * pd.to_numeric(ranked.get("overvaluation_penalty"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
-        det = penalty_det * pd.to_numeric(ranked.get("deterioration_penalty"), errors="coerce").fillna(0.0).to_numpy(dtype="float64")
+        soft_rate = (
+            pd.to_numeric(ranked.get("soft_pass_rate"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
+        ovp = (
+            penalty_over
+            * pd.to_numeric(ranked.get("overvaluation_penalty"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
+        det = (
+            penalty_det
+            * pd.to_numeric(ranked.get("deterioration_penalty"), errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+        )
         fwd = ranked[[f"fwd_ret_{h}" for h in horizons]].to_numpy(dtype="float64")
         symbols = ranked["symbol"].astype(str).tolist()
+        sic = (
+            ranked["sic"].fillna("").astype(str).tolist()
+            if "sic" in ranked.columns
+            else [""] * len(ranked)
+        )
+        watchlist_etfs = (
+            ranked["watchlist_etfs"].fillna("").astype(str).tolist()
+            if "watchlist_etfs" in ranked.columns
+            else [""] * len(ranked)
+        )
+        etf_count = (
+            pd.to_numeric(ranked["watchlist_etf_count"], errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype="float64")
+            if "watchlist_etf_count" in ranked.columns
+            else np.zeros(len(ranked), dtype="float64")
+        )
         groups[(str(signal_date), str(list_type), str(channel))] = {
             "axes": axes,
             "norm": mat,
@@ -152,8 +217,68 @@ def precompute_groups(
             "det": det,
             "fwd": fwd,
             "symbols": symbols,
+            "sic": sic,
+            "watchlist_etfs": watchlist_etfs,
+            "watchlist_etf_count": etf_count,
+            "gate_allowed": gate_allowed,
         }
     return groups
+
+
+def _select_ranked_indices_with_caps(
+    scores: np.ndarray,
+    gate_allowed: np.ndarray,
+    sic: list[str],
+    watchlist_etfs: list[str],
+    top_n: int,
+    max_per_sector: int | None,
+    max_per_watchlist_etf_source: int | None,
+) -> np.ndarray:
+    """Mirror production research-gate -> group-caps -> top-N ordering."""
+    order = np.argsort(-scores, kind="stable")
+    limit = max(1, int(top_n))
+    picked: list[int] = []
+    sector_count: dict[str, int] = {}
+    etf_count: dict[str, int] = {}
+
+    for raw_idx in order:
+        idx = int(raw_idx)
+        if idx >= len(gate_allowed) or not bool(gate_allowed[idx]):
+            continue
+
+        sector_key = str(sic[idx] or "")[:2] if idx < len(sic) else ""
+        if idx < len(watchlist_etfs):
+            etf_tokens = [
+                token
+                for token in str(watchlist_etfs[idx] or "").split(",")
+                if token
+            ]
+        else:
+            etf_tokens = []
+        primary_etf = sorted(etf_tokens)[0] if etf_tokens else ""
+
+        if (
+            max_per_sector is not None
+            and sector_key
+            and sector_count.get(sector_key, 0) >= int(max_per_sector)
+        ):
+            continue
+        if (
+            max_per_watchlist_etf_source is not None
+            and primary_etf
+            and etf_count.get(primary_etf, 0) >= int(max_per_watchlist_etf_source)
+        ):
+            continue
+
+        picked.append(idx)
+        if sector_key:
+            sector_count[sector_key] = sector_count.get(sector_key, 0) + 1
+        if primary_etf:
+            etf_count[primary_etf] = etf_count.get(primary_etf, 0) + 1
+        if len(picked) >= limit:
+            break
+
+    return np.asarray(picked, dtype=int)
 
 
 def score_candidate(
@@ -162,11 +287,17 @@ def score_candidate(
     soft_weight_by_list: dict[str, float] | dict[tuple[str, str], float],
     horizons: list[int],
     top_n: int,
+    *,
+    max_per_sector: int | None = None,
+    max_per_watchlist_etf_source: int | None = None,
+    channel_order: list[str] | None = None,
 ) -> pd.DataFrame:
     """Returns DataFrame of portfolio events per (signal_date, list_type, horizon).
 
-    Mirrors production rank_and_pick_symbols_with_diagnostics EXACTLY:
-    - top_n per channel, channels iterated in group insertion order
+    Mirrors the current production selection path:
+    - low_value production research gate before diversification
+    - per-channel sector / watchlist-ETF caps before top-N
+    - channels concatenated in ScanConfig.channel_profiles order
     - cross-channel DEDUP keeping first occurrence (normalize_symbol_list)
     - portfolio = equal-weighted mean over UNIQUE picked symbols
 
@@ -200,19 +331,42 @@ def score_candidate(
                 return float(soft_weight_by_list.get((list_type, channel), 0.30))  # type: ignore[union-attr]
         return float(soft_weight_by_list[list_type])  # type: ignore[index]
 
-    for (signal_date, list_type, channel), g in groups.items():
+    group_items = list(groups.items())
+    if channel_order:
+        channel_rank = {str(ch): idx for idx, ch in enumerate(channel_order)}
+        group_items.sort(
+            key=lambda item: (
+                item[0][0],
+                item[0][1],
+                channel_rank.get(str(item[0][2]), len(channel_rank)),
+            )
+        )
+
+    for (signal_date, list_type, channel), g in group_items:
         mult = mult_by_axis[list_type]
         weights = np.array([mult.get(a, 1.0) for a in g["axes"]], dtype="float64")
         base_soft = _soft_w(list_type, channel)
         scores = g["norm"] @ weights + base_soft * g["soft_rate"] - g["ovp"] - g["det"]
-        order = np.argsort(-scores, kind="stable")
-        picked = order[:top_n]
+        picked = _select_ranked_indices_with_caps(
+            scores=scores,
+            gate_allowed=np.asarray(
+                g.get("gate_allowed", np.ones(len(scores), dtype=bool)),
+                dtype=bool,
+            ),
+            sic=list(g.get("sic", [""] * len(scores))),
+            watchlist_etfs=list(g.get("watchlist_etfs", [""] * len(scores))),
+            top_n=top_n,
+            max_per_sector=max_per_sector,
+            max_per_watchlist_etf_source=max_per_watchlist_etf_source,
+        )
         key = (signal_date, list_type)
         picks.setdefault(key, [])
         for j in picked:
             picks[key].append(g["symbols"][int(j)])
         fwd_by_key[(signal_date, list_type, channel)] = g["fwd"][picked]
-        syms_by_key[(signal_date, list_type, channel)] = [g["symbols"][int(j)] for j in picked]
+        syms_by_key[(signal_date, list_type, channel)] = [
+            g["symbols"][int(j)] for j in picked
+        ]
 
     # Stage 2: dedup + equal-weighted portfolio over unique symbols
     events: list[dict[str, Any]] = []
@@ -360,16 +514,28 @@ def main() -> None:
 
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
     list_types = [x.strip() for x in str(args.list_types).split(",") if x.strip()]
-    channels = [x.strip() for x in str(args.include_channels).split(",") if x.strip()]
+    requested_channels = [
+        x.strip() for x in str(args.include_channels).split(",") if x.strip()
+    ]
     split_date = str(args.split_date)
 
     dataset = pd.read_csv(args.dataset)
-    dataset = dataset[dataset["channel"].isin(channels) & dataset["list_type"].isin(list_types)].copy()
+    dataset = dataset[
+        dataset["channel"].isin(requested_channels)
+        & dataset["list_type"].isin(list_types)
+    ].copy()
     if dataset.empty:
         raise ValueError("Dataset empty after channel/list filtering.")
-    log(f"dataset: {len(dataset)} rows | {dataset['signal_date'].nunique()} dates | channels={channels}")
 
     scan_config = load_config(args.scan_config)
+    configured_channels = list((scan_config.channel_profiles or {}).keys())
+    channels = [ch for ch in configured_channels if ch in requested_channels]
+    if not channels:
+        raise ValueError("No requested channels exist in scan_config.channel_profiles.")
+    log(
+        f"dataset: {len(dataset)} rows | {dataset['signal_date'].nunique()} dates "
+        f"| channels={channels}"
+    )
     winsor_lower_q = scan_config.score_winsor_lower_q
     winsor_upper_q = scan_config.score_winsor_upper_q
     penalty_over = scan_config.score_penalty_overvaluation
@@ -382,7 +548,14 @@ def main() -> None:
             log(f"base weights {lt}/{ch}: " + json.dumps({k: round(v, 3) for k, v in sorted(base_weights[lt][ch].items(), key=lambda x: -x[1])}))
 
     log("precomputing normalized matrices per (date, list, channel) ...")
-    groups = precompute_groups(dataset, base_weights, horizons, pe_cash_backing_haircut)
+    groups = precompute_groups(
+        dataset,
+        base_weights,
+        horizons,
+        pe_cash_backing_haircut,
+        scan_config=scan_config,
+        channel_order=channels,
+    )
     log(f"groups: {len(groups)}")
 
     rng = np.random.default_rng(args.seed)
@@ -462,7 +635,16 @@ def main() -> None:
         return ev_tr, ev_va
 
     def evaluate(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> dict[str, Any]:
-        events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
+        events = score_candidate(
+            groups,
+            mults,
+            soft_w,
+            horizons,
+            args.top_n,
+            max_per_sector=scan_config.max_per_sector_per_list,
+            max_per_watchlist_etf_source=scan_config.max_per_watchlist_etf_source_per_list,
+            channel_order=channels,
+        )
         full = summarize(events, dataset, horizons)
         score_full = objective_from_summary(full, list_types, horizons)
         ev_tr, ev_va = _mask_events(events)
@@ -477,7 +659,16 @@ def main() -> None:
         }
 
     def evaluate_light(mults: dict[str, dict[str, float]], soft_w: dict[str, float]) -> tuple[float, float, float]:
-        events = score_candidate(groups, mults, soft_w, horizons, args.top_n)
+        events = score_candidate(
+            groups,
+            mults,
+            soft_w,
+            horizons,
+            args.top_n,
+            max_per_sector=scan_config.max_per_sector_per_list,
+            max_per_watchlist_etf_source=scan_config.max_per_watchlist_etf_source_per_list,
+            channel_order=channels,
+        )
         score_full = objective_from_summary(summarize(events, dataset, horizons), list_types, horizons)
         ev_tr, ev_va = _mask_events(events)
         s_tr = objective_from_summary(summarize(ev_tr, dataset, horizons), list_types, horizons)
