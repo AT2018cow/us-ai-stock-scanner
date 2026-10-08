@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import re
 import shutil
@@ -66,6 +65,10 @@ from ai_value_scanner.features.ai_link import (
     ai_etf_consensus_score,
     ai_market_link_score,
     compute_ai_link_score,
+)
+from ai_value_scanner.features.price import (
+    compute_price_history_features,
+    price_history_percentile_from_closes,
 )
 from ai_value_scanner.features.valuation import (
     compute_historical_valuation_percentile,
@@ -1625,30 +1628,26 @@ def apply_split_adjustment(
 def price_dimension_from_bars(
     price: float | None, bars: list[dict[str, Any]]
 ) -> dict[str, float | int | None]:
+    """Adapt scanner bar dictionaries to the canonical price feature core."""
     if price is None or not bars:
-        return {
-            "drawdown_from_52w_high": None,
-            "range_position_52w": None,
-            "price_to_sma200": None,
-            "days_below_sma200": None,
-            "return_20d": None,
-            "return_60d": None,
-            "volatility_60d": None,
-            "avg_dollar_volume_20d": None,
-        }
+        return compute_price_history_features(
+            current_price=price,
+            range_highs=[],
+            range_lows=[],
+            closes=[],
+            dollar_volumes=[],
+        )
 
     highs: list[float] = []
     lows: list[float] = []
     closes: list[float] = []
     dollar_volumes: list[float] = []
-    # Ensure a stable chronological order before computing trailing statistics.
-    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
-    for row in sorted_bars:
+    for row in sorted(bars, key=lambda item: str(item.get("t", ""))):
         try:
-            high = float(row.get("h")) if row.get("h") is not None else None
-            low = float(row.get("l")) if row.get("l") is not None else None
-            close = float(row.get("c")) if row.get("c") is not None else None
-            volume = float(row.get("v")) if row.get("v") is not None else None
+            high = float(row["h"]) if row.get("h") is not None else None
+            low = float(row["l"]) if row.get("l") is not None else None
+            close = float(row["c"]) if row.get("c") is not None else None
+            volume = float(row["v"]) if row.get("v") is not None else None
         except (TypeError, ValueError):
             continue
         if high is not None:
@@ -1660,85 +1659,13 @@ def price_dimension_from_bars(
         if close is not None and volume is not None:
             dollar_volumes.append(close * volume)
 
-    if not highs or not lows:
-        return {
-            "drawdown_from_52w_high": None,
-            "range_position_52w": None,
-            "price_to_sma200": None,
-            "days_below_sma200": None,
-            "return_20d": None,
-            "return_60d": None,
-            "volatility_60d": None,
-            "avg_dollar_volume_20d": None,
-        }
-
-    high_52w = max(highs)
-    low_52w = min(lows)
-
-    drawdown = None
-    if high_52w > 0:
-        drawdown = (price / high_52w)
-        drawdown = 1.0 - drawdown
-
-    range_pos = None
-    if high_52w > low_52w:
-        range_pos = (price - low_52w) / (high_52w - low_52w)
-
-    price_to_sma200 = None
-    days_below_sma200 = None
-    if closes:
-        window = closes[-200:] if len(closes) >= 200 else closes
-        sma200 = float(np.mean(window)) if window else None
-        if sma200 and sma200 > 0:
-            price_to_sma200 = price / sma200
-
-        if len(closes) >= 200:
-            s = pd.Series(closes, dtype="float64")
-            sma_roll = s.rolling(window=200, min_periods=200).mean()
-            below = s < sma_roll
-            trailing = 0
-            for flag in reversed(below.tolist()):
-                if pd.isna(flag) or not bool(flag):
-                    break
-                trailing += 1
-            days_below_sma200 = trailing
-
-    return_20d = None
-    if len(closes) >= 21 and closes[-21] > 0:
-        return_20d = (price / closes[-21]) - 1.0
-
-    return_60d = None
-    if len(closes) >= 61 and closes[-61] > 0:
-        return_60d = (price / closes[-61]) - 1.0
-
-    volatility_60d = None
-    if len(closes) >= 61:
-        window_61 = np.asarray(closes[-61:], dtype="float64")
-        daily_ret = (window_61[1:] / window_61[:-1]) - 1.0
-        if daily_ret.size > 0:
-            vol = float(np.nanstd(daily_ret, ddof=0) * math.sqrt(252.0))
-            if np.isfinite(vol):
-                volatility_60d = vol
-
-    avg_dollar_volume_20d = None
-    if len(dollar_volumes) >= 20:
-        adv20 = float(np.mean(np.asarray(dollar_volumes[-20:], dtype="float64")))
-        if np.isfinite(adv20):
-            avg_dollar_volume_20d = adv20
-
-    return {
-        "drawdown_from_52w_high": round(drawdown, 6) if drawdown is not None else None,
-        "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
-        "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
-        "days_below_sma200": int(days_below_sma200) if days_below_sma200 is not None else None,
-        "return_20d": round(return_20d, 6) if return_20d is not None else None,
-        "return_60d": round(return_60d, 6) if return_60d is not None else None,
-        "volatility_60d": round(volatility_60d, 6) if volatility_60d is not None else None,
-        "avg_dollar_volume_20d": round(avg_dollar_volume_20d, 2)
-        if avg_dollar_volume_20d is not None
-        else None,
-    }
-
+    return compute_price_history_features(
+        current_price=price,
+        range_highs=highs,
+        range_lows=lows,
+        closes=closes,
+        dollar_volumes=dollar_volumes,
+    )
 
 def theme_score_from_news(news: list[dict[str, Any]], keywords: list[str]) -> float:
     if not news:
@@ -2200,11 +2127,9 @@ def hard_filter_metric_enabled(metric: str, config: ScanConfig, cp: dict[str, An
 def compute_price_history_percentile(
     bars: list[dict[str, Any]], window_days: int
 ) -> float | None:
-    if not bars:
-        return None
+    """Compatibility adapter over the canonical close-history percentile."""
     closes: list[float] = []
-    sorted_bars = sorted(bars, key=lambda row: str(row.get("t", "")))
-    for row in sorted_bars:
+    for row in sorted(bars, key=lambda item: str(item.get("t", ""))):
         value = row.get("c")
         if value is None:
             continue
@@ -2214,16 +2139,11 @@ def compute_price_history_percentile(
             continue
         if np.isfinite(close) and close > 0:
             closes.append(close)
-    if len(closes) < 20:
-        return None
-    window = closes[-int(max(20, window_days)) :]
-    latest = window[-1]
-    arr = np.asarray(window, dtype="float64")
-    pct = float(np.mean(arr <= latest))
-    if np.isfinite(pct):
-        return round(pct, 6)
-    return None
-
+    return price_history_percentile_from_closes(
+        closes,
+        window_observations=window_days,
+        min_observations=20,
+    )
 
 def apply_group_caps(
     frame: pd.DataFrame,

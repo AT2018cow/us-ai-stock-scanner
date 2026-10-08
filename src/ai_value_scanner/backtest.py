@@ -43,6 +43,7 @@ from ai_value_scanner.features.ai_link import (
     ai_market_link_score,
     compute_ai_link_score,
 )
+from ai_value_scanner.features.price import compute_price_history_features
 from ai_value_scanner.features.valuation import (
     compute_historical_valuation_percentile,
     safe_divide,
@@ -1368,88 +1369,73 @@ def compute_price_features_asof(
     lookback_days: int,
     split_events: list[tuple[str, float]] | None = None,
 ) -> dict[str, float | int | None] | None:
+    """Adapt PIT replay bars to the canonical price-history feature core."""
     if bar_df.empty:
         return None
     if split_events:
         bar_df = apply_split_adjustment_to_frame(bar_df, split_events)
         if bar_df is None or bar_df.empty:
             return None
-    idx = bar_df.index.searchsorted(asof, side="right") - 1
+
+    cutoff = pd.Timestamp(asof)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.tz_localize("UTC")
+    else:
+        cutoff = cutoff.tz_convert("UTC")
+
+    idx = bar_df.index.searchsorted(cutoff, side="right") - 1
     if idx < 0:
         return None
-
     up_to = bar_df.iloc[: idx + 1]
     if up_to.empty:
         return None
-    window = up_to.tail(max(lookback_days, 1))
-    price = float(window["close"].iloc[-1])
-    high_52w = float(window["high"].max())
-    low_52w = float(window["low"].min())
-    volume = float(window["volume"].iloc[-1]) if "volume" in window.columns else 0.0
+
+    # price_lookback_days is a calendar-day contract in the live scanner,
+    # where bars are fetched from now-lookback_days. Replay must use the same
+    # meaning rather than treating the number as a count of trading rows.
+    range_start = cutoff.normalize() - pd.Timedelta(days=max(1, int(lookback_days)))
+    range_window = up_to.loc[up_to.index >= range_start]
+    if range_window.empty:
+        return None
+
+    price = float(pd.to_numeric(up_to["close"], errors="coerce").iloc[-1])
+    volume = (
+        float(pd.to_numeric(up_to["volume"], errors="coerce").iloc[-1])
+        if "volume" in up_to.columns
+        else 0.0
+    )
     dollar_volume = price * volume
-    avg_dollar_volume_20d = float((up_to["close"].tail(20) * up_to["volume"].tail(20)).mean()) if len(up_to) >= 20 else None
 
-    drawdown = None
-    if high_52w > 0:
-        drawdown = 1.0 - (price / high_52w)
+    highs = (
+        pd.to_numeric(range_window["high"], errors="coerce").dropna().astype(float).tolist()
+        if "high" in range_window.columns
+        else []
+    )
+    lows = (
+        pd.to_numeric(range_window["low"], errors="coerce").dropna().astype(float).tolist()
+        if "low" in range_window.columns
+        else []
+    )
+    closes = pd.to_numeric(up_to["close"], errors="coerce").dropna().astype(float).tolist()
 
-    range_pos = None
-    if high_52w > low_52w:
-        range_pos = (price - low_52w) / (high_52w - low_52w)
+    dollar_volumes: list[float] = []
+    if "volume" in up_to.columns:
+        close_series = pd.to_numeric(up_to["close"], errors="coerce")
+        volume_series = pd.to_numeric(up_to["volume"], errors="coerce")
+        dollar_volumes = (close_series * volume_series).dropna().astype(float).tolist()
 
-    sma200 = float(up_to["sma200"].iloc[-1]) if not pd.isna(up_to["sma200"].iloc[-1]) else None
-    price_to_sma200 = None
-    if sma200 and sma200 > 0:
-        price_to_sma200 = price / sma200
-
-    days_below_sma200 = None
-    if len(up_to) >= 200:
-        trailing = 0
-        for _, row in up_to.iloc[::-1].iterrows():
-            s = row["sma200"]
-            c = row["close"]
-            if pd.isna(s):
-                break
-            if float(c) < float(s):
-                trailing += 1
-            else:
-                break
-        days_below_sma200 = trailing
-
-    return_20d = None
-    if len(up_to) >= 21:
-        prev = float(up_to["close"].iloc[-21])
-        if prev > 0:
-            return_20d = (price / prev) - 1.0
-
-    return_60d = None
-    if len(up_to) >= 61:
-        prev_60d = float(up_to["close"].iloc[-61])
-        if prev_60d > 0:
-            return_60d = (price / prev_60d) - 1.0
-
-    volatility_60d = None
-    if len(up_to) >= 61:
-        closes = up_to["close"].tail(61).to_numpy(dtype=float)
-        daily_ret = (closes[1:] / closes[:-1]) - 1.0
-        if daily_ret.size > 0:
-            vol = float(np.nanstd(daily_ret, ddof=0) * np.sqrt(252.0))
-            if np.isfinite(vol):
-                volatility_60d = vol
-
+    features = compute_price_history_features(
+        current_price=price,
+        range_highs=highs,
+        range_lows=lows,
+        closes=closes,
+        dollar_volumes=dollar_volumes,
+    )
     return {
         "price": price,
         "dollar_volume": dollar_volume,
-        "drawdown_from_52w_high": round(drawdown, 6) if drawdown is not None else None,
-        "range_position_52w": round(range_pos, 6) if range_pos is not None else None,
-        "price_to_sma200": round(price_to_sma200, 6) if price_to_sma200 is not None else None,
-        "days_below_sma200": int(days_below_sma200) if days_below_sma200 is not None else None,
-        "avg_dollar_volume_20d": round(avg_dollar_volume_20d, 2) if avg_dollar_volume_20d is not None else None,
-        "return_20d": round(return_20d, 6) if return_20d is not None else None,
-        "return_60d": round(return_60d, 6) if return_60d is not None else None,
-        "volatility_60d": round(volatility_60d, 6) if volatility_60d is not None else None,
+        **features,
     }
-
 
 def build_rebalance_dates(
     start_date: datetime,
