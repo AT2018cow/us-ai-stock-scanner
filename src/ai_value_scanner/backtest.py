@@ -53,6 +53,7 @@ from ai_value_scanner.features.valuation import (
 )
 
 from ai_value_scanner.evaluation.backtest import (
+    _hold_window_mature,
     build_signal_diagnostics,
     event_backtest,
     fallback_label_end_date,
