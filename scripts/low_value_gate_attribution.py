@@ -222,7 +222,18 @@ def build_risk_off_group_states(
             ).reset_index(drop=True)
             ranked["_rank_pre_research"] = np.arange(1, len(ranked) + 1)
 
-            assessed = apply_research_assessment(ranked, "low_value")
+            # Production cross-sections do not carry the extracted dataset
+            # channel label when research assessment runs. Keeping that column
+            # here lets ai_enabler rows self-award ai_infrastructure_exposure,
+            # changing research_score/priority versus production semantics.
+            assessment_input = ranked.drop(
+                columns=["channel"],
+                errors="ignore",
+            )
+            assessed = apply_research_assessment(
+                assessment_input,
+                "low_value",
+            )
             research_kept = apply_low_value_research_gate(
                 assessed,
                 config,
