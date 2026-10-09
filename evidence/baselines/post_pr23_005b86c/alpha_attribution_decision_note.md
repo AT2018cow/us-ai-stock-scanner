@@ -7,8 +7,11 @@ dates, rebuilt once on Modal with the style-aware extractor).
 
 ## Mechanism that survives (1 of 1)
 
-**risk_off range/position hard gates exclude continuation winners in
-low_value.** Over 2023+2025, 412 risk_on-only channel-selection cases:
+**Candidate mechanism: risk_off range/position hard gates exclude
+continuation winners in low_value.** Over 2023+2025, 412 channel-level
+risk_on-only cases were diagnosed. These are not 412 independent observations:
+the same symbol/date can appear in multiple channels, so the paired
+date-level substitution diagnostic is the stronger robustness view.
 
 - `hard:max_range_position_52w`: 189 cases, 117 QQQ-winners, avg +11.7%
 - `hard:min_drawdown_from_52w_high`: 98 cases, 61 winners, avg +14.4%
@@ -24,11 +27,16 @@ posture in scored mode.
 
 ## Ranking check
 
-Production-score rank IC is positive in every list/horizon cell
-(0.02–0.10; momentum 120d strongest at ~0.095, t≈4.5–4.8). Top-minus-bottom
-decile excess is positive except risk_off low_value 20d/60d (small negative).
-The score ranks; it is the defensive hard gates — not the score — that
-remove the edge.
+Production-score rank IC is positive in every pooled list/horizon cell
+(roughly 0.02–0.10; momentum 120d is strongest), but low_value decile
+monotonicity is not strong enough to rule ranking out as part of the problem.
+For risk_off low_value the pooled top-minus-bottom excess is slightly negative
+at 20d/60d and only slightly positive at 120d; risk_on low_value also changes
+sign by year/regime in several monotonicity diagnostics.
+
+Therefore the evidence supports the position hard gates as a **candidate
+mechanism**, not as a proven sole cause. PR28 must test that mechanism directly
+while leaving score weights unchanged.
 
 ## PR28 candidate (one mechanism only)
 
