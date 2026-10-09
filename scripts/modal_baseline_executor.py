@@ -278,6 +278,10 @@ def run_dataset_remote(payload_json: str) -> str:
             }
         )
 
+    dataset_list_types = str(spec.get("dataset_list_types", "low_value,momentum"))
+    research_skip_steps = str(
+        spec.get("research_skip_low_value_hard_steps", "") or ""
+    )
     cmd = [
         sys.executable,
         "/root/scripts/extract_weight_dataset.py",
@@ -286,7 +290,7 @@ def run_dataset_remote(payload_json: str) -> str:
         "--output",
         str(output_path),
         "--list-types",
-        "low_value,momentum",
+        dataset_list_types,
         "--start-date",
         str(spec["start_date"]),
         "--end-date",
@@ -313,6 +317,13 @@ def run_dataset_remote(payload_json: str) -> str:
         "--include-channels",
         "core_ai,ai_enabler,ai_peripheral",
     ]
+    if research_skip_steps:
+        cmd.extend(
+            [
+                "--research-skip-low-value-hard-steps",
+                research_skip_steps,
+            ]
+        )
     completed = subprocess.run(cmd, text=True)
     if completed.returncode != 0:
         raise RuntimeError(
@@ -429,6 +440,8 @@ def main(
     end_date: str = "2026-09-30",
     frozen_input_dir: str = "",
     resume: bool = True,
+    dataset_list_types: str = "low_value,momentum",
+    research_skip_low_value_hard_steps: str = "",
 ) -> None:
     """Launch heavy baseline stages on Modal."""
     _require_experiment_modal_profile()
@@ -438,6 +451,15 @@ def main(
         raise ValueError("styles must contain risk_on and/or risk_off")
     if stage not in {"replay", "dataset", "all"}:
         raise ValueError("stage must be replay, dataset, or all")
+    if research_skip_low_value_hard_steps and stage not in {"dataset", "all"}:
+        raise ValueError(
+            "research_skip_low_value_hard_steps applies only to dataset stage"
+        )
+    if research_skip_low_value_hard_steps and dataset_list_types != "low_value":
+        raise ValueError(
+            "research_skip_low_value_hard_steps requires "
+            "dataset_list_types=low_value"
+        )
 
     frozen_dir = (
         Path(frozen_input_dir)
@@ -447,20 +469,31 @@ def main(
     _verify_frozen_inputs(frozen_dir, style_list)
 
     code_sha = _current_git_sha()
-    specs = [
-        json.dumps(
-            {
-                "run_id": run_id,
-                "style": style,
-                "start_date": start_date,
-                "end_date": end_date,
-                "code_sha": code_sha,
-                "resume": bool(resume),
-            },
-            sort_keys=True,
-        )
+    spec_dicts: list[dict[str, Any]] = [
+        {
+            "run_id": run_id,
+            "style": style,
+            "start_date": start_date,
+            "end_date": end_date,
+            "code_sha": code_sha,
+            "resume": bool(resume),
+        }
         for style in style_list
     ]
+    replay_specs = [
+        json.dumps(spec, sort_keys=True)
+        for spec in spec_dicts
+    ]
+    dataset_specs: list[str] = []
+    for base_spec in spec_dicts:
+        spec = dict(base_spec)
+        if dataset_list_types != "low_value,momentum":
+            spec["dataset_list_types"] = str(dataset_list_types)
+        if research_skip_low_value_hard_steps:
+            spec["research_skip_low_value_hard_steps"] = str(
+                research_skip_low_value_hard_steps
+            )
+        dataset_specs.append(json.dumps(spec, sort_keys=True))
 
     print(
         f"[modal-baseline] run_id={run_id} stage={stage} "
@@ -474,11 +507,11 @@ def main(
     )
 
     if stage in {"replay", "all"}:
-        for spec in specs:
+        for spec in replay_specs:
             print(run_replay_remote.remote(spec), flush=True)
 
     if stage in {"dataset", "all"}:
-        for spec in specs:
+        for spec in dataset_specs:
             print(run_dataset_remote.remote(spec), flush=True)
 
     print(
