@@ -549,6 +549,80 @@ def build_paired(
     return pd.DataFrame(pair_rows), pd.DataFrame(switch_rows)
 
 
+def summarize_switch_symbols(
+    switch_cases: pd.DataFrame,
+) -> pd.DataFrame:
+    if switch_cases.empty:
+        return pd.DataFrame(
+            columns=[
+                "horizon_days",
+                "side",
+                "symbol",
+                "n_dates",
+                "avg_excess_vs_qqq",
+                "total_excess_vs_qqq",
+                "positive_excess_sum",
+                "positive_excess_share",
+            ]
+        )
+    rows: list[dict[str, Any]] = []
+    for (horizon, side), scope in switch_cases.groupby(
+        ["horizon_days", "side"],
+        sort=False,
+    ):
+        excess_all = pd.to_numeric(
+            scope["excess_vs_qqq"],
+            errors="coerce",
+        )
+        positive_total = float(
+            excess_all[excess_all > 0.0].sum()
+        )
+        for symbol, group in scope.groupby("symbol", sort=False):
+            excess = pd.to_numeric(
+                group["excess_vs_qqq"],
+                errors="coerce",
+            )
+            finite = excess[np.isfinite(excess)]
+            positive_sum = float(
+                finite[finite > 0.0].sum()
+            )
+            rows.append(
+                {
+                    "horizon_days": int(horizon),
+                    "side": str(side),
+                    "symbol": str(symbol),
+                    "n_dates": int(
+                        group["signal_date"].astype(str).nunique()
+                    ),
+                    "avg_excess_vs_qqq": (
+                        float(finite.mean())
+                        if len(finite)
+                        else np.nan
+                    ),
+                    "total_excess_vs_qqq": (
+                        float(finite.sum())
+                        if len(finite)
+                        else np.nan
+                    ),
+                    "positive_excess_sum": positive_sum,
+                    "positive_excess_share": (
+                        float(positive_sum / positive_total)
+                        if positive_total > 0.0
+                        else np.nan
+                    ),
+                }
+            )
+    return pd.DataFrame(rows).sort_values(
+        [
+            "horizon_days",
+            "side",
+            "positive_excess_share",
+            "n_dates",
+        ],
+        ascending=[True, True, False, False],
+    )
+
+
 def summarize_arms(events: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     scopes: list[tuple[str, str, pd.DataFrame]] = [
@@ -699,6 +773,7 @@ def summarize_paired(paired: pd.DataFrame) -> pd.DataFrame:
 def retrospective_gate(
     parity: pd.DataFrame,
     paired_summary: pd.DataFrame,
+    switch_symbol_summary: pd.DataFrame | None = None,
 ) -> tuple[bool, list[str]]:
     failures: list[str] = []
     if parity.empty or not bool(parity["exact_match"].all()):
@@ -743,6 +818,21 @@ def retrospective_gate(
             )
         if float(row["median_selection_jaccard"]) < 0.50:
             failures.append("selection_overlap_too_low")
+
+    if switch_symbol_summary is not None and not switch_symbol_summary.empty:
+        added_120 = switch_symbol_summary[
+            (switch_symbol_summary["horizon_days"] == 120)
+            & (switch_symbol_summary["side"] == "added")
+        ]
+        if not added_120.empty:
+            top_share = pd.to_numeric(
+                added_120["positive_excess_share"],
+                errors="coerce",
+            ).max()
+            if np.isfinite(top_share) and float(top_share) >= 0.35:
+                failures.append(
+                    "added_120d_positive_excess_too_concentrated_by_symbol"
+                )
 
     down_rows = primary[
         (primary["scope"] == "regime")
@@ -914,11 +1004,15 @@ def main() -> None:
         channels,
     )
     paired, switch_cases = build_paired(events, dataset)
+    switch_symbol_summary = summarize_switch_symbols(
+        switch_cases
+    )
     arm_summary = summarize_arms(events)
     paired_summary = summarize_paired(paired)
     gate_pass, failures = retrospective_gate(
         parity,
         paired_summary,
+        switch_symbol_summary,
     )
 
     prefix = Path(args.output_prefix)
@@ -930,6 +1024,9 @@ def main() -> None:
         ),
         "paired": Path(f"{prefix}_paired.csv"),
         "switch_cases": Path(f"{prefix}_switch_cases.csv"),
+        "switch_symbol_summary": Path(
+            f"{prefix}_switch_symbol_summary.csv"
+        ),
         "arm_summary": Path(f"{prefix}_arm_summary.csv"),
         "paired_summary": Path(
             f"{prefix}_paired_summary.csv"
@@ -940,6 +1037,10 @@ def main() -> None:
     parity.to_csv(outputs["baseline_parity"], index=False)
     paired.to_csv(outputs["paired"], index=False)
     switch_cases.to_csv(outputs["switch_cases"], index=False)
+    switch_symbol_summary.to_csv(
+        outputs["switch_symbol_summary"],
+        index=False,
+    )
     arm_summary.to_csv(outputs["arm_summary"], index=False)
     paired_summary.to_csv(
         outputs["paired_summary"], index=False
