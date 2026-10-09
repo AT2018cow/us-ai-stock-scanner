@@ -59,9 +59,6 @@ Production configs **unchanged**, no `--promote` used.
    gates discard the winners that risk_on low_value catches in 2023/2025.
    First-fail diagnostics on the 2023/2025 low_value dates will show which
    gate removes them.
-2. **Ranking monotonicity before any weight tuning**: use the two frozen
-   weight datasets to test score-decile forward returns and rank IC per
-   list; if high score is not monotone vs mid/low, threshold tuning is
-   pointless.
+2. **Ranking monotonicity before any weight tuning**: use the frozen risk_off dataset plus a **corrected risk_on re-extraction** to test production-score decile forward returns and rank IC per list. The original risk_on survivor dataset used the wrong default hard/soft partition and is not canonical for this purpose. If high score is not monotone vs mid/low, threshold/weight tuning is pointless.
 
 Chosen next PR from attribution, not from a pooled sweep.
