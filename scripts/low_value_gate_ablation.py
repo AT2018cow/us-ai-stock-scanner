@@ -353,3 +353,620 @@ def evaluate_arms(
     return pd.DataFrame(rows), active_by_channel
 
 
+def load_replay_channel_symbols(
+    path: str | Path,
+) -> dict[tuple[str, str], set[str]]:
+    frame = pd.read_csv(path)
+    frame = frame[
+        (frame["scenario"].astype(str) == "base")
+        & (frame["list_type"].astype(str) == "low_value")
+    ].copy()
+    out: dict[tuple[str, str], set[str]] = {}
+    for row in frame.itertuples(index=False):
+        mapping = json.loads(
+            str(getattr(row, "channel_symbols", "{}") or "{}")
+        )
+        signal_date = str(getattr(row, "signal_date"))
+        if not isinstance(mapping, dict):
+            continue
+        for channel, symbols in mapping.items():
+            vals = symbols if isinstance(symbols, list) else []
+            out[(signal_date, str(channel))] = {
+                str(x).strip().upper()
+                for x in vals
+                if str(x).strip()
+            }
+    return out
+
+
+def build_baseline_parity(
+    events: pd.DataFrame,
+    replay_symbols: dict[tuple[str, str], set[str]],
+    channels: list[str],
+) -> pd.DataFrame:
+    base = events[
+        (events["arm"] == "baseline")
+        & (
+            events["horizon_days"]
+            == int(events["horizon_days"].min())
+        )
+    ].copy()
+    rows: list[dict[str, Any]] = []
+    for row in base.itertuples(index=False):
+        mapping = json.loads(str(row.channel_symbols_json))
+        for channel in channels:
+            actual = {
+                str(x).upper()
+                for x in mapping.get(channel, [])
+            }
+            expected = replay_symbols.get(
+                (str(row.signal_date), channel),
+                set(),
+            )
+            union = actual | expected
+            rows.append(
+                {
+                    "signal_date": str(row.signal_date),
+                    "channel": channel,
+                    "actual_n": len(actual),
+                    "expected_n": len(expected),
+                    "exact_match": actual == expected,
+                    "jaccard": (
+                        float(len(actual & expected) / len(union))
+                        if union
+                        else 1.0
+                    ),
+                    "actual_only": ",".join(
+                        sorted(actual - expected)
+                    ),
+                    "expected_only": ",".join(
+                        sorted(expected - actual)
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_paired(
+    events: pd.DataFrame,
+    dataset: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    base = events[events["arm"] == "baseline"].copy()
+    alt = events[events["arm"] == "hard_to_soft"].copy()
+    joined = base.merge(
+        alt,
+        on=["signal_date", "year", "regime", "horizon_days"],
+        suffixes=("_baseline", "_ablation"),
+        how="inner",
+    )
+    switch_rows: list[dict[str, Any]] = []
+    pair_rows: list[dict[str, Any]] = []
+    date_groups = {
+        str(date): group.copy()
+        for date, group in dataset.groupby("signal_date", sort=False)
+    }
+
+    for row in joined.itertuples(index=False):
+        baseline_symbols = set(
+            json.loads(str(row.selected_symbols_json_baseline))
+        )
+        ablation_symbols = set(
+            json.loads(str(row.selected_symbols_json_ablation))
+        )
+        added = sorted(ablation_symbols - baseline_symbols)
+        removed = sorted(baseline_symbols - ablation_symbols)
+        union = baseline_symbols | ablation_symbols
+        overlap = baseline_symbols & ablation_symbols
+        horizon = int(row.horizon_days)
+        returns = returns_by_symbol(
+            date_groups[str(row.signal_date)],
+            horizon,
+        )
+        qqq = qqq_return(
+            date_groups[str(row.signal_date)],
+            horizon,
+        )
+        added_returns = [
+            returns[s] for s in added if s in returns
+        ]
+        removed_returns = [
+            returns[s] for s in removed if s in returns
+        ]
+        delta = (
+            float(
+                row.avg_return_ablation
+                - row.avg_return_baseline
+            )
+            if np.isfinite(row.avg_return_ablation)
+            and np.isfinite(row.avg_return_baseline)
+            else float("nan")
+        )
+        pair_rows.append(
+            {
+                "signal_date": str(row.signal_date),
+                "year": str(row.year),
+                "regime": str(row.regime),
+                "horizon_days": horizon,
+                "baseline_return": row.avg_return_baseline,
+                "ablation_return": row.avg_return_ablation,
+                "delta_return": delta,
+                "baseline_excess": row.excess_vs_qqq_baseline,
+                "ablation_excess": row.excess_vs_qqq_ablation,
+                "delta_excess": delta,
+                "selection_jaccard": (
+                    float(len(overlap) / len(union))
+                    if union
+                    else 1.0
+                ),
+                "n_added": len(added),
+                "n_removed": len(removed),
+                "added_symbols": ",".join(added),
+                "removed_symbols": ",".join(removed),
+                "added_avg_return": finite_mean(added_returns),
+                "removed_avg_return": finite_mean(removed_returns),
+                "added_minus_removed_return": (
+                    float(
+                        finite_mean(added_returns)
+                        - finite_mean(removed_returns)
+                    )
+                    if added_returns and removed_returns
+                    else float("nan")
+                ),
+            }
+        )
+        for side, symbols in (("added", added), ("removed", removed)):
+            for symbol in symbols:
+                ret = returns.get(symbol, float("nan"))
+                switch_rows.append(
+                    {
+                        "signal_date": str(row.signal_date),
+                        "year": str(row.year),
+                        "regime": str(row.regime),
+                        "horizon_days": horizon,
+                        "side": side,
+                        "symbol": symbol,
+                        "forward_return": ret,
+                        "qqq_return": qqq,
+                        "excess_vs_qqq": (
+                            float(ret - qqq)
+                            if np.isfinite(ret)
+                            and np.isfinite(qqq)
+                            else float("nan")
+                        ),
+                    }
+                )
+    return pd.DataFrame(pair_rows), pd.DataFrame(switch_rows)
+
+
+def summarize_arms(events: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    scopes: list[tuple[str, str, pd.DataFrame]] = [
+        ("all", "ALL", events)
+    ]
+    scopes.extend(
+        ("year", str(year), part)
+        for year, part in events.groupby("year", sort=True)
+    )
+    scopes.extend(
+        ("regime", str(regime), part)
+        for regime, part in events.groupby("regime", sort=True)
+    )
+    for scope, value, frame in scopes:
+        for (arm, horizon), group in frame.groupby(
+            ["arm", "horizon_days"],
+            sort=False,
+        ):
+            ret = pd.to_numeric(
+                group["avg_return"], errors="coerce"
+            )
+            excess = pd.to_numeric(
+                group["excess_vs_qqq"], errors="coerce"
+            )
+            valid = np.isfinite(ret) & np.isfinite(excess)
+            rows.append(
+                {
+                    "scope": scope,
+                    "scope_value": value,
+                    "arm": str(arm),
+                    "horizon_days": int(horizon),
+                    "n_dates": int(valid.sum()),
+                    "avg_return": (
+                        float(ret[valid].mean())
+                        if valid.any()
+                        else np.nan
+                    ),
+                    "avg_excess_vs_qqq": (
+                        float(excess[valid].mean())
+                        if valid.any()
+                        else np.nan
+                    ),
+                    "positive_return_ratio": (
+                        float(ret[valid].gt(0).mean())
+                        if valid.any()
+                        else np.nan
+                    ),
+                    "qqq_win_ratio": (
+                        float(excess[valid].gt(0).mean())
+                        if valid.any()
+                        else np.nan
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def leave_one_out_mean_range(
+    values: np.ndarray,
+) -> tuple[float, float]:
+    values = values[np.isfinite(values)]
+    if len(values) < 2:
+        return float("nan"), float("nan")
+    total = float(values.sum())
+    means = (total - values) / (len(values) - 1)
+    return float(means.min()), float(means.max())
+
+
+def summarize_paired(paired: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    scopes: list[tuple[str, str, pd.DataFrame]] = [
+        ("all", "ALL", paired)
+    ]
+    scopes.extend(
+        ("year", str(year), part)
+        for year, part in paired.groupby("year", sort=True)
+    )
+    scopes.extend(
+        ("regime", str(regime), part)
+        for regime, part in paired.groupby("regime", sort=True)
+    )
+    for scope, value, frame in scopes:
+        for horizon, group in frame.groupby(
+            "horizon_days", sort=False
+        ):
+            delta = pd.to_numeric(
+                group["delta_return"],
+                errors="coerce",
+            ).to_numpy(dtype=float)
+            valid = delta[np.isfinite(delta)]
+            jaccard = pd.to_numeric(
+                group["selection_jaccard"],
+                errors="coerce",
+            )
+            loo_min, loo_max = leave_one_out_mean_range(valid)
+            abs_sum = (
+                float(np.abs(valid).sum()) if len(valid) else 0.0
+            )
+            rows.append(
+                {
+                    "scope": scope,
+                    "scope_value": value,
+                    "horizon_days": int(horizon),
+                    "n_dates": int(len(valid)),
+                    "avg_delta_return": (
+                        float(np.mean(valid))
+                        if len(valid)
+                        else np.nan
+                    ),
+                    "median_delta_return": (
+                        float(np.median(valid))
+                        if len(valid)
+                        else np.nan
+                    ),
+                    "positive_delta_ratio": (
+                        float(np.mean(valid > 0.0))
+                        if len(valid)
+                        else np.nan
+                    ),
+                    "worst_delta_return": (
+                        float(np.min(valid))
+                        if len(valid)
+                        else np.nan
+                    ),
+                    "best_delta_return": (
+                        float(np.max(valid))
+                        if len(valid)
+                        else np.nan
+                    ),
+                    "mean_selection_jaccard": float(jaccard.mean()),
+                    "median_selection_jaccard": float(
+                        jaccard.median()
+                    ),
+                    "top_abs_date_share": (
+                        float(
+                            np.max(np.abs(valid)) / abs_sum
+                        )
+                        if len(valid) and abs_sum > 0.0
+                        else np.nan
+                    ),
+                    "loo_mean_min": loo_min,
+                    "loo_mean_max": loo_max,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def retrospective_gate(
+    parity: pd.DataFrame,
+    paired_summary: pd.DataFrame,
+) -> tuple[bool, list[str]]:
+    failures: list[str] = []
+    if parity.empty or not bool(parity["exact_match"].all()):
+        failures.append("baseline_selection_parity_failed")
+
+    primary = paired_summary[
+        paired_summary["horizon_days"] == 120
+    ]
+    by_year = {
+        str(row.scope_value): row
+        for row in primary[
+            primary["scope"] == "year"
+        ].itertuples(index=False)
+    }
+    for year in ("2023", "2024", "2025"):
+        row = by_year.get(year)
+        if row is None or int(row.n_dates) < 8:
+            failures.append(f"{year}_120d_sample_too_low")
+        elif not (
+            np.isfinite(row.avg_delta_return)
+            and float(row.avg_delta_return) > 0.0
+        ):
+            failures.append(
+                f"{year}_120d_delta_not_positive"
+            )
+
+    all_rows = primary[
+        (primary["scope"] == "all")
+        & (primary["scope_value"] == "ALL")
+    ]
+    if all_rows.empty:
+        failures.append("all_120d_missing")
+    else:
+        row = all_rows.iloc[0]
+        if float(row["positive_delta_ratio"]) <= 0.50:
+            failures.append(
+                "all_120d_positive_date_ratio_not_above_half"
+            )
+        if float(row["top_abs_date_share"]) >= 0.35:
+            failures.append(
+                "all_120d_too_concentrated_by_date"
+            )
+        if float(row["median_selection_jaccard"]) < 0.50:
+            failures.append("selection_overlap_too_low")
+
+    down_rows = primary[
+        (primary["scope"] == "regime")
+        & (primary["scope_value"] == "down")
+    ]
+    if down_rows.empty or not np.isfinite(
+        float(down_rows.iloc[0]["avg_delta_return"])
+    ):
+        failures.append("down_regime_120d_missing")
+    elif float(down_rows.iloc[0]["avg_delta_return"]) < 0.0:
+        failures.append("down_regime_120d_degraded")
+
+    return not failures, failures
+
+
+def write_report(
+    path: Path,
+    meta: dict[str, Any],
+    active_by_channel: dict[str, list[str]],
+    parity: pd.DataFrame,
+    paired_summary: pd.DataFrame,
+    gate_pass: bool,
+    failures: list[str],
+) -> None:
+    lines = [
+        "# PR28 risk_off low_value position-gate ablation",
+        "",
+        "Retrospective mechanism validation only. "
+        "This is not OOS and cannot promote production parameters.",
+        "",
+        "## Contract",
+        "",
+        "- A: current risk_off low_value pipeline.",
+        "- B: move the pre-registered position/range hard gates "
+        "to soft; thresholds and all other rules stay unchanged.",
+        f"- expanded rows: {int(meta.get('n_rows', 0) or 0)}",
+        f"- expanded dates: {int(meta.get('n_dates', 0) or 0)}",
+        "- active targets by channel: "
+        + json.dumps(active_by_channel, sort_keys=True),
+        "",
+        "## Baseline replay parity",
+        "",
+        "- channel-date exact matches: "
+        f"{int(parity['exact_match'].sum())}/{len(parity)}",
+        "- exact parity: "
+        f"{bool(not parity.empty and parity['exact_match'].all())}",
+        "",
+        "## 120d paired A/B",
+        "",
+    ]
+    primary = paired_summary[
+        paired_summary["horizon_days"] == 120
+    ]
+    for row in primary.itertuples(index=False):
+        lines.append(
+            f"- {row.scope}:{row.scope_value}: "
+            f"n={int(row.n_dates)}, "
+            f"mean_delta={float(row.avg_delta_return):+.4f}, "
+            f"median_delta={float(row.median_delta_return):+.4f}, "
+            f"positive_dates={float(row.positive_delta_ratio):.0%}, "
+            f"median_jaccard={float(row.median_selection_jaccard):.2f}, "
+            f"top_abs_date_share={float(row.top_abs_date_share):.1%}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Retrospective robustness gate",
+            "",
+            f"- pass: **{gate_pass}**",
+        ]
+    )
+    if failures:
+        lines.append(
+            "- failures: " + ";".join(failures)
+        )
+    else:
+        lines.append(
+            "- Pre-registered retrospective checks passed. "
+            "This only justifies a later narrow validation PR."
+        )
+    lines.extend(
+        [
+            "",
+            "## Interpretation",
+            "",
+            "- 2023 and 2025 are hypothesis-forming years.",
+            "- 2024 is the key full-year stress check.",
+            "- 2026YTD is diagnostic because 120d labels are immature.",
+            "- Down-regime degradation is a stop condition because "
+            "risk_off has a defensive role.",
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    dataset_path = Path(args.dataset)
+    target_steps = parse_tokens(args.target_steps)
+    if set(target_steps) != set(DEFAULT_TARGET_STEPS):
+        raise ValueError(
+            "canonical PR28 run requires exactly: "
+            + ",".join(DEFAULT_TARGET_STEPS)
+        )
+    channels = parse_tokens(args.include_channels)
+    horizons = [int(x) for x in parse_tokens(args.horizons)]
+    if int(args.top_n) != 10:
+        raise ValueError("canonical PR28 run requires top_n=10")
+
+    meta = validate_expanded_dataset(
+        dataset_path,
+        target_steps,
+    )
+    dataset = pd.read_csv(dataset_path)
+    required = {
+        "signal_date",
+        "channel",
+        "list_type",
+        "symbol",
+        "regime",
+    }
+    required.update(f"fwd_ret_{h}" for h in horizons)
+    required.update(f"qqq_return_{h}" for h in horizons)
+    missing = sorted(required - set(dataset.columns))
+    if missing:
+        raise ValueError(
+            "expanded dataset missing columns: "
+            + ",".join(missing)
+        )
+    if set(dataset["list_type"].astype(str).unique()) != {
+        "low_value"
+    }:
+        raise ValueError(
+            "expanded dataset must contain only low_value rows"
+        )
+
+    config = load_config(args.scan_config)
+    if str(config.strategy_style) != "risk_off":
+        raise ValueError("PR28 requires risk_off config")
+    config_channels = list((config.channel_profiles or {}).keys())
+    channels = [x for x in config_channels if x in channels]
+    if not channels:
+        raise ValueError("no requested channels present in config")
+
+    events, active_by_channel = evaluate_arms(
+        dataset,
+        config,
+        channels,
+        set(target_steps),
+        int(args.top_n),
+        horizons,
+    )
+    for channel in channels:
+        if set(active_by_channel.get(channel, [])) != set(
+            target_steps
+        ):
+            raise ValueError(
+                "target block not fully active in "
+                f"{channel}: {active_by_channel.get(channel, [])}"
+            )
+
+    replay_symbols = load_replay_channel_symbols(
+        args.baseline_signals
+    )
+    parity = build_baseline_parity(
+        events,
+        replay_symbols,
+        channels,
+    )
+    paired, switch_cases = build_paired(events, dataset)
+    arm_summary = summarize_arms(events)
+    paired_summary = summarize_paired(paired)
+    gate_pass, failures = retrospective_gate(
+        parity,
+        paired_summary,
+    )
+
+    prefix = Path(args.output_prefix)
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    outputs = {
+        "events": Path(f"{prefix}_events.csv"),
+        "baseline_parity": Path(
+            f"{prefix}_baseline_parity.csv"
+        ),
+        "paired": Path(f"{prefix}_paired.csv"),
+        "switch_cases": Path(f"{prefix}_switch_cases.csv"),
+        "arm_summary": Path(f"{prefix}_arm_summary.csv"),
+        "paired_summary": Path(
+            f"{prefix}_paired_summary.csv"
+        ),
+        "report": Path(f"{prefix}_report.md"),
+    }
+    events.to_csv(outputs["events"], index=False)
+    parity.to_csv(outputs["baseline_parity"], index=False)
+    paired.to_csv(outputs["paired"], index=False)
+    switch_cases.to_csv(outputs["switch_cases"], index=False)
+    arm_summary.to_csv(outputs["arm_summary"], index=False)
+    paired_summary.to_csv(
+        outputs["paired_summary"], index=False
+    )
+    write_report(
+        outputs["report"],
+        meta,
+        active_by_channel,
+        parity,
+        paired_summary,
+        gate_pass,
+        failures,
+    )
+    summary = {
+        "mode": "retrospective_mechanism_ablation",
+        "production_promotion_allowed": False,
+        "dataset": str(dataset_path),
+        "dataset_meta": str(dataset_meta_path(dataset_path)),
+        "scan_config": str(args.scan_config),
+        "baseline_signals": str(args.baseline_signals),
+        "target_steps": target_steps,
+        "arms": list(ARMS),
+        "retrospective_gate_pass": gate_pass,
+        "retrospective_gate_failures": failures,
+        "outputs": {
+            key: str(value) for key, value in outputs.items()
+        },
+    }
+    Path(f"{prefix}_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    )
+    print(
+        "PR28 ablation complete: "
+        f"gate_pass={gate_pass} failures={failures} "
+        f"report={outputs['report']}",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
