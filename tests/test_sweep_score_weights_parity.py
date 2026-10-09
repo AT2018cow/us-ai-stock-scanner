@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -183,6 +184,68 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
             args.watchlist_history_dir,
             "outputs/frozen/watchlist_history",
         )
+
+    def test_precompute_reapplies_target_style_hard_partition(self) -> None:
+        dataset = pd.DataFrame(
+            {
+                "signal_date": ["2025-01-31", "2025-01-31"],
+                "list_type": ["momentum", "momentum"],
+                "channel": ["core_ai", "core_ai"],
+                "symbol": ["DROP", "KEEP"],
+                "x": [0.5, 1.5],
+                "fwd_ret_20": [0.9, 0.1],
+            }
+        )
+        base_weights = {
+            "momentum": {
+                "core_ai": {
+                    "x": 1.0,
+                    "soft_pass_rate": 0.0,
+                }
+            }
+        }
+        cfg = SimpleNamespace(
+            strategy_style="risk_on",
+            channel_profiles={"core_ai": {}},
+        )
+
+        def fake_score(frame: pd.DataFrame, *args, **kwargs) -> pd.DataFrame:
+            out = frame.copy()
+            out["x_norm"] = pd.to_numeric(out["x"], errors="coerce")
+            out["soft_pass_rate"] = 0.0
+            out["overvaluation_penalty"] = 0.0
+            out["deterioration_penalty"] = 0.0
+            out["composite_score"] = out["x_norm"]
+            return out.sort_values("composite_score", ascending=False)
+
+        with (
+            mock.patch.object(
+                sweep,
+                "build_steps_and_weights",
+                return_value=(
+                    [
+                        (
+                            "min_price_to_sma200",
+                            lambda frame: frame["x"] >= 1.0,
+                        )
+                    ],
+                    {"x": 1.0, "soft_pass_rate": 0.0},
+                ),
+            ),
+            mock.patch(
+                "ai_value_scanner.scanner.score_and_rank",
+                side_effect=fake_score,
+            ),
+        ):
+            groups = sweep.precompute_groups(
+                dataset,
+                base_weights,
+                [20],
+                scan_config=cfg,
+                channel_order=["core_ai"],
+            )
+        group = groups[("2025-01-31", "momentum", "core_ai")]
+        self.assertEqual(group["symbols"], ["KEEP"])
 
     def test_baseline_candidate_applies_production_base_weights(self) -> None:
         groups = {
