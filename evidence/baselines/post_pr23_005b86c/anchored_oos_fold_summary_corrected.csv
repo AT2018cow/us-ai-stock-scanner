@@ -1,0 +1,13 @@
+rescore_run,profile,train_labels,held_out,selected_cid,training_constraints_passed,training_failure_reason,oos_pass,oos_failure_reason,oos_avg_excess_vs_qqq,oos_valid_events,oos_available_events,oos_required_valid_events,oos_valid_event_ratio
+risk_off,risk_on,2023,2024,cand_012,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,False,heldout_avg_excess_too_low,-0.005566005676283292,12,12,10,1.0
+risk_off,risk_on,2023+2024,2025,cand_032,False,avg_excess_vs_qqq_too_low,False,heldout_avg_excess_too_low,-0.0013697749606273498,10,12,10,0.8333333333333334
+risk_off,risk_on,2023+2024+2025,2026YTD,cand_032,True,,False,heldout_valid_events_too_low;heldout_avg_excess_too_low,-0.004679032361575341,4,9,8,0.4444444444444444
+risk_off,risk_off,2023,2024,cand_035,False,avg_excess_vs_qqq_too_low;positive_window_score_ratio_too_low;positive_excess_window_ratio_too_low,False,heldout_avg_excess_too_low,-0.004358259336447422,12,12,10,1.0
+risk_off,risk_off,2023+2024,2025,cand_030,False,avg_excess_vs_qqq_too_low,True,,0.005967782990086227,10,12,10,0.8333333333333334
+risk_off,risk_off,2023+2024+2025,2026YTD,cand_030,True,,False,heldout_valid_events_too_low,0.003124253520496799,4,9,8,0.4444444444444444
+risk_on,risk_on,2023,2024,cand_034,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,False,heldout_avg_excess_too_low,-0.0073461804249538845,12,12,10,1.0
+risk_on,risk_on,2023+2024,2025,cand_005,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,True,,0.08044427292106554,10,12,10,0.8333333333333334
+risk_on,risk_on,2023+2024+2025,2026YTD,cand_028,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,False,heldout_valid_events_too_low;heldout_avg_excess_too_low,-0.019897046392453353,4,9,8,0.4444444444444444
+risk_on,risk_off,2023,2024,cand_026,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,False,heldout_avg_excess_too_low,-0.004885679206318536,12,12,10,1.0
+risk_on,risk_off,2023+2024,2025,cand_012,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,True,,0.08468985471629659,10,12,10,0.8333333333333334
+risk_on,risk_off,2023+2024+2025,2026YTD,cand_005,False,avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low,False,heldout_valid_events_too_low;heldout_avg_excess_too_low,-0.019897046392453353,4,9,8,0.4444444444444444

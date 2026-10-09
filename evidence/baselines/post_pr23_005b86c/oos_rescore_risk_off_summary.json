@@ -1,0 +1,211 @@
+{
+  "tuning_run_id": "corrected_oos_risk_off",
+  "mode": "offline_rescore",
+  "source_results_csv": "evidence/baselines/post_pr23_005b86c/tuner_risk_off_results.csv",
+  "base_config": "configs/config.risk_off.json",
+  "param_space": "configs/tuner.param_space.json",
+  "list_types": [
+    "low_value",
+    "industry_trend",
+    "momentum",
+    "research_pool"
+  ],
+  "primary_list_types": [
+    "low_value"
+  ],
+  "selection_mode": "walk_forward",
+  "candidates": 36,
+  "guardrails": {
+    "min_total_valid_events": 120,
+    "min_window_valid_events": 20,
+    "min_total_valid_event_ratio": 0.8,
+    "min_window_valid_event_ratio": 0.8,
+    "min_oos_folds": 2,
+    "min_oos_pass_ratio": 0.6666666666666666,
+    "min_oos_positive_excess_ratio": 0.6666666666666666
+  },
+  "picks": {
+    "risk_on": "cand_032",
+    "risk_off": "cand_030"
+  },
+  "walk_forward": {
+    "risk_on": {
+      "profile": "risk_on",
+      "folds": [
+        {
+          "train_labels": [
+            "2023"
+          ],
+          "validation_label": "2024",
+          "selected_cid": "cand_012",
+          "training_rank_score": 0.1439460824821379,
+          "training_constraints_passed": false,
+          "training_failure_reason": "avg_excess_vs_qqq_too_low;positive_excess_window_ratio_too_low",
+          "validation": {
+            "passed": false,
+            "reason": "heldout_avg_excess_too_low",
+            "score": 0.0995578233615936,
+            "avg_return": 0.039125019115949504,
+            "avg_excess_vs_qqq": -0.005566005676283292,
+            "avg_win_rate": 0.6816666666666666,
+            "coverage_ratio": 1.0,
+            "valid_events": 12,
+            "available_events": 12,
+            "required_valid_events": 10,
+            "valid_event_ratio": 1.0
+          }
+        },
+        {
+          "train_labels": [
+            "2023",
+            "2024"
+          ],
+          "validation_label": "2025",
+          "selected_cid": "cand_032",
+          "training_rank_score": 0.1909448097343354,
+          "training_constraints_passed": false,
+          "training_failure_reason": "avg_excess_vs_qqq_too_low",
+          "validation": {
+            "passed": false,
+            "reason": "heldout_avg_excess_too_low",
+            "score": 0.05284700028589795,
+            "avg_return": 0.04067176278393912,
+            "avg_excess_vs_qqq": -0.0013697749606273498,
+            "avg_win_rate": 0.594,
+            "coverage_ratio": 0.8333333333333333,
+            "valid_events": 10,
+            "available_events": 12,
+            "required_valid_events": 10,
+            "valid_event_ratio": 0.8333333333333334
+          }
+        },
+        {
+          "train_labels": [
+            "2023",
+            "2024",
+            "2025"
+          ],
+          "validation_label": "2026YTD",
+          "selected_cid": "cand_032",
+          "training_rank_score": 0.19915220576712422,
+          "training_constraints_passed": true,
+          "training_failure_reason": "",
+          "validation": {
+            "passed": false,
+            "reason": "heldout_valid_events_too_low;heldout_avg_excess_too_low",
+            "score": 0.0699396319212848,
+            "avg_return": 0.06340479558087572,
+            "avg_excess_vs_qqq": -0.004679032361575341,
+            "avg_win_rate": 0.5928571428571429,
+            "coverage_ratio": 0.5,
+            "valid_events": 4,
+            "available_events": 9,
+            "required_valid_events": 8,
+            "valid_event_ratio": 0.4444444444444444
+          }
+        }
+      ],
+      "final_candidate": "cand_032",
+      "oos_fold_count": 3,
+      "oos_pass_count": 0,
+      "oos_pass_ratio": 0.0,
+      "oos_positive_excess_count": 0,
+      "oos_positive_excess_ratio": 0.0,
+      "promotion_failure_reasons": [
+        "oos_pass_ratio_too_low",
+        "oos_positive_excess_ratio_too_low",
+        "final_heldout_failed"
+      ],
+      "promotion_eligible": false
+    },
+    "risk_off": {
+      "profile": "risk_off",
+      "folds": [
+        {
+          "train_labels": [
+            "2023"
+          ],
+          "validation_label": "2024",
+          "selected_cid": "cand_035",
+          "training_rank_score": 0.05158397540923385,
+          "training_constraints_passed": false,
+          "training_failure_reason": "avg_excess_vs_qqq_too_low;positive_window_score_ratio_too_low;positive_excess_window_ratio_too_low",
+          "validation": {
+            "passed": false,
+            "reason": "heldout_avg_excess_too_low",
+            "score": 0.1091101186454525,
+            "avg_return": 0.04033276545578538,
+            "avg_excess_vs_qqq": -0.004358259336447422,
+            "avg_win_rate": 0.6883333333333334,
+            "coverage_ratio": 1.0,
+            "valid_events": 12,
+            "available_events": 12,
+            "required_valid_events": 10,
+            "valid_event_ratio": 1.0
+          }
+        },
+        {
+          "train_labels": [
+            "2023",
+            "2024"
+          ],
+          "validation_label": "2025",
+          "selected_cid": "cand_030",
+          "training_rank_score": 0.12299224920892901,
+          "training_constraints_passed": false,
+          "training_failure_reason": "avg_excess_vs_qqq_too_low",
+          "validation": {
+            "passed": true,
+            "reason": "",
+            "score": 0.07676784521345861,
+            "avg_return": 0.04800932073465272,
+            "avg_excess_vs_qqq": 0.005967782990086227,
+            "avg_win_rate": 0.612,
+            "coverage_ratio": 0.8333333333333333,
+            "valid_events": 10,
+            "available_events": 12,
+            "required_valid_events": 10,
+            "valid_event_ratio": 0.8333333333333334
+          }
+        },
+        {
+          "train_labels": [
+            "2023",
+            "2024",
+            "2025"
+          ],
+          "validation_label": "2026YTD",
+          "selected_cid": "cand_030",
+          "training_rank_score": 0.11897784781076991,
+          "training_constraints_passed": true,
+          "training_failure_reason": "",
+          "validation": {
+            "passed": false,
+            "reason": "heldout_valid_events_too_low",
+            "score": 0.13395184851915842,
+            "avg_return": 0.07120808146294788,
+            "avg_excess_vs_qqq": 0.003124253520496799,
+            "avg_win_rate": 0.6828571428571428,
+            "coverage_ratio": 0.5,
+            "valid_events": 4,
+            "available_events": 9,
+            "required_valid_events": 8,
+            "valid_event_ratio": 0.4444444444444444
+          }
+        }
+      ],
+      "final_candidate": "cand_030",
+      "oos_fold_count": 3,
+      "oos_pass_count": 1,
+      "oos_pass_ratio": 0.3333333333333333,
+      "oos_positive_excess_count": 2,
+      "oos_positive_excess_ratio": 0.6666666666666666,
+      "promotion_failure_reasons": [
+        "oos_pass_ratio_too_low",
+        "final_heldout_failed"
+      ],
+      "promotion_eligible": false
+    }
+  },
+  "report_path": "outputs/post_pr23_baseline_202610/oos_rescore_risk_off/corrected_oos_risk_off_report.md"
+}

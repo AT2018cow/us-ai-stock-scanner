@@ -1,0 +1,75 @@
+{
+  "risk_off": {
+    "mode": "offline_rescore",
+    "source_results_csv": "evidence/baselines/post_pr23_005b86c/tuner_risk_off_results.csv",
+    "candidates": 36,
+    "guardrails": {
+      "min_total_valid_events": 120,
+      "min_window_valid_events": 20,
+      "min_total_valid_event_ratio": 0.8,
+      "min_window_valid_event_ratio": 0.8,
+      "min_oos_folds": 2,
+      "min_oos_pass_ratio": 0.6666666666666666,
+      "min_oos_positive_excess_ratio": 0.6666666666666666
+    },
+    "picks": {
+      "risk_on": "cand_032",
+      "risk_off": "cand_030"
+    },
+    "risk_on_final_candidate": "cand_032",
+    "risk_on_promotion_eligible": false,
+    "risk_on_pass_ratio": 0.0,
+    "risk_on_positive_excess_ratio": 0.0,
+    "risk_on_promotion_failures": [
+      "oos_pass_ratio_too_low",
+      "oos_positive_excess_ratio_too_low",
+      "final_heldout_failed"
+    ],
+    "risk_off_final_candidate": "cand_030",
+    "risk_off_promotion_eligible": false,
+    "risk_off_pass_ratio": 0.3333333333333333,
+    "risk_off_positive_excess_ratio": 0.6666666666666666,
+    "risk_off_promotion_failures": [
+      "oos_pass_ratio_too_low",
+      "final_heldout_failed"
+    ]
+  },
+  "risk_on": {
+    "mode": "offline_rescore",
+    "source_results_csv": "evidence/baselines/post_pr23_005b86c/tuner_risk_on_results.csv",
+    "candidates": 36,
+    "guardrails": {
+      "min_total_valid_events": 120,
+      "min_window_valid_events": 20,
+      "min_total_valid_event_ratio": 0.8,
+      "min_window_valid_event_ratio": 0.8,
+      "min_oos_folds": 2,
+      "min_oos_pass_ratio": 0.6666666666666666,
+      "min_oos_positive_excess_ratio": 0.6666666666666666
+    },
+    "picks": {
+      "risk_on": "cand_028",
+      "risk_off": "cand_005"
+    },
+    "risk_on_final_candidate": "cand_028",
+    "risk_on_promotion_eligible": false,
+    "risk_on_pass_ratio": 0.3333333333333333,
+    "risk_on_positive_excess_ratio": 0.3333333333333333,
+    "risk_on_promotion_failures": [
+      "oos_pass_ratio_too_low",
+      "oos_positive_excess_ratio_too_low",
+      "final_training_constraints_failed",
+      "final_heldout_failed"
+    ],
+    "risk_off_final_candidate": "cand_005",
+    "risk_off_promotion_eligible": false,
+    "risk_off_pass_ratio": 0.3333333333333333,
+    "risk_off_positive_excess_ratio": 0.3333333333333333,
+    "risk_off_promotion_failures": [
+      "oos_pass_ratio_too_low",
+      "oos_positive_excess_ratio_too_low",
+      "final_training_constraints_failed",
+      "final_heldout_failed"
+    ]
+  }
+}

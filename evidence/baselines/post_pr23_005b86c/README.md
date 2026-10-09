@@ -40,6 +40,31 @@ MODAL_PROFILE=infi MODAL_TUNER_CONCURRENCY=40 .venv/bin/python scripts/tune_para
 # tuner_risk_on outputs. Total in-flight candidate containers ≤ 80.
 ```
 
+## Corrected OOS rescore (PR #26, no new compute)
+
+The original anchored-OOS interpretation used fixed sample-size guardrails
+(`min_window_valid_events=20`, `min_total_valid_events=120`) that are
+structurally impossible for monthly annual folds (12 signal dates per year).
+PR #26 caps absolute targets at 80% of actually-available events and requires
+the promotion decision to consider the whole OOS fold sequence (≥2 folds,
+≥2/3 passing, ≥2/3 positive excess, final training + held-out pass).
+
+The two existing 36-candidate result files were rescored offline
+(`--rescore-results`; no backtests, no SEC/Alpaca, no Modal):
+
+- `oos_rescore_risk_off_report.md` / `oos_rescore_risk_off_summary.json`
+- `oos_rescore_risk_on_report.md` / `oos_rescore_risk_on_summary.json`
+- `anchored_oos_fold_summary_corrected.csv` (+ `.meta.json`) — 12 folds with
+  corrected guardrails (supersedes `anchored_oos_fold_summary.csv` for
+  pass/fail interpretation; the return observations are unchanged).
+
+Headline: fold selections are unchanged (selection uses rank score only);
+training failures move from impossible sample gates to genuine return
+metrics (`avg_excess_vs_qqq_too_low`); 2025 held-out shows +8.0%/+8.5%
+excess (PASS) from training-invalid selections, 2026YTD fails on both sample
+(4/9 < 8) and excess (−2.0%); all four profiles remain
+`promotion_eligible=False`. Instability is real, not gate pollution.
+
 ## Limitations (see research_decision.md §4 for detail)
 
 - IEX volumes are tape-proxy, not real liquidity; cumulative diagnostics are
@@ -57,8 +82,11 @@ MODAL_PROFILE=infi MODAL_TUNER_CONCURRENCY=40 .venv/bin/python scripts/tune_para
   metadata, SHA256 and row counts (raw 55/63 MB CSVs stay off-repo).
 - `current_config_replay_summary.csv`, `current_config_replay_by_year.csv`,
   `selection_attribution_*.csv`, `paired_style_diff.csv` — replay + attribution.
-- `anchored_oos_fold_summary.csv` (+ `.meta.json`) — 12 held-out folds.
+- `anchored_oos_fold_summary.csv` (+ `.meta.json`) — 12 held-out folds
+  (original guardrails); `anchored_oos_fold_summary_corrected.csv` (+ `.meta.json`)
+  — same 12 folds under corrected attainable guardrails (PR #26).
 - `tuner_*_results.csv`, `tuner_*_summary.json`, `tuner_*_report.md` —
   compact tuner evidence per style.
+- `oos_rescore_*` — corrected offline OOS rescore (PR #26) per style.
 - `weightsweep_parity_*` — sweep candidate-zero offline baselines.
 - `research_decision.md` — conclusions, limits, next hypotheses.
