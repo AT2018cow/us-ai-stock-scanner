@@ -114,6 +114,9 @@ A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: t
   assessment, +0.7/priority flip for ai_enabler rows; production has no
   channel at assessment). Same-state oracle parity is 168/168; the
   single-gate B-arm then fails substantively (2024 −0.01%, 2025 −0.56%,
-  pooled CI covers zero). Position-gate path stops; see `decision_note.md`.
+  pooled CI covers zero). **Provenance correction:** this bundle was produced
+  from a dirty working tree while HEAD still pointed at the PR30 merge, so it
+  is historical/non-canonical until one clean-checkout local rerun reproduces
+  it. See `decision_note.md` and `provenance_correction.md`.
 - `weightsweep_parity_*` — **superseded pre-PR27 artifacts**. PR27 audit found that the old offline sweep applied multiplier=1 without first multiplying by each channel's configured production base-weight vector. Do not use the recorded candidate-zero scores for research conclusions; rerun candidate zero with the corrected sweep before any weight study.
 - `research_decision.md` — conclusions, limits, next hypotheses.
