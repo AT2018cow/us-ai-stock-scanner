@@ -7,15 +7,22 @@ channel at assessment time). Regression test:
 `test_rank_channel_ignores_dataset_channel_column` (fails pre-fix with the
 `2.7 vs 2.0` signature, passes post-fix).
 
-## Root cause of PR28 parity failure (resolved)
+## Root cause of the same-state code-path mismatch (resolved)
 
 `build_research_assessment` awards `ai_infrastructure_exposure` (+0.7 and a
 priority flip) to any row whose `channel` contains `ai_enabler`. The PR28/PR30
 research path scored dataset rows that still carried their channel label, so
 ai_enabler-channel rows lacking bucket/ETF triggers were over-included versus
-production. All 20 same-state mismatches were ai_enabler; core_ai and
-ai_peripheral were always clean. After the fix, same-state oracle parity is
-**168/168**.
+production. All 20 pre-fix **same-state** mismatches were ai_enabler; core_ai
+and ai_peripheral were clean in that same-state comparison. After the fix,
+same-state oracle parity is **168/168**.
+
+This does **not** retroactively convert the historical PR28 Oct-8 replay vs
+Oct-9 extraction check from 114/126 to a pass. That older cross-run artifact
+contained 10 ai_enabler mismatches plus one ai_peripheral and one core_ai
+mismatch and also spans mutable data/cache states. The channel leak explains
+the research code-path parity defect; the old cross-run hard-stop remains
+historical evidence of non-identical run state.
 
 ## B-arm result (valid comparison, negative outcome)
 
