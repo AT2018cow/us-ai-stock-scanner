@@ -391,39 +391,50 @@ def build_baseline_parity(
             == int(events["horizon_days"].min())
         )
     ].copy()
-    rows: list[dict[str, Any]] = []
+    actual_map: dict[tuple[str, str], set[str]] = {}
     for row in base.itertuples(index=False):
         mapping = json.loads(str(row.channel_symbols_json))
         for channel in channels:
-            actual = {
+            actual_map[(str(row.signal_date), channel)] = {
                 str(x).upper()
                 for x in mapping.get(channel, [])
             }
-            expected = replay_symbols.get(
-                (str(row.signal_date), channel),
-                set(),
-            )
-            union = actual | expected
-            rows.append(
-                {
-                    "signal_date": str(row.signal_date),
-                    "channel": channel,
-                    "actual_n": len(actual),
-                    "expected_n": len(expected),
-                    "exact_match": actual == expected,
-                    "jaccard": (
-                        float(len(actual & expected) / len(union))
-                        if union
-                        else 1.0
-                    ),
-                    "actual_only": ",".join(
-                        sorted(actual - expected)
-                    ),
-                    "expected_only": ",".join(
-                        sorted(expected - actual)
-                    ),
-                }
-            )
+
+    keys = set(actual_map)
+    keys.update(
+        key
+        for key, symbols in replay_symbols.items()
+        if key[1] in channels and symbols
+    )
+
+    rows: list[dict[str, Any]] = []
+    for signal_date, channel in sorted(keys):
+        actual = actual_map.get((signal_date, channel), set())
+        expected = replay_symbols.get(
+            (signal_date, channel),
+            set(),
+        )
+        union = actual | expected
+        rows.append(
+            {
+                "signal_date": signal_date,
+                "channel": channel,
+                "actual_n": len(actual),
+                "expected_n": len(expected),
+                "exact_match": actual == expected,
+                "jaccard": (
+                    float(len(actual & expected) / len(union))
+                    if union
+                    else 1.0
+                ),
+                "actual_only": ",".join(
+                    sorted(actual - expected)
+                ),
+                "expected_only": ",".join(
+                    sorted(expected - actual)
+                ),
+            }
+        )
     return pd.DataFrame(rows)
 
 
