@@ -242,6 +242,7 @@ def build_risk_off_group_states(
                 "hard_steps": hard_steps,
                 "soft_steps": soft_steps,
                 "ranked": ranked,
+                "assessed": assessed,
                 "research_kept": research_kept,
                 "capped": capped,
                 "top_n": int(top_n),
@@ -316,6 +317,7 @@ def diagnose_exclusion(
         )
         return base
 
+    assessed_row = _symbol_row(state["assessed"], symbol)
     base.update(
         {
             "risk_off_composite_score": ranked_row.get(
@@ -324,14 +326,20 @@ def diagnose_exclusion(
             "risk_off_rank_pre_research": ranked_row.get(
                 "_rank_pre_research", np.nan
             ),
-            "risk_off_research_priority": ranked_row.get(
-                "research_priority", ""
+            "risk_off_research_priority": (
+                assessed_row.get("research_priority", "")
+                if assessed_row is not None
+                else ""
             ),
-            "risk_off_research_score": ranked_row.get(
-                "research_score", np.nan
+            "risk_off_research_score": (
+                assessed_row.get("research_score", np.nan)
+                if assessed_row is not None
+                else np.nan
             ),
-            "risk_off_research_risks": ranked_row.get(
-                "research_risks", ""
+            "risk_off_research_risks": (
+                assessed_row.get("research_risks", "")
+                if assessed_row is not None
+                else ""
             ),
         }
     )
@@ -627,9 +635,13 @@ def write_report(
             )
 
     lines.extend(["", "## Largest missed positive-excess cases", ""])
-    mature = cases[
-        np.isfinite(pd.to_numeric(cases.get("excess_vs_qqq"), errors="coerce"))
-    ].copy()
+    if "excess_vs_qqq" in cases.columns:
+        excess_series = pd.to_numeric(
+            cases["excess_vs_qqq"], errors="coerce"
+        )
+        mature = cases[np.isfinite(excess_series)].copy()
+    else:
+        mature = cases.iloc[0:0].copy()
     mature = mature.sort_values("excess_vs_qqq", ascending=False).head(20)
     if mature.empty:
         lines.append("No mature cases.")
