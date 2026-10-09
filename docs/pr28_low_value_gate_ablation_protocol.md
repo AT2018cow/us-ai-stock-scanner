@@ -1,6 +1,37 @@
 # PR28 — risk_off low_value position-gate ablation (pre-registration)
 
-Status: **research-only, implementation pending**. Base evidence: PR27 merged `d6d6965211ea6c3c66bb01be63a6de124016f456`; evidence commit `bcc50b07dd564e9b548054748df6021da10e747f`.
+Status: **research-only; implementation added after this pre-registration**. Base evidence: PR27 merged `d6d6965211ea6c3c66bb01be63a6de124016f456`; evidence commit `bcc50b07dd564e9b548054748df6021da10e747f`.
+
+## Pre-outcome implementation amendment
+
+This amendment was made during implementation review **before any PR28 A/B
+outcome was generated**. The original commit remains in branch history.
+
+One original feasibility assumption was wrong: the existing risk_off survivor
+dataset cannot evaluate relaxing a hard gate because the excluded candidates
+are absent, and the corrected risk_on survivor dataset is not a complete
+counterfactual universe because it has different structural hard gates.
+Therefore the "do not regenerate PIT datasets" sentence below is superseded
+for PR28 by exactly one targeted, low_value-only risk_off extraction that
+omits only the three pre-registered style-structural hard steps. All other
+risk_off hard filters, frozen inputs and label conventions remain unchanged.
+The extraction is explicitly marked research-expanded in metadata; core/base
+hard filters cannot be bypassed.
+
+The registered B intervention is implemented as **hard -> soft**, not complete
+threshold deletion: the same three threshold functions are removed from the
+hard layer and added to the soft-pass layer. This preserves their defensive
+ranking influence while testing whether one-vote hard exclusion is excessive.
+
+Baseline parity compares ordered per-channel selected-symbol lists against the
+canonical replay and treats any order/symbol/date mismatch as a hard stop.
+Eligibility/first-fail diagnostics that require rows already removed by other
+hard filters are not claimed as end-to-end parity evidence.
+
+The current PR performs the fixed retrospective A/B only. The registered
+anchored fixed-B validation remains a later stage and is justified only if the
+pre-registered retrospective robustness gate passes. No retrospective result
+may be relabeled as anchored OOS.
 
 ## Hypothesis
 
