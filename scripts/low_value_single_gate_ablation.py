@@ -146,6 +146,84 @@ def git_head_sha() -> str | None:
     return completed.stdout.strip() or None
 
 
+def unique_cross_section(date_rows: pd.DataFrame) -> pd.DataFrame:
+    """Recover the one-row-per-symbol production cross-section.
+
+    The expanded survivor file repeats raw rows once per channel. Channel and
+    extracted soft-pass counters are expected to differ; every other field
+    must agree across duplicate symbol rows or the same-state oracle is not
+    well-defined.
+    """
+    if date_rows.empty:
+        return date_rows.copy()
+    work = date_rows.copy()
+    work["_symbol_key"] = (
+        work["symbol"].astype(str).str.strip().str.upper()
+    )
+    ignored = {
+        "channel",
+        "soft_pass_count",
+        "soft_total",
+        "_symbol_key",
+    }
+    compare_cols = [
+        col for col in work.columns if col not in ignored
+    ]
+
+    for symbol, group in work.groupby("_symbol_key", sort=False):
+        if len(group) <= 1:
+            continue
+        first = group.iloc[0]
+        for col in compare_cols:
+            ref = first.get(col)
+            series = group[col]
+            if pd.isna(ref):
+                mismatch = series.notna()
+            elif isinstance(ref, float) and np.isfinite(ref):
+                numeric = pd.to_numeric(series, errors="coerce")
+                mismatch = ~np.isclose(
+                    numeric.to_numpy(dtype=float),
+                    float(ref),
+                    rtol=0.0,
+                    atol=1e-12,
+                    equal_nan=True,
+                )
+                if bool(np.asarray(mismatch).any()):
+                    raise ValueError(
+                        "cross-channel raw-field disagreement for "
+                        f"{symbol} column={col}"
+                    )
+                continue
+            else:
+                mismatch = (
+                    series.fillna("").astype(str)
+                    != str(ref)
+                )
+            if bool(np.asarray(mismatch).any()):
+                raise ValueError(
+                    "cross-channel raw-field disagreement for "
+                    f"{symbol} column={col}"
+                )
+
+    out = (
+        work.drop_duplicates(
+            subset=["_symbol_key"],
+            keep="first",
+        )
+        .drop(
+            columns=[
+                "_symbol_key",
+                "channel",
+                "soft_pass_count",
+                "soft_total",
+            ],
+            errors="ignore",
+        )
+        .reset_index(drop=True)
+    )
+    return out
+
+
 def canonical_baseline_select(
     date_rows: pd.DataFrame,
     *,
@@ -153,8 +231,9 @@ def canonical_baseline_select(
     channels: list[str],
     top_n: int,
 ) -> tuple[list[str], dict[str, list[str]], dict[str, Any]]:
+    cross_section = unique_cross_section(date_rows)
     picks, diagnostics = rank_and_pick_symbols_with_diagnostics(
-        df=date_rows,
+        df=cross_section,
         scan_config=config,
         list_type="low_value",
         top_n=top_n,
