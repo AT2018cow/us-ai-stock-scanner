@@ -57,6 +57,8 @@ Do not edit production config.
 
 ## Execution
 
+Canonical evidence must be generated from a **clean committed Git checkout**. The evaluator now hard-fails if tracked or untracked non-ignored worktree changes are present, and records both commit SHA and Git tree SHA in the manifest. Commit code fixes before running evidence; never run canonical evidence from a dirty working tree.
+
 No new Modal compute is required.
 
 If the raw PR28 dataset is still local:
@@ -116,7 +118,7 @@ Passing this retrospective gate does not authorize a production change. It only 
 
 The script writes:
 
-- `*_input_manifest.json` with dataset/meta/config hashes and code SHA;
+- `*_input_manifest.json` with dataset/meta/config hashes, code SHA, Git tree SHA, and `git_worktree_clean=true`;
 - `*_oracle_parity.csv`;
 - `*_events.csv`;
 - `*_paired.csv`;

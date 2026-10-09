@@ -1,5 +1,7 @@
 # PR27 alpha-attribution decision note
 
+> **PR31 correction:** the original attribution tool leaked the extracted dataset `channel` label into `apply_research_assessment`. Structural hard first-fail counts, direct soft-step failures, pre-research score/rank, actual replay selection membership, paired selection diagnostics, and IC/decile evidence are not affected by this specific bug. Research priority/score/risks, research-gate exclusions, post-research rank, and downstream cap/Top-N classifications are superseded until recomputed with the fixed tool. See `docs/research_channel_column_parity_audit_20261010.md`.
+
 Date: 2026-10-09
 Inputs: frozen `weight_dataset_risk_off.csv` (SHA `4a0203d9…`, unchanged) +
 corrected `weight_dataset_risk_on.csv` (SHA `295e3de8…`, 30355 rows / 42

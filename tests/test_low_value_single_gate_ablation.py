@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -122,6 +123,26 @@ class TestSameStateSingleRangeGate(unittest.TestCase):
                     single.validate_canonical_config(path)
             finally:
                 single.EXPECTED_CONFIG_GIT_BLOB_SHA1 = original
+
+    def test_clean_git_provenance_records_commit_and_tree(self) -> None:
+        with mock.patch.object(
+            single,
+            "_git_text",
+            side_effect=["abc123", "tree456", ""],
+        ):
+            out = single.validate_clean_git_checkout()
+        self.assertEqual(out["code_sha"], "abc123")
+        self.assertEqual(out["code_tree_sha"], "tree456")
+        self.assertTrue(out["git_worktree_clean"])
+
+    def test_dirty_git_checkout_is_rejected(self) -> None:
+        with mock.patch.object(
+            single,
+            "_git_text",
+            side_effect=["abc123", "tree456", " M scripts/example.py"],
+        ):
+            with self.assertRaises(ValueError):
+                single.validate_clean_git_checkout()
 
     def test_ordered_same_state_parity_detects_reordering(self) -> None:
         row = single._parity_row(

@@ -152,17 +152,46 @@ def validate_canonical_dataset(dataset_path: Path) -> dict[str, Any]:
     }
 
 
-def git_head_sha() -> str | None:
+def _git_text(args: list[str]) -> str:
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", *args],
+            cwd=ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return completed.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            "canonical research evidence requires a readable Git checkout"
+        ) from exc
+    return completed.stdout.strip()
+
+
+def validate_clean_git_checkout() -> dict[str, Any]:
+    """Return immutable code provenance or fail on a dirty checkout.
+
+    Canonical evidence must never be generated from uncommitted source edits:
+    git rev-parse HEAD alone cannot identify that executed code. Ignored
+    artifacts (outputs/, cache/, .env) do not appear in porcelain status and
+    therefore do not block an evidence rerun.
+    """
+    head = _git_text(["rev-parse", "HEAD"])
+    tree = _git_text(["rev-parse", "HEAD^{tree}"])
+    status = _git_text(
+        ["status", "--porcelain", "--untracked-files=normal"]
+    )
+    if status:
+        preview = " | ".join(status.splitlines()[:8])
+        raise ValueError(
+            "canonical research evidence requires a clean Git worktree; "
+            f"commit/stash source changes first: {preview}"
+        )
+    return {
+        "code_sha": head,
+        "code_tree_sha": tree,
+        "git_worktree_clean": True,
+    }
 
 
 def unique_cross_section(date_rows: pd.DataFrame) -> pd.DataFrame:
@@ -794,6 +823,7 @@ def write_report(
 
 def main() -> None:
     args = build_parser().parse_args()
+    code_provenance = validate_clean_git_checkout()
     dataset_path = Path(args.dataset)
     frozen = validate_canonical_dataset(dataset_path)
 
@@ -904,7 +934,7 @@ def main() -> None:
         "scan_config": str(config_path),
         "scan_config_sha256": sha256_file(config_path),
         "scan_config_git_blob_sha1": config_blob_sha1,
-        "code_sha": git_head_sha(),
+        **code_provenance,
         "target_step": TARGET_STEP,
         "expanded_dataset_skipped_steps": sorted(
             EXPECTED_EXPANDED_SKIPS
