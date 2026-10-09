@@ -103,5 +103,11 @@ A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: t
 - `tuner_*_results.csv`, `tuner_*_summary.json`, `tuner_*_report.md` —
   compact tuner evidence per style.
 - `oos_rescore_*` — corrected offline OOS rescore (PR #26) per style.
+- `pr28_position_ablation/` — single risk_off low_value expanded-dataset
+  rebuild (meta + SHA256/rows only; raw CSV off-repo) plus compact
+  parity/paired/summary/report artifacts and a hard-stop decision note.
+  Baseline ordered parity reached 114/126 with 12 Top-10 boundary swaps,
+  so B-arm returns are quarantined per protocol; see
+  `decision_note_hard_stop.md`.
 - `weightsweep_parity_*` — **superseded pre-PR27 artifacts**. PR27 audit found that the old offline sweep applied multiplier=1 without first multiplying by each channel's configured production base-weight vector. Do not use the recorded candidate-zero scores for research conclusions; rerun candidate zero with the corrected sweep before any weight study.
 - `research_decision.md` — conclusions, limits, next hypotheses.

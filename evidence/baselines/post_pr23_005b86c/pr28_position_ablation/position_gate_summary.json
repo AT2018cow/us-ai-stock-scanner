@@ -1,0 +1,32 @@
+{
+  "arms": [
+    "baseline",
+    "hard_to_soft"
+  ],
+  "baseline_signals": "evidence/baselines/post_pr23_005b86c/post_pr23_baseline_202610_risk_off_events_signals.csv",
+  "dataset": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.csv",
+  "dataset_meta": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.meta.json",
+  "mode": "retrospective_mechanism_ablation",
+  "outputs": {
+    "arm_summary": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_arm_summary.csv",
+    "baseline_parity": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_baseline_parity.csv",
+    "events": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_events.csv",
+    "paired": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_paired.csv",
+    "paired_summary": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_paired_summary.csv",
+    "report": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_report.md",
+    "switch_cases": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_switch_cases.csv",
+    "switch_symbol_summary": "outputs/post_pr23_baseline_202610/pr28_position_ablation/position_gate_switch_symbol_summary.csv"
+  },
+  "production_promotion_allowed": false,
+  "retrospective_gate_failures": [
+    "baseline_selection_parity_failed",
+    "selection_overlap_too_low"
+  ],
+  "retrospective_gate_pass": false,
+  "scan_config": "configs/config.risk_off.json",
+  "target_steps": [
+    "max_range_position_52w",
+    "min_drawdown_from_52w_high",
+    "max_price_to_sma200"
+  ]
+}
