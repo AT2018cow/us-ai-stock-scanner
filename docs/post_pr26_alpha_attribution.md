@@ -132,7 +132,7 @@ python scripts/low_value_gate_attribution.py \
   --output-prefix "$EXP/alpha_attribution/low_value_gate"
 ```
 
-Outputs: `low_value_gate_cases.csv`, `low_value_gate_summary.csv`, `low_value_gate_paired_selection.csv`, and `low_value_gate_report.md`.
+Outputs: `low_value_gate_cases.csv`, `low_value_gate_summary.csv`, `low_value_gate_soft_failures.csv`, `low_value_gate_paired_selection.csv`, and `low_value_gate_report.md`.
 
 For each channel-level stock selected by risk_on low_value but not risk_off, the script diagnoses the risk_off pipeline in order: hard filter -> research gate -> group cap -> per-channel Top-N. For names that pass hard filters but rank below Top-N, it also records failed risk_off soft conditions. In scored mode most valuation/quality conditions are soft, so do not call every ranking difference a hard-gate exclusion.
 
@@ -148,4 +148,4 @@ A narrow ablation is justified only if one mechanism survives both ranking and s
 
 ## Evidence to commit after the offline run
 
-Keep raw survivor CSVs in `outputs/`. Commit only compact candidate-zero results/reports, IC summaries/deciles/monotonicity/reports, low-value summary/paired/report (and cases if review-sized), plus a short decision note naming at most one or two next mechanisms. Do not commit production config changes.
+Keep raw survivor CSVs in `outputs/`. Commit only compact candidate-zero results/reports, IC summaries/deciles/monotonicity/reports, low-value summary/soft-failures/paired/report (and cases if review-sized), plus a short decision note naming at most one or two next mechanisms. Preserve the corrected risk_on dataset `.meta.json` and SHA256, but keep the raw CSV off Git. Do not commit production config changes.
