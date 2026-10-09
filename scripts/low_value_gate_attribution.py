@@ -317,7 +317,8 @@ def diagnose_exclusion(
         )
         return base
 
-    assessed_row = _symbol_row(state["assessed"], symbol)
+    assessed_frame = state.get("assessed", state["ranked"])
+    assessed_row = _symbol_row(assessed_frame, symbol)
     base.update(
         {
             "risk_off_composite_score": ranked_row.get(
