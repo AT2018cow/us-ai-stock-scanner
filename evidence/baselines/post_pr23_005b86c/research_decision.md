@@ -26,9 +26,7 @@ Production configs **unchanged**, no `--promote` used.
   `low_value` 2023 (+6.7pp) and 2025 (+12.0pp).
 - Symbol concentration is moderate: 120d top-1 share 6–9% (MU in momentum
   both styles); removing the top winner keeps all totals positive.
-- Sweep candidate-zero offline baselines: risk_off 0.152 (train 0.169 /
-  valid 0.052), risk_on 0.199 (train 0.217 / valid 0.136), with R04 purging
-  1/3/6 late-train dates for 20/60/120d.
+- The old sweep candidate-zero scores are **superseded** by a PR27 correctness finding: the pre-fix offline sweep omitted each channel's configured production base-weight vector and therefore did not represent current-config scoring. Replay/OOS findings are unaffected. Rerun candidate zero with the corrected multiplicative-weight formula before any weight-tuning conclusion.
 
 ## 3. Anchored OOS findings
 
@@ -61,9 +59,6 @@ Production configs **unchanged**, no `--promote` used.
    gates discard the winners that risk_on low_value catches in 2023/2025.
    First-fail diagnostics on the 2023/2025 low_value dates will show which
    gate removes them.
-2. **Ranking monotonicity before any weight tuning**: use the two frozen
-   weight datasets to test score-decile forward returns and rank IC per
-   list; if high score is not monotone vs mid/low, threshold tuning is
-   pointless.
+2. **Ranking monotonicity before any weight tuning**: use the frozen risk_off dataset plus a **corrected risk_on re-extraction** to test production-score decile forward returns and rank IC per list. The original risk_on survivor dataset used the wrong default hard/soft partition and is not canonical for this purpose. If high score is not monotone vs mid/low, threshold/weight tuning is pointless.
 
 Chosen next PR from attribution, not from a pooled sweep.

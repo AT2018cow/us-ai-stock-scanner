@@ -74,6 +74,19 @@ def log(msg: str, started: float) -> None:
     print(f"[extract {stamp} +{elapsed / 60:.1f}m] {msg}", flush=True)
 
 
+def partition_dataset_filter_steps(
+    scan_config: Any,
+    channel_name: str,
+    steps: list[tuple[str, Any]],
+) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
+    """Use the dataset style explicitly; never rely on risk_off default."""
+    return partition_filter_steps(
+        steps,
+        channel_name,
+        scan_config.strategy_style,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Extract hard-gate survivor dataset for weight sweeps.")
     p.add_argument("--scan-config", default="configs/config.risk_off.json")
@@ -344,7 +357,11 @@ def main() -> None:
             for channel_name, channel_profile in channel_profiles.items():
                 steps, _weights = build_steps_and_weights(scan_config, channel_name, channel_profile, list_type)
                 if scored_mode:
-                    hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+                    hard_steps, soft_steps = partition_dataset_filter_steps(
+                        scan_config,
+                        channel_name,
+                        steps,
+                    )
                 else:
                     hard_steps, soft_steps = steps, []
                 survivors, _diag = apply_filters_with_diagnostics(df, hard_steps)

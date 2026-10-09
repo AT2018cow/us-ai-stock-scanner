@@ -37,7 +37,7 @@
       60,
       120
     ],
-    "trading_cost_bps": 15.0,
+    "trading_cost_bps": 15,
     "entry_price_mode": "next_open",
     "exit_price_mode": "close",
     "theme_source": "rules_proxy",
@@ -172,7 +172,7 @@
           "low_value",
           "momentum"
         ],
-        "trading_cost_bps": 15.0,
+        "trading_cost_bps": 15,
         "roundtrip_cost": 0.003,
         "entry_price_mode": "next_open",
         "exit_price_mode": "close",
@@ -216,7 +216,7 @@
           "low_value",
           "momentum"
         ],
-        "trading_cost_bps": 15.0,
+        "trading_cost_bps": 15,
         "roundtrip_cost": 0.003,
         "entry_price_mode": "next_open",
         "exit_price_mode": "close",
@@ -247,6 +247,7 @@
     "SEC/Alpaca caches warm: local canonical cache synced to Modal volume ai-scanner-cache (infini) before the runs; submissions/facts_meta fresh at run time.",
     "SEC is live data: the Modal risk_off replay differs from the earlier local risk_off replay only at the final unpriced date 2026-09-30 (low_value n_selected 19 vs 18), consistent with same-day companyfacts drift; see local_run_20261008_pre_checkpoints/ for the earlier artifacts.",
     "Label maturity: labels extending past the last available bar are immature (NaN); late-2026 20d/60d/120d rows appear as unpriced or partial-valid in events.",
-    "watchlist_history contains 32 snapshots from 2026-09-22 onward, all with identical content; pre-snapshot dates use the union approximation (documented in dataset meta watchlist_source)."
+    "watchlist_history contains 32 snapshots from 2026-09-22 onward, all with identical content; pre-snapshot dates use the union approximation (documented in dataset meta watchlist_source).",
+    "PR27 audit: original weight_dataset_risk_on.csv was extracted with partition_filter_steps defaulting to risk_off because strategy_style was not passed. Treat it as non-canonical for risk_on survivor-ranking/IC work; rebuild risk_on only with the corrected extractor. Replay/tuner evidence is unaffected."
   ]
 }

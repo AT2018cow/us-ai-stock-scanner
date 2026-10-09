@@ -65,6 +65,21 @@ excess (PASS) from training-invalid selections, 2026YTD fails on both sample
 (4/9 < 8) and excess (−2.0%); all four profiles remain
 `promotion_eligible=False`. Instability is real, not gate pollution.
 
+## PR27 score-weight audit note
+
+The historical replay, anchored OOS returns and survivor datasets remain valid.
+Only the old offline score-weight sweep candidate-zero interpretation is
+invalidated: `sweep_score_weights.py` normalized component columns correctly
+but failed to multiply those normalized axes by the configured production base
+weights before applying candidate multipliers. PR27 corrects the formula to
+`production_base_weight * candidate_multiplier`.
+
+Until the two cheap candidate-zero sweeps are rerun, do not cite
+`weightsweep_parity_risk_off_results.csv` or
+`weightsweep_parity_risk_on_results.csv` as current-config parity evidence.
+
+A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: the extractor did not pass `strategy_style` to `partition_filter_steps`, so the old risk_on extraction used the default risk_off hard/soft partition. Because risk_on can configure risk_off-style conditions as soft criteria, the old risk_on dataset may have incorrectly hard-excluded rows and is **not canonical for survivor-ranking/IC research**. The risk_off dataset is unaffected by this specific bug. Rebuild risk_on only with the corrected extractor before PR27 attribution. Production replay/tuner evidence is unaffected.
+
 ## Limitations (see research_decision.md §4 for detail)
 
 - IEX volumes are tape-proxy, not real liquidity; cumulative diagnostics are
@@ -88,5 +103,5 @@ excess (PASS) from training-invalid selections, 2026YTD fails on both sample
 - `tuner_*_results.csv`, `tuner_*_summary.json`, `tuner_*_report.md` —
   compact tuner evidence per style.
 - `oos_rescore_*` — corrected offline OOS rescore (PR #26) per style.
-- `weightsweep_parity_*` — sweep candidate-zero offline baselines.
+- `weightsweep_parity_*` — **superseded pre-PR27 artifacts**. PR27 audit found that the old offline sweep applied multiplier=1 without first multiplying by each channel's configured production base-weight vector. Do not use the recorded candidate-zero scores for research conclusions; rerun candidate zero with the corrected sweep before any weight study.
 - `research_decision.md` — conclusions, limits, next hypotheses.

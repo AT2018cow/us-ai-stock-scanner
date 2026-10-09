@@ -44,6 +44,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.backtest import build_steps_and_weights
 from ai_value_scanner.scanner import load_config
+from ai_value_scanner.strategy.filtering import (
+    apply_filters_with_diagnostics,
+    partition_filter_steps,
+)
 from ai_value_scanner.strategy.research import (
     apply_low_value_research_gate,
     apply_research_assessment,
@@ -147,6 +151,46 @@ def precompute_groups(
         base = base_weights.get(str(list_type), {}).get(str(channel), {})
         if not base:
             continue
+
+        # Reapply the target config's hard/soft semantics from raw survivor
+        # columns. This protects offline research from stale datasets produced
+        # with an older partition policy and ensures soft_pass_count matches
+        # the style being evaluated.
+        part = part.copy()
+        if scan_config is not None:
+            profiles = scan_config.channel_profiles or {}
+            profile = profiles.get(str(channel), {})
+            steps, _ = build_steps_and_weights(
+                scan_config,
+                str(channel),
+                profile,
+                str(list_type),
+            )
+            hard_steps, soft_steps = partition_filter_steps(
+                steps,
+                str(channel),
+                scan_config.strategy_style,
+            )
+            part, _ = apply_filters_with_diagnostics(part, hard_steps)
+            if part.empty:
+                continue
+            if soft_steps:
+                soft_matrix = pd.DataFrame(
+                    {
+                        name: pd.Series(
+                            mask_fn(part),
+                            index=part.index,
+                        ).fillna(False).astype(bool)
+                        for name, mask_fn in soft_steps
+                    },
+                    index=part.index,
+                )
+                part["soft_pass_count"] = soft_matrix.sum(axis=1)
+                part["soft_total"] = len(soft_steps)
+            else:
+                part["soft_pass_count"] = 0
+                part["soft_total"] = 1
+
         ranked = score_and_rank(
             part,
             base,
@@ -211,6 +255,10 @@ def precompute_groups(
         )
         groups[(str(signal_date), str(list_type), str(channel))] = {
             "axes": axes,
+            "base_weight_vector": np.asarray(
+                [float(base.get(axis, 0.0)) for axis in axes],
+                dtype="float64",
+            ),
             "norm": mat,
             "soft_rate": soft_rate,
             "ovp": ovp,
@@ -344,9 +392,29 @@ def score_candidate(
 
     for (signal_date, list_type, channel), g in group_items:
         mult = mult_by_axis[list_type]
-        weights = np.array([mult.get(a, 1.0) for a in g["axes"]], dtype="float64")
+        multipliers = np.array(
+            [mult.get(a, 1.0) for a in g["axes"]],
+            dtype="float64",
+        )
+        base_weight_vector = np.asarray(
+            g.get(
+                "base_weight_vector",
+                np.ones(len(g["axes"]), dtype="float64"),
+            ),
+            dtype="float64",
+        )
+        if base_weight_vector.shape != multipliers.shape:
+            raise ValueError(
+                "base-weight vector shape mismatch in precomputed score group"
+            )
+        weights = base_weight_vector * multipliers
         base_soft = _soft_w(list_type, channel)
-        scores = g["norm"] @ weights + base_soft * g["soft_rate"] - g["ovp"] - g["det"]
+        scores = (
+            g["norm"] @ weights
+            + base_soft * g["soft_rate"]
+            - g["ovp"]
+            - g["det"]
+        )
         picked = _select_ranked_indices_with_caps(
             scores=scores,
             gate_allowed=np.asarray(
