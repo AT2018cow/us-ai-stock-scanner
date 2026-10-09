@@ -78,6 +78,8 @@ Until the two cheap candidate-zero sweeps are rerun, do not cite
 `weightsweep_parity_risk_off_results.csv` or
 `weightsweep_parity_risk_on_results.csv` as current-config parity evidence.
 
+A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: the extractor did not pass `strategy_style` to `partition_filter_steps`, so the old risk_on extraction used the default risk_off hard/soft partition. Because risk_on can configure risk_off-style conditions as soft criteria, the old risk_on dataset may have incorrectly hard-excluded rows and is **not canonical for survivor-ranking/IC research**. The risk_off dataset is unaffected by this specific bug. Rebuild risk_on only with the corrected extractor before PR27 attribution. Production replay/tuner evidence is unaffected.
+
 ## Limitations (see research_decision.md §4 for detail)
 
 - IEX volumes are tape-proxy, not real liquidity; cumulative diagnostics are
