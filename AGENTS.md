@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> **当前交接（PR #30 之后）：** 请先阅读 `docs/work_handoff_after_pr30_20261010.md`。PR #30 已用 same-state oracle 修复/验证 research selector parity，并证明单独放松 `max_range_position_52w` 无稳定收益；position-gate 路线停止。当前第一优先级是审计并修复 dataset `channel` 列泄漏到 research assessment 的影响范围、干净重跑 PR30 provenance，并重算受影响的离线 low_value evidence；在此之前不要启动新 alpha 调参、full replay 或 broad tuner。旧 PR23/PR8 handoff 仅作历史记录。
+> **当前交接（PR #31 合并后）：** 请先阅读 `docs/work_handoff_after_pr31_20261010.md`。PR #31 关闭 research dataset `channel` 列泄漏的剩余代码路径，并让 PR30 canonical evidence 在 dirty Git checkout 上直接 hard fail。合并后先完成一次 clean-checkout PR30 本地复现和一次修正后的 PR27 low_value attribution 离线重算；这两步完成前不要启动新 alpha 调参、full replay、dataset extraction 或 broad tuner。position-gate 路线已停止。旧 PR30/PR23/PR8 handoff 仅作历史记录。
 
 
 US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a local watchlist for undervalued AI stocks. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
