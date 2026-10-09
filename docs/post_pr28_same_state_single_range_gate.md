@@ -24,7 +24,7 @@ Its metadata must state:
 - latest-watchlist fallback = false;
 - skipped structural hard steps are exactly max_range_position_52w, min_drawdown_from_52w_high, max_price_to_sma200.
 
-The script refuses any other dataset hash or skipped-step set.
+The script refuses any other dataset hash or skipped-step set. It also locks `configs/config.risk_off.json` to Git blob SHA1 `8214689234b6ff2994a85d8a494763b54e56178d`; a later production-config change requires a new experiment rather than silently reinterpreting this dataset.
 
 ## Same-state production oracle
 
