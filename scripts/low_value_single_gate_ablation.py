@@ -506,3 +506,446 @@ def overlap_block_len(horizon_days: int) -> int:
     return max(1, int(math.ceil(int(horizon_days) / 21.0)))
 
 
+def summarize_paired_with_bootstrap(
+    paired: pd.DataFrame,
+) -> pd.DataFrame:
+    summary = base.summarize_paired(paired)
+    if summary.empty:
+        summary["bootstrap_block_len"] = pd.Series(dtype="int64")
+        summary["bootstrap_ci90_lower"] = pd.Series(dtype="float64")
+        summary["bootstrap_ci90_upper"] = pd.Series(dtype="float64")
+        return summary
+
+    ci_map: dict[tuple[str, str, int], tuple[int, float, float]] = {}
+    scopes: list[tuple[str, str, pd.DataFrame]] = [
+        ("all", "ALL", paired)
+    ]
+    scopes.extend(
+        ("year", str(year), part)
+        for year, part in paired.groupby("year", sort=True)
+    )
+    scopes.extend(
+        ("regime", str(regime), part)
+        for regime, part in paired.groupby("regime", sort=True)
+    )
+    for scope, value, frame in scopes:
+        for horizon, group in frame.groupby(
+            "horizon_days",
+            sort=False,
+        ):
+            ordered = group.sort_values("signal_date")
+            values = pd.to_numeric(
+                ordered["delta_return"],
+                errors="coerce",
+            ).to_numpy(dtype=float)
+            block_len = overlap_block_len(int(horizon))
+            seed_key = f"{scope}|{value}|{int(horizon)}".encode()
+            seed = 42 + int(zlib.crc32(seed_key))
+            lower, upper = circular_block_bootstrap_mean_ci(
+                values,
+                block_len=block_len,
+                seed=seed,
+                n_boot=5000,
+                confidence=0.90,
+            )
+            ci_map[(scope, value, int(horizon))] = (
+                block_len,
+                lower,
+                upper,
+            )
+
+    blocks: list[int] = []
+    lowers: list[float] = []
+    uppers: list[float] = []
+    for row in summary.itertuples(index=False):
+        block_len, lower, upper = ci_map[
+            (
+                str(row.scope),
+                str(row.scope_value),
+                int(row.horizon_days),
+            )
+        ]
+        blocks.append(block_len)
+        lowers.append(lower)
+        uppers.append(upper)
+    summary = summary.copy()
+    summary["bootstrap_block_len"] = blocks
+    summary["bootstrap_ci90_lower"] = lowers
+    summary["bootstrap_ci90_upper"] = uppers
+    return summary
+
+
+def single_gate_retrospective_gate(
+    oracle_parity: pd.DataFrame,
+    paired_summary: pd.DataFrame,
+    switch_symbol_summary: pd.DataFrame,
+) -> tuple[bool, list[str]]:
+    failures: list[str] = []
+    if (
+        oracle_parity.empty
+        or not bool(oracle_parity["exact_match"].all())
+    ):
+        failures.append("same_state_oracle_parity_failed")
+
+    primary = paired_summary[
+        paired_summary["horizon_days"] == 120
+    ]
+    by_year = {
+        str(row.scope_value): row
+        for row in primary[
+            primary["scope"] == "year"
+        ].itertuples(index=False)
+    }
+    for year in ("2023", "2024", "2025"):
+        row = by_year.get(year)
+        if row is None or int(row.n_dates) < 8:
+            failures.append(f"{year}_120d_sample_too_low")
+            continue
+        if not (
+            np.isfinite(row.avg_delta_return)
+            and float(row.avg_delta_return) > 0.0
+        ):
+            failures.append(
+                f"{year}_120d_delta_not_positive"
+            )
+        if (
+            not np.isfinite(row.median_selection_jaccard)
+            or float(row.median_selection_jaccard) < 0.60
+        ):
+            failures.append(
+                f"{year}_selection_overlap_too_low"
+            )
+
+    pooled = primary[
+        (primary["scope"] == "all")
+        & (primary["scope_value"] == "ALL")
+    ]
+    if pooled.empty:
+        failures.append("all_120d_missing")
+    else:
+        row = pooled.iloc[0]
+        if float(row["positive_delta_ratio"]) <= 0.50:
+            failures.append(
+                "all_120d_positive_date_ratio_not_above_half"
+            )
+        if float(row["top_abs_date_share"]) >= 0.35:
+            failures.append(
+                "all_120d_too_concentrated_by_date"
+            )
+        if float(row["median_selection_jaccard"]) < 0.70:
+            failures.append(
+                "single_gate_selection_overlap_too_low"
+            )
+        lower = float(row["bootstrap_ci90_lower"])
+        if not np.isfinite(lower) or lower <= 0.0:
+            failures.append(
+                "all_120d_block_bootstrap_lower_not_positive"
+            )
+
+    down = primary[
+        (primary["scope"] == "regime")
+        & (primary["scope_value"] == "down")
+    ]
+    if down.empty or not np.isfinite(
+        float(down.iloc[0]["avg_delta_return"])
+    ):
+        failures.append("down_regime_120d_missing")
+    elif float(down.iloc[0]["avg_delta_return"]) < 0.0:
+        failures.append("down_regime_120d_degraded")
+
+    if not switch_symbol_summary.empty:
+        added_120 = switch_symbol_summary[
+            (switch_symbol_summary["horizon_days"] == 120)
+            & (switch_symbol_summary["side"] == "added")
+        ]
+        if not added_120.empty:
+            top_share = pd.to_numeric(
+                added_120["positive_excess_share"],
+                errors="coerce",
+            ).max()
+            if (
+                np.isfinite(top_share)
+                and float(top_share) >= 0.35
+            ):
+                failures.append(
+                    "added_120d_positive_excess_too_concentrated_by_symbol"
+                )
+
+    return not failures, failures
+
+
+def write_report(
+    path: Path,
+    *,
+    manifest: dict[str, Any],
+    parity: pd.DataFrame,
+    paired_summary: pd.DataFrame,
+    gate_pass: bool,
+    failures: list[str],
+) -> None:
+    exact = (
+        int(parity["exact_match"].sum())
+        if not parity.empty
+        else 0
+    )
+    lines = [
+        "# PR30 same-state single range-gate ablation",
+        "",
+        "Retrospective mechanism validation only. "
+        "No production promotion is allowed.",
+        "",
+        "## Frozen contract",
+        "",
+        f"- dataset SHA256: {manifest['dataset_sha256']}",
+        f"- target: {TARGET_STEP} hard -> soft",
+        "- A: canonical production-parity replay selector on the frozen "
+        "cross-section.",
+        "- B: same cross-section, same config, same scoring/research/caps/"
+        "Top-N; only the target hard gate moves to the soft layer.",
+        "",
+        "## Same-state oracle parity",
+        "",
+        f"- exact ordered rows: {exact}/{len(parity)}",
+        f"- pass: {bool(not parity.empty and parity['exact_match'].all())}",
+        "",
+        "This parity compares two code paths on identical in-memory rows. "
+        "It replaces the invalid Oct-8 replay vs Oct-9 extraction timing "
+        "comparison as the code-equivalence gate; it does not rewrite the "
+        "historical PR28 hard-stop record.",
+        "",
+        "## 120d paired A/B",
+        "",
+    ]
+    primary = paired_summary[
+        paired_summary["horizon_days"] == 120
+    ]
+    for row in primary.itertuples(index=False):
+        lines.append(
+            f"- {row.scope}:{row.scope_value}: "
+            f"n={int(row.n_dates)}, "
+            f"mean={float(row.avg_delta_return):+.4f}, "
+            f"median={float(row.median_delta_return):+.4f}, "
+            f"positive={float(row.positive_delta_ratio):.0%}, "
+            f"median_jaccard={float(row.median_selection_jaccard):.2f}, "
+            f"top_date={float(row.top_abs_date_share):.1%}, "
+            f"block{int(row.bootstrap_block_len)} "
+            f"CI90=[{float(row.bootstrap_ci90_lower):+.4f},"
+            f"{float(row.bootstrap_ci90_upper):+.4f}]"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Pre-registered retrospective gate",
+            "",
+            f"- pass: **{gate_pass}**",
+        ]
+    )
+    if failures:
+        lines.append(
+            "- failures: " + ";".join(failures)
+        )
+    else:
+        lines.append(
+            "- All fixed retrospective checks passed. "
+            "This only justifies a later anchored fixed-B validation; "
+            "it does not justify production changes."
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Interpretation limits",
+            "",
+            "- The dataset is retrospective and uses the documented "
+            "pre-snapshot union approximation.",
+            "- 2023/2025 contributed to the original hypothesis. "
+            "2024 remains the most useful full-year stress check.",
+            "- 2026YTD is diagnostic because long-horizon labels are "
+            "immature.",
+            "- The 120d confidence interval uses a circular moving-block "
+            "bootstrap with block length ceil(120/21)=6 months to account "
+            "for overlapping monthly forward labels.",
+            "- The old PR28 B arm remains quarantined and is not reused as "
+            "validation evidence.",
+        ]
+    )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    dataset_path = Path(args.dataset)
+    frozen = validate_canonical_dataset(dataset_path)
+
+    if int(args.top_n) != 10:
+        raise ValueError("canonical PR30 run requires top_n=10")
+    horizons = [int(x) for x in parse_tokens(args.horizons)]
+    if horizons != [20, 60, 120]:
+        raise ValueError(
+            "canonical PR30 run requires horizons=20,60,120"
+        )
+
+    config_path = Path(args.scan_config)
+    config = load_config(str(config_path))
+    if str(config.strategy_style) != "risk_off":
+        raise ValueError("PR30 requires risk_off config")
+
+    requested_channels = parse_tokens(args.include_channels)
+    config_channels = list((config.channel_profiles or {}).keys())
+    channels = [
+        channel
+        for channel in config_channels
+        if channel in requested_channels
+    ]
+    expected_channels = [
+        channel
+        for channel in config_channels
+        if channel in {
+            "core_ai",
+            "ai_enabler",
+            "ai_peripheral",
+        }
+    ]
+    if channels != expected_channels:
+        raise ValueError(
+            "canonical PR30 run requires all production AI channels"
+        )
+
+    dataset = pd.read_csv(dataset_path)
+    required = {
+        "signal_date",
+        "channel",
+        "list_type",
+        "symbol",
+        "regime",
+    }
+    required.update(f"fwd_ret_{h}" for h in horizons)
+    required.update(f"qqq_return_{h}" for h in horizons)
+    missing = sorted(required - set(dataset.columns))
+    if missing:
+        raise ValueError(
+            "canonical dataset missing columns: "
+            + ",".join(missing)
+        )
+    if set(dataset["list_type"].astype(str).unique()) != {
+        "low_value"
+    }:
+        raise ValueError(
+            "canonical dataset contains non-low_value rows"
+        )
+
+    events, oracle_parity = evaluate_same_state(
+        dataset,
+        config=config,
+        channels=channels,
+        top_n=int(args.top_n),
+        horizons=horizons,
+    )
+
+    paired, switch_cases = base.build_paired(
+        events,
+        dataset,
+    )
+    switch_symbol_summary = base.summarize_switch_symbols(
+        switch_cases
+    )
+    arm_summary = base.summarize_arms(events)
+    paired_summary = summarize_paired_with_bootstrap(paired)
+    gate_pass, failures = single_gate_retrospective_gate(
+        oracle_parity,
+        paired_summary,
+        switch_symbol_summary,
+    )
+
+    prefix = Path(args.output_prefix)
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    outputs = {
+        "events": Path(f"{prefix}_events.csv"),
+        "oracle_parity": Path(f"{prefix}_oracle_parity.csv"),
+        "paired": Path(f"{prefix}_paired.csv"),
+        "switch_cases": Path(f"{prefix}_switch_cases.csv"),
+        "switch_symbol_summary": Path(
+            f"{prefix}_switch_symbol_summary.csv"
+        ),
+        "arm_summary": Path(f"{prefix}_arm_summary.csv"),
+        "paired_summary": Path(f"{prefix}_paired_summary.csv"),
+        "report": Path(f"{prefix}_report.md"),
+        "manifest": Path(f"{prefix}_input_manifest.json"),
+        "summary": Path(f"{prefix}_summary.json"),
+    }
+
+    manifest = {
+        "mode": "same_state_single_gate_retrospective",
+        "dataset": str(dataset_path),
+        "dataset_sha256": frozen["dataset_sha256"],
+        "dataset_meta": frozen["meta_path"],
+        "dataset_meta_sha256": frozen["meta_sha256"],
+        "scan_config": str(config_path),
+        "scan_config_sha256": sha256_file(config_path),
+        "code_sha": git_head_sha(),
+        "target_step": TARGET_STEP,
+        "expanded_dataset_skipped_steps": sorted(
+            EXPECTED_EXPANDED_SKIPS
+        ),
+        "channels": channels,
+        "top_n": int(args.top_n),
+        "horizons": horizons,
+        "production_promotion_allowed": False,
+    }
+
+    events.to_csv(outputs["events"], index=False)
+    oracle_parity.to_csv(outputs["oracle_parity"], index=False)
+    paired.to_csv(outputs["paired"], index=False)
+    switch_cases.to_csv(outputs["switch_cases"], index=False)
+    switch_symbol_summary.to_csv(
+        outputs["switch_symbol_summary"],
+        index=False,
+    )
+    arm_summary.to_csv(outputs["arm_summary"], index=False)
+    paired_summary.to_csv(
+        outputs["paired_summary"],
+        index=False,
+    )
+    outputs["manifest"].write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
+    write_report(
+        outputs["report"],
+        manifest=manifest,
+        parity=oracle_parity,
+        paired_summary=paired_summary,
+        gate_pass=gate_pass,
+        failures=failures,
+    )
+
+    summary = {
+        "mode": "same_state_single_gate_retrospective",
+        "target_step": TARGET_STEP,
+        "production_promotion_allowed": False,
+        "same_state_oracle_parity_pass": bool(
+            not oracle_parity.empty
+            and oracle_parity["exact_match"].all()
+        ),
+        "retrospective_gate_pass": gate_pass,
+        "retrospective_gate_failures": failures,
+        "outputs": {
+            key: str(value)
+            for key, value in outputs.items()
+        },
+    }
+    outputs["summary"].write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    )
+
+    print(
+        "PR30 single-gate ablation complete: "
+        f"oracle_parity={summary['same_state_oracle_parity_pass']} "
+        f"gate_pass={gate_pass} failures={failures} "
+        f"report={outputs['report']}",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
