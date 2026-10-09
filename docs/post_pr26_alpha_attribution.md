@@ -7,7 +7,7 @@ Use the completed post-PR23 survivor datasets to answer two questions before any
 1. Does the current production composite score rank survivors monotonically toward higher future returns?
 2. Why did `risk_on` low_value select winners that `risk_off` did not in the retrospective edge years 2023 and 2025?
 
-This stage is offline-only: no SEC, Alpaca, Modal or historical replay, and no production parameter change.
+One targeted `risk_on` survivor-dataset rebuild is required because PR27 found a style-partition bug in the old extractor. Run that rebuild on Modal in the `infi` workspace, foreground only. After that single rebuild, all attribution in this protocol is offline-only. No replay, tuner, or production parameter change.
 
 ## Corrected OOS starting point
 
@@ -23,22 +23,56 @@ The corrected formula is:
 effective_axis_weight = production_base_weight * candidate_multiplier
 ```
 
-The old tracked `weightsweep_parity_*` artifacts are superseded for weight research. Historical replay, tuner return observations and survivor datasets are unaffected.
+The old tracked `weightsweep_parity_*` artifacts are superseded for weight research. Historical replay and tuner return observations are unaffected.
 
+A second PR27 audit finding affects the old `risk_on` survivor dataset: `extract_weight_dataset.py` called `partition_filter_steps` without `strategy_style`, so it used the default risk_off hard/soft partition. Because some risk_on config conditions that should be soft were incorrectly treated as hard, the old risk_on dataset is not guaranteed to contain the full production risk_on survivor population. The risk_off dataset is unaffected because the old default matched risk_off. Regenerate **risk_on only** with the corrected extractor before canonical rank/gate analysis.
+
+## Rebuild only the corrected risk_on survivor dataset
+
+Use the original frozen inputs, a new research run id, the `infi` workspace and foreground execution. Do not use `--detach`.
+
+```bash
+RUN_ID=post_pr23_baseline_202610
+ALPHA_RUN_ID=post_pr26_alpha_202610
+EXP="outputs/$RUN_ID"
+
+MODAL_PROFILE=infi .venv/bin/python -m modal run \
+  scripts/modal_baseline_executor.py \
+  --run-id "$ALPHA_RUN_ID" \
+  --stage dataset \
+  --styles risk_on \
+  --start-date 2023-01-01 \
+  --end-date 2026-09-30 \
+  --frozen-input-dir "$EXP/frozen_inputs"
+```
+
+Then copy back only the corrected dataset:
+
+```bash
+mkdir -p "$EXP/alpha_attribution/corrected_risk_on_dataset"
+
+MODAL_PROFILE=infi .venv/bin/python -m modal volume get \
+  --force \
+  ai-scanner-research \
+  "/$ALPHA_RUN_ID/datasets" \
+  "$EXP/alpha_attribution/corrected_risk_on_dataset"
+```
+
+This is the only cloud compute required by PR27. Do not rerun risk_off extraction, baseline replay, or tuner.
 ## Locate frozen survivor datasets
 
 ```bash
 RUN_ID=post_pr23_baseline_202610
 EXP="outputs/$RUN_ID"
 
-RISK_OFF_DATASET="$(find "$EXP" -type f -name 'weight_dataset_risk_off.csv' -print -quit)"
-RISK_ON_DATASET="$(find "$EXP" -type f -name 'weight_dataset_risk_on.csv' -print -quit)"
+RISK_OFF_DATASET="$(find "$EXP" -type f -name 'weight_dataset_risk_off.csv' ! -path '*/alpha_attribution/*' -print -quit)"
+RISK_ON_DATASET="$(find "$EXP/alpha_attribution/corrected_risk_on_dataset" -type f -name 'weight_dataset_risk_on.csv' -print -quit)"
 
 test -n "$RISK_OFF_DATASET" && test -f "$RISK_OFF_DATASET"
 test -n "$RISK_ON_DATASET" && test -f "$RISK_ON_DATASET"
 ```
 
-Do not regenerate the datasets if their SHA256 values still match `evidence/baselines/post_pr23_005b86c/weight_dataset_sha256.txt`.
+For risk_off, reuse the original dataset only if its SHA256 still matches `evidence/baselines/post_pr23_005b86c/weight_dataset_sha256.txt`. For risk_on, use the newly rebuilt dataset and preserve its new `.meta.json` plus SHA256 as PR27 evidence; do not use the old risk_on dataset for canonical ranking conclusions.
 
 ## A. Corrected candidate-zero sweep check
 
