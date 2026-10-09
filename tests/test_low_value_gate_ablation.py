@@ -96,8 +96,8 @@ class TestLowValueGateAblation(unittest.TestCase):
             ]
         )
         replay = {
-            ("2025-01-31", "core_ai"): {"A", "B"},
-            ("2025-01-31", "ai_enabler"): {"C", "D"},
+            ("2025-01-31", "core_ai"): ["A", "B"],
+            ("2025-01-31", "ai_enabler"): ["C", "D"],
         }
         out = ablation.build_baseline_parity(
             events,
@@ -109,6 +109,30 @@ class TestLowValueGateAblation(unittest.TestCase):
         self.assertTrue(bool(core["exact_match"]))
         self.assertFalse(bool(enabler["exact_match"]))
         self.assertEqual(enabler["expected_only"], "D")
+
+    def test_baseline_parity_requires_symbol_order(self) -> None:
+        events = pd.DataFrame(
+            [
+                {
+                    "signal_date": "2025-01-31",
+                    "arm": "baseline",
+                    "horizon_days": 20,
+                    "channel_symbols_json": '{"core_ai":["B","A"]}',
+                }
+            ]
+        )
+        replay = {
+            ("2025-01-31", "core_ai"): ["A", "B"],
+        }
+        out = ablation.build_baseline_parity(
+            events,
+            replay,
+            ["core_ai"],
+        )
+        row = out.iloc[0]
+        self.assertFalse(bool(row["exact_match"]))
+        self.assertFalse(bool(row["order_match"]))
+        self.assertAlmostEqual(float(row["jaccard"]), 1.0)
 
     def test_baseline_parity_detects_replay_date_missing_from_dataset(self) -> None:
         events = pd.DataFrame(
@@ -122,8 +146,8 @@ class TestLowValueGateAblation(unittest.TestCase):
             ]
         )
         replay = {
-            ("2025-01-31", "core_ai"): {"A"},
-            ("2025-02-28", "core_ai"): {"B"},
+            ("2025-01-31", "core_ai"): ["A"],
+            ("2025-02-28", "core_ai"): ["B"],
         }
         out = ablation.build_baseline_parity(
             events,
