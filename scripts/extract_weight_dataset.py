@@ -344,7 +344,11 @@ def main() -> None:
             for channel_name, channel_profile in channel_profiles.items():
                 steps, _weights = build_steps_and_weights(scan_config, channel_name, channel_profile, list_type)
                 if scored_mode:
-                    hard_steps, soft_steps = partition_filter_steps(steps, channel_name)
+                    hard_steps, soft_steps = partition_filter_steps(
+                        steps,
+                        channel_name,
+                        scan_config.strategy_style,
+                    )
                 else:
                     hard_steps, soft_steps = steps, []
                 survivors, _diag = apply_filters_with_diagnostics(df, hard_steps)
