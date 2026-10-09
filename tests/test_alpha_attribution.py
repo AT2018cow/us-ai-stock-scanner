@@ -124,6 +124,36 @@ class TestAlphaAttribution(unittest.TestCase):
         scores = scored.set_index("symbol")["composite_score"]
         self.assertGreater(float(scores["A"]), float(scores["B"]))
 
+    def test_soft_failure_summary_counts_repeated_missed_winners(self) -> None:
+        cases = pd.DataFrame(
+            [
+                {
+                    "year": "2023",
+                    "soft_failed_steps": "min_fcf_yield,min_net_margin",
+                    "excess_vs_qqq": 0.20,
+                },
+                {
+                    "year": "2025",
+                    "soft_failed_steps": "min_fcf_yield",
+                    "excess_vs_qqq": 0.10,
+                },
+                {
+                    "year": "2025",
+                    "soft_failed_steps": "min_net_margin",
+                    "excess_vs_qqq": -0.05,
+                },
+            ]
+        )
+        out = lv.summarize_soft_failures(cases)
+        fcf = out[
+            (out["year"].astype(str) == "ALL")
+            & (out["soft_step"] == "min_fcf_yield")
+        ].iloc[0]
+        self.assertEqual(int(fcf["n_cases"]), 2)
+        self.assertEqual(int(fcf["n_winners_vs_qqq"]), 2)
+        self.assertAlmostEqual(float(fcf["winner_rate"]), 1.0)
+        self.assertAlmostEqual(float(fcf["avg_excess_vs_qqq"]), 0.15)
+
     def test_low_value_diagnosis_reports_hard_first_fail(self) -> None:
         source = pd.Series({"symbol": "A", "x": 0.5})
         state = {
