@@ -31,14 +31,18 @@ features are identical across Oct-8/Oct-9 datasets.
 Unresolved: exact input-side cause of 4 larger-margin swaps
 (2023-05-31 NXPI/ACN, 2024-02-29 AAPL/TER, 2026-04-30 PH/AAPL, 2026-09-30
 CEG/BWXT). Replay-side per-date inputs are not retained, so the residual
-cannot be attributed to a single column from committed evidence. No
-systematic mis-selection was found: all divergences are Top-10 boundary
-single swaps, never wholesale list changes.
+cannot be attributed to a single column from committed evidence. There is no
+wholesale list divergence, but the mismatch pattern is not demonstrably
+random: 10/12 swaps are in ai_enabler and ADBE is the extraction-only boundary
+name in 7/12 mismatches. A systematic input/soft-score drift therefore cannot
+be excluded.
 
 ## What this means for the mechanism question
 
 The stop is procedural, not a refutation: the B-arm comparison was computed
-but is quarantined until parity is resolved. Options: (a) root-cause the 4
-large-margin swaps with a same-state replay/extract pair; (b) amend the
-protocol to set-based parity with a stated tolerance; (c) drop the
-position-gate path. No production change under any option.
+but remains quarantined. The chosen follow-up is not to weaken the historical
+parity rule. Instead, code-path equivalence will be tested on one immutable
+cross-section state using the canonical production selector, and any new
+mechanism test will use a separately pre-registered single-gate intervention.
+The Oct-8 replay vs Oct-9 extraction remains 114/126 and is not relabeled as
+passing. No production change is justified by PR28.
