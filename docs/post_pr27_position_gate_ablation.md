@@ -105,7 +105,8 @@ PR28 passes the retrospective mechanism gate only if all of the following hold:
 4. across all mature 120d dates, more than 50% of paired dates improve;
 5. no single date contributes 35% or more of total absolute paired delta;
 6. median A/B selected-symbol Jaccard is at least 0.50;
-7. average 120d B-A return in down regime is non-negative.
+7. average 120d B-A return in down regime is non-negative;
+8. no single added symbol contributes 35% or more of total positive 120d excess among B-only additions.
 
 2023 and 2025 are hypothesis-forming years. 2024 is the key full-year stress check. 2026YTD is diagnostic only because 120d labels are immature.
 
@@ -119,6 +120,7 @@ Passing this gate does not authorize production changes. It only justifies one l
 - `*_baseline_parity.csv`: exact channel/date selection parity;
 - `*_paired.csv`: per-date A/B return delta and selection overlap;
 - `*_switch_cases.csv`: added/removed symbols with forward return/excess;
+- `*_switch_symbol_summary.csv`: repeated-symbol concentration among added/removed names;
 - `*_arm_summary.csv`: absolute/excess metrics by year/regime/horizon;
 - `*_paired_summary.csv`: paired delta, concentration and leave-one-date-out diagnostics;
 - `*_report.md`;
