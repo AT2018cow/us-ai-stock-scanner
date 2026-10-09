@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> **当前交接（PR #23 完成后）：** 请先阅读 `docs/work_handoff_after_pr23_20261008.md` 和 `docs/modular_refactor_closure_audit_20261008.md`。PR #1–#23 模块化阶段结束；下一阶段是 risk_off/risk_on 选股效果研究，先冻结 post-PR23 基线并区分 retrospective replay 与真正 anchored OOS，再做归因/消融。不要默认启动多年 full replay，不要擅自修改生产参数或 promote。旧 `docs/work_handoff_after_pr8_20261006.md` 仅作历史记录。
+> **当前交接（PR #30 之后）：** 请先阅读 `docs/work_handoff_after_pr30_20261010.md`。PR #30 已用 same-state oracle 修复/验证 research selector parity，并证明单独放松 `max_range_position_52w` 无稳定收益；position-gate 路线停止。当前第一优先级是审计并修复 dataset `channel` 列泄漏到 research assessment 的影响范围、干净重跑 PR30 provenance，并重算受影响的离线 low_value evidence；在此之前不要启动新 alpha 调参、full replay 或 broad tuner。旧 PR23/PR8 handoff 仅作历史记录。
 
 
 US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a local watchlist for undervalued AI stocks. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
