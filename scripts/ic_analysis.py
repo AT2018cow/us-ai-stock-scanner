@@ -36,6 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_value_scanner.backtest import build_steps_and_weights
 from ai_value_scanner.config import ScanConfig, load_config
+from ai_value_scanner.strategy.filtering import (
+    apply_filters_with_diagnostics,
+    partition_filter_steps,
+)
 from ai_value_scanner.strategy.scoring import score_and_rank
 
 
@@ -180,14 +184,40 @@ def score_survivors(
         list_type = str(list_type)
         if channel not in profiles:
             continue
-        _steps, weights = build_steps_and_weights(
+        steps, weights = build_steps_and_weights(
             config,
             channel,
             profiles[channel],
             list_type,
         )
+        hard_steps, soft_steps = partition_filter_steps(
+            steps,
+            channel,
+            config.strategy_style,
+        )
+        filtered, _ = apply_filters_with_diagnostics(group, hard_steps)
+        if filtered.empty:
+            continue
+        filtered = filtered.copy()
+        if soft_steps:
+            soft_matrix = pd.DataFrame(
+                {
+                    name: pd.Series(
+                        mask_fn(filtered),
+                        index=filtered.index,
+                    ).fillna(False).astype(bool)
+                    for name, mask_fn in soft_steps
+                },
+                index=filtered.index,
+            )
+            filtered["soft_pass_count"] = soft_matrix.sum(axis=1)
+            filtered["soft_total"] = len(soft_steps)
+        else:
+            filtered["soft_pass_count"] = 0
+            filtered["soft_total"] = 1
+
         ranked = score_and_rank(
-            group,
+            filtered,
             weights,
             config.score_winsor_lower_q,
             config.score_winsor_upper_q,
