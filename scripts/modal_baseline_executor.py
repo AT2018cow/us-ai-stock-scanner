@@ -469,24 +469,31 @@ def main(
     _verify_frozen_inputs(frozen_dir, style_list)
 
     code_sha = _current_git_sha()
-    specs = [
-        json.dumps(
-            {
-                "run_id": run_id,
-                "style": style,
-                "start_date": start_date,
-                "end_date": end_date,
-                "code_sha": code_sha,
-                "resume": bool(resume),
-                "dataset_list_types": str(dataset_list_types),
-                "research_skip_low_value_hard_steps": str(
-                    research_skip_low_value_hard_steps
-                ),
-            },
-            sort_keys=True,
-        )
+    spec_dicts: list[dict[str, Any]] = [
+        {
+            "run_id": run_id,
+            "style": style,
+            "start_date": start_date,
+            "end_date": end_date,
+            "code_sha": code_sha,
+            "resume": bool(resume),
+        }
         for style in style_list
     ]
+    replay_specs = [
+        json.dumps(spec, sort_keys=True)
+        for spec in spec_dicts
+    ]
+    dataset_specs: list[str] = []
+    for base_spec in spec_dicts:
+        spec = dict(base_spec)
+        if dataset_list_types != "low_value,momentum":
+            spec["dataset_list_types"] = str(dataset_list_types)
+        if research_skip_low_value_hard_steps:
+            spec["research_skip_low_value_hard_steps"] = str(
+                research_skip_low_value_hard_steps
+            )
+        dataset_specs.append(json.dumps(spec, sort_keys=True))
 
     print(
         f"[modal-baseline] run_id={run_id} stage={stage} "
@@ -500,11 +507,11 @@ def main(
     )
 
     if stage in {"replay", "all"}:
-        for spec in specs:
+        for spec in replay_specs:
             print(run_replay_remote.remote(spec), flush=True)
 
     if stage in {"dataset", "all"}:
-        for spec in specs:
+        for spec in dataset_specs:
             print(run_dataset_remote.remote(spec), flush=True)
 
     print(
