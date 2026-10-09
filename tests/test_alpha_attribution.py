@@ -94,6 +94,7 @@ class TestAlphaAttribution(unittest.TestCase):
             }
         )
         cfg = SimpleNamespace(
+            strategy_style="risk_on",
             channel_profiles={"core_ai": {}},
             score_winsor_lower_q=0.0,
             score_winsor_upper_q=1.0,
