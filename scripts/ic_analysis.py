@@ -5,9 +5,10 @@ This script answers a narrow precondition for any future weight tuning:
     Does the CURRENT production composite score rank hard-gate survivors in a
     way that is monotone with future returns?
 
-It uses the exact production score weights for each channel/list and the
-style-specific soft-pass counts already stored by extract_weight_dataset.py.
-It does not call Alpaca, SEC, Modal, or historical replay.
+It re-applies the target config's style-specific hard/soft partition to the
+stored raw survivor rows, recomputes soft-pass counts, and then uses the exact
+production score weights for each channel/list. It does not call Alpaca, SEC,
+Modal, or historical replay.
 
 Outputs are compact CSV/Markdown evidence:
 - per-date/channel cross-sectional Spearman IC
