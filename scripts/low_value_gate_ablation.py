@@ -355,13 +355,13 @@ def evaluate_arms(
 
 def load_replay_channel_symbols(
     path: str | Path,
-) -> dict[tuple[str, str], set[str]]:
+) -> dict[tuple[str, str], list[str]]:
     frame = pd.read_csv(path)
     frame = frame[
         (frame["scenario"].astype(str) == "base")
         & (frame["list_type"].astype(str) == "low_value")
     ].copy()
-    out: dict[tuple[str, str], set[str]] = {}
+    out: dict[tuple[str, str], list[str]] = {}
     for row in frame.itertuples(index=False):
         mapping = json.loads(
             str(getattr(row, "channel_symbols", "{}") or "{}")
@@ -371,17 +371,17 @@ def load_replay_channel_symbols(
             continue
         for channel, symbols in mapping.items():
             vals = symbols if isinstance(symbols, list) else []
-            out[(signal_date, str(channel))] = {
+            out[(signal_date, str(channel))] = [
                 str(x).strip().upper()
                 for x in vals
                 if str(x).strip()
-            }
+            ]
     return out
 
 
 def build_baseline_parity(
     events: pd.DataFrame,
-    replay_symbols: dict[tuple[str, str], set[str]],
+    replay_symbols: dict[tuple[str, str], list[str]],
     channels: list[str],
 ) -> pd.DataFrame:
     base = events[
@@ -391,14 +391,14 @@ def build_baseline_parity(
             == int(events["horizon_days"].min())
         )
     ].copy()
-    actual_map: dict[tuple[str, str], set[str]] = {}
+    actual_map: dict[tuple[str, str], list[str]] = {}
     for row in base.itertuples(index=False):
         mapping = json.loads(str(row.channel_symbols_json))
         for channel in channels:
-            actual_map[(str(row.signal_date), channel)] = {
+            actual_map[(str(row.signal_date), channel)] = [
                 str(x).upper()
                 for x in mapping.get(channel, [])
-            }
+            ]
 
     keys = set(actual_map)
     keys.update(
@@ -409,12 +409,14 @@ def build_baseline_parity(
 
     rows: list[dict[str, Any]] = []
     for signal_date, channel in sorted(keys):
-        actual = actual_map.get((signal_date, channel), set())
+        actual = actual_map.get((signal_date, channel), [])
         expected = replay_symbols.get(
             (signal_date, channel),
-            set(),
+            [],
         )
-        union = actual | expected
+        actual_set = set(actual)
+        expected_set = set(expected)
+        union = actual_set | expected_set
         rows.append(
             {
                 "signal_date": signal_date,
@@ -422,16 +424,17 @@ def build_baseline_parity(
                 "actual_n": len(actual),
                 "expected_n": len(expected),
                 "exact_match": actual == expected,
+                "order_match": actual == expected,
                 "jaccard": (
-                    float(len(actual & expected) / len(union))
+                    float(len(actual_set & expected_set) / len(union))
                     if union
                     else 1.0
                 ),
                 "actual_only": ",".join(
-                    sorted(actual - expected)
+                    sorted(actual_set - expected_set)
                 ),
                 "expected_only": ",".join(
-                    sorted(expected - actual)
+                    sorted(expected_set - actual_set)
                 ),
             }
         )
