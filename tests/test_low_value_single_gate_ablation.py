@@ -105,6 +105,24 @@ class TestSameStateSingleRangeGate(unittest.TestCase):
             finally:
                 single.EXPECTED_DATASET_SHA256 = original
 
+    def test_config_validator_locks_git_blob(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.risk_off.json"
+            path.write_text('{"strategy_style":"risk_off"}\n')
+            digest = single.git_blob_sha1(path)
+            original = single.EXPECTED_CONFIG_GIT_BLOB_SHA1
+            try:
+                single.EXPECTED_CONFIG_GIT_BLOB_SHA1 = digest
+                self.assertEqual(
+                    single.validate_canonical_config(path),
+                    digest,
+                )
+                path.write_text('{"strategy_style":"risk_on"}\n')
+                with self.assertRaises(ValueError):
+                    single.validate_canonical_config(path)
+            finally:
+                single.EXPECTED_CONFIG_GIT_BLOB_SHA1 = original
+
     def test_ordered_same_state_parity_detects_reordering(self) -> None:
         row = single._parity_row(
             signal_date="2025-01-31",
