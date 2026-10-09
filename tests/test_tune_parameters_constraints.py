@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -447,6 +448,88 @@ class TestTuneParameterConstraints(unittest.TestCase):
         # With no regime stats, fallback rank is objective + coverage/return/excess.
         # The result must be based on purged 0.10, not the full-window 9.0.
         self.assertLess(out["rank_score"], 1.0)
+
+    def test_offline_rescore_reuses_existing_results_without_backtest(self) -> None:
+        import json
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "source_results.csv"
+            output_dir = root / "out"
+            work_dir = root / "work"
+            metrics = [
+                self._window_metric(
+                    "2023", 0.20, 0.03, purged_score=0.20,
+                    valid_events=12, total_events=12,
+                ),
+                self._window_metric(
+                    "2024", 0.15, 0.02,
+                    valid_events=12, total_events=12,
+                ),
+            ]
+            self.tuner.pd.DataFrame(
+                [
+                    {
+                        "cid": "A",
+                        "objective_score": 0.2,
+                        "balanced_rank_score": 0.2,
+                        "risk_on_rank_score": 0.2,
+                        "risk_off_rank_score": 0.2,
+                        "coverage_ratio": 1.0,
+                        "avg_win_rate": 0.6,
+                        "worst_max_drawdown": -0.1,
+                        "strict_total_valid_events": 12,
+                        "research_pool_total_valid_events": 12,
+                        "research_pool_avg_excess_vs_qqq": 0.02,
+                        "positive_window_score_ratio": 1.0,
+                        "positive_excess_window_ratio": 1.0,
+                        "empty_window_ratio": 0.0,
+                        "constraints_passed": False,
+                        "failure_reason": "legacy_impossible_sample_floor",
+                        "window_failure_summary": "",
+                        "deltas_json": "{}",
+                        "window_metrics_json": json.dumps(metrics),
+                    }
+                ]
+            ).to_csv(results, index=False)
+
+            argv = [
+                "tune_parameters.py",
+                "--rescore-results",
+                str(results),
+                "--outputs-dir",
+                str(output_dir),
+                "--work-dir",
+                str(work_dir),
+                "--output-prefix",
+                "rescored",
+                "--windows",
+                "2023:2023-01-01:2023-12-31,2024:2024-01-01:2024-12-31",
+                "--selection-mode",
+                "walk_forward",
+                "--min-total-valid-events",
+                "120",
+                "--min-window-valid-events",
+                "20",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(
+                    self.tuner,
+                    "run_candidate",
+                    side_effect=AssertionError("backtest path must not run"),
+                ),
+            ):
+                self.tuner.main()
+
+            summary = json.loads((output_dir / "rescored_summary.json").read_text())
+            self.assertEqual(summary["mode"], "offline_rescore")
+            self.assertEqual(summary["candidates"], 1)
+            self.assertTrue((output_dir / "rescored_report.md").exists())
+            fold = summary["walk_forward"]["risk_on"]["folds"][0]
+            self.assertEqual(fold["validation"]["required_valid_events"], 10)
+            self.assertTrue(fold["validation"]["passed"])
 
     def test_walk_forward_windows_must_be_non_overlapping(self) -> None:
         windows = [
