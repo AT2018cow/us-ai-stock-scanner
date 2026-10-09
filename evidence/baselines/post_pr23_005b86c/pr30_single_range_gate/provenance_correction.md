@@ -36,3 +36,12 @@ Required revalidation:
 Until then, do not use the existing bundle as a provenance-complete promotion
 artifact. It already disallows production promotion, and no production change
 was made.
+
+## Closure (clean-checkout rerun)
+
+Reproduced from clean checkout `39e46a5` (tree
+`5cdb7047a7929e97d262d9003732e147b3ed31d2`, `git_worktree_clean=true`):
+168/168 same-state oracle parity and the identical five gate failures.
+All rerun artifacts are byte-identical to the dirty-run bundle except
+`single_range_gate_input_manifest.json`, which now carries the clean
+commit/tree provenance. This bundle is canonical.

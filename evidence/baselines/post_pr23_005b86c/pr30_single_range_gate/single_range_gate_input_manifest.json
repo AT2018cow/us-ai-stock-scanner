@@ -4,7 +4,8 @@
     "ai_enabler",
     "ai_peripheral"
   ],
-  "code_sha": "20a610b9e99f44268d21939a761c7b72ff5192d9",
+  "code_sha": "39e46a519ce98d793fde21c41cbbe20299d9ad63",
+  "code_tree_sha": "5cdb7047a7929e97d262d9003732e147b3ed31d2",
   "dataset": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.csv",
   "dataset_meta": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.meta.json",
   "dataset_meta_sha256": "f4f1550377076858c3d9b8aff53ef22e73f2644c8fbc927a12991cae324c8666",
@@ -14,6 +15,7 @@
     "max_range_position_52w",
     "min_drawdown_from_52w_high"
   ],
+  "git_worktree_clean": true,
   "horizons": [
     20,
     60,
