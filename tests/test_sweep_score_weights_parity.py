@@ -94,6 +94,11 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
             return out.sort_values("composite_score", ascending=False)
 
         def fake_assessment(frame: pd.DataFrame, list_type: str) -> pd.DataFrame:
+            self.assertNotIn(
+                "channel",
+                frame.columns,
+                "dataset channel must not leak into production-parity research assessment",
+            )
             out = frame.copy()
             out["research_priority"] = [
                 "research_now" if symbol == "KEEP" else "theme_only"
