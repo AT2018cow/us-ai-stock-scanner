@@ -106,6 +106,14 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
             return out
 
         with (
+            mock.patch.object(
+                sweep,
+                "build_steps_and_weights",
+                return_value=(
+                    [],
+                    {"x": 1.0, "soft_pass_rate": 0.0},
+                ),
+            ),
             mock.patch(
                 "ai_value_scanner.scanner.score_and_rank",
                 side_effect=fake_score,
