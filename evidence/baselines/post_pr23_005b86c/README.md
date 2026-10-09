@@ -109,5 +109,11 @@ A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: t
   Baseline ordered parity reached 114/126 with 12 Top-10 boundary swaps,
   so B-arm returns are quarantined per protocol; see
   `decision_note_hard_stop.md`.
+- `pr30_single_range_gate/` — same-state single-gate rerun after fixing a
+  research-tooling bug (dataset `channel` column leaked into research
+  assessment, +0.7/priority flip for ai_enabler rows; production has no
+  channel at assessment). Same-state oracle parity is 168/168; the
+  single-gate B-arm then fails substantively (2024 −0.01%, 2025 −0.56%,
+  pooled CI covers zero). Position-gate path stops; see `decision_note.md`.
 - `weightsweep_parity_*` — **superseded pre-PR27 artifacts**. PR27 audit found that the old offline sweep applied multiplier=1 without first multiplying by each channel's configured production base-weight vector. Do not use the recorded candidate-zero scores for research conclusions; rerun candidate zero with the corrected sweep before any weight study.
 - `research_decision.md` — conclusions, limits, next hypotheses.

@@ -209,6 +209,12 @@ def rank_channel(
         config.pe_cash_backing_haircut,
     )
     if not ranked.empty:
+        # Production cross-sections carry no channel column at assessment
+        # time, so channel-sensitive research rules must not see the
+        # dataset row's own channel (e.g. an ai_enabler-channel row would
+        # otherwise self-award ai_infrastructure_exposure). Drop it here;
+        # rank_channel re-attaches the channel label afterwards.
+        ranked = ranked.drop(columns=["channel"], errors="ignore")
         ranked = apply_research_assessment(ranked, "low_value")
         ranked = apply_low_value_research_gate(ranked, config)
     ranked = apply_group_caps(

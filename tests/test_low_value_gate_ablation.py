@@ -299,6 +299,106 @@ class TestLowValueGateAblation(unittest.TestCase):
         out = ablation.returns_by_symbol(frame, 120)
         self.assertAlmostEqual(out["A"], 0.10)
 
+    def test_rank_channel_ignores_dataset_channel_column(self) -> None:
+        """Research assessment must match production (no channel column).
+
+        Production cross-sections carry no channel column at assessment
+        time, so a dataset row labelled ai_enabler must not self-award
+        ai_infrastructure_exposure. rank_channel output must be identical
+        whether or not the input frame carries a channel column.
+        """
+        cfg = SimpleNamespace(
+            strategy_style="risk_off",
+            channel_profiles={"ai_enabler": {}},
+            score_winsor_lower_q=0.05,
+            score_winsor_upper_q=0.95,
+            score_penalty_overvaluation=0.2,
+            score_penalty_deterioration=0.2,
+            pe_cash_backing_haircut=1.0,
+            low_value_allowed_research_priorities=[
+                "research_now",
+                "watch_for_pullback",
+            ],
+            low_value_excluded_research_risks=[],
+            low_value_min_research_score=0.0,
+            max_per_sector_per_list=None,
+            max_per_watchlist_etf_source_per_list=None,
+        )
+        steps = [("always_true", lambda frame: pd.Series(True, index=frame.index))]
+        weights = {"x": 1.0}
+        base_row = {
+            "symbol": "TER",
+            "x": 1.0,
+            "watchlist_bucket": "core_ai",
+            "watchlist_etfs": "ARKQ,SMH",
+            "fundamental_quality_score": 0.99,
+            "ai_link_score": 0.64,
+            "pe": 34.5,
+            "ps": 5.9,
+            "revenue_yoy": -0.15,
+            "net_income_yoy": -0.37,
+            "return_20d": 0.07,
+            "return_60d": 0.10,
+            "price_to_sma200": 1.02,
+            "drawdown_from_52w_high": 0.13,
+            "fcf_yield": 0.027,
+            "ev_to_ebit": 30.2,
+            "net_margin": 0.17,
+            "ps_hist_percentile": 1.0,
+            "pe_hist_percentile": 0.875,
+            "ps_discount": -0.40,
+            "pe_discount": -0.36,
+            "ps_percentile_in_sic": 1.0,
+            "pe_percentile_in_sic": 0.71,
+        }
+        with_channel = pd.DataFrame(
+            [{**base_row, "channel": "ai_enabler"}]
+        )
+        without_channel = pd.DataFrame(
+            [{k: v for k, v in base_row.items()}]
+        )
+
+        original = ablation.build_steps_and_weights
+        try:
+            ablation.build_steps_and_weights = (
+                lambda *args, **kwargs: (steps, weights)
+            )
+            ranked_with, _ = ablation.rank_channel(
+                with_channel,
+                cfg,
+                "ai_enabler",
+                "baseline",
+                set(),
+            )
+            ranked_without, _ = ablation.rank_channel(
+                without_channel,
+                cfg,
+                "ai_enabler",
+                "baseline",
+                set(),
+            )
+        finally:
+            ablation.build_steps_and_weights = original
+
+        self.assertEqual(
+            ranked_with["symbol"].astype(str).tolist(),
+            ranked_without["symbol"].astype(str).tolist(),
+        )
+        self.assertEqual(len(ranked_with), len(ranked_without))
+        for col in (
+            "research_score",
+            "research_priority",
+            "research_tags",
+            "research_risks",
+        ):
+            self.assertIn(col, ranked_with.columns)
+            self.assertIn(col, ranked_without.columns)
+            self.assertEqual(
+                ranked_with[col].astype(str).tolist(),
+                ranked_without[col].astype(str).tolist(),
+                f"research column {col} must not depend on the dataset channel label",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

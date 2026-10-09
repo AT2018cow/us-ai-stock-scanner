@@ -208,7 +208,12 @@ def precompute_groups(
 
         gate_allowed = np.ones(len(ranked), dtype=bool)
         if str(list_type) == "low_value" and scan_config is not None and not ranked.empty:
-            assessed = apply_research_assessment(ranked, "low_value")
+            # Production cross-sections carry no channel column at
+            # assessment time; drop the dataset row's own channel so
+            # channel-sensitive research rules resolve as in production.
+            assessed = apply_research_assessment(
+                ranked.drop(columns=["channel"], errors="ignore"), "low_value"
+            )
             gated = apply_low_value_research_gate(assessed, scan_config)
             allowed_index = set(gated.index.tolist())
             gate_allowed = np.asarray(

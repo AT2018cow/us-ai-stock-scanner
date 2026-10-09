@@ -1,0 +1,26 @@
+{
+  "mode": "same_state_single_gate_retrospective",
+  "outputs": {
+    "arm_summary": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_arm_summary.csv",
+    "events": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_events.csv",
+    "manifest": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_input_manifest.json",
+    "oracle_parity": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_oracle_parity.csv",
+    "paired": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_paired.csv",
+    "paired_summary": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_paired_summary.csv",
+    "report": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_report.md",
+    "summary": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_summary.json",
+    "switch_cases": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_switch_cases.csv",
+    "switch_symbol_summary": "outputs/post_pr23_baseline_202610/pr30_single_range_gate/single_range_gate_switch_symbol_summary.csv"
+  },
+  "production_promotion_allowed": false,
+  "retrospective_gate_failures": [
+    "2024_120d_delta_not_positive",
+    "2025_120d_delta_not_positive",
+    "all_120d_positive_date_ratio_not_above_half",
+    "all_120d_block_bootstrap_lower_not_positive",
+    "down_regime_120d_degraded"
+  ],
+  "retrospective_gate_pass": false,
+  "same_state_oracle_parity_pass": true,
+  "target_step": "max_range_position_52w"
+}

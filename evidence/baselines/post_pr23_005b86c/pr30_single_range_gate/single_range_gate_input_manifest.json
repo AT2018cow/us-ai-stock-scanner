@@ -1,0 +1,29 @@
+{
+  "channels": [
+    "core_ai",
+    "ai_enabler",
+    "ai_peripheral"
+  ],
+  "code_sha": "20a610b9e99f44268d21939a761c7b72ff5192d9",
+  "dataset": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.csv",
+  "dataset_meta": "outputs/post_pr23_baseline_202610/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.meta.json",
+  "dataset_meta_sha256": "f4f1550377076858c3d9b8aff53ef22e73f2644c8fbc927a12991cae324c8666",
+  "dataset_sha256": "bb6edd7a30d8347aeb2020f77255eb1d043d2417aa8892b1a62da8ff0cad0ad6",
+  "expanded_dataset_skipped_steps": [
+    "max_price_to_sma200",
+    "max_range_position_52w",
+    "min_drawdown_from_52w_high"
+  ],
+  "horizons": [
+    20,
+    60,
+    120
+  ],
+  "mode": "same_state_single_gate_retrospective",
+  "production_promotion_allowed": false,
+  "scan_config": "configs/config.risk_off.json",
+  "scan_config_git_blob_sha1": "8214689234b6ff2994a85d8a494763b54e56178d",
+  "scan_config_sha256": "7a967e42ce6eadb499b87a3ba22b669f70288b38d60b1da9ff68032c43204424",
+  "target_step": "max_range_position_52w",
+  "top_n": 10
+}
