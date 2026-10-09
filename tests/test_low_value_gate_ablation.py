@@ -137,6 +137,70 @@ class TestLowValueGateAblation(unittest.TestCase):
         self.assertEqual(missing["actual_n"], 0)
         self.assertEqual(missing["expected_only"], "B")
 
+    def test_retrospective_gate_rejects_single_symbol_concentration(self) -> None:
+        parity = pd.DataFrame({"exact_match": [True]})
+        rows = [
+            {
+                "scope": "all",
+                "scope_value": "ALL",
+                "horizon_days": 120,
+                "n_dates": 30,
+                "avg_delta_return": 0.03,
+                "positive_delta_ratio": 0.60,
+                "top_abs_date_share": 0.20,
+                "median_selection_jaccard": 0.70,
+            },
+            {
+                "scope": "regime",
+                "scope_value": "down",
+                "horizon_days": 120,
+                "n_dates": 8,
+                "avg_delta_return": 0.01,
+                "positive_delta_ratio": 0.50,
+                "top_abs_date_share": 0.20,
+                "median_selection_jaccard": 0.70,
+            },
+        ]
+        for year in ("2023", "2024", "2025"):
+            rows.append(
+                {
+                    "scope": "year",
+                    "scope_value": year,
+                    "horizon_days": 120,
+                    "n_dates": 10,
+                    "avg_delta_return": 0.02,
+                    "positive_delta_ratio": 0.60,
+                    "top_abs_date_share": 0.20,
+                    "median_selection_jaccard": 0.70,
+                }
+            )
+        symbols = pd.DataFrame(
+            [
+                {
+                    "horizon_days": 120,
+                    "side": "added",
+                    "symbol": "A",
+                    "positive_excess_share": 0.40,
+                },
+                {
+                    "horizon_days": 120,
+                    "side": "added",
+                    "symbol": "B",
+                    "positive_excess_share": 0.20,
+                },
+            ]
+        )
+        passed, failures = ablation.retrospective_gate(
+            parity,
+            pd.DataFrame(rows),
+            symbols,
+        )
+        self.assertFalse(passed)
+        self.assertIn(
+            "added_120d_positive_excess_too_concentrated_by_symbol",
+            failures,
+        )
+
     def test_retrospective_gate_requires_all_full_years_and_down_regime(self) -> None:
         parity = pd.DataFrame({"exact_match": [True, True]})
         rows = [
