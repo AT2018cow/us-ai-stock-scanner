@@ -377,7 +377,64 @@ Modal image.
 The current-config replay and survivor dataset should normally be generated
 once in the experiment environment where the canonical frozen caches live.
 
-## 7. Artifact retention and Git evidence policy
+## 7. Offline OOS rescore before any new heavy tuner run
+
+If tuner candidate backtests already exist and only the validation policy or
+guardrails change, **do not rerun Modal backtests**. Recompute anchored
+selection from the existing `window_metrics_json` stored in the tuner results.
+
+The default valid-event guardrails are now attainable across rebalance
+frequencies:
+
+- absolute targets remain 20 events/window and 120 total;
+- when those counts are impossible, the effective requirement is capped at
+  80% of the events actually available in the relevant window(s);
+- a full monthly year therefore requires 10/12 valid events rather than an
+  impossible 20/12;
+- an immature YTD window such as 4/9 still fails.
+
+Promotion also considers the entire anchored OOS sequence: at least two folds,
+at least 2/3 passing folds, at least 2/3 folds with positive excess vs QQQ, plus
+a passing final training/held-out fold.
+
+For the post-PR23 evidence already committed to Git, rescore locally:
+
+```bash
+RUN_ID=post_pr23_baseline_202610
+WINDOWS="2023:2023-01-01:2023-12-31,2024:2024-01-01:2024-12-31,2025:2025-01-01:2025-12-31,2026YTD:2026-01-01:2026-09-30"
+
+python scripts/tune_parameters.py \
+  --rescore-results evidence/baselines/post_pr23_005b86c/tuner_risk_off_results.csv \
+  --base-config configs/config.risk_off.json \
+  --param-space configs/tuner.param_space.json \
+  --outputs-dir "outputs/$RUN_ID/oos_rescore_risk_off" \
+  --output-prefix corrected_oos_risk_off \
+  --windows "$WINDOWS" \
+  --selection-mode walk_forward \
+  --rebalance-frequency monthly \
+  --no-promote
+
+python scripts/tune_parameters.py \
+  --rescore-results evidence/baselines/post_pr23_005b86c/tuner_risk_on_results.csv \
+  --base-config configs/config.risk_on.json \
+  --param-space configs/tuner.param_space.momentum.json \
+  --outputs-dir "outputs/$RUN_ID/oos_rescore_risk_on" \
+  --output-prefix corrected_oos_risk_on \
+  --windows "$WINDOWS" \
+  --selection-mode walk_forward \
+  --rebalance-frequency monthly \
+  --no-promote
+```
+
+This path is CPU-light and network-free. It must not invoke Modal, SEC, Alpaca,
+or historical replay. Treat the original candidate return observations as
+fixed evidence; only the selection/guardrail interpretation is recomputed.
+
+Do not promote directly from `--rescore-results`; the CLI rejects that mode.
+If a later research hypothesis survives offline attribution and corrected OOS
+review, run a fresh narrow validation before any production change.
+
+## 8. Artifact retention and Git evidence policy
 
 There are three different storage classes. Do not mix them.
 
@@ -458,7 +515,7 @@ artifact store.
 
 Do not commit production config changes as part of this evidence checkpoint.
 
-## 8. Required review outputs
+## 9. Required review outputs
 
 Before any production parameter discussion, prepare these five evidence objects:
 
@@ -503,7 +560,7 @@ If the existing raw artifacts cannot support one of these fields, mark it
 explicitly as unavailable rather than reconstructing it with a different data
 state.
 
-## 9. Acceptance / stop rules
+## 10. Acceptance / stop rules
 
 This checkpoint passes only if:
 

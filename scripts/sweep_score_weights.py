@@ -505,6 +505,76 @@ def summarize_with_keys(
     return pd.DataFrame(rows)
 
 
+def build_split_date_masks(
+    dataset: pd.DataFrame,
+    horizons: list[int],
+    split_date: str,
+) -> tuple[dict[int, set[str]], dict[int, set[str]], dict[int, int]]:
+    """Build leakage-safe train/validation signal-date masks per horizon.
+
+    Exact per-symbol label_end dates are preferred. Immature labels (NaN/NaT)
+    fall back to the QQQ label end and finally to a conservative calendar gap.
+    """
+    train_mask_dates = set(
+        dataset[dataset["signal_date"] < split_date]["signal_date"].unique()
+    )
+    split_dt = pd.Timestamp(split_date, tz="UTC")
+    train_dates_by_h: dict[int, set[str]] = {}
+    valid_dates_by_h: dict[int, set[str]] = {}
+    sig_dates = sorted(dataset["signal_date"].astype(str).unique())
+
+    for h in horizons:
+        col = f"label_end_{h}"
+        qcol = f"qqq_label_end_{h}"
+        gap_days = int(h * 7 / 5) + 2
+        if col in dataset.columns:
+            le = pd.to_datetime(dataset[col], errors="coerce", utc=True)
+            ends = le.groupby(dataset["signal_date"].astype(str)).max()
+        else:
+            ends = pd.Series(dtype="datetime64[ns, UTC]")
+        if qcol in dataset.columns:
+            qmap = (
+                dataset.assign(_signal_date=dataset["signal_date"].astype(str))
+                .drop_duplicates("_signal_date")
+                .set_index("_signal_date")[qcol]
+            )
+        else:
+            qmap = pd.Series(dtype=object)
+
+        train_dates: set[str] = set()
+        valid_dates: set[str] = set()
+        for signal_date in sig_dates:
+            if signal_date >= split_date:
+                valid_dates.add(signal_date)
+                continue
+
+            end = ends.get(signal_date)
+            if end is None or pd.isna(end):
+                end = qmap.get(signal_date) if len(qmap) else None
+            if end is None or pd.isna(end) or end == "":
+                end = pd.Timestamp(signal_date, tz="UTC") + pd.Timedelta(
+                    days=gap_days
+                )
+            else:
+                end = pd.Timestamp(end)
+                if end.tzinfo is None:
+                    end = end.tz_localize("UTC")
+                else:
+                    end = end.tz_convert("UTC")
+
+            if end < split_dt:
+                train_dates.add(signal_date)
+
+        train_dates_by_h[int(h)] = train_dates
+        valid_dates_by_h[int(h)] = valid_dates
+
+    blocked = {
+        h: len(train_mask_dates - train_dates_by_h[h])
+        for h in train_dates_by_h
+    }
+    return train_dates_by_h, valid_dates_by_h, blocked
+
+
 def main() -> None:
     global winsor_lower_q, winsor_upper_q, penalty_over, penalty_det
     global pe_cash_backing_haircut
@@ -580,50 +650,12 @@ def main() -> None:
                 m[a] = float(np.exp(rng.uniform(-np.log(args.mult_range), np.log(args.mult_range))))
         return m
 
-    train_mask_dates = set(dataset[dataset["signal_date"] < split_date]["signal_date"].unique())
-    valid_mask_dates = set(dataset[dataset["signal_date"] >= split_date]["signal_date"].unique())
-
-    # R04: a training label may not extend into the validation window. Use
-    # the exact label exit dates recorded by the extractor (per-symbol
-    # label_end_{h}, fallback qqq_label_end_{h}); without them, fall back to
-    # the conservative calendar-gap bound (horizon*7/5 + 2 days, the same
-    # bound used for non-overlapping selection).
-    split_dt = pd.Timestamp(split_date, tz="UTC")
-    train_dates_by_h: dict[int, set[str]] = {}
-    valid_dates_by_h: dict[int, set[str]] = {}
-    sig_dates = sorted(dataset["signal_date"].unique())
-    for h in horizons:
-        col = f"label_end_{h}"
-        qcol = f"qqq_label_end_{h}"
-        gap_days = int(h * 7 / 5) + 2
-        if col in dataset.columns:
-            # Immature labels are NaN in the extractor output; an object column
-            # mixing strings and NaN makes groupby.max() raise, so coerce to
-            # datetime first (NaT groups compare as "not before split").
-            le = pd.to_datetime(dataset[col], errors="coerce")
-            ends = le.groupby(dataset["signal_date"]).max()
-        else:
-            ends = pd.Series(dtype="datetime64[ns]")
-        if qcol in dataset.columns:
-            qmap = dataset.drop_duplicates("signal_date").set_index("signal_date")[qcol]
-        else:
-            qmap = pd.Series(dtype=object)
-        tr: set[str] = set()
-        va: set[str] = set()
-        for d in sig_dates:
-            if d >= split_date:
-                va.add(d)
-                continue
-            end = ends.get(d)
-            if end is None or (not isinstance(end, str) and pd.isna(end)) or end == "":
-                end = qmap.get(d) if len(qmap) else None
-            if end is None or (not isinstance(end, str) and pd.isna(end)) or end == "":
-                end = (pd.Timestamp(d, tz="UTC") + pd.Timedelta(days=gap_days)).date().isoformat()
-            if pd.Timestamp(str(end), tz="UTC") < split_dt:
-                tr.add(d)
-        train_dates_by_h[int(h)] = tr
-        valid_dates_by_h[int(h)] = va
-    n_train_blocked = {h: len(train_mask_dates - train_dates_by_h[h]) for h in train_dates_by_h}
+    # R04: training labels may not extend into validation.
+    train_dates_by_h, valid_dates_by_h, n_train_blocked = build_split_date_masks(
+        dataset,
+        horizons,
+        split_date,
+    )
     log(f"R04 boundary clearing: blocked train dates per horizon {n_train_blocked}")
 
     def _mask_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

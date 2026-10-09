@@ -167,8 +167,44 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--risk-on-config-path", default="configs/config.risk_on.json")
     p.add_argument("--balanced-config-path", default="configs/archive/config.balanced.json")  # archived; two-style promote uses risk_on/risk_off
     p.add_argument("--risk-off-config-path", default="configs/config.risk_off.json")
-    p.add_argument("--min-total-valid-events", type=int, default=120)
-    p.add_argument("--min-window-valid-events", type=int, default=20)
+    p.add_argument(
+        "--min-total-valid-events",
+        type=int,
+        default=120,
+        help=(
+            "Absolute target for valid training events. The effective target "
+            "is capped by --min-total-valid-event-ratio times the events "
+            "actually available in the selected training windows."
+        ),
+    )
+    p.add_argument(
+        "--min-window-valid-events",
+        type=int,
+        default=20,
+        help=(
+            "Absolute target for valid events in one window. The effective "
+            "target is capped by --min-window-valid-event-ratio times the "
+            "events actually available in that window."
+        ),
+    )
+    p.add_argument(
+        "--min-total-valid-event-ratio",
+        type=float,
+        default=0.80,
+        help=(
+            "Minimum valid/available ratio used when the absolute total-event "
+            "target is unattainable (default: 0.80)."
+        ),
+    )
+    p.add_argument(
+        "--min-window-valid-event-ratio",
+        type=float,
+        default=0.80,
+        help=(
+            "Minimum valid/available ratio used when the absolute per-window "
+            "target is unattainable (default: 0.80)."
+        ),
+    )
     p.add_argument("--min-avg-return", type=float, default=0.0)
     p.add_argument("--min-avg-excess-vs-qqq", type=float, default=0.0)
     p.add_argument("--min-avg-win-rate", type=float, default=0.52)
@@ -203,6 +239,32 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--positive-window-penalty-weight", type=float, default=0.5)
     p.add_argument("--positive-excess-window-penalty-weight", type=float, default=0.5)
     p.add_argument("--empty-window-penalty-weight", type=float, default=0.7)
+    p.add_argument(
+        "--min-oos-folds",
+        type=int,
+        default=2,
+        help="Minimum number of anchored held-out folds required for promotion.",
+    )
+    p.add_argument(
+        "--min-oos-pass-ratio",
+        type=float,
+        default=2.0 / 3.0,
+        help="Minimum fraction of anchored held-out folds that must pass.",
+    )
+    p.add_argument(
+        "--min-oos-positive-excess-ratio",
+        type=float,
+        default=2.0 / 3.0,
+        help="Minimum fraction of held-out folds with positive excess vs QQQ.",
+    )
+    p.add_argument(
+        "--rescore-results",
+        default=None,
+        help=(
+            "Offline-only: reuse an existing tuner *_results.csv and recompute "
+            "anchored selection/guardrails without running any backtests."
+        ),
+    )
     p.add_argument("--prune-backtest-artifacts", action="store_true", default=True)
     p.add_argument("--no-prune-backtest-artifacts", action="store_true")
     return p.parse_args()
@@ -383,6 +445,31 @@ def mature_horizons_from_summary(
     return out
 
 
+def effective_valid_event_requirement(
+    absolute_target: int,
+    available_events: int,
+    available_ratio: float,
+) -> int:
+    """Return an attainable sample-size guardrail without making it permissive.
+
+    The old fixed defaults (20 per window / 120 total) are sensible for weekly
+    runs but structurally impossible for a monthly one-year held-out window.
+    Keep the absolute target when enough observations exist; otherwise require
+    a high fraction of the observations that could actually be valid.
+    """
+    absolute_target = max(0, int(absolute_target))
+    available_events = max(0, int(available_events))
+    ratio = float(available_ratio)
+    if not 0.0 <= ratio <= 1.0:
+        raise ValueError("valid-event ratio guardrails must be in [0, 1]")
+    if absolute_target == 0:
+        return 0
+    if available_events <= 0:
+        return absolute_target
+    ratio_target = max(1, int(math.ceil(available_events * ratio)))
+    return min(absolute_target, ratio_target)
+
+
 def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
     if not evals:
         return {
@@ -392,11 +479,14 @@ def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
             "avg_excess_vs_qqq": float("nan"),
             "avg_std_return": float("nan"),
             "total_valid_events": 0,
+            "total_events": 0,
             "min_window_valid_events": 0,
+            "min_window_total_events": 0,
             "empty_window_ratio": 1.0,
             "worst_max_drawdown": -1.0,
         }
     valid_counts = [int(e.get("total_valid_events", 0) or 0) for e in evals]
+    total_counts = [int(e.get("total_events", 0) or 0) for e in evals]
     drawdowns: list[float] = []
     for e in evals:
         raw_dd = e.get("max_drawdown", -1.0)
@@ -411,7 +501,9 @@ def aggregate_window_evals(evals: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "avg_std_return": finite_nanmean([float(e.get("avg_std_return", float("nan"))) for e in evals]),
         "total_valid_events": int(sum(valid_counts)),
+        "total_events": int(sum(total_counts)),
         "min_window_valid_events": min(valid_counts) if valid_counts else 0,
+        "min_window_total_events": min(total_counts) if total_counts else 0,
         "empty_window_ratio": float(sum(1 for x in valid_counts if x <= 0) / len(valid_counts))
         if valid_counts
         else 1.0,
@@ -525,7 +617,9 @@ def score_training_subset(
 
     penalty, failures = candidate_constraint_penalty(
         total_valid=int(primary.get("total_valid_events", 0) or 0),
+        total_events=int(primary.get("total_events", 0) or 0),
         min_window_valid=int(primary.get("min_window_valid_events", 0) or 0),
+        min_window_total_events=int(primary.get("min_window_total_events", 0) or 0),
         coverage_ratio=float(primary.get("coverage_ratio", 0.0) or 0.0),
         worst_dd=float(primary.get("worst_max_drawdown", -1.0) or -1.0),
         window_stability_std=stability,
@@ -609,6 +703,16 @@ def score_training_subset(
         "avg_excess_vs_qqq": avg_ex,
         "avg_win_rate": avg_win,
         "drawdown_diagnostic": worst_dd,
+        "required_total_valid_events": effective_valid_event_requirement(
+            int(args.min_total_valid_events),
+            int(primary.get("total_events", 0) or 0),
+            float(getattr(args, "min_total_valid_event_ratio", 0.80)),
+        ),
+        "required_window_valid_events": effective_valid_event_requirement(
+            int(args.min_window_valid_events),
+            int(primary.get("min_window_total_events", 0) or 0),
+            float(getattr(args, "min_window_valid_event_ratio", 0.80)),
+        ),
     }
 
 
@@ -631,10 +735,16 @@ def heldout_validation(
     avg_win = safe_float(primary.get("avg_win_rate"))
     coverage = safe_float(primary.get("coverage_ratio"))
     valid = int(primary.get("total_valid_events", 0) or 0)
+    available = int(primary.get("total_events", 0) or 0)
+    required_valid = effective_valid_event_requirement(
+        int(args.min_window_valid_events),
+        available,
+        float(getattr(args, "min_window_valid_event_ratio", 0.80)),
+    )
     reasons: list[str] = []
     if not np.isfinite(score):
         reasons.append("heldout_score_missing")
-    if valid < int(args.min_window_valid_events):
+    if valid < required_valid:
         reasons.append("heldout_valid_events_too_low")
     if not np.isfinite(coverage) or coverage < float(args.coverage_ratio_floor):
         reasons.append("heldout_coverage_too_low")
@@ -653,6 +763,9 @@ def heldout_validation(
         "avg_win_rate": avg_win,
         "coverage_ratio": coverage,
         "valid_events": valid,
+        "available_events": available,
+        "required_valid_events": required_valid,
+        "valid_event_ratio": float(valid / available) if available > 0 else 0.0,
     }
 
 
@@ -708,15 +821,50 @@ def walk_forward_profile_selection(
             }
         )
     final = folds[-1] if folds else {}
+    fold_count = len(folds)
+    passed_count = sum(
+        1 for fold in folds if bool((fold.get("validation") or {}).get("passed"))
+    )
+    finite_excess = [
+        safe_float((fold.get("validation") or {}).get("avg_excess_vs_qqq"))
+        for fold in folds
+    ]
+    finite_excess = [x for x in finite_excess if np.isfinite(x)]
+    positive_excess_count = sum(x > 0.0 for x in finite_excess)
+    pass_ratio = float(passed_count / fold_count) if fold_count else 0.0
+    positive_excess_ratio = (
+        float(positive_excess_count / len(finite_excess))
+        if finite_excess
+        else 0.0
+    )
+
+    promotion_failures: list[str] = []
+    if fold_count < int(getattr(args, "min_oos_folds", 2)):
+        promotion_failures.append("oos_fold_count_too_low")
+    if pass_ratio < float(getattr(args, "min_oos_pass_ratio", 2.0 / 3.0)):
+        promotion_failures.append("oos_pass_ratio_too_low")
+    if positive_excess_ratio < float(
+        getattr(args, "min_oos_positive_excess_ratio", 2.0 / 3.0)
+    ):
+        promotion_failures.append("oos_positive_excess_ratio_too_low")
+    if not final.get("selected_cid"):
+        promotion_failures.append("no_final_candidate")
+    if not bool(final.get("training_constraints_passed")):
+        promotion_failures.append("final_training_constraints_failed")
+    if not bool((final.get("validation") or {}).get("passed")):
+        promotion_failures.append("final_heldout_failed")
+
     return {
         "profile": profile,
         "folds": folds,
         "final_candidate": final.get("selected_cid"),
-        "promotion_eligible": bool(
-            final.get("selected_cid")
-            and final.get("training_constraints_passed")
-            and (final.get("validation") or {}).get("passed")
-        ),
+        "oos_fold_count": fold_count,
+        "oos_pass_count": passed_count,
+        "oos_pass_ratio": pass_ratio,
+        "oos_positive_excess_count": positive_excess_count,
+        "oos_positive_excess_ratio": positive_excess_ratio,
+        "promotion_failure_reasons": promotion_failures,
+        "promotion_eligible": not promotion_failures,
     }
 
 
@@ -1002,6 +1150,8 @@ def candidate_constraint_penalty(
     *,
     total_valid: int,
     min_window_valid: int,
+    total_events: int | None = None,
+    min_window_total_events: int | None = None,
     coverage_ratio: float,
     worst_dd: float,
     window_stability_std: float,
@@ -1016,10 +1166,25 @@ def candidate_constraint_penalty(
     penalty = 0.0
     failure_reasons: list[str] = []
 
-    if total_valid < int(args.min_total_valid_events):
+    total_required = int(args.min_total_valid_events)
+    if total_events is not None:
+        total_required = effective_valid_event_requirement(
+            total_required,
+            int(total_events),
+            float(getattr(args, "min_total_valid_event_ratio", 0.80)),
+        )
+    window_required = int(args.min_window_valid_events)
+    if min_window_total_events is not None:
+        window_required = effective_valid_event_requirement(
+            window_required,
+            int(min_window_total_events),
+            float(getattr(args, "min_window_valid_event_ratio", 0.80)),
+        )
+
+    if total_valid < total_required:
         penalty += 0.8
         failure_reasons.append("total_valid_events_too_low")
-    if min_window_valid < int(args.min_window_valid_events):
+    if min_window_valid < window_required:
         penalty += 0.7
         failure_reasons.append("window_valid_events_too_low")
     if coverage_ratio < float(args.coverage_ratio_floor):
@@ -1530,8 +1695,19 @@ def write_tuning_report(
         f"min_avg_win_rate={args.min_avg_win_rate}, "
         f"min_positive_window_score_ratio={args.min_positive_window_score_ratio}, "
         f"min_positive_excess_window_ratio={args.min_positive_excess_window_ratio}, "
-        f"max_empty_window_ratio={args.max_empty_window_ratio}"
+        f"max_empty_window_ratio={args.max_empty_window_ratio}, "
+        f"min_total_valid_event_ratio={args.min_total_valid_event_ratio}, "
+        f"min_window_valid_event_ratio={args.min_window_valid_event_ratio}, "
+        f"min_oos_pass_ratio={args.min_oos_pass_ratio}, "
+        f"min_oos_positive_excess_ratio={args.min_oos_positive_excess_ratio}"
     )
+    if args.rescore_results:
+        lines.append(
+            f"- offline_rescore_source: `{args.rescore_results}` "
+            "(candidate backtests were not rerun; pooled candidate fields below "
+            "are source diagnostics, while anchored fold selection/guardrails "
+            "are recomputed from window_metrics_json)"
+        )
     if walk_forward:
         lines.append("")
         lines.append("## Anchored Walk-Forward OOS")
@@ -1563,9 +1739,20 @@ def write_tuning_report(
                 if validation.get("reason"):
                     lines.append(f"  OOS_failure: `{validation['reason']}`")
             lines.append(
+                f"- OOS aggregate: folds={int(result.get('oos_fold_count', 0) or 0)} "
+                f"| pass_ratio={safe_float(result.get('oos_pass_ratio')):.3f} "
+                f"| positive_excess_ratio={safe_float(result.get('oos_positive_excess_ratio')):.3f}"
+            )
+            lines.append(
                 f"- final_candidate: `{result.get('final_candidate') or 'none'}` "
                 f"| promotion_eligible={bool(result.get('promotion_eligible'))}"
             )
+            if result.get("promotion_failure_reasons"):
+                lines.append(
+                    "- promotion_failure: `"
+                    + ";".join(result["promotion_failure_reasons"])
+                    + "`"
+                )
             lines.append("")
     lines.append("")
     lines.append("## Profile Picks")
@@ -1643,6 +1830,18 @@ def main() -> None:
         )
     stamp = args.output_prefix or datetime.now(timezone.utc).strftime("tuning_%Y%m%dT%H%M%SZ")
 
+    for name in (
+        "min_total_valid_event_ratio",
+        "min_window_valid_event_ratio",
+        "min_oos_pass_ratio",
+        "min_oos_positive_excess_ratio",
+    ):
+        value = float(getattr(args, name))
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be in [0, 1]")
+    if int(args.min_oos_folds) < 1:
+        raise ValueError("--min-oos-folds must be >= 1")
+
     if bool(args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback):
         log(
             "WARNING: --allow-latest-watchlist-fallback is ON: replay windows "
@@ -1650,6 +1849,80 @@ def main() -> None:
             "constituents — tuning scores contain lookahead bias. "
             "Research-only; do not promote these configs."
         )
+
+    if args.rescore_results:
+        if args.selection_mode != "walk_forward":
+            raise SystemExit("--rescore-results requires --selection-mode walk_forward")
+        if bool(args.promote and not args.no_promote):
+            raise SystemExit(
+                "--rescore-results is evaluation-only and cannot --promote; "
+                "run a fresh validated tuner before any production write"
+            )
+        source_results = Path(args.rescore_results)
+        if not source_results.exists():
+            raise FileNotFoundError(source_results)
+        scores_df = pd.read_csv(source_results)
+        required_columns = {"cid", "window_metrics_json"}
+        missing_columns = sorted(required_columns - set(scores_df.columns))
+        if missing_columns:
+            raise ValueError(
+                "--rescore-results is missing required columns: "
+                + ",".join(missing_columns)
+            )
+        validate_walk_forward_windows(windows)
+        walk_forward = {
+            profile: walk_forward_profile_selection(scores_df, windows, profile, args)
+            for profile in ("risk_on", "risk_off")
+        }
+        picks = {
+            profile: str(result["final_candidate"])
+            for profile, result in walk_forward.items()
+            if result.get("final_candidate")
+        }
+        report_path = outputs_dir / f"{stamp}_report.md"
+        write_tuning_report(
+            path=report_path,
+            stamp=stamp,
+            args=args,
+            windows=windows,
+            scores_df=scores_df,
+            picks=picks,
+            walk_forward=walk_forward,
+        )
+        summary_json = outputs_dir / f"{stamp}_summary.json"
+        write_json(
+            summary_json,
+            {
+                "tuning_run_id": stamp,
+                "mode": "offline_rescore",
+                "source_results_csv": str(source_results),
+                "base_config": args.base_config,
+                "param_space": args.param_space,
+                "list_types": list_types,
+                "primary_list_types": primary_list_types,
+                "selection_mode": args.selection_mode,
+                "candidates": int(len(scores_df)),
+                "guardrails": {
+                    "min_total_valid_events": int(args.min_total_valid_events),
+                    "min_window_valid_events": int(args.min_window_valid_events),
+                    "min_total_valid_event_ratio": float(args.min_total_valid_event_ratio),
+                    "min_window_valid_event_ratio": float(args.min_window_valid_event_ratio),
+                    "min_oos_folds": int(args.min_oos_folds),
+                    "min_oos_pass_ratio": float(args.min_oos_pass_ratio),
+                    "min_oos_positive_excess_ratio": float(
+                        args.min_oos_positive_excess_ratio
+                    ),
+                },
+                "picks": picks,
+                "walk_forward": walk_forward,
+                "report_path": str(report_path),
+            },
+        )
+        log(
+            f"offline rescore complete: source={source_results} "
+            f"summary={summary_json} report={report_path}"
+        )
+        return
 
     base_config = read_json(base_path)
     axes = load_axes(param_space_path)
@@ -1784,6 +2057,15 @@ def main() -> None:
         "candidates": len(candidates),
         "picks": picks,
         "walk_forward": walk_forward,
+        "guardrails": {
+            "min_total_valid_events": int(args.min_total_valid_events),
+            "min_window_valid_events": int(args.min_window_valid_events),
+            "min_total_valid_event_ratio": float(args.min_total_valid_event_ratio),
+            "min_window_valid_event_ratio": float(args.min_window_valid_event_ratio),
+            "min_oos_folds": int(args.min_oos_folds),
+            "min_oos_pass_ratio": float(args.min_oos_pass_ratio),
+            "min_oos_positive_excess_ratio": float(args.min_oos_positive_excess_ratio),
+        },
         "results_csv": str(results_csv),
         "report_path": str(report_path),
     }

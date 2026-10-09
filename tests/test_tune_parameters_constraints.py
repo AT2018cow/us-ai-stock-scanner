@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,11 @@ def _args(**overrides: float | int) -> argparse.Namespace:
     base = {
         "min_total_valid_events": 10,
         "min_window_valid_events": 2,
+        "min_total_valid_event_ratio": 0.80,
+        "min_window_valid_event_ratio": 0.80,
+        "min_oos_folds": 2,
+        "min_oos_pass_ratio": 2.0 / 3.0,
+        "min_oos_positive_excess_ratio": 2.0 / 3.0,
         "coverage_ratio_floor": 0.2,
         "max_acceptable_drawdown": 0.5,
         "drawdown_penalty_weight": 0.6,
@@ -217,17 +223,27 @@ class TestTuneParameterConstraints(unittest.TestCase):
         self.assertAlmostEqual(out["worst_max_drawdown"], -0.10)
 
     @staticmethod
-    def _window_metric(label: str, score: float, excess: float, *, purged_score: float | None = None) -> dict:
+    def _window_metric(
+        label: str,
+        score: float,
+        excess: float,
+        *,
+        purged_score: float | None = None,
+        valid_events: int = 20,
+        total_events: int = 20,
+    ) -> dict:
         def ev(s: float, ex: float) -> dict:
             return {
                 "score": s,
-                "coverage_ratio": 1.0,
+                "coverage_ratio": (
+                    float(valid_events / total_events) if total_events else 0.0
+                ),
                 "avg_win_rate": 0.60,
                 "avg_return": 0.05,
                 "avg_excess_vs_qqq": ex,
                 "avg_std_return": 0.02,
-                "total_valid_events": 20,
-                "total_events": 20,
+                "total_valid_events": valid_events,
+                "total_events": total_events,
                 "max_drawdown": -0.10,
             }
 
@@ -254,6 +270,128 @@ class TestTuneParameterConstraints(unittest.TestCase):
             "purged_up_stats": empty_regime if purged is not None else None,
             "purged_down_stats": empty_regime if purged is not None else None,
         }
+
+    def test_monthly_valid_event_requirement_is_attainable_but_strict(self) -> None:
+        self.assertEqual(
+            self.tuner.effective_valid_event_requirement(20, 12, 0.80),
+            10,
+        )
+        self.assertEqual(
+            self.tuner.effective_valid_event_requirement(20, 52, 0.80),
+            20,
+        )
+        self.assertEqual(
+            self.tuner.effective_valid_event_requirement(120, 24, 0.80),
+            20,
+        )
+
+    def test_heldout_monthly_window_uses_available_event_ratio(self) -> None:
+        import json
+
+        row = self.tuner.pd.Series(
+            {
+                "window_metrics_json": json.dumps(
+                    [
+                        self._window_metric(
+                            "2025",
+                            score=0.2,
+                            excess=0.03,
+                            valid_events=10,
+                            total_events=12,
+                        )
+                    ]
+                )
+            }
+        )
+        out = self.tuner.heldout_validation(
+            row,
+            "2025",
+            _args(min_window_valid_events=20),
+        )
+        self.assertEqual(out["required_valid_events"], 10)
+        self.assertTrue(out["passed"])
+
+    def test_heldout_immature_ytd_still_fails_sample_guardrail(self) -> None:
+        import json
+
+        row = self.tuner.pd.Series(
+            {
+                "window_metrics_json": json.dumps(
+                    [
+                        self._window_metric(
+                            "2026YTD",
+                            score=0.2,
+                            excess=0.03,
+                            valid_events=4,
+                            total_events=9,
+                        )
+                    ]
+                )
+            }
+        )
+        out = self.tuner.heldout_validation(
+            row,
+            "2026YTD",
+            _args(min_window_valid_events=20),
+        )
+        self.assertEqual(out["required_valid_events"], 8)
+        self.assertFalse(out["passed"])
+        self.assertIn("heldout_valid_events_too_low", out["reason"])
+
+    def test_promotion_requires_oos_sequence_not_only_final_fold(self) -> None:
+        import json
+
+        windows = [
+            self.tuner.TuneWindow("2023", "2023-01-01", "2023-12-31"),
+            self.tuner.TuneWindow("2024", "2024-01-01", "2024-12-31"),
+            self.tuner.TuneWindow("2025", "2025-01-01", "2025-12-31"),
+            self.tuner.TuneWindow("2026YTD", "2026-01-01", "2026-09-30"),
+        ]
+        scores = self.tuner.pd.DataFrame(
+            [
+                {
+                    "cid": "A",
+                    "window_metrics_json": json.dumps(
+                        [
+                            self._window_metric(
+                                "2023", 0.20, 0.03, purged_score=0.20,
+                                valid_events=12, total_events=12,
+                            ),
+                            self._window_metric(
+                                "2024", -0.10, -0.03, purged_score=-0.10,
+                                valid_events=12, total_events=12,
+                            ),
+                            self._window_metric(
+                                "2025", -0.05, -0.02, purged_score=-0.05,
+                                valid_events=12, total_events=12,
+                            ),
+                            self._window_metric(
+                                "2026YTD", 0.15, 0.04,
+                                valid_events=9, total_events=9,
+                            ),
+                        ]
+                    ),
+                }
+            ]
+        )
+        out = self.tuner.walk_forward_profile_selection(
+            scores,
+            windows,
+            "risk_on",
+            _args(
+                min_total_valid_events=120,
+                min_window_valid_events=20,
+                min_positive_window_score_ratio=0.0,
+                min_positive_excess_window_ratio=0.0,
+            ),
+        )
+        self.assertTrue(out["folds"][-1]["validation"]["passed"])
+        self.assertLess(out["oos_pass_ratio"], 2.0 / 3.0)
+        self.assertFalse(out["promotion_eligible"])
+        self.assertIn(
+            "oos_pass_ratio_too_low",
+            out["promotion_failure_reasons"],
+        )
 
     def test_walk_forward_heldout_window_cannot_change_selection(self) -> None:
         import json
@@ -310,6 +448,89 @@ class TestTuneParameterConstraints(unittest.TestCase):
         # With no regime stats, fallback rank is objective + coverage/return/excess.
         # The result must be based on purged 0.10, not the full-window 9.0.
         self.assertLess(out["rank_score"], 1.0)
+
+    def test_offline_rescore_reuses_existing_results_without_backtest(self) -> None:
+        import json
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "source_results.csv"
+            output_dir = root / "out"
+            work_dir = root / "work"
+            metrics = [
+                self._window_metric(
+                    "2023", 0.20, 0.03, purged_score=0.20,
+                    valid_events=12, total_events=12,
+                ),
+                self._window_metric(
+                    "2024", 0.15, 0.02,
+                    valid_events=12, total_events=12,
+                ),
+            ]
+            self.tuner.pd.DataFrame(
+                [
+                    {
+                        "cid": "A",
+                        "objective_score": 0.2,
+                        "balanced_rank_score": 0.2,
+                        "risk_on_rank_score": 0.2,
+                        "risk_off_rank_score": 0.2,
+                        "coverage_ratio": 1.0,
+                        "avg_win_rate": 0.6,
+                        "worst_max_drawdown": -0.1,
+                        "strict_total_valid_events": 12,
+                        "research_pool_total_valid_events": 12,
+                        "research_pool_avg_excess_vs_qqq": 0.02,
+                        "positive_window_score_ratio": 1.0,
+                        "positive_excess_window_ratio": 1.0,
+                        "empty_window_ratio": 0.0,
+                        "constraints_passed": False,
+                        "failure_reason": "legacy_impossible_sample_floor",
+                        "window_failure_summary": "",
+                        "deltas_json": "{}",
+                        "window_metrics_json": json.dumps(metrics),
+                    }
+                ]
+            ).to_csv(results, index=False)
+
+            argv = [
+                "tune_parameters.py",
+                "--rescore-results",
+                str(results),
+                "--outputs-dir",
+                str(output_dir),
+                "--work-dir",
+                str(work_dir),
+                "--output-prefix",
+                "rescored",
+                "--windows",
+                "2023:2023-01-01:2023-12-31,2024:2024-01-01:2024-12-31",
+                "--selection-mode",
+                "walk_forward",
+                "--min-total-valid-events",
+                "120",
+                "--min-window-valid-events",
+                "20",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(
+                    self.tuner,
+                    "run_candidate",
+                    side_effect=AssertionError("backtest path must not run"),
+                ),
+            ):
+                self.tuner.main()
+
+            summary = json.loads((output_dir / "rescored_summary.json").read_text())
+            self.assertEqual(summary["mode"], "offline_rescore")
+            self.assertEqual(summary["candidates"], 1)
+            self.assertTrue((output_dir / "rescored_report.md").exists())
+            fold = summary["walk_forward"]["risk_on"]["folds"][0]
+            self.assertTrue(fold["training_constraints_passed"])
+            self.assertEqual(fold["validation"]["required_valid_events"], 10)
+            self.assertTrue(fold["validation"]["passed"])
 
     def test_walk_forward_windows_must_be_non_overlapping(self) -> None:
         windows = [

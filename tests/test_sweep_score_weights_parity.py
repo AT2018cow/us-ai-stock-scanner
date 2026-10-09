@@ -136,6 +136,35 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
         self.assertEqual(int(event["n_picked"]), 1)
         self.assertAlmostEqual(float(event["mean_ret"]), 0.1)
 
+    def test_split_masks_handle_immature_nan_labels_without_leakage(self) -> None:
+        dataset = pd.DataFrame(
+            {
+                "signal_date": [
+                    "2025-08-29",
+                    "2025-11-28",
+                    "2026-01-30",
+                ],
+                "label_end_120": [
+                    "2025-12-15",
+                    np.nan,
+                    np.nan,
+                ],
+                "qqq_label_end_120": [
+                    "2025-12-15",
+                    "2026-03-31",
+                    np.nan,
+                ],
+            }
+        )
+        train, valid, blocked = sweep.build_split_date_masks(
+            dataset,
+            [120],
+            "2026-01-01",
+        )
+        self.assertEqual(train[120], {"2025-08-29"})
+        self.assertEqual(valid[120], {"2026-01-30"})
+        self.assertEqual(blocked[120], 1)
+
     def test_weight_extractor_accepts_frozen_watchlist_override(self) -> None:
         parser = extract_weight_dataset.build_parser()
         args = parser.parse_args(
