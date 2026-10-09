@@ -535,6 +535,74 @@ def summarize_cases(cases: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def summarize_soft_failures(cases: pd.DataFrame) -> pd.DataFrame:
+    """Explode soft failures, with winner-vs-QQQ counts for mechanism triage."""
+    if cases.empty or "soft_failed_steps" not in cases.columns:
+        return pd.DataFrame(
+            columns=[
+                "year",
+                "soft_step",
+                "n_cases",
+                "n_mature",
+                "n_winners_vs_qqq",
+                "winner_rate",
+                "avg_excess_vs_qqq",
+            ]
+        )
+
+    work = cases.copy()
+    work["soft_step"] = (
+        work["soft_failed_steps"]
+        .fillna("")
+        .astype(str)
+        .str.split(",")
+    )
+    work = work.explode("soft_step")
+    work["soft_step"] = work["soft_step"].fillna("").astype(str).str.strip()
+    work = work[work["soft_step"] != ""].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    for scope_year in ["ALL", *sorted(work["year"].dropna().astype(str).unique())]:
+        part_year = (
+            work
+            if scope_year == "ALL"
+            else work[work["year"].astype(str) == scope_year]
+        )
+        for step, part in part_year.groupby("soft_step", dropna=False):
+            excess = pd.to_numeric(part["excess_vs_qqq"], errors="coerce")
+            mature_mask = np.isfinite(excess)
+            mature = part[mature_mask]
+            mature_excess = pd.to_numeric(
+                mature["excess_vs_qqq"], errors="coerce"
+            )
+            winners = int(mature_excess.gt(0).sum())
+            rows.append(
+                {
+                    "year": scope_year,
+                    "soft_step": str(step),
+                    "n_cases": int(len(part)),
+                    "n_mature": int(len(mature)),
+                    "n_winners_vs_qqq": winners,
+                    "winner_rate": (
+                        float(winners / len(mature))
+                        if len(mature)
+                        else np.nan
+                    ),
+                    "avg_excess_vs_qqq": (
+                        float(mature_excess.mean())
+                        if len(mature)
+                        else np.nan
+                    ),
+                }
+            )
+    return pd.DataFrame(rows).sort_values(
+        ["year", "n_winners_vs_qqq", "n_cases", "soft_step"],
+        ascending=[True, False, False, True],
+    )
+
+
 def build_paired_selection_outcomes(
     *,
     risk_on_dataset: pd.DataFrame,
@@ -604,6 +672,7 @@ def write_report(
     path: Path,
     cases: pd.DataFrame,
     summary: pd.DataFrame,
+    soft_summary: pd.DataFrame,
     paired: pd.DataFrame,
     *,
     years: list[str],
@@ -631,6 +700,20 @@ def write_report(
                 f"- {row.exclusion_reason}: n={int(row.n_cases)}, "
                 f"mature={int(row.n_mature)}, "
                 f"winner_vs_QQQ={int(row.n_winners_vs_qqq)}, "
+                f"avg_excess={float(row.avg_excess_vs_qqq):+.4f}"
+            )
+
+    lines.extend(["", "## Repeated soft-condition failures", ""])
+    if soft_summary.empty:
+        lines.append("No soft-condition failures recorded.")
+    else:
+        top_soft = soft_summary[
+            soft_summary["year"].astype(str) == "ALL"
+        ].head(12)
+        for row in top_soft.itertuples(index=False):
+            lines.append(
+                f"- {row.soft_step}: cases={int(row.n_cases)}, "
+                f"winners_vs_QQQ={int(row.n_winners_vs_qqq)}, "
                 f"avg_excess={float(row.avg_excess_vs_qqq):+.4f}"
             )
 
@@ -730,6 +813,7 @@ def main() -> None:
         top_n=int(args.top_n),
     )
     summary = summarize_cases(cases)
+    soft_summary = summarize_soft_failures(cases)
     paired = build_paired_selection_outcomes(
         risk_on_dataset=risk_on_dataset,
         risk_off_dataset=risk_off_dataset,
@@ -742,22 +826,25 @@ def main() -> None:
     prefix.parent.mkdir(parents=True, exist_ok=True)
     cases_path = Path(f"{prefix}_cases.csv")
     summary_path = Path(f"{prefix}_summary.csv")
+    soft_summary_path = Path(f"{prefix}_soft_failures.csv")
     paired_path = Path(f"{prefix}_paired_selection.csv")
     report_path = Path(f"{prefix}_report.md")
     cases.to_csv(cases_path, index=False)
     summary.to_csv(summary_path, index=False)
+    soft_summary.to_csv(soft_summary_path, index=False)
     paired.to_csv(paired_path, index=False)
     write_report(
         report_path,
         cases,
         summary,
+        soft_summary,
         paired,
         years=years,
         horizon=horizon,
     )
     log(
         f"done: cases={cases_path} summary={summary_path} "
-        f"paired={paired_path} report={report_path}"
+        f"soft={soft_summary_path} paired={paired_path} report={report_path}"
     )
 
 
