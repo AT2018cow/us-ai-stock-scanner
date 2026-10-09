@@ -528,6 +528,7 @@ class TestTuneParameterConstraints(unittest.TestCase):
             self.assertEqual(summary["candidates"], 1)
             self.assertTrue((output_dir / "rescored_report.md").exists())
             fold = summary["walk_forward"]["risk_on"]["folds"][0]
+            self.assertTrue(fold["training_constraints_passed"])
             self.assertEqual(fold["validation"]["required_valid_events"], 10)
             self.assertTrue(fold["validation"]["passed"])
 
