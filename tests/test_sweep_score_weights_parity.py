@@ -184,6 +184,40 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
             "outputs/frozen/watchlist_history",
         )
 
+    def test_baseline_candidate_applies_production_base_weights(self) -> None:
+        groups = {
+            ("2025-01-31", "momentum", "core_ai"): {
+                "axes": ["a", "b"],
+                "base_weight_vector": np.asarray([0.9, 0.1], dtype="float64"),
+                "norm": np.asarray(
+                    [
+                        [1.0, 0.0],
+                        [0.0, 1.0],
+                    ],
+                    dtype="float64",
+                ),
+                "soft_rate": np.asarray([0.0, 0.0], dtype="float64"),
+                "ovp": np.asarray([0.0, 0.0], dtype="float64"),
+                "det": np.asarray([0.0, 0.0], dtype="float64"),
+                "fwd": np.asarray([[0.10], [0.90]], dtype="float64"),
+                "symbols": ["BASE_WEIGHT_WINNER", "EQUAL_WEIGHT_TIEBREAKER"],
+                "sic": ["", ""],
+                "watchlist_etfs": ["", ""],
+                "watchlist_etf_count": np.asarray([0.0, 0.0], dtype="float64"),
+                "gate_allowed": np.asarray([True, True], dtype=bool),
+            }
+        }
+        event = sweep.score_candidate(
+            groups,
+            {"momentum": {"a": 1.0, "b": 1.0}},
+            {"momentum": 0.0},
+            [20],
+            1,
+            channel_order=["core_ai"],
+        ).iloc[0]
+        self.assertEqual(int(event["n_picked"]), 1)
+        self.assertAlmostEqual(float(event["mean_ret"]), 0.10)
+
     def test_channel_order_controls_cross_channel_dedup_source(self) -> None:
         def group(ret: float) -> dict:
             return {
