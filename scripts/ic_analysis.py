@@ -156,8 +156,6 @@ def score_survivors(
         "list_type",
         "channel",
         "symbol",
-        "soft_pass_count",
-        "soft_total",
         "regime",
     }
     required.update(f"fwd_ret_{h}" for h in horizons)
