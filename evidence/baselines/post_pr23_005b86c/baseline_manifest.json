@@ -7,7 +7,7 @@
     "pr24_merge_sha": "7a1586af3a2f7c35f2c4ab144fa87cbe3f58349e",
     "pr25_merge_sha": "26f93e4e733b485bf60c14661979e0a26f7df7ed",
     "git_status": "clean",
-    "note": "replay/dataset executed on Modal (infini workspace) after local OOM; local pre-checkpoint risk_off attempt kept under local_run_20261008_pre_checkpoints/"
+    "note": "replay/dataset executed on Modal (infi workspace) after local OOM; local pre-checkpoint risk_off attempt kept under local_run_20261008_pre_checkpoints/"
   },
   "evidence_classes": {
     "current_config_replay": "retrospective; NOT automatically OOS (configs were informed by parts of the same period)",
@@ -94,7 +94,7 @@
     ],
     "label_purge": "train events/benchmarks filtered by label_end_date < next window start; sweep R04 uses per-date exact label_end max with calendar-gap fallback",
     "promotion": false,
-    "executor": "modal (infini workspace, MODAL_TUNER_CONCURRENCY=40 per style, max 80 total)",
+    "executor": "modal (infi workspace, MODAL_TUNER_CONCURRENCY=40 per style, max 80 total)",
     "max_candidates": 36,
     "random_seed": 42,
     "param_space_risk_off": "configs/tuner.param_space.json",
