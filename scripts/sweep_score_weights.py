@@ -211,6 +211,10 @@ def precompute_groups(
         )
         groups[(str(signal_date), str(list_type), str(channel))] = {
             "axes": axes,
+            "base_weight_vector": np.asarray(
+                [float(base.get(axis, 0.0)) for axis in axes],
+                dtype="float64",
+            ),
             "norm": mat,
             "soft_rate": soft_rate,
             "ovp": ovp,
@@ -344,9 +348,29 @@ def score_candidate(
 
     for (signal_date, list_type, channel), g in group_items:
         mult = mult_by_axis[list_type]
-        weights = np.array([mult.get(a, 1.0) for a in g["axes"]], dtype="float64")
+        multipliers = np.array(
+            [mult.get(a, 1.0) for a in g["axes"]],
+            dtype="float64",
+        )
+        base_weight_vector = np.asarray(
+            g.get(
+                "base_weight_vector",
+                np.ones(len(g["axes"]), dtype="float64"),
+            ),
+            dtype="float64",
+        )
+        if base_weight_vector.shape != multipliers.shape:
+            raise ValueError(
+                "base-weight vector shape mismatch in precomputed score group"
+            )
+        weights = base_weight_vector * multipliers
         base_soft = _soft_w(list_type, channel)
-        scores = g["norm"] @ weights + base_soft * g["soft_rate"] - g["ovp"] - g["det"]
+        scores = (
+            g["norm"] @ weights
+            + base_soft * g["soft_rate"]
+            - g["ovp"]
+            - g["det"]
+        )
         picked = _select_ranked_indices_with_caps(
             scores=scores,
             gate_allowed=np.asarray(
