@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> **当前交接（PR #31 closure 完成）：** 请先阅读 `docs/work_handoff_after_pr31_20261010.md`。PR #31 已关闭 research dataset `channel` 列泄漏与 dirty-worktree evidence provenance；post-merge commit `fc781d74...` 已从 clean checkout 复现 PR30 168/168 parity/相同负结果，并用修复工具重算 PR27 attribution，headline 结论不变。correctness closure 已完成，可以进入下一窄 alpha 机制研究；优先 low_value ranking / research-gate interaction，不要恢复 position-gate 路线、full replay、dataset extraction 或 broad tuner，除非新证据明确需要。永远不要使用 Modal `--detach`。旧 PR30/PR23/PR8 handoff 仅作历史记录。
+> **当前交接（PR #31 closure 完成，进入盈利路线）：** 请先完整阅读 `docs/work_handoff_after_pr31_20261010.md`。该文档现在是从当前状态到“可验证、可交易、可逐步投入真实资金”的长期路线图，而不是短期 PR 清单。PR31 correctness closure 已完成；下一优先级不是继续修 low_value，也不是 broad tuning，而是先用现有 canonical evidence 做 **portfolio viability / list triage**，重点验证 momentum、industry_trend 及其简单组合是否值得进入 account-NAV simulation。low_value ranking / research-gate interaction 作为并行 alpha 研究，不得阻塞已有较强信号的变现路径。后续依次完成 portfolio NAV、固定候选 robustness、prospective paper/shadow、staged live pilot、监控/kill-switch。不要恢复 position-gate 路线，不要无理由 full replay/dataset extraction/broad tuner，永远不要使用 Modal `--detach`。旧 PR30/PR23/PR8 handoff 仅作历史记录。
 
 
 US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a local watchlist for undervalued AI stocks. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
