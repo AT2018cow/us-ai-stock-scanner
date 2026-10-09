@@ -48,6 +48,9 @@ import low_value_gate_ablation as base  # noqa: E402
 EXPECTED_DATASET_SHA256 = (
     "bb6edd7a30d8347aeb2020f77255eb1d043d2417aa8892b1a62da8ff0cad0ad6"
 )
+EXPECTED_CONFIG_GIT_BLOB_SHA1 = (
+    "8214689234b6ff2994a85d8a494763b54e56178d"
+)
 EXPECTED_EXPANDED_SKIPS = {
     "max_range_position_52w",
     "min_drawdown_from_52w_high",
@@ -91,6 +94,22 @@ def sha256_file(path: str | Path) -> str:
                 break
             digest.update(block)
     return digest.hexdigest()
+
+
+def git_blob_sha1(path: str | Path) -> str:
+    data = Path(path).read_bytes()
+    header = f"blob {len(data)}\0".encode("utf-8")
+    return hashlib.sha1(header + data).hexdigest()
+
+
+def validate_canonical_config(config_path: Path) -> str:
+    actual = git_blob_sha1(config_path)
+    if actual != EXPECTED_CONFIG_GIT_BLOB_SHA1:
+        raise ValueError(
+            "PR30 is pre-registered against risk_off config blob "
+            f"{EXPECTED_CONFIG_GIT_BLOB_SHA1}; got {actual}"
+        )
+    return actual
 
 
 def validate_canonical_dataset(dataset_path: Path) -> dict[str, Any]:
@@ -787,6 +806,7 @@ def main() -> None:
         )
 
     config_path = Path(args.scan_config)
+    config_blob_sha1 = validate_canonical_config(config_path)
     config = load_config(str(config_path))
     if str(config.strategy_style) != "risk_off":
         raise ValueError("PR30 requires risk_off config")
@@ -883,6 +903,7 @@ def main() -> None:
         "dataset_meta_sha256": frozen["meta_sha256"],
         "scan_config": str(config_path),
         "scan_config_sha256": sha256_file(config_path),
+        "scan_config_git_blob_sha1": config_blob_sha1,
         "code_sha": git_head_sha(),
         "target_step": TARGET_STEP,
         "expanded_dataset_skipped_steps": sorted(
