@@ -166,6 +166,20 @@ class TestOfflineWeightSweepParity(unittest.TestCase):
         self.assertEqual(valid[120], {"2026-01-30"})
         self.assertEqual(blocked[120], 1)
 
+    def test_weight_extractor_uses_risk_on_partition_semantics(self) -> None:
+        cfg = SimpleNamespace(strategy_style="risk_on")
+        steps = [
+            ("max_price_to_sma200", lambda frame: frame["x"] <= 1.3),
+            ("min_price_to_sma200", lambda frame: frame["x"] >= 1.02),
+        ]
+        hard, soft = extract_weight_dataset.partition_dataset_filter_steps(
+            cfg,
+            "core_ai",
+            steps,
+        )
+        self.assertEqual([name for name, _ in hard], ["min_price_to_sma200"])
+        self.assertEqual([name for name, _ in soft], ["max_price_to_sma200"])
+
     def test_weight_extractor_accepts_frozen_watchlist_override(self) -> None:
         parser = extract_weight_dataset.build_parser()
         args = parser.parse_args(
