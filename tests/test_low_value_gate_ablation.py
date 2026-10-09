@@ -110,6 +110,33 @@ class TestLowValueGateAblation(unittest.TestCase):
         self.assertFalse(bool(enabler["exact_match"]))
         self.assertEqual(enabler["expected_only"], "D")
 
+    def test_baseline_parity_detects_replay_date_missing_from_dataset(self) -> None:
+        events = pd.DataFrame(
+            [
+                {
+                    "signal_date": "2025-01-31",
+                    "arm": "baseline",
+                    "horizon_days": 20,
+                    "channel_symbols_json": '{"core_ai":["A"]}',
+                }
+            ]
+        )
+        replay = {
+            ("2025-01-31", "core_ai"): {"A"},
+            ("2025-02-28", "core_ai"): {"B"},
+        }
+        out = ablation.build_baseline_parity(
+            events,
+            replay,
+            ["core_ai"],
+        )
+        missing = out[
+            out["signal_date"].astype(str) == "2025-02-28"
+        ].iloc[0]
+        self.assertFalse(bool(missing["exact_match"]))
+        self.assertEqual(missing["actual_n"], 0)
+        self.assertEqual(missing["expected_only"], "B")
+
     def test_retrospective_gate_requires_all_full_years_and_down_regime(self) -> None:
         parity = pd.DataFrame({"exact_match": [True, True]})
         rows = [
