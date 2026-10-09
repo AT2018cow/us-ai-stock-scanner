@@ -597,9 +597,13 @@ def main() -> None:
         qcol = f"qqq_label_end_{h}"
         gap_days = int(h * 7 / 5) + 2
         if col in dataset.columns:
-            ends = dataset.groupby("signal_date")[col].max()
+            # Immature labels are NaN in the extractor output; an object column
+            # mixing strings and NaN makes groupby.max() raise, so coerce to
+            # datetime first (NaT groups compare as "not before split").
+            le = pd.to_datetime(dataset[col], errors="coerce")
+            ends = le.groupby(dataset["signal_date"]).max()
         else:
-            ends = pd.Series(dtype=object)
+            ends = pd.Series(dtype="datetime64[ns]")
         if qcol in dataset.columns:
             qmap = dataset.drop_duplicates("signal_date").set_index("signal_date")[qcol]
         else:
@@ -611,9 +615,9 @@ def main() -> None:
                 va.add(d)
                 continue
             end = ends.get(d)
-            if end is None or (isinstance(end, float) and pd.isna(end)) or end == "":
+            if end is None or (not isinstance(end, str) and pd.isna(end)) or end == "":
                 end = qmap.get(d) if len(qmap) else None
-            if end is None or (isinstance(end, float) and pd.isna(end)) or end == "":
+            if end is None or (not isinstance(end, str) and pd.isna(end)) or end == "":
                 end = (pd.Timestamp(d, tz="UTC") + pd.Timedelta(days=gap_days)).date().isoformat()
             if pd.Timestamp(str(end), tz="UTC") < split_dt:
                 tr.add(d)

@@ -1,0 +1,13 @@
+style,list_type,horizon,n_symbols,sum_total_return,top1_symbol,top1_share,top3_share,sum_after_removing_top1
+risk_off,low_value,20,84,9.92802,PANW,0.1893,0.4879,8.048253
+risk_off,low_value,60,83,49.601111,CAT,0.0848,0.2329,45.396323
+risk_off,low_value,120,83,116.200482,TSLA,0.064,0.1817,108.760327
+risk_off,momentum,20,93,37.888349,VRT,0.1134,0.3316,33.593543
+risk_off,momentum,60,90,119.127369,NVDA,0.0937,0.2466,107.967464
+risk_off,momentum,120,89,276.905038,MU,0.0935,0.243,251.016644
+risk_on,low_value,20,79,18.493472,CAT,0.0751,0.2056,17.10447
+risk_on,low_value,60,78,46.338745,ON,0.0684,0.1823,43.170424
+risk_on,low_value,120,77,100.513549,PWR,0.0798,0.1884,92.493771
+risk_on,momentum,20,109,37.702627,NVDA,0.1216,0.3264,33.1197
+risk_on,momentum,60,107,116.352415,NVDA,0.1082,0.2662,103.764645
+risk_on,momentum,120,106,275.637833,MU,0.0939,0.2652,249.749439

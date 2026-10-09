@@ -1,0 +1,38 @@
+{
+  "scan_config": "/root/configs/config.risk_off.json",
+  "style": "risk_off",
+  "generated_utc": "2026-10-08T22:12:20.034778+00:00",
+  "start_date": "2023-01-01",
+  "end_date": "2026-09-30",
+  "rebalance_frequency": "monthly",
+  "horizons": [
+    20,
+    60,
+    120
+  ],
+  "list_types": [
+    "low_value",
+    "momentum"
+  ],
+  "trading_cost_bps": 15.0,
+  "roundtrip_cost": 0.003,
+  "entry_price_mode": "next_open",
+  "exit_price_mode": "close",
+  "theme_source": "rules_proxy",
+  "replay_asset_status": "all",
+  "replay_max_symbols": 800,
+  "disclosure_lookback_days": 720,
+  "delist_return_assumption": -0.55,
+  "allow_latest_watchlist_fallback": false,
+  "watchlist_csv_path": "/root/data/ai_watchlist.csv",
+  "watchlist_history_dir": "/root/data/watchlist_history",
+  "pre_snapshot_universe": "union",
+  "channels": [
+    "ai_enabler",
+    "ai_peripheral",
+    "core_ai"
+  ],
+  "n_rows": 39309,
+  "n_dates": 42,
+  "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)"
+}

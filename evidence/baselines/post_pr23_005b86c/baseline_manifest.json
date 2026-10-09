@@ -1,0 +1,252 @@
+{
+  "run_id": "post_pr23_baseline_202610",
+  "purpose": "post-PR23 risk_on/risk_off baseline; retrospective + anchored OOS kept separate",
+  "code": {
+    "experiment_sha": "26f93e4e733b485bf60c14661979e0a26f7df7ed",
+    "pr23_parent_sha": "ca1baee60d617b07f013710c96c7e99a03195c60",
+    "pr24_merge_sha": "7a1586af3a2f7c35f2c4ab144fa87cbe3f58349e",
+    "pr25_merge_sha": "26f93e4e733b485bf60c14661979e0a26f7df7ed",
+    "git_status": "clean",
+    "note": "replay/dataset executed on Modal (infini workspace) after local OOM; local pre-checkpoint risk_off attempt kept under local_run_20261008_pre_checkpoints/"
+  },
+  "evidence_classes": {
+    "current_config_replay": "retrospective; NOT automatically OOS (configs were informed by parts of the same period)",
+    "anchored_oos": "tuner walk_forward; prior windows select, next window held out; label purge at boundaries"
+  },
+  "frozen_inputs": {
+    "config_risk_off_sha256": "7a967e42ce6eadb499b87a3ba22b669f70288b38d60b1da9ff68032c43204424",
+    "config_risk_on_sha256": "8e79e76ac5d2f151549ba9d3fbafd1e0f4e1fcdbe9b00217990bf03367b5d818",
+    "ai_watchlist_sha256": "230f32d6c3bac36a5e44f4f0af2e0b962e4cc2acf9f81ffa7e6fd574f94478b5",
+    "watchlist_history_files": 32,
+    "watchlist_history_all_same_content": true,
+    "watchlist_history_unique_hashes": [
+      "230f32d6c3bac36a5e44f4f0af2e0b962e4cc2acf9f81ffa7e6fd574f94478b5"
+    ],
+    "watchlist_history_span": [
+      "outputs/post_pr23_baseline_202610/frozen_inputs/watchlist_history/ai_watchlist_20260922",
+      "outputs/post_pr23_baseline_202610/frozen_inputs/watchlist_history/ai_watchlist_20261003"
+    ]
+  },
+  "replay_settings": {
+    "mode": "historical_replay",
+    "start_date": "2023-01-01",
+    "end_date": "2026-09-30",
+    "rebalance_frequency": "monthly",
+    "horizons_days": [
+      20,
+      60,
+      120
+    ],
+    "trading_cost_bps": 15.0,
+    "entry_price_mode": "next_open",
+    "exit_price_mode": "close",
+    "theme_source": "rules_proxy",
+    "latest_watchlist_fallback": false,
+    "pre_snapshot_universe": "union",
+    "list_types": [
+      "low_value",
+      "industry_trend",
+      "momentum",
+      "research_pool"
+    ],
+    "include_channels": [
+      "core_ai",
+      "ai_enabler",
+      "ai_peripheral"
+    ],
+    "perturbation": false,
+    "top_n": 10,
+    "per_channel_top_n": true,
+    "benchmark_symbols": [
+      "QQQ",
+      "SOXX",
+      "XLI",
+      "XLU"
+    ],
+    "replay_max_symbols": 800,
+    "replay_asset_status": "all",
+    "disclosure_lookback_days": 720,
+    "delist_return_assumption": -0.55
+  },
+  "tuner_settings": {
+    "selection_mode": "walk_forward",
+    "windows": [
+      {
+        "label": "2023",
+        "start": "2023-01-01",
+        "end": "2023-12-31"
+      },
+      {
+        "label": "2024",
+        "start": "2024-01-01",
+        "end": "2024-12-31"
+      },
+      {
+        "label": "2025",
+        "start": "2025-01-01",
+        "end": "2025-12-31"
+      },
+      {
+        "label": "2026YTD",
+        "start": "2026-01-01",
+        "end": "2026-09-30"
+      }
+    ],
+    "label_purge": "train events/benchmarks filtered by label_end_date < next window start; sweep R04 uses per-date exact label_end max with calendar-gap fallback",
+    "promotion": false,
+    "executor": "modal (infini workspace, MODAL_TUNER_CONCURRENCY=40 per style, max 80 total)",
+    "max_candidates": 36,
+    "random_seed": 42,
+    "param_space_risk_off": "configs/tuner.param_space.json",
+    "param_space_risk_on": "configs/tuner.param_space.momentum.json",
+    "note": "risk_on tuner completed in one batch (tuning_20261009T035725Z, 36 candidates, all ok); risk_off first batch (tuning_20261009T035725Z) lost its local results to a flaky CLI delivery, re-ran as tuning_20261009T080134Z with server-side orchestration + per-candidate volume commits; both final results files are from complete 36-candidate batches, promotion off"
+  },
+  "sweeps": {
+    "split_date": "2026-01-01",
+    "risk_off_baseline": "weightsweep_parity_risk_off_results.csv",
+    "risk_on_baseline": "weightsweep_parity_risk_on_results.csv",
+    "note": "candidate zero recorded as current-config offline baseline; correctness gate only"
+  },
+  "styles": {
+    "risk_off": {
+      "config_frozen_sha256": "7a967e42ce6eadb499b87a3ba22b669f70288b38d60b1da9ff68032c43204424",
+      "network_diagnostics": {
+        "had_rate_limit_or_network_issue": false,
+        "stale_market_data_fallback_used": false,
+        "alpaca_bars_feed": "iex",
+        "alpaca_bars_latest_data_asof_utc": "2026-10-08T04:00:00Z",
+        "alpaca_bars_last_observed_at_utc": "2026-10-08T21:13:58.407654+00:00",
+        "stale_fallback_used_bars": false,
+        "services": {
+          "alpaca": {
+            "requests_started": 24,
+            "http_429": 0,
+            "http_5xx": 0,
+            "cache_hits": 0,
+            "cache_misses": 1
+          }
+        }
+      },
+      "artifacts_dir": "modal_download/replay/risk_off",
+      "success_marker": "risk_off_replay_SUCCESS.json"
+    },
+    "risk_on": {
+      "config_frozen_sha256": "8e79e76ac5d2f151549ba9d3fbafd1e0f4e1fcdbe9b00217990bf03367b5d818",
+      "network_diagnostics": {
+        "had_rate_limit_or_network_issue": false,
+        "stale_market_data_fallback_used": false,
+        "alpaca_bars_feed": "iex",
+        "alpaca_bars_latest_data_asof_utc": "2026-10-08T04:00:00Z",
+        "alpaca_bars_last_observed_at_utc": "2026-10-08T21:42:57.922995+00:00",
+        "stale_fallback_used_bars": false,
+        "services": {
+          "alpaca": {
+            "requests_started": 27,
+            "http_429": 0,
+            "http_5xx": 0,
+            "cache_hits": 0,
+            "cache_misses": 2
+          }
+        }
+      },
+      "artifacts_dir": "modal_download/replay/risk_on",
+      "success_marker": "risk_on_replay_SUCCESS.json"
+    }
+  },
+  "survivor_datasets": {
+    "risk_off": {
+      "meta_present": true,
+      "meta": {
+        "scan_config": "/root/configs/config.risk_off.json",
+        "style": "risk_off",
+        "generated_utc": "2026-10-08T22:12:20.034778+00:00",
+        "start_date": "2023-01-01",
+        "end_date": "2026-09-30",
+        "rebalance_frequency": "monthly",
+        "horizons": [
+          20,
+          60,
+          120
+        ],
+        "list_types": [
+          "low_value",
+          "momentum"
+        ],
+        "trading_cost_bps": 15.0,
+        "roundtrip_cost": 0.003,
+        "entry_price_mode": "next_open",
+        "exit_price_mode": "close",
+        "theme_source": "rules_proxy",
+        "replay_asset_status": "all",
+        "replay_max_symbols": 800,
+        "disclosure_lookback_days": 720,
+        "delist_return_assumption": -0.55,
+        "allow_latest_watchlist_fallback": false,
+        "watchlist_csv_path": "/root/data/ai_watchlist.csv",
+        "watchlist_history_dir": "/root/data/watchlist_history",
+        "pre_snapshot_universe": "union",
+        "channels": [
+          "ai_enabler",
+          "ai_peripheral",
+          "core_ai"
+        ],
+        "n_rows": 39309,
+        "n_dates": 42,
+        "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)"
+      },
+      "csv": "weight_dataset_risk_off.csv",
+      "sha256": "4a0203d9b3782c32717d1c4e979953fcc7572fe5da8e58c9b7acf2606b846c55",
+      "rows": 39309
+    },
+    "risk_on": {
+      "meta_present": true,
+      "meta": {
+        "scan_config": "/root/configs/config.risk_on.json",
+        "style": "risk_on",
+        "generated_utc": "2026-10-08T22:37:34.246727+00:00",
+        "start_date": "2023-01-01",
+        "end_date": "2026-09-30",
+        "rebalance_frequency": "monthly",
+        "horizons": [
+          20,
+          60,
+          120
+        ],
+        "list_types": [
+          "low_value",
+          "momentum"
+        ],
+        "trading_cost_bps": 15.0,
+        "roundtrip_cost": 0.003,
+        "entry_price_mode": "next_open",
+        "exit_price_mode": "close",
+        "theme_source": "rules_proxy",
+        "replay_asset_status": "all",
+        "replay_max_symbols": 800,
+        "disclosure_lookback_days": 720,
+        "delist_return_assumption": -0.55,
+        "allow_latest_watchlist_fallback": false,
+        "watchlist_csv_path": "/root/data/ai_watchlist.csv",
+        "watchlist_history_dir": "/root/data/watchlist_history",
+        "pre_snapshot_universe": "union",
+        "channels": [
+          "ai_enabler",
+          "ai_peripheral",
+          "core_ai"
+        ],
+        "n_rows": 44668,
+        "n_dates": 42,
+        "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)"
+      },
+      "csv": "weight_dataset_risk_on.csv",
+      "sha256": "62b4e40c6954b0ca3b6755157e3bfe8402f42d95f486323d5b05f86e469cb945",
+      "rows": 44668
+    }
+  },
+  "notes": [
+    "SEC/Alpaca caches warm: local canonical cache synced to Modal volume ai-scanner-cache (infini) before the runs; submissions/facts_meta fresh at run time.",
+    "SEC is live data: the Modal risk_off replay differs from the earlier local risk_off replay only at the final unpriced date 2026-09-30 (low_value n_selected 19 vs 18), consistent with same-day companyfacts drift; see local_run_20261008_pre_checkpoints/ for the earlier artifacts.",
+    "Label maturity: labels extending past the last available bar are immature (NaN); late-2026 20d/60d/120d rows appear as unpriced or partial-valid in events.",
+    "watchlist_history contains 32 snapshots from 2026-09-22 onward, all with identical content; pre-snapshot dates use the union approximation (documented in dataset meta watchlist_source)."
+  ]
+}

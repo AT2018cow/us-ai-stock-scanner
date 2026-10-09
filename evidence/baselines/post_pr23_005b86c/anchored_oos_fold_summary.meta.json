@@ -1,0 +1,34 @@
+{
+  "runs": {
+    "risk_off": {
+      "tuning_run_id": "tuning_20261009T080134Z",
+      "base_config": "outputs/post_pr23_baseline_202610/frozen_inputs/config.risk_off.json",
+      "param_space": "configs/tuner.param_space.json",
+      "candidates": 36,
+      "selection_mode": "walk_forward",
+      "picks": {
+        "risk_on": "cand_032",
+        "risk_off": "cand_030"
+      },
+      "risk_on_final_candidate": "cand_032",
+      "risk_on_promotion_eligible": false,
+      "risk_off_final_candidate": "cand_030",
+      "risk_off_promotion_eligible": false
+    },
+    "risk_on": {
+      "tuning_run_id": "tuning_20261009T035725Z",
+      "base_config": "outputs/post_pr23_baseline_202610/frozen_inputs/config.risk_on.json",
+      "param_space": "configs/tuner.param_space.momentum.json",
+      "candidates": 36,
+      "selection_mode": "walk_forward",
+      "picks": {
+        "risk_on": "cand_028",
+        "risk_off": "cand_005"
+      },
+      "risk_on_final_candidate": "cand_028",
+      "risk_on_promotion_eligible": false,
+      "risk_off_final_candidate": "cand_005",
+      "risk_off_promotion_eligible": false
+    }
+  }
+}
