@@ -63,6 +63,7 @@ from ai_value_scanner.evaluation.backtest import (
     forward_return_with_exit,
 )
 from ai_value_scanner.strategy.filtering import (
+    STYLE_STRUCTURAL_STEP_NAMES,
     apply_filters_with_diagnostics,
     partition_filter_steps,
 )
@@ -85,6 +86,30 @@ def partition_dataset_filter_steps(
         channel_name,
         scan_config.strategy_style,
     )
+
+
+def research_skip_low_value_hard_steps(
+    scan_config: Any,
+    hard_steps: list[tuple[str, Any]],
+    requested_steps: list[str],
+) -> list[tuple[str, Any]]:
+    """Expand only the research survivor universe; production is untouched.
+
+    Safety rule: only style-structural hard steps may be skipped. Core/base
+    hard filters can never be bypassed through this research-only path.
+    """
+    if not requested_steps:
+        return hard_steps
+    style = str(getattr(scan_config, "strategy_style", "") or "")
+    allowed = set(STYLE_STRUCTURAL_STEP_NAMES.get(style, frozenset()))
+    requested = {str(x).strip() for x in requested_steps if str(x).strip()}
+    invalid = sorted(requested - allowed)
+    if invalid:
+        raise ValueError(
+            "research hard-step omission may target only "
+            f"{style!r} structural steps; invalid={invalid}"
+        )
+    return [(name, fn) for name, fn in hard_steps if name not in requested]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +143,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--delist-return-assumption", type=float, default=-0.55)
     p.add_argument("--delist-detection-buffer-days", type=int, default=7)
     p.add_argument("--include-channels", default=None, help="Comma-separated channels (default: all in config)")
+    p.add_argument(
+        "--research-skip-low-value-hard-steps",
+        default="",
+        help=(
+            "Research-only comma-separated style-structural hard steps to "
+            "omit while extracting LOW_VALUE survivors. Requires "
+            "--list-types low_value. Never affects production scanning."
+        ),
+    )
     return p
 
 
@@ -138,6 +172,17 @@ def main() -> None:
     output_path = Path(args.output) if args.output else Path(f"outputs/weight_dataset_{style}.csv")
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
     list_types = [x.strip() for x in str(args.list_types).split(",") if x.strip()]
+    research_skip_steps = [
+        x.strip()
+        for x in str(args.research_skip_low_value_hard_steps).split(",")
+        if x.strip()
+    ]
+    if research_skip_steps and list_types != ["low_value"]:
+        raise ValueError(
+            "--research-skip-low-value-hard-steps requires "
+            "--list-types low_value to keep the expanded research universe "
+            "narrow and auditable"
+        )
     roundtrip_cost = (2.0 * args.trading_cost_bps) / 10000.0
     allow_fallback = args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
 
@@ -145,6 +190,26 @@ def main() -> None:
     if args.watchlist_csv_path:
         scan_config.watchlist_csv_path = str(args.watchlist_csv_path)
     scan_config.max_symbols = args.replay_max_symbols
+    if research_skip_steps:
+        # Validate before any network/cache work.
+        allowed = set(
+            STYLE_STRUCTURAL_STEP_NAMES.get(
+                str(scan_config.strategy_style),
+                frozenset(),
+            )
+        )
+        invalid = sorted(set(research_skip_steps) - allowed)
+        if invalid:
+            raise ValueError(
+                "research hard-step omission may target only "
+                f"{scan_config.strategy_style!r} structural steps; "
+                f"invalid={invalid}"
+            )
+        log(
+            "RESEARCH-ONLY expanded survivor extraction: skipping low_value "
+            f"hard steps={sorted(set(research_skip_steps))}",
+            started,
+        )
 
     client, monitor = load_alpaca_client(scan_config)
     sec = load_sec_client(scan_config, monitor)
@@ -362,6 +427,12 @@ def main() -> None:
                         channel_name,
                         steps,
                     )
+                    if list_type == "low_value" and research_skip_steps:
+                        hard_steps = research_skip_low_value_hard_steps(
+                            scan_config,
+                            hard_steps,
+                            research_skip_steps,
+                        )
                 else:
                     hard_steps, soft_steps = steps, []
                 survivors, _diag = apply_filters_with_diagnostics(df, hard_steps)
@@ -509,6 +580,10 @@ def main() -> None:
         "n_rows": int(len(dataset)),
         "n_dates": int(dataset["signal_date"].nunique()) if not dataset.empty else 0,
         "watchlist_source": watchlist_source,
+        "research_expanded_survivor_dataset": bool(research_skip_steps),
+        "research_skipped_low_value_hard_steps": sorted(
+            set(research_skip_steps)
+        ),
     }
     meta_path = output_path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps(meta, indent=2))
