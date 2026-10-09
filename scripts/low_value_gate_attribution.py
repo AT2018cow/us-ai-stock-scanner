@@ -701,6 +701,13 @@ def main() -> None:
         if missing:
             raise ValueError(f"{label} dataset missing columns: {','.join(missing)}")
 
+    risk_on_config = load_config(args.risk_on_config)
+    risk_off_config = load_config(args.risk_off_config)
+    if str(risk_on_config.strategy_style) != "risk_on":
+        raise ValueError("--risk-on-config must declare strategy_style=risk_on")
+    if str(risk_off_config.strategy_style) != "risk_off":
+        raise ValueError("--risk-off-config must declare strategy_style=risk_off")
+
     on_selected = load_channel_selections(
         args.risk_on_signals,
         years=year_set,
@@ -711,8 +718,6 @@ def main() -> None:
         years=year_set,
         channels=channel_set,
     )
-    risk_off_config = load_config(args.risk_off_config)
-
     log("diagnosing risk_on-only low_value selections under risk_off pipeline")
     cases = build_cases(
         risk_on_dataset=risk_on_dataset,
