@@ -1,34 +1,48 @@
-# AI Undervalued US Stocks Scanner (Alpaca + SEC)
+# AI US Stock Research Scanner (Alpaca + SEC)
 
-基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 `AI 观察清单`执行多通道筛选。项目的核心生产策略是 `Low-Value`：在 AI 相关观察池中寻找估值处于低位、质量可接受、且没有明显价值陷阱特征的股票。
+基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 AI 观察池做低频、可解释的人工决策辅助筛选。
 
-**架构**（2026-09-24 起）：双风格并行——`risk_off`（低吸防守 + QQQ SMA200 深熊熔断）与
-`risk_on`（双动量进攻），两套配置独立扫描、独立观察，不合并权重。每周用
-`observation_scan.py` 同时跑两个风格。
+> **当前产品目标（2026-10-10 起）：**
+> **先找到值得拥有的公司，再判断现在是不是一个相对合理的买入时点。**
+>
+> 本项目不是自动量化交易系统。它不负责自动下单、账户持仓管理、自动调仓或高频交易；
+> 它负责把较大的观察池压缩成少量值得人工研究的候选，并把“公司质量”和“入场位置”
+> 分开解释。完整方向见
+> [docs/product_direction_low_frequency_manual_selection.md](docs/product_direction_low_frequency_manual_selection.md)。
 
-程序同时输出辅助清单：
-- `Low-Value`：核心清单，估值与质量优先。
-- `Industry-Trend`：辅助观察清单，用于识别产业趋势和主题联动，不作为生产参数通过/失败的主目标。
-- `Momentum`：辅助观察清单，用于识别价格动量，不作为生产参数通过/失败的主目标。
-- `Research Pool`：宽口径研究池，用于人工扩展研究，不作为自动投资结论。
+当前目标模型：
 
-项目默认只扫描本地 watchlist 中的股票，不执行全市场无约束遍历。
+- **Company Quality**：基于 SEC 基本面、增长、盈利、自由现金流、利润率、资本效率、
+  资产负债表、稀释、估值和业务相关性，回答“这家公司是否值得长期关注”。
+- **Entry Quality**：基于趋势、SMA 结构、20d/60d momentum、pullback/breakout、
+  成交量、距高点位置、相对 QQQ/行业强弱和市场 regime，回答“现在位置是否合理”。
+- **Action State**：把两者组合成少量人工可读状态，例如 Entry Ready、Watch Pullback、
+  Watch Breakout、Hold / Monitor、Avoid / Deteriorating。
 
-定位说明：本项目是保守型 Low-Value 研究筛选器。它优先减少明显高估、现金流较弱、基本面恶化或主题关联不足的候选，而不是追求输出数量。正常市场环境下，`Low-Value` 清单可能只有少量股票，甚至为空；`Industry-Trend`、`Momentum` 和 `Research Pool` 用于辅助研究，不代表自动买入候选。
+**最终面向用户的核心产物是紧凑的 Daily / Weekly Action List，辅以 Detailed Report。**
+Action List 用于快速决定“今天 / 本周该研究谁”；Detailed Report 用于解释完整财务、
+估值、量价、风险、数据新鲜度、provenance 和状态变化原因。两者必须由同一套底层判断生成。
 
-**实盘试点**：见 §15 与 `docs/live_pilot_protocol.md`——分层权重（keep/watch/drop +
-momentum 五层）的实盘语义与 2021-2026 实证依据。
+现有 `Low-Value`、`Industry-Trend`、`Momentum` 和 `Research Pool`
+继续保留，作为迁移期的证据来源和兼容输出；长期用户界面将逐步围绕
+**Quality × Entry → Action List → Detailed Report** 统一。
+
+项目默认只扫描本地 watchlist，不执行全市场无约束遍历。
+
+原 account-NAV / staged live-pilot 路线已降级为历史研究和未来可选扩展，
+不再是当前开发主线。当前优先级是：统一输出契约 → Company Quality →
+Entry Quality → Action List + Detailed Report → prospective observation。
 
 ## 1. 核心能力
 
-- Watchlist-only 扫描（候选池可控，执行速度稳定）
-- 三池并行通道：`core_ai`、`ai_enabler`、`ai_peripheral`
-- 三张并行清单：`low_value`、`industry_trend`、`momentum`
-- 宽口径研究池：`research_pool`，用于人工扩展研究
-- 硬过滤 + 打分排序 + `triage` 分层（`keep/watch/drop`）
-- 网络/限流诊断、过滤诊断、Markdown 运行报告
-- Alpaca 与 SEC 本地缓存（降低重复请求）
-- 可选历史回测（`run_backtest.py`）
+- Watchlist-only 扫描（候选池可控）
+- SEC 基本面获取、缓存、财务指标与估值计算
+- Alpaca 日线、趋势、动量、相对强弱和价格位置特征
+- `low_value` / `industry_trend` / `momentum` / `research_pool` 兼容输出
+- 硬过滤、打分、triage 和可解释诊断
+- 网络 / freshness / provenance 诊断
+- 历史回放与研究工具，用于验证机制而不是自动交易
+- 目标输出：少量高质量人工复核候选，而不是高换手交易信号
 
 ## 2. 数据源
 
@@ -992,10 +1006,16 @@ $100K/$1M 大单买方主动性（tick rule 近似）、场外占比与 3 日价
   3. 在过滤步骤或打分逻辑中显式使用
   4. 同步更新本 README
 
-## 15. 实盘试点操作流程（Live Pilot）
+## 15. 历史实盘试点流程（当前非主路线）
 
-完整规则见 `docs/live_pilot_protocol.md`（预注册，含资金分级 P0 纸面→P1 25%→
-P2 50%→P3 100% 与降级条件）。日常观察运行：
+> **状态：暂停作为产品主路线。** `docs/live_pilot_protocol.md` 保留为历史研究协议和
+> 人工交易参考，但 2026-10-10 起不再驱动研发优先级。当前项目首先建设
+> Company Quality / Entry Quality / Action List / Detailed Report。不要据此新增自动下单、
+> account-NAV、仓位优化或自动调仓功能。
+>
+> 下面命令仍可用于兼容的观察 / 人工复核工作流。
+
+日常观察运行：
 
 ```bash
 .venv/bin/python scripts/daily_run.py

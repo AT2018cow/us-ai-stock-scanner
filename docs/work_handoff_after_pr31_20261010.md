@@ -1,295 +1,330 @@
-# Work handoff after PR31 — 2026-10-10
+# Work Handoff after PR31 — product-direction reset (2026-10-10)
 
-This handoff becomes the current research handoff once PR #31 is merged.
-Do not start a new alpha experiment before completing the small evidence
-revalidation steps below.
+> **Canonical direction changed on 2026-10-10.**
+>
+> First read: `docs/product_direction_low_frequency_manual_selection.md`.
+>
+> The previous roadmap in this file targeted portfolio NAV, prospective portfolio
+> validation and staged live deployment. That is no longer the primary product
+> objective. The repository is now being developed as a **low-frequency,
+> human-decision-support stock-selection system**.
 
-## 1. Repository / PR state
+## 1. Current repository state
 
-Base main when PR31 was opened:
+Baseline verified before this direction change:
 
-- `81345e527514b1af8a79c60f177d92a2beeeb7c6`
+- current `main` at reset: `5ea55046c35324af11daa1cc6407a860ba984116`;
+- PR31 correctness closure is complete;
+- existing canonical replay / attribution evidence remains useful research input;
+- PR #32 portfolio viability triage may remain useful historical evidence about
+  momentum / industry_trend, but its proposed account-NAV follow-up is **not**
+  the required next stage.
 
-PR31:
+Do not discard prior research. Reinterpret it under the new product goal.
 
-- URL: https://github.com/AT2018cow/us-ai-stock-scanner/pull/31
-- title: `Research: close PR30 parity and evidence provenance gaps`
-- purpose: close research-tooling correctness/provenance only
-- no production config change
-- no production scanner/backtest change
-- no parameter promotion
-- no new alpha mechanism
+## 2. New product goal
 
-PR31 full repository CI passed before this handoff document was added. After
-this document/AGENTS update, require the final PR head CI to pass again before
-merge.
+The system should answer two questions separately:
 
-## 2. What PR31 fixes
+> **1. Is this a company worth owning / following?**
+>
+> **2. If yes, is the current price / volume setup a relatively reasonable entry?**
 
-### 2.1 Remaining channel-column leak
+The human remains the final decision maker.
 
-Extracted survivor datasets contain a `channel` column. Production
-cross-sections do not contain that column when
-`apply_research_assessment` runs.
+The system is not expected to place orders, manage brokerage state, rebalance
+automatically, optimize portfolio weights, or trade frequently.
 
-Passing the extracted channel into assessment can cause an `ai_enabler` row
-to self-award `ai_infrastructure_exposure`, adding +0.7 research score and
-possibly changing research priority/gate eligibility.
+## 3. Final user-facing product
 
-A complete direct-call audit of `scripts/*.py` found only three research
-assessment/gate call sites:
+The final user-facing product has two layers.
 
-- `scripts/low_value_gate_ablation.py` — fixed in `9c478546...`;
-- `scripts/sweep_score_weights.py` — fixed in `9c478546...`, regression
-  strengthened in PR31;
-- `scripts/low_value_gate_attribution.py` — remaining affected call site,
-  fixed in PR31.
+### Core: Daily / Weekly Action List
 
-PR31 adds a dedicated attribution regression test requiring the assessment
-callback to receive no dataset `channel` column.
+The Action List is the main product. It should be short and answer:
 
-Audit:
-`docs/research_channel_column_parity_audit_20261010.md`
+- which companies deserve attention now;
+- Company Quality;
+- Entry Quality;
+- Action State;
+- why the name is on the list;
+- the most important risk;
+- what condition should trigger the next review.
 
-### 2.2 PR30 dirty-worktree provenance
+Target main-list size: roughly **5–15 names requiring real human attention**,
+not a fixed number of trades.
 
-The first post-merge PR30 rerun was executed after the channel fix was edited
-but before it was committed. Its manifest therefore records HEAD
-`20a610b9...` even though the executed working tree contained code later
-committed in `9c478546...`.
+Preferred states include:
 
-PR31 prevents recurrence:
+- Buy / Entry Ready;
+- Watch Pullback;
+- Watch Breakout;
+- Hold / Monitor;
+- Avoid / Deteriorating.
 
-- canonical PR30 evaluator requires a readable Git checkout;
-- any dirty tracked or untracked non-ignored state hard-fails;
-- manifest records commit SHA;
-- manifest records Git tree SHA;
-- manifest records `git_worktree_clean=true`.
+These are research states, not automatic orders.
 
-The existing PR30 bundle is retained as historical evidence but marked
-non-canonical until one clean-checkout rerun reproduces it.
+Daily output should emphasize changes. Weekly output should provide a fuller
+Quality × Entry review.
 
-Correction:
-`evidence/baselines/post_pr23_005b86c/pr30_single_range_gate/provenance_correction.md`
+### Supporting layer: Detailed Report
 
-## 3. Prior evidence: what survives / what is superseded
+Every Action List candidate should link conceptually to a detailed report with:
 
-### Survives this specific channel-column audit
+- filing-aware fundamentals;
+- growth, margins, FCF and capital efficiency;
+- balance sheet, debt and dilution;
+- valuation context;
+- price trend, SMA structure and momentum;
+- pullback / breakout / overextension context;
+- relative strength vs QQQ / industry;
+- explicit risks and counter-evidence;
+- data freshness / provenance;
+- Quality / Entry / Action history and change reasons.
 
-PR27 evidence upstream of research assessment remains usable:
+Action List and Detailed Report must come from the same underlying decision
+logic. The report explains the list; it must not contradict it.
 
-- structural hard first-fail counts;
-- direct soft-step failures;
-- production composite score before research assessment;
-- pre-research rank;
-- actual replay risk_on/risk_off selected membership;
-- paired replay-selection diagnostics;
-- `scripts/ic_analysis.py` IC / decile evidence.
+## 4. Canonical mental model
 
-The channel leak does not affect `ic_analysis.py` because that script does
-not call research assessment/gating.
+### Company Quality
 
-### Superseded until corrected rerun
+Slow-moving, fundamentals-first.
 
-Original PR27 attribution fields downstream of research assessment are not
-canonical:
+Use SEC and existing valuation / quality infrastructure to evaluate:
 
-- `risk_off_research_priority`;
-- `risk_off_research_score`;
-- `risk_off_research_risks`;
-- research-gate exclusion counts;
-- post-research rank;
-- downstream group-cap / below-Top-N classifications when gate membership
-  changed.
+- growth quality;
+- profitability;
+- free cash flow;
+- margins;
+- capital efficiency;
+- balance-sheet strength;
+- dilution;
+- accounting red flags;
+- valuation context;
+- business / AI-theme relevance.
 
-Pre-`9c478546` low_value weight-sweep eligibility/results are also
-superseded.
+Output should be understandable, e.g. A / B / C plus reasons.
 
-The PR27 decision note has been annotated rather than deleting historical
-evidence.
+### Entry Quality
 
-## 4. PR28 / PR30 conclusions
+Faster-moving, market-data-first.
 
-Do not rewrite the historical PR28 cross-run hard stop:
+Use existing momentum / industry-trend / technical infrastructure to evaluate:
 
-- PR28 historical replay-vs-extraction ordered parity remains 114/126;
-- 10 mismatches were ai_enabler, one ai_peripheral, one core_ai;
-- those runs also used different mutable data/cache states.
+- medium-term trend;
+- SMA structure;
+- 20d / 60d momentum;
+- pullback / breakout structure;
+- distance from highs;
+- volume behavior;
+- relative strength vs QQQ / theme;
+- overextension;
+- broad-market regime.
 
-The channel-column fix proves the **same-state code-path** defect was fixed; it
-does not prove every Oct-8-vs-Oct-9 historical difference had the same cause.
+Prefer human-readable states such as Entry Ready, Watch Pullback,
+Watch Breakout, Trend Damaged and Overextended.
 
-PR30 same-state result observed after the fix:
+## 5. How existing list types should migrate
 
-- 168/168 ordered oracle parity;
-- single intervention:
-  `max_range_position_52w: hard -> soft`;
-- pooled 120d B-A about +0.00018;
-- positive-date ratio about 38%;
-- block-6 90% CI about [-0.0033, +0.0036];
-- 2024 slightly negative;
-- 2025 about -0.56 percentage points;
-- down regime slightly negative;
-- retrospective gate failed.
+Do not spend the next cycle deciding which existing list becomes an automated portfolio.
 
-Scientific conclusion remains:
+Instead:
 
-**Do not continue the single range-position gate path and do not promote a
-production change.**
+- `low_value` contributes fundamentals / valuation / value-trap logic;
+- `momentum` contributes Entry Quality and relative-strength evidence;
+- `industry_trend` contributes industry / theme confirmation;
+- `research_pool` remains a discovery layer.
 
-However, the committed PR30 result bundle needs the clean provenance rerun
-below before being called canonical evidence.
+The future user abstraction is:
 
-## 5. Immediate post-merge closure: do this before new research
+> **Quality × Entry → Action List → Detailed Report**
 
-### Step A — clean PR30 local rerun
+Existing list names may remain internally during migration.
 
-No new Modal compute is required.
+## 6. Immediate engineering priority
 
-Start from a clean checkout after PR31 merge:
+The next substantive PR should define the **decision-output contract**.
 
-```bash
-git status --short
-python -m unittest discover -s tests
-```
+Before changing production scoring, define a minimal candidate model containing:
 
-`git status --short` must be empty before the evaluator starts.
+- symbol;
+- company-quality grade / score;
+- entry-quality state / score;
+- final action state;
+- top positive fundamental reasons;
+- top fundamental risks;
+- top technical / price reasons;
+- freshness / provenance;
+- state-change explanation.
 
-Use the existing frozen PR28 expanded dataset:
+The same contract should support both the compact Action List and the Detailed Report.
 
-```text
-SHA256 bb6edd7a30d8347aeb2020f77255eb1d043d2417aa8892b1a62da8ff0cad0ad6
-23,774 rows / 42 dates
-```
+Do not start with weight tuning.
+Do not start with account NAV.
+Do not start by rewriting the whole scanner.
 
-If still local:
+## 7. Suggested development sequence
 
-```bash
-RUN_ID=post_pr23_baseline_202610
-EXP="outputs/$RUN_ID"
-DATASET="$EXP/pr28_position_ablation/expanded_dataset/weight_dataset_risk_off.csv"
+### Stage A — documentation alignment
 
-python scripts/low_value_single_gate_ablation.py \
-  --dataset "$DATASET" \
-  --scan-config configs/config.risk_off.json \
-  --output-prefix "$EXP/pr31_pr30_clean_rerun/single_range_gate"
-```
+This direction-reset PR.
 
-If the raw file is absent, recover the existing artifact only:
+Done when AGENTS, README, handoff and live-pilot status no longer conflict.
 
-```bash
-MODAL_PROFILE=infi .venv/bin/python -m modal volume get \
-  --force \
-  ai-scanner-research \
-  "/post_pr28_position_ablation_202610/datasets" \
-  "outputs/post_pr23_baseline_202610/pr31_pr30_clean_rerun/recovered_dataset"
-```
+### Stage B — output-contract PR
 
-Do not run a new extraction/replay.
+Create the schema / model for Quality, Entry and Action State, including the
+shared evidence fields needed by Action List and Detailed Report.
 
-Required clean-rerun checks:
+Prefer an additive compatibility layer so existing scans still work.
 
-- dataset SHA exactly matches the frozen SHA above;
-- config content guard passes;
-- manifest `git_worktree_clean=true`;
-- manifest `code_sha` equals the clean checkout commit;
-- manifest `code_tree_sha` is present;
-- same-state ordered parity is 168/168;
-- retrospective gate remains false;
-- substantive 120d result remains materially identical to the recorded
-  negative PR30 result.
+Tests should cover deterministic state mapping, missing-data behavior and
+Action-List/report consistency.
 
-If any of those fail, stop and debug before interpreting alpha results.
+### Stage C — Company Quality baseline
 
-Commit only compact clean-rerun evidence; keep the raw dataset off Git.
+Build a simple, explainable fundamentals grade from existing SEC metrics.
 
-### Step B — corrected PR27 attribution rerun
+Required diagnostics include coverage, missingness, freshness, distribution by
+channel / market-cap bucket, examples of upgrades / downgrades and historical
+stability where PIT data supports it.
 
-After Step A passes, rerun only the affected attribution analysis using the
-existing frozen survivor datasets and committed replay signal files.
+Do not optimize score weights against one pooled forward-return objective.
 
-Committed signal inputs:
+### Stage D — Entry Quality baseline
 
-- `evidence/baselines/post_pr23_005b86c/post_pr23_baseline_202610_risk_on_events_signals.csv`
-- `evidence/baselines/post_pr23_005b86c/post_pr23_baseline_202610_risk_off_events_signals.csv`
+Use existing market features to classify price setup.
 
-Canonical survivor dataset identities:
+Required diagnostics include state counts, state transitions, forward returns
+by state as diagnostics, regime splits, overextension / trend-damage false
+positives and overlap with existing momentum / industry_trend.
 
-- risk_off: 39,309 rows / 42 dates, SHA begins `4a0203d9`
-- corrected risk_on: 30,355 rows / 42 dates,
-  SHA `295e3de8d0e48b9f9fac0a182c2354e447a0b97c68203ddc3b65d840305a282d`
+The objective is useful timing context, not frequent trading.
 
-The raw survivor CSVs remain off Git. Use the existing local/Volume copies; do
-not regenerate them unless a correctness proof shows they are unavailable or
-insufficient.
+### Stage E — Action List + Detailed Report
 
-Example once the raw paths are resolved:
+Combine Quality and Entry with simple deterministic rules.
 
-```bash
-python scripts/low_value_gate_attribution.py \
-  --risk-on-dataset <corrected-risk-on-csv> \
-  --risk-off-dataset <canonical-risk-off-csv> \
-  --risk-on-signals evidence/baselines/post_pr23_005b86c/post_pr23_baseline_202610_risk_on_events_signals.csv \
-  --risk-off-signals evidence/baselines/post_pr23_005b86c/post_pr23_baseline_202610_risk_off_events_signals.csv \
-  --risk-on-config configs/config.risk_on.json \
-  --risk-off-config configs/config.risk_off.json \
-  --years 2023,2025 \
-  --horizon 120 \
-  --top-n 10 \
-  --output-prefix outputs/post_pr23_baseline_202610/pr31_corrected_low_value_attribution
-```
+Examples:
 
-Compare corrected downstream attribution fields with the original PR27
-artifacts and write a compact correction note. Do not silently overwrite old
-historical files.
+- Quality A + Entry Ready → priority manual review;
+- Quality A + Overextended → Watch Pullback;
+- Quality A + Watch Breakout → monitor;
+- Quality C → normally suppress regardless of momentum.
 
-## 6. What not to do
+Keep the main list compact; put depth in the report.
 
-Until Steps A and B are closed, do not:
+### Stage F — prospective observation
 
-- start a new alpha ablation;
-- modify production risk_off/risk_on thresholds;
-- revive the PR28 three-gate B arm;
-- tune `max_range_position_52w`;
-- launch a broad score-weight sweep;
-- launch the 36-candidate tuner;
-- run a new historical replay;
-- regenerate frozen survivor datasets without a correctness need;
-- call retrospective results anchored OOS;
-- use `--detach` with Modal.
+Archive actual outputs before outcomes are known.
 
-## 7. Compute rules
+Track whether the system:
 
-User requirement: **never use Modal detach**.
+- surfaces genuinely high-quality companies;
+- avoids obvious weak fundamentals;
+- distinguishes good companies from bad entry points;
+- produces understandable state transitions;
+- reduces the user's research workload.
 
-If Modal becomes necessary later:
+### Stage G — optional portfolio tooling
 
-- foreground `modal run` only;
-- explicit `MODAL_PROFILE=infi`;
-- no reliance on default profile;
-- tuner in-flight candidate cap <= 80.
+Only revisit account NAV, sizing, broker integration or automated execution if
+real usage later demonstrates a concrete need. They are not current success
+criteria.
 
-For the immediate PR31 closure, no Modal research compute should be needed.
-A `modal volume get` to recover an existing raw artifact is acceptable and
-is not a new experiment.
+## 8. Validation philosophy
 
-## 8. Research direction after correctness closure
+Historical forward returns remain useful diagnostics, but are not the sole target.
 
-Only after the clean PR30 rerun and corrected attribution rerun are recorded
-should a new mechanism be selected.
+For Company Quality, prioritize financial correctness, PIT availability,
+economic plausibility, stability and separation of obviously stronger/weaker businesses.
 
-The current highest-value candidate direction is **low_value ranking /
-research-gate interaction**, not position hard gates:
+For Entry Quality, prioritize interpretable timing states, subsequent-return
+separation, regime stability, reasonable state persistence and avoidance of
+“chase what already went up” behavior.
 
-- momentum ranking has materially stronger/stabler IC;
-- low_value pooled IC can be positive while decile monotonicity is weak;
-- low_value monotonicity changes by year/regime;
-- PR30 failed to validate the narrow position-gate mechanism.
+For Action List + Detailed Report, prioritize shortlist usefulness,
+explainability, state stability, evidence consistency and attention saved.
 
-Use one pre-registered mechanism at a time. Do not begin with a broad
-parameter search.
+Do not force every module to maximize the same 120d return metric.
 
-## 9. New-conversation entry point
+## 9. Low-frequency operating model
 
-After PR31 merges, the next conversation should first verify the merge and
-then complete Steps A and B above before proposing new alpha work.
+Recommended cadence:
+
+- daily market-data refresh;
+- fundamentals refresh when filings change;
+- Company Quality weekly or event-driven;
+- Entry Quality daily;
+- Daily Action List daily, emphasizing material changes;
+- Weekly Review List once per week;
+- detailed report generated/refreshed for candidates as needed;
+- manual research / trading only when the user decides action is justified.
+
+A daily process may legitimately produce **no new trade**.
+
+## 10. What not to do next
+
+Do not:
+
+- build the account-NAV simulator as the default next PR;
+- add broker order submission;
+- add automated position management;
+- reopen the old position-gate route;
+- launch broad tuner searches;
+- optimize dozens of score weights;
+- increase trading frequency to manufacture sample size;
+- collapse Quality and Entry into one opaque number;
+- build a detailed report with logic different from the Action List;
+- regenerate expensive historical evidence without a specific need;
+- use Modal `--detach`.
+
+Modal remains available for genuinely heavy research, foreground only, with
+explicit `MODAL_PROFILE=infi`.
+
+## 11. Treatment of PR #32 and old portfolio research
+
+PR #32 can still inform Entry Quality design:
+
+- momentum provides useful historical signal evidence;
+- industry_trend may add confirmation / context;
+- style redundancy findings can prevent duplicate logic.
+
+However:
+
+- do not treat PR #32 as an obligation to build account NAV;
+- do not tune portfolio allocations from that evidence;
+- do not interpret the 50/50 proxy as the new product design.
+
+The new question is:
+
+> How can existing signals help identify a good entry for a financially attractive company?
+
+## 12. Definition of success
+
+A successful next-generation scanner should:
+
+1. identify financially stronger companies;
+2. explain why they are stronger;
+3. separately identify whether current price action is favorable;
+4. flag overextended or damaged setups;
+5. generate a short daily / weekly Action List;
+6. provide a detailed report for each important candidate;
+7. show data freshness and provenance;
+8. change states for understandable reasons;
+9. support low-frequency human decisions without pretending to automate them.
+
+## 13. New-conversation entry point
+
+In a new conversation:
+
+1. verify latest `main`;
+2. read `AGENTS.md`;
+3. read `docs/product_direction_low_frequency_manual_selection.md`;
+4. read this handoff;
+5. identify the smallest next PR that improves Quality, Entry, Action List,
+   Detailed Report, explainability or data correctness.
+
+Unless a correctness bug blocks progress, the expected next PR is the
+**Quality / Entry / Action output-contract PR**.

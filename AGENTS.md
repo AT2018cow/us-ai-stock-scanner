@@ -1,9 +1,38 @@
 # AGENTS.md
 
-> **当前交接（PR #31 合并后）：** 请先阅读 `docs/work_handoff_after_pr31_20261010.md`。PR #31 关闭 research dataset `channel` 列泄漏的剩余代码路径，并让 PR30 canonical evidence 在 dirty Git checkout 上直接 hard fail。合并后先完成一次 clean-checkout PR30 本地复现和一次修正后的 PR27 low_value attribution 离线重算；这两步完成前不要启动新 alpha 调参、full replay、dataset extraction 或 broad tuner。position-gate 路线已停止。旧 PR30/PR23/PR8 handoff 仅作历史记录。
+> **当前产品方向（2026-10-10 起，最高优先级）：**
+> 本项目不再以“完备自动量化交易系统 / account-NAV / 自动实盘”为主路线。
+> 北极星是 **低频、人工决策辅助型选股系统：先找到值得拥有的公司，再判断现在是不是相对合理的买入时点。**
+> 所有 agent 开工前先完整阅读
+> `docs/product_direction_low_frequency_manual_selection.md` 和
+> `docs/work_handoff_after_pr31_20261010.md`。
+>
+> **最终用户产物：** 一个紧凑的每日 / 每周 **Action List**，辅以每只候选的
+> **Detailed Report**。Action List 回答“今天 / 本周该看谁、为什么、下一步等待什么”；
+> Detailed Report 提供完整基本面、估值、量价、风险、freshness、provenance 和状态历史。
+> 两者必须由同一套 Quality / Entry 判断生成，不能逻辑冲突。
+>
+> 开发时必须把 **Company Quality** 与 **Entry Quality** 分开建模：
+> Quality 以 SEC 基本面、盈利质量、现金流、资产负债表、稀释、估值等慢变量为主；
+> Entry 以趋势、20d/60d momentum、SMA 结构、pullback/breakout、成交量、
+> 相对 QQQ/行业强弱、overextension 和 regime 等快变量为主。
+> 最终状态应少量、稳定、可解释，例如 Entry Ready / Watch Pullback /
+> Watch Breakout / Hold/Monitor / Trend Damaged / Overextended /
+> Avoid/Deteriorating。**这些是人工研究提示，不是自动买卖指令。**
+>
+> **当前研发优先级：** 先定义统一的 Quality / Entry / Action output contract，
+> 再做 Company Quality baseline、Entry Quality baseline、Action List +
+> Detailed Report 和 prospective observation。现有 `low_value` / `momentum` /
+> `industry_trend` / `research_pool` 先作为证据来源和兼容接口。
+>
+> **当前非目标：** broker 自动下单、账户状态同步、自动调仓、频繁交易、
+> account-NAV simulator、仓位优化、复杂 portfolio construction、broad tuner、
+> 为历史收益反复调 production 参数。PR #32 的 portfolio-triage 证据可保留，
+> 但其原计划的 account-NAV follow-up 已被本方向取代。不要恢复 position-gate
+> 路线；没有明确必要性不要 full replay / dataset regeneration；永远不要使用
+> Modal `--detach`.
 
-
-US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a local watchlist for undervalued AI stocks. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
+US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, used to build a low-frequency human-review shortlist by separating company quality from entry quality. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
 
 ## Commands
 - Install: `.venv/bin/pip install -e .` (py>=3.10; venv is 3.12). `requirements.txt` mirrors pyproject deps.
@@ -22,7 +51,7 @@ US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, filters a loca
 - Theme observation (P0 paper, five themes): `python scripts/theme_observation_scan.py` runs an observation only; `--archive-cohort` explicitly freezes the weekly paper cohort (daily runner does this on Friday only), and `--evaluate` settles matured rows with absolute / vs-QQQ / vs-theme-basket returns. See docs/theme_observation_protocol.md.
 - Daily runner (RECOMMENDED entry point): `python scripts/daily_run.py` — US-market weekdays: AI two-style + five-theme + venture observations; Friday freezes one weekly theme/venture paper cohort and settles matured cohorts; Monday adds population validation + theme basket refresh + venture universe rebuild. Business date is America/New_York (override with `--run-date YYYY-MM-DD`). It does NOT generate the trade-plan reference by default; use `--generate-trade-plan --capital N` only when a compact manual-review summary is wanted. Relevant upstream failures block fresh reference generation. Runner scheduling/result summaries go to `.debug_logs/daily_YYYYMMDD.log`; child-process output remains on the console. See README §15.
 - Venture sleeve universe: `python scripts/build_venture_universe.py --fts` — three-layer discovery funnel (ETF baskets in $100M-$3B window, basket new-membership events via data/theme_history/, SEC full-text-search pre-ETF names).
-- Live pilot: rules in docs/live_pilot_protocol.md (staged capital P0→P3, tier→weight table, weekly population-validation gate). Production scan reports carry explicit `Strategy-Style:` metadata from `ScanConfig.strategy_style`; the Config path is provenance/legacy fallback only.
+- Historical live-pilot reference: `docs/live_pilot_protocol.md` is retained for research history but is **not the current roadmap**. Do not build new broker/position/account-NAV automation from it unless product direction explicitly changes again. Production scan reports still carry explicit `Strategy-Style:` metadata from `ScanConfig.strategy_style`; the Config path is provenance/legacy fallback only.
 
 ## Environment
 - `.env` (gitignored) must set `ALPACA_API_ENDPOINT`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `SEC_USER_AGENT`. Missing values fail at runtime (API client construction), not at import.
