@@ -451,6 +451,23 @@ def summarize_results(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         )
         for row in gap_rows
     )
+    gap_by_form: dict[str, dict[str, Any]] = {}
+    for row in gap_rows:
+        form = str(row.get("current_latest_periodic_form") or "UNKNOWN")
+        bucket = gap_by_form.setdefault(
+            form,
+            {"cases": 0, "edgartools_core_found": 0, "core_found_rate": None},
+        )
+        bucket["cases"] += 1
+        if str(row.get("classification", "")).startswith(
+            "CURRENT_PATH_GAP_EDGARTOOLS_CORE_FOUND"
+        ):
+            bucket["edgartools_core_found"] += 1
+    for bucket in gap_by_form.values():
+        bucket["core_found_rate"] = round(
+            bucket["edgartools_core_found"] / bucket["cases"],
+            6,
+        )
     return {
         "cases": len(materialized),
         "classifications": dict(sorted(classifications.items())),
@@ -459,6 +476,7 @@ def summarize_results(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "current_path_gap_core_found_rate": (
             round(gap_core_found / len(gap_rows), 6) if gap_rows else None
         ),
+        "current_path_gap_by_form": dict(sorted(gap_by_form.items())),
         "custom_core_taxonomy_cases": sum(
             bool((row.get("edgartools") or {}).get("custom_core_taxonomy_present"))
             for row in materialized
@@ -500,9 +518,23 @@ def render_summary_markdown(
         f"- EdgarTools fetch failures: {summary['edgartools_fetch_failures']}",
         f"- EdgarTools XBRL unavailable: {summary['edgartools_xbrl_unavailable']}",
         "",
+        "## Filing-gap resolution by form",
+        "",
+    ]
+    for form, bucket in summary.get("current_path_gap_by_form", {}).items():
+        lines.append(
+            f"- {form}: {bucket['edgartools_core_found']}/{bucket['cases']} "
+            f"(rate={bucket['core_found_rate']})"
+        )
+
+    lines.extend(
+        [
+        "",
         "## Classification counts",
         "",
     ]
+        ]
+    )
     for name, count in summary["classifications"].items():
         lines.append(f"- {name}: {count}")
 
