@@ -255,6 +255,38 @@ def summarize_quality_concentration(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _spearman_rank_correlation(
+    left: pd.Series,
+    right: pd.Series,
+) -> float | None:
+    """Compute Spearman correlation without adding SciPy as a dependency."""
+    x = pd.to_numeric(left, errors="coerce")
+    y = pd.to_numeric(right, errors="coerce")
+    valid = x.notna() & y.notna()
+    if valid.sum() < 3:
+        return None
+
+    x_valid = x[valid]
+    y_valid = y[valid]
+    if x_valid.nunique() < 2 or y_valid.nunique() < 2:
+        return None
+
+    x_rank = x_valid.rank(method="average")
+    y_rank = y_valid.rank(method="average")
+    x_centered = x_rank - float(x_rank.mean())
+    y_centered = y_rank - float(y_rank.mean())
+    denominator = float(
+        np.sqrt(
+            float((x_centered * x_centered).sum())
+            * float((y_centered * y_centered).sum())
+        )
+    )
+    if not np.isfinite(denominator) or denominator <= 0.0:
+        return None
+    correlation = float((x_centered * y_centered).sum()) / denominator
+    return correlation if np.isfinite(correlation) else None
+
+
 def summarize_quality_rank_correlation(
     frame: pd.DataFrame,
     *,
@@ -274,23 +306,15 @@ def summarize_quality_rank_correlation(
         for _, group in frame.groupby("signal_date", sort=True):
             score = pd.to_numeric(group["quality_score"], errors="coerce")
             ret = pd.to_numeric(group[ret_col], errors="coerce")
-            valid = score.notna() & ret.notna()
-            if valid.sum() >= 3 and score[valid].nunique() >= 2 and ret[valid].nunique() >= 2:
-                corr = score[valid].corr(ret[valid], method="spearman")
-                if corr is not None and np.isfinite(corr):
-                    date_return_ic.append(float(corr))
+            corr = _spearman_rank_correlation(score, ret)
+            if corr is not None:
+                date_return_ic.append(corr)
             if qqq_col in group.columns:
                 qqq = pd.to_numeric(group[qqq_col], errors="coerce")
                 excess = ret - qqq
-                valid_ex = score.notna() & excess.notna()
-                if (
-                    valid_ex.sum() >= 3
-                    and score[valid_ex].nunique() >= 2
-                    and excess[valid_ex].nunique() >= 2
-                ):
-                    corr_ex = score[valid_ex].corr(excess[valid_ex], method="spearman")
-                    if corr_ex is not None and np.isfinite(corr_ex):
-                        date_excess_ic.append(float(corr_ex))
+                corr_ex = _spearman_rank_correlation(score, excess)
+                if corr_ex is not None:
+                    date_excess_ic.append(corr_ex)
 
         rows.append(
             {
