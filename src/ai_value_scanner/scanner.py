@@ -57,6 +57,7 @@ from ai_value_scanner.fundamentals.edgartools_fallback import (
     EDGARTOOLS_FALLBACK_VERSION,
     fetch_usd_10q_companyfacts_patch,
     merge_companyfacts_patch,
+    remove_companyfacts_patch,
 )
 from ai_value_scanner.fundamentals.reconstruction import (
     ReconstructedFlows,
@@ -156,6 +157,8 @@ QUARTERLY_FORMS = {"10-Q", "10-K", "20-F", "40-F"}
 REVENUE_TAGS = [
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "RegulatedAndUnregulatedOperatingRevenue",
     "SalesRevenueNet",
 ]
 NET_INCOME_TAGS = ["NetIncomeLoss", "ProfitLoss"]
@@ -2327,6 +2330,36 @@ def relevant_fundamental_fact_accessions(
     return accessions
 
 
+def latest_rolling_ttm_uses_accession(
+    companyfacts: dict[str, Any],
+    tags: list[str],
+    unit: str,
+    accession: str,
+) -> bool:
+    """Require the latest rolling TTM endpoint to come from one exact filing.
+
+    This prevents a fallback filing from merely clearing the coverage flag while
+    the selected Company Quality flow still falls back to an older annual value.
+    """
+    target = str(accession or "").strip()
+    if not target:
+        return False
+    records = extract_fact_records(companyfacts, tags, unit, QUARTERLY_FORMS)
+    exact = [record for record in records if (record.accession or "") == target]
+    if not exact:
+        return False
+    flows = reconstruct_flow_periods(records)
+    rolling = rolling_ttm_points(flows.quarters)
+    if not rolling:
+        return False
+    latest = max(rolling, key=lambda point: point.period_end)
+    latest_exact_end = max(record.period_end for record in exact)
+    return (
+        latest.period_end == latest_exact_end
+        and (latest.accession or "") == target
+    )
+
+
 def fundamental_currency_support(
     companyfacts: dict[str, Any],
     *,
@@ -2546,6 +2579,25 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                 fallback.patch,
             )
             fallback_used = fallback_fact_count > 0
+            if fallback_used:
+                ttm_fresh = all(
+                    latest_rolling_ttm_uses_accession(
+                        companyfacts,
+                        tags,
+                        "USD",
+                        latest_periodic_accession or "",
+                    )
+                    for tags in (
+                        REVENUE_TAGS,
+                        NET_INCOME_TAGS,
+                        OPERATING_CASH_FLOW_TAGS,
+                    )
+                )
+                if not ttm_fresh:
+                    remove_companyfacts_patch(companyfacts, fallback.patch)
+                    fallback_used = False
+                    fallback_fact_count = 0
+                    fallback_status = "ttm_not_fresh"
 
     # Recompute all integrity/freshness fields from the effective in-memory
     # fact set after the narrow exact-filing patch. The raw SEC cache remains
