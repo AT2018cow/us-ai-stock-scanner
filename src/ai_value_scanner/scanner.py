@@ -1850,6 +1850,42 @@ def bars_return_from_lookback(bars: list[dict[str, Any]], lookback_days: int) ->
     return (latest / base) - 1.0
 
 
+def bars_market_asof(bars: list[dict[str, Any]]) -> str | None:
+    """Latest valid daily-bar date, normalized to YYYY-MM-DD."""
+    dates = [
+        pd.to_datetime(item.get("t"), utc=True, errors="coerce")
+        for item in bars
+        if item.get("t")
+    ]
+    valid = [ts for ts in dates if pd.notna(ts)]
+    if not valid:
+        return None
+    return max(valid).date().isoformat()
+
+
+def resolve_market_decision_date(
+    frame: pd.DataFrame,
+    *,
+    benchmark_market_asof: str | None = None,
+) -> str:
+    """Resolve the canonical decision date from observed market data.
+
+    Prefer the QQQ benchmark session because Entry Quality is benchmark-aware.
+    If that provenance is unavailable, fall back to the latest valid symbol
+    market_asof. Never silently use wall-clock UTC date for a prospective
+    decision snapshot.
+    """
+    if benchmark_market_asof:
+        parsed = pd.to_datetime(benchmark_market_asof, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.date().isoformat()
+    if "market_asof" in frame.columns:
+        parsed = pd.to_datetime(frame["market_asof"], errors="coerce").dropna()
+        if not parsed.empty:
+            return parsed.max().date().isoformat()
+    raise ValueError("cannot resolve decision_date from market data")
+
+
 def bars_closes(bars: list[dict[str, Any]]) -> list[float]:
     """Chronological list of valid close prices from daily bars."""
     closes: list[float] = []
@@ -3001,6 +3037,7 @@ def run_scan(
         bars_map.get(entry_benchmark_symbol, []),
         split_events.get(entry_benchmark_symbol),
     )
+    qqq_market_asof = bars_market_asof(qqq_bars)
     qqq_trailing_return_60d = bars_return_from_lookback(qqq_bars, 60)
     if qqq_trailing_return_60d is not None and not np.isfinite(
         qqq_trailing_return_60d
@@ -3039,15 +3076,7 @@ def run_scan(
             split_events.get(row.symbol),
         )
         features = price_dimension_from_bars(row.price, symbol_bars)
-        market_asof = None
-        bar_dates = [
-            pd.to_datetime(item.get("t"), utc=True, errors="coerce")
-            for item in symbol_bars
-            if item.get("t")
-        ]
-        valid_bar_dates = [ts for ts in bar_dates if pd.notna(ts)]
-        if valid_bar_dates:
-            market_asof = max(valid_bar_dates).date().isoformat()
+        market_asof = bars_market_asof(symbol_bars)
         stock_return_60d = features.get("return_60d")
         relative_strength_60d_qqq = None
         if (
@@ -3872,7 +3901,10 @@ def run_scan(
     decision_snapshot_root: Path | None = None
     decision_output_error: str | None = None
     try:
-        decision_date = started_at.date().isoformat()
+        decision_date = resolve_market_decision_date(
+            df,
+            benchmark_market_asof=qqq_market_asof,
+        )
         default_decision_dir = (
             "decisions"
             if config.max_symbols is None
@@ -3941,6 +3973,10 @@ def run_scan(
             code_sha=code_sha,
             input_provenance={
                 "watchlist_csv_path": config.watchlist_csv_path,
+                "decision_date_source": (
+                    "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
+                ),
+                "qqq_market_asof": qqq_market_asof,
                 "legacy_ranked_csv": str(out_path),
                 "industry_trend_csv": str(trend_out_path),
                 "momentum_csv": str(momentum_out_path),
