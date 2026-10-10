@@ -1,0 +1,49 @@
+{
+  "counts": {
+    "action": {
+      "AVOID": 162,
+      "HOLD_MONITOR": 247,
+      "PRIORITY_REVIEW": 17,
+      "WATCH_BREAKOUT": 52,
+      "WATCH_PULLBACK": 32
+    },
+    "daily_attention": 15,
+    "decisions": 510,
+    "entry": {
+      "ENTRY_READY": 47,
+      "INSUFFICIENT_DATA": 7,
+      "TREND_DAMAGED": 230,
+      "WATCH_BREAKOUT": 141,
+      "WATCH_PULLBACK": 85
+    },
+    "fundamental_fallback": {
+      "edgartools_10q_used": 0,
+      "status": {
+        "core_facts_incomplete": 45,
+        "filing_mismatch": 2,
+        "ineligible_form": 6,
+        "not_needed": 457
+      }
+    },
+    "fundamental_integrity": {
+      "fundamental_currency_unsupported": 17,
+      "latest_periodic_filing_not_covered": 53
+    },
+    "quality": {
+      "A": 168,
+      "B": 180,
+      "C": 88,
+      "UNRATED": 74
+    },
+    "weekly_attention": 15
+  },
+  "decision_date": "2026-10-09",
+  "errors": [],
+  "ok": true,
+  "root": "outputs/decision_experiments/risk_off_20261010T174923Z/2026-10-09/risk_off",
+  "strategy_style": "risk_off",
+  "warnings": [
+    "latest periodic filing is not covered by recognized Company Facts for 53 decision(s)",
+    "non-USD core monetary facts are unsupported for 17 decision(s)"
+  ]
+}
