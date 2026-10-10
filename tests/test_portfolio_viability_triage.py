@@ -18,4 +18,33 @@ class TestPortfolioViabilityTriage(unittest.TestCase):
         r=pvt.return_stats(x); self.assertEqual(r["top_year"],"2025"); self.assertAlmostEqual(r["avg_excess_without_top_year"],.025); self.assertGreater(r["loo_avg_excess_min"],0)
     def test_jaccard(self):
         self.assertAlmostEqual(pvt.jaccard(frozenset("ABC"),frozenset("BCD")),.5)
+    def test_duplicated_benchmark_rows_are_deduped(self):
+        import tempfile
+        root=Path(tempfile.mkdtemp())
+        ev=pd.DataFrame({"signal_date":["2023-01-31"]*6,"list_type":["momentum"]*3+["industry_trend"]*3,"horizon_days":[20,60,120]*2,"event_status":["valid"]*6,"portfolio_return":[.05,.06,.07,.04,.05,.06],"n_selected":[10]*6,"n_priced":[10]*6,"regime":["up"]*6})
+        sg=pd.DataFrame({"signal_date":["2023-01-31","2023-01-31"],"list_type":["momentum","industry_trend"],"symbols":["['A','B']","['B','C']"]})
+        bq=pd.DataFrame({"signal_date":["2023-01-31"]*6,"horizon_days":[20,20,60,60,120,120],"benchmark":["QQQ"]*6,"benchmark_return":[.01,.01,.02,.02,.03,.03]})
+        for style in ("risk_off","risk_on"):
+            ev.to_csv(root/f"post_pr23_baseline_202610_{style}_events.csv",index=False)
+            sg.to_csv(root/f"post_pr23_baseline_202610_{style}_events_signals.csv",index=False)
+        bq.to_csv(root/"post_pr23_baseline_202610_risk_off_benchmarks.csv",index=False)
+        pd.DataFrame({"style":[],"list_type":[],"horizon":[],"top1_share":[],"sum_after_removing_top1":[]}).to_csv(root/"selection_attribution_concentration.csv",index=False)
+        pd.DataFrame({"style":[],"list_type":[],"channel":[],"total_selected":[]}).to_csv(root/"selection_attribution_channel.csv",index=False)
+        rows,_,_,_=pvt.analyze(root)
+        self.assertEqual(len(rows),18)
+        self.assertAlmostEqual(rows.iloc[0]["avg_excess_vs_qqq"],.04)
+    def test_conflicting_benchmark_duplicates_raise(self):
+        import tempfile
+        root=Path(tempfile.mkdtemp())
+        ev=pd.DataFrame({"signal_date":["2023-01-31"]*6,"list_type":["momentum"]*3+["industry_trend"]*3,"horizon_days":[20,60,120]*2,"event_status":["valid"]*6,"portfolio_return":[.05,.06,.07,.04,.05,.06],"n_selected":[10]*6,"n_priced":[10]*6,"regime":["up"]*6})
+        sg=pd.DataFrame({"signal_date":["2023-01-31","2023-01-31"],"list_type":["momentum","industry_trend"],"symbols":["['A','B']","['B','C']"]})
+        bq=pd.DataFrame({"signal_date":["2023-01-31"]*2,"horizon_days":[20]*2,"benchmark":["QQQ"]*2,"benchmark_return":[.01,.02]})
+        for style in ("risk_off","risk_on"):
+            ev.to_csv(root/f"post_pr23_baseline_202610_{style}_events.csv",index=False)
+            sg.to_csv(root/f"post_pr23_baseline_202610_{style}_events_signals.csv",index=False)
+        bq.to_csv(root/"post_pr23_baseline_202610_risk_off_benchmarks.csv",index=False)
+        pd.DataFrame({"style":[],"list_type":[],"horizon":[],"top1_share":[],"sum_after_removing_top1":[]}).to_csv(root/"selection_attribution_concentration.csv",index=False)
+        pd.DataFrame({"style":[],"list_type":[],"channel":[],"total_selected":[]}).to_csv(root/"selection_attribution_channel.csv",index=False)
+        with self.assertRaises(ValueError):
+            pvt.analyze(root)
 if __name__=="__main__": unittest.main()

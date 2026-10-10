@@ -74,6 +74,12 @@ def analyze(root):
     events={"risk_off":read("post_pr23_baseline_202610_risk_off_events.csv"),"risk_on":read("post_pr23_baseline_202610_risk_on_events.csv")}
     signals={"risk_off":read("post_pr23_baseline_202610_risk_off_events_signals.csv"),"risk_on":read("post_pr23_baseline_202610_risk_on_events_signals.csv")}
     b=read("post_pr23_baseline_202610_risk_off_benchmarks.csv"); qqq=b[b.benchmark.eq("QQQ")][["signal_date","horizon_days","benchmark_return"]].rename(columns={"benchmark_return":"qqq_return"})
+    # Benchmark rows are written once per evaluated list type; the copies are
+    # value-identical, so keep one row per date/horizon (fail loudly if not).
+    dup_check = qqq.groupby(["signal_date","horizon_days"]).qqq_return.nunique()
+    if int((dup_check > 1).sum()):
+        raise ValueError("benchmark rows disagree for the same date/horizon")
+    qqq = qqq.drop_duplicates(["signal_date","horizon_days"])
     conc=read("selection_attribution_concentration.csv")
     rows=[]; segments=[]; overlap=[]; styles=[]; cache={}; sets={}
     for style in events:
