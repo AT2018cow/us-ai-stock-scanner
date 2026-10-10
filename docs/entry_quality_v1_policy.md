@@ -168,6 +168,38 @@ applied.
 
 The score is not used to override the ordered state rules.
 
+### 8.1 Fixed component scoring bands
+
+Trend:
+
+- SMA200 ratio: >=1.05 -> 1.00; >=1.00 -> 0.90; >=0.95 -> 0.50; otherwise 0.00.
+- SMA50 ratio: 0.98–1.08 -> 1.00; 0.95–1.10 -> 0.60;
+  0.92–1.15 -> 0.30; otherwise 0.00.
+- days below SMA200: <=0 -> 1.00; <=5 -> 0.80; <15 -> 0.40; otherwise 0.00.
+
+Momentum:
+
+- 20d return: -3% to +12% -> 1.00; -8% to +15% -> 0.60;
+  otherwise 0.20.
+- 60d return: >=10% -> 1.00; >=0% -> 0.80; >=-8% -> 0.40;
+  otherwise 0.10.
+
+Relative strength versus QQQ:
+
+- >=+5% -> 1.00;
+- >=-3% -> 0.75;
+- >=-10% -> 0.40;
+- otherwise 0.00.
+
+Location:
+
+- 52w drawdown: 3–18% -> 1.00; 0–22% -> 0.75; <=30% -> 0.45;
+  otherwise 0.10.
+- 52w range position: 0.50–0.90 -> 1.00; 0.30–0.50 -> 0.60;
+  0.90–0.95 -> 0.70; >0.95 -> 0.35; otherwise 0.25.
+
+These score bands are also frozen before outcome inspection.
+
 ## 9. Historical evaluation
 
 Entry validation is conditional on Company Quality **A or B**. The historical
