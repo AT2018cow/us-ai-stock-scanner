@@ -1,5 +1,14 @@
 """Backtest evaluation primitives."""
 
+from .entry_quality import (
+    apply_entry_quality_v1,
+    build_entry_quality_evaluation_frame,
+    build_entry_state_transitions,
+    summarize_entry_state_cohorts,
+    summarize_entry_state_concentration,
+    summarize_entry_state_persistence,
+    validate_entry_replay_frame,
+)
 from .company_quality import (
     apply_company_quality_v1,
     summarize_quality_cohorts,
@@ -23,6 +32,13 @@ from .backtest import (
 )
 
 __all__ = [
+    "validate_entry_replay_frame",
+    "summarize_entry_state_persistence",
+    "summarize_entry_state_concentration",
+    "summarize_entry_state_cohorts",
+    "build_entry_state_transitions",
+    "build_entry_quality_evaluation_frame",
+    "apply_entry_quality_v1",
     "apply_company_quality_v1",
     "build_signal_diagnostics",
     "event_backtest",
