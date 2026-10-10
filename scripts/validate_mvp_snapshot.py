@@ -173,6 +173,22 @@ def validate_snapshot(
         state.value: sum(decision.action_state is state for decision in decisions)
         for state in ActionState
     }
+    integrity_counts = {
+        "latest_periodic_filing_not_covered": sum(
+            any(
+                item.code == "latest_periodic_filing_not_covered"
+                for item in decision.quality.missing
+            )
+            for decision in decisions
+        ),
+        "fundamental_currency_unsupported": sum(
+            any(
+                item.code == "fundamental_currency_unsupported"
+                for item in decision.quality.missing
+            )
+            for decision in decisions
+        ),
+    }
 
     n = len(decisions)
     if n > 0 and quality_counts[QualityGrade.UNRATED.value] / n > 0.50:
@@ -185,6 +201,16 @@ def validate_snapshot(
         warnings.append("Weekly Review List is empty")
     if action_counts[ActionState.PRIORITY_REVIEW.value] == 0:
         warnings.append("no PRIORITY_REVIEW names in this snapshot")
+    if integrity_counts["latest_periodic_filing_not_covered"] > 0:
+        warnings.append(
+            "latest periodic filing is not covered by recognized Company Facts for "
+            f"{integrity_counts['latest_periodic_filing_not_covered']} decision(s)"
+        )
+    if integrity_counts["fundamental_currency_unsupported"] > 0:
+        warnings.append(
+            "non-USD core monetary facts are unsupported for "
+            f"{integrity_counts['fundamental_currency_unsupported']} decision(s)"
+        )
 
     input_provenance = manifest.get("input_provenance", {}) or {}
     if input_provenance.get("network_issue_flag") is True:
@@ -204,6 +230,7 @@ def validate_snapshot(
             "quality": quality_counts,
             "entry": entry_counts,
             "action": action_counts,
+            "fundamental_integrity": integrity_counts,
         },
         "errors": errors,
         "warnings": warnings,
@@ -242,6 +269,7 @@ def main() -> None:
             print(f"quality={counts['quality']}")
             print(f"entry={counts['entry']}")
             print(f"action={counts['action']}")
+            print(f"fundamental_integrity={counts.get('fundamental_integrity', {})}")
         for warning in result.get("warnings", []):
             print(f"[WARN] {warning}")
         for error in result.get("errors", []):
