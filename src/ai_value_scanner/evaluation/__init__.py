@@ -1,5 +1,12 @@
 """Backtest evaluation primitives."""
 
+from .company_quality import (
+    apply_company_quality_v1,
+    summarize_quality_cohorts,
+    summarize_quality_concentration,
+    summarize_quality_rank_correlation,
+    validate_quality_replay_frame,
+)
 from .backtest import (
     build_signal_diagnostics,
     event_backtest,
@@ -16,6 +23,7 @@ from .backtest import (
 )
 
 __all__ = [
+    "apply_company_quality_v1",
     "build_signal_diagnostics",
     "event_backtest",
     "fallback_label_end_date",
@@ -28,4 +36,8 @@ __all__ = [
     "parse_json_object",
     "summarize_backtest",
     "summarize_backtest_by_segment",
+    "summarize_quality_cohorts",
+    "summarize_quality_concentration",
+    "summarize_quality_rank_correlation",
+    "validate_quality_replay_frame",
 ]
