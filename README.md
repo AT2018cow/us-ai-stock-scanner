@@ -150,6 +150,21 @@ python scripts/evaluate_action_states.py \
 
 该诊断是 retrospective evidence，不会自动修改 Quality / Entry 阈值。
 
+首次真实数据验收建议使用一键入口，而不是手工拼接命令：
+
+```bash
+# 可重复实验，不占用正式 prospective archive
+python scripts/run_mvp_full_scan.py
+
+# 实验通过后，再显式创建正式不可变 snapshot
+python scripts/run_mvp_full_scan.py --formal
+```
+
+该入口会先跑 unittest，再执行 full watchlist scan，并自动校验 canonical JSONL、
+Action List、Weekly Review、Detailed Report、Action mapping 与 attention cap。
+完整验收标准见
+[docs/mvp_full_scan_acceptance.md](docs/mvp_full_scan_acceptance.md)。
+
 ### 3.5 官方配置
 
 自 2026-09-24 起采用**两风格架构**（原 balanced 与 risk_off 收益相关性 0.999，已归档）：
