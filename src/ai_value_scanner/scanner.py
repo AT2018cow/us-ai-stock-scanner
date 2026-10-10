@@ -1240,13 +1240,13 @@ class SecClient:
         subs_path = self.cache_dir / f"submissions_{cik}.json"
         need_fetch = not cache_path.exists()
         latest_accn: str | None = None
-        latest_periodic: dict[str, str] | None = None
         if subs_path.exists():
             try:
                 subs = json.loads(subs_path.read_text())
-                latest_periodic = latest_periodic_filing(subs)
-                if latest_periodic is not None:
-                    latest_accn = latest_periodic["accession"] or None
+                recent = subs.get("filings", {}).get("recent", {}) or {}
+                accessions = recent.get("accessionNumber", []) or []
+                if accessions:
+                    latest_accn = str(accessions[0])
             except Exception:
                 pass  # fall back to metadata/mtime heuristics below
         if cache_path.exists() and not need_fetch:
@@ -1285,9 +1285,9 @@ class SecClient:
                             os.replace(meta_tmp, meta_path)
                     if not need_fetch:
                         subs = json.loads(subs_path.read_text())
-                        periodic = latest_periodic_filing(subs)
-                        if periodic is not None:
-                            latest_filing = pd.Timestamp(periodic["filed"]).timestamp()
+                        filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
+                        if filing_dates:
+                            latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
                             if latest_filing > cache_path.stat().st_mtime:
                                 need_fetch = True
                 except Exception:
@@ -2389,18 +2389,20 @@ def _parsed_fund_cache_meta(
 
 def _submissions_latest_filing(subs_cache: Path) -> str | None:
     try:
-        filing = latest_periodic_filing(json.loads(subs_cache.read_text()))
-        return filing["filed"] if filing is not None else None
+        subs = json.loads(subs_cache.read_text())
+        filings = subs.get("filings", {}).get("recent", {}) or {}
+        dates = filings.get("filingDate", []) or []
+        return str(dates[0]) if dates else None
     except Exception:
         return None
 
 
 def _submissions_latest_accession(subs_cache: Path) -> str | None:
     try:
-        filing = latest_periodic_filing(json.loads(subs_cache.read_text()))
-        if filing is None:
-            return None
-        return filing["accession"] or None
+        subs = json.loads(subs_cache.read_text())
+        filings = subs.get("filings", {}).get("recent", {}) or {}
+        accessions = filings.get("accessionNumber", []) or []
+        return str(accessions[0]) if accessions else None
     except Exception:
         return None
 
