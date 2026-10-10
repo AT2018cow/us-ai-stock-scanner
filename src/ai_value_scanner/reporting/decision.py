@@ -50,18 +50,64 @@ def _render_evidence(items: Iterable[EvidenceItem]) -> list[str]:
     return rendered
 
 
-def render_action_list(decisions: Iterable[StockDecision]) -> str:
-    """Render a minimal Action List without recomputing any decision state."""
+def _rationale_by_polarity(
+    decision: StockDecision,
+) -> tuple[tuple[EvidenceItem, ...], tuple[EvidenceItem, ...]]:
+    positives = tuple(
+        item for item in decision.rationale if item.polarity == "positive"
+    )
+    counter = tuple(
+        item
+        for item in decision.rationale
+        if item.polarity in {"negative", "missing", "neutral"}
+    )
+    return positives, counter
+
+
+def render_action_list(
+    decisions: Iterable[StockDecision],
+    *,
+    title: str = "Action List",
+    cadence: str | None = None,
+) -> str:
+    """Render the compact attention surface from canonical StockDecision objects."""
     materialized = tuple(decisions)
-    lines = ["# Action List", ""]
+    lines = [f"# {title}", ""]
+    if cadence:
+        lines.extend(
+            [
+                f"- Cadence: {cadence}",
+                "- States are research priorities, not automated trade instructions.",
+                "",
+            ]
+        )
     if not materialized:
         lines.extend(["- no decisions", ""])
         return "\n".join(lines)
 
     for decision in materialized:
         lines.extend(_render_decision_summary(decision, heading_level=2))
-        lines.extend(["", "### Rationale", ""])
-        lines.extend(_render_evidence(decision.rationale))
+        positives, counter = _rationale_by_polarity(decision)
+        lines.extend(["", "### Key positives", ""])
+        lines.extend(_render_evidence(positives))
+        lines.extend(["", "### Risks / counter-evidence", ""])
+        lines.extend(_render_evidence(counter))
+        lines.extend(["", "### Current price structure", ""])
+        price_items = tuple(
+            item
+            for item in (*decision.entry.positives, *decision.entry.risks)
+            if item.metric
+            in {
+                "price_to_sma50",
+                "price_to_sma200",
+                "return_20d",
+                "return_60d",
+                "relative_strength_60d_qqq",
+                "volatility_60d",
+                "regime",
+            }
+        )
+        lines.extend(_render_evidence(price_items[:4]))
         lines.append("")
     return "\n".join(lines)
 
@@ -114,6 +160,11 @@ def render_detailed_report(decision: StockDecision) -> str:
             "### Risks",
             "",
             *_render_evidence(decision.entry.risks),
+            "",
+            "## Decision History",
+            "",
+            f"- Previous action: {_display(decision.previous_action_state.value if decision.previous_action_state else None)}",
+            f"- State change: {_display(decision.state_change_reason)}",
             "",
             "## Provenance",
             "",
