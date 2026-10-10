@@ -53,6 +53,11 @@ from ai_value_scanner.fundamentals.facts import (
     merged_standard_taxonomy_facts,
     normalize_form,
 )
+from ai_value_scanner.fundamentals.edgartools_fallback import (
+    EDGARTOOLS_FALLBACK_VERSION,
+    fetch_usd_10q_companyfacts_patch,
+    merge_companyfacts_patch,
+)
 from ai_value_scanner.fundamentals.reconstruction import (
     ReconstructedFlows,
     current_ttm_pair,
@@ -273,6 +278,18 @@ CORE_MONETARY_CURRENCY_TAGS = frozenset(
     ]
 )
 _CURRENCY_UNIT_PATTERN = re.compile(r"^[A-Z]{3}$")
+
+EDGARTOOLS_FALLBACK_ALLOWED_TAGS = frozenset(
+    set(FUNDAMENTAL_DATA_ASOF_TAGS)
+    .union(SHARES_TAGS)
+    .union(EPS_TAGS)
+    .union(BACKLOG_TAGS)
+)
+EDGARTOOLS_FALLBACK_CORE_TAG_GROUPS: dict[str, tuple[str, ...]] = {
+    "revenue": tuple(REVENUE_TAGS),
+    "net_income": tuple(NET_INCOME_TAGS),
+    "operating_cash_flow": tuple(OPERATING_CASH_FLOW_TAGS),
+}
 
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
@@ -2312,16 +2329,20 @@ def relevant_fundamental_fact_accessions(
 
 def fundamental_currency_support(
     companyfacts: dict[str, Any],
+    *,
+    accession: str | None = None,
 ) -> tuple[str | None, bool | None]:
-    """Detect whether core monetary facts are available in USD.
+    """Detect core monetary currency, optionally for one exact filing accession.
 
-    Live valuation combines SEC monetary facts with USD market prices. We do
-    not silently mix local-currency facts with USD market cap. Non-USD-only
-    foreign issuers are therefore explicitly unsupported until an FX-aware
-    normalization layer is intentionally introduced.
+    When an accession is supplied, only core facts from that filing contribute.
+    USD is considered supported only when it is the sole detected core monetary
+    currency. This avoids the old false-positive behavior where a foreign
+    issuer could be labeled USD merely because some historical or supplemental
+    fact somewhere in Company Facts used USD.
     """
     facts = merged_standard_taxonomy_facts(companyfacts)
     currencies: set[str] = set()
+    target_accession = str(accession or "").strip()
     for tag in CORE_MONETARY_CURRENCY_TAGS:
         tag_obj = facts.get(tag, {})
         units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
@@ -2331,9 +2352,18 @@ def fundamental_currency_support(
             token = str(unit).strip().upper()
             if not _CURRENCY_UNIT_PATTERN.fullmatch(token):
                 continue
-            if isinstance(entries, list) and entries:
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if target_accession and str(item.get("accn") or "").strip() != target_accession:
+                    continue
+                if normalize_form(item.get("form")) not in QUARTERLY_FORMS:
+                    continue
                 currencies.add(token)
-    if "USD" in currencies:
+                break
+    if currencies == {"USD"}:
         return "USD", True
     if currencies:
         return ",".join(sorted(currencies)), False
@@ -2382,7 +2412,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 6
+PARSED_FUND_CACHE_VERSION = 7
 
 
 def _parsed_fund_cache_meta(
@@ -2483,7 +2513,6 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
-    fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
     latest_periodic = latest_periodic_filing(submissions)
     latest_periodic_filing_date = (
         latest_periodic["filed"] if latest_periodic is not None else None
@@ -2494,6 +2523,34 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     latest_periodic_accession = (
         latest_periodic["accession"] if latest_periodic is not None else None
     )
+
+    fact_accessions = relevant_fundamental_fact_accessions(companyfacts)
+    initially_covered = (
+        None
+        if not latest_periodic_accession
+        else latest_periodic_accession in fact_accessions
+    )
+    fallback_status = "not_needed"
+    fallback_used = False
+    fallback_fact_count = 0
+    if initially_covered is False:
+        fallback = fetch_usd_10q_companyfacts_patch(
+            periodic_filing=latest_periodic,
+            allowed_tags=EDGARTOOLS_FALLBACK_ALLOWED_TAGS,
+            core_tag_groups=EDGARTOOLS_FALLBACK_CORE_TAG_GROUPS,
+        )
+        fallback_status = fallback.status
+        if fallback.used:
+            fallback_fact_count = merge_companyfacts_patch(
+                companyfacts,
+                fallback.patch,
+            )
+            fallback_used = fallback_fact_count > 0
+
+    # Recompute all integrity/freshness fields from the effective in-memory
+    # fact set after the narrow exact-filing patch. The raw SEC cache remains
+    # untouched.
+    fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
     fact_accessions = relevant_fundamental_fact_accessions(companyfacts)
     fundamental_facts_cover_latest_periodic = (
         None
@@ -2501,7 +2558,15 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         else latest_periodic_accession in fact_accessions
     )
     fundamental_reporting_currency, fundamental_currency_supported = (
-        fundamental_currency_support(companyfacts)
+        fundamental_currency_support(
+            companyfacts,
+            accession=latest_periodic_accession,
+        )
+    )
+    fundamental_source = (
+        "companyfacts+edgartools_exact_10q"
+        if fallback_used and fundamental_facts_cover_latest_periodic is True
+        else "companyfacts"
     )
 
     def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
@@ -2732,6 +2797,13 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "fundamental_facts_cover_latest_periodic": fundamental_facts_cover_latest_periodic,
         "fundamental_reporting_currency": fundamental_reporting_currency,
         "fundamental_currency_supported": fundamental_currency_supported,
+        "fundamental_source": fundamental_source,
+        "fundamental_edgartools_fallback_used": fallback_used,
+        "fundamental_edgartools_fallback_status": fallback_status,
+        "fundamental_edgartools_fallback_version": (
+            EDGARTOOLS_FALLBACK_VERSION if fallback_used else None
+        ),
+        "fundamental_edgartools_fallback_fact_count": fallback_fact_count,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -2851,6 +2923,11 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "fundamental_facts_cover_latest_periodic": None,
                         "fundamental_reporting_currency": None,
                         "fundamental_currency_supported": None,
+                        "fundamental_source": None,
+                        "fundamental_edgartools_fallback_used": False,
+                        "fundamental_edgartools_fallback_status": "collection_error",
+                        "fundamental_edgartools_fallback_version": None,
+                        "fundamental_edgartools_fallback_fact_count": 0,
                         "revenue_ttm_history_json": None,
                         "net_income_ttm_history_json": None,
                         "shares_history_json": None,
@@ -3498,6 +3575,11 @@ def run_scan(
         "fundamental_facts_cover_latest_periodic",
         "fundamental_reporting_currency",
         "fundamental_currency_supported",
+        "fundamental_source",
+        "fundamental_edgartools_fallback_used",
+        "fundamental_edgartools_fallback_status",
+        "fundamental_edgartools_fallback_version",
+        "fundamental_edgartools_fallback_fact_count",
         "regime",
         "benchmark_trend_ok",
         "market_cap",
