@@ -630,3 +630,65 @@ def merge_companyfacts_patch(
                 existing.add(identity)
                 appended += 1
     return appended
+
+
+def remove_companyfacts_patch(
+    companyfacts: dict[str, Any],
+    patch: Mapping[str, Any] | None,
+) -> int:
+    """Remove only exact rows previously injected by merge_companyfacts_patch."""
+
+    if not patch:
+        return 0
+    raw_patch = patch.get("facts", {}) if isinstance(patch, Mapping) else {}
+    patch_taxonomy = raw_patch.get(_STANDARD_TAXONOMY, {})
+    if not isinstance(patch_taxonomy, Mapping):
+        return 0
+    taxonomy = companyfacts.get("facts", {}).get(_STANDARD_TAXONOMY, {})
+    if not isinstance(taxonomy, Mapping):
+        return 0
+
+    removed = 0
+    for tag, incoming_obj in patch_taxonomy.items():
+        target_obj = taxonomy.get(tag)
+        if not isinstance(target_obj, dict) or not isinstance(incoming_obj, Mapping):
+            continue
+        target_units = target_obj.get("units", {})
+        incoming_units = incoming_obj.get("units", {})
+        if not isinstance(target_units, dict) or not isinstance(incoming_units, Mapping):
+            continue
+        for unit, incoming_entries in incoming_units.items():
+            target_entries = target_units.get(unit)
+            if not isinstance(target_entries, list) or not isinstance(incoming_entries, list):
+                continue
+            identities = {
+                (
+                    str(item.get("accn") or ""),
+                    str(item.get("start") or ""),
+                    str(item.get("end") or ""),
+                    item.get("val"),
+                    str(item.get("form") or ""),
+                    str(item.get("filed") or ""),
+                )
+                for item in incoming_entries
+                if isinstance(item, Mapping)
+            }
+            kept = []
+            for item in target_entries:
+                if not isinstance(item, Mapping):
+                    kept.append(item)
+                    continue
+                identity = (
+                    str(item.get("accn") or ""),
+                    str(item.get("start") or ""),
+                    str(item.get("end") or ""),
+                    item.get("val"),
+                    str(item.get("form") or ""),
+                    str(item.get("filed") or ""),
+                )
+                if identity in identities:
+                    removed += 1
+                    continue
+                kept.append(item)
+            target_units[unit] = kept
+    return removed
