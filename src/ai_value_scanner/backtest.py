@@ -1451,7 +1451,7 @@ def compute_price_features_asof(
     asof: pd.Timestamp,
     lookback_days: int,
     split_events: list[tuple[str, float]] | None = None,
-) -> dict[str, float | int | None] | None:
+) -> dict[str, float | int | str | None] | None:
     """Adapt PIT replay bars to the canonical price-history feature core."""
     if bar_df.empty:
         return None
@@ -1514,9 +1514,11 @@ def compute_price_features_asof(
         closes=closes,
         dollar_volumes=dollar_volumes,
     )
+    market_asof = pd.Timestamp(up_to.index[-1]).date().isoformat()
     return {
         "price": price,
         "dollar_volume": dollar_volume,
+        "market_asof": market_asof,
         **features,
     }
 
@@ -2026,6 +2028,7 @@ def build_cross_section_asof(
     benchmark_return_60d: float | None,
     disclosure_lookback_days: int,
     scan_config: ScanConfig,
+    qqq_return_60d: float | None = None,
     benchmark_trend_ok: bool | None = None,
     split_events: dict[str, list[tuple[str, float]]] | None = None,
 ) -> pd.DataFrame:
@@ -2346,12 +2349,14 @@ def build_cross_section_asof(
                 "dollar_volume": price_feat["dollar_volume"],
                 "drawdown_from_52w_high": price_feat["drawdown_from_52w_high"],
                 "range_position_52w": price_feat["range_position_52w"],
+                "price_to_sma50": price_feat["price_to_sma50"],
                 "price_to_sma200": price_feat["price_to_sma200"],
                 "days_below_sma200": price_feat["days_below_sma200"],
                 "avg_dollar_volume_20d": price_feat["avg_dollar_volume_20d"],
                 "return_20d": price_feat["return_20d"],
                 "return_60d": price_feat["return_60d"],
                 "volatility_60d": price_feat["volatility_60d"],
+                "market_asof": price_feat["market_asof"],
                 "shares_outstanding": shares,
                 "shares_asof_end": shares_asof_end,
                 "shares_stale": shares_stale,
@@ -2418,6 +2423,7 @@ def build_cross_section_asof(
         "price",
         "dollar_volume",
         "avg_dollar_volume_20d",
+        "price_to_sma50",
         "return_20d",
         "return_60d",
         "volatility_60d",
@@ -2470,6 +2476,22 @@ def build_cross_section_asof(
         "ai_link_score",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    qqq_trailing_60d = None
+    if qqq_return_60d is not None:
+        try:
+            candidate = float(qqq_return_60d)
+            if np.isfinite(candidate):
+                qqq_trailing_60d = candidate
+        except (TypeError, ValueError):
+            qqq_trailing_60d = None
+    df["qqq_trailing_return_60d"] = (
+        qqq_trailing_60d if qqq_trailing_60d is not None else np.nan
+    )
+    df["relative_strength_60d_qqq"] = (
+        pd.to_numeric(df["return_60d"], errors="coerce")
+        - df["qqq_trailing_return_60d"]
+    )
 
     df["market_cap"] = df["price"] * df["shares_outstanding"]
     df["enterprise_value"] = df["market_cap"] + df["total_debt"].fillna(0) - df["cash_and_equivalents"].fillna(0)
