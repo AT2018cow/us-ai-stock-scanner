@@ -241,7 +241,9 @@ def build_stock_decisions(
             StockDecision(
                 schema_version=DECISION_SCHEMA_VERSION,
                 symbol=symbol,
-                company_name=_text(row.get("company_name") or row.get("name")),
+                company_name=(
+                    _text(row.get("company_name")) or _text(row.get("name"))
+                ),
                 decision_date=decision_day,
                 generated_at_utc=str(generated_at_utc),
                 quality=quality,
