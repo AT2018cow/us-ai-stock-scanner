@@ -3250,6 +3250,30 @@ def run_scan(
     log_status(started_at, "INFO", "[3/6] Fetching SEC fundamentals (cached locally).")
     fundamentals = collect_fundamentals(df, sec, config)
     df = df.merge(fundamentals, on="symbol", how="left")
+    if "fundamental_edgartools_fallback_status" in fundamentals.columns:
+        fallback_status_counts = (
+            fundamentals["fundamental_edgartools_fallback_status"]
+            .fillna("none")
+            .astype(str)
+            .value_counts()
+            .sort_index()
+            .to_dict()
+        )
+        fallback_used_count = int(
+            fundamentals.get(
+                "fundamental_edgartools_fallback_used",
+                pd.Series(False, index=fundamentals.index),
+            )
+            .fillna(False)
+            .astype(bool)
+            .sum()
+        )
+        log_status(
+            started_at,
+            "INFO",
+            "EdgarTools USD 10-Q fallback: "
+            f"used={fallback_used_count} status={fallback_status_counts}",
+        )
     log_status(started_at, "INFO", "SEC fundamentals merge complete.")
 
     log_status(started_at, "INFO", "[4/6] Computing valuation and watchlist funnel.")
