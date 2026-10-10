@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 from ai_value_scanner.decision.model import QualityGrade
 from ai_value_scanner.decision.quality import (
@@ -259,31 +260,24 @@ def _spearman_rank_correlation(
     left: pd.Series,
     right: pd.Series,
 ) -> float | None:
-    """Compute Spearman correlation without adding SciPy as a dependency."""
+    """Compute a finite Spearman rank correlation for one decision date."""
     x = pd.to_numeric(left, errors="coerce")
     y = pd.to_numeric(right, errors="coerce")
     valid = x.notna() & y.notna()
     if valid.sum() < 3:
         return None
 
-    x_valid = x[valid]
-    y_valid = y[valid]
+    x_valid = x[valid].astype(float)
+    y_valid = y[valid].astype(float)
     if x_valid.nunique() < 2 or y_valid.nunique() < 2:
         return None
 
-    x_rank = x_valid.rank(method="average")
-    y_rank = y_valid.rank(method="average")
-    x_centered = x_rank - float(x_rank.mean())
-    y_centered = y_rank - float(y_rank.mean())
-    denominator = float(
-        np.sqrt(
-            float((x_centered * x_centered).sum())
-            * float((y_centered * y_centered).sum())
-        )
+    result = spearmanr(
+        x_valid.to_numpy(),
+        y_valid.to_numpy(),
+        nan_policy="omit",
     )
-    if not np.isfinite(denominator) or denominator <= 0.0:
-        return None
-    correlation = float((x_centered * y_centered).sum()) / denominator
+    correlation = float(result.statistic)
     return correlation if np.isfinite(correlation) else None
 
 
