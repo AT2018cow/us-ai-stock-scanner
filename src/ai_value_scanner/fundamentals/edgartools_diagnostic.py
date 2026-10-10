@@ -529,10 +529,9 @@ def render_summary_markdown(
 
     lines.extend(
         [
-        "",
-        "## Classification counts",
-        "",
-    ]
+            "",
+            "## Classification counts",
+            "",
         ]
     )
     for name, count in summary["classifications"].items():
