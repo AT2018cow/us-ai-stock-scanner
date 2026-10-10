@@ -102,9 +102,20 @@ def analyze(root):
     return map(pd.DataFrame,(rows,segments,overlap,styles))
 
 
+def channel_concentration(root):
+    x=pd.read_csv(root/"selection_attribution_channel.csv")
+    rows=[]
+    for style in ("risk_off","risk_on"):
+        for list_type in LISTS:
+            g=x[(x.style.eq(style))&(x.list_type.eq(list_type))]
+            vals={r.channel:int(r.total_selected) for _,r in g.iterrows()}; total=sum(vals.values())
+            rows.append({"style":style,"list_type":list_type,"core_ai_slots":vals.get("core_ai",0),"ai_enabler_slots":vals.get("ai_enabler",0),"ai_peripheral_slots":vals.get("ai_peripheral",0),"total_channel_slots":total,"max_channel_share":max(vals.values())/total})
+    return pd.DataFrame(rows)
+
+
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--evidence-dir",default="evidence/baselines/post_pr23_005b86c"); p.add_argument("--output-dir"); a=p.parse_args(); root=Path(a.evidence_dir); out=Path(a.output_dir) if a.output_dir else root/"portfolio_viability_stage1"
-    c,s,o,st=analyze(root); out.mkdir(parents=True,exist_ok=True); c.to_csv(out/"candidate_summary.csv",index=False); s.to_csv(out/"candidate_segments.csv",index=False); o.to_csv(out/"overlap_summary.csv",index=False); st.to_csv(out/"style_incremental.csv",index=False)
+    c,s,o,st=analyze(root); ch=channel_concentration(root); out.mkdir(parents=True,exist_ok=True); c.to_csv(out/"candidate_summary.csv",index=False); s.to_csv(out/"candidate_segments.csv",index=False); o.to_csv(out/"overlap_summary.csv",index=False); st.to_csv(out/"style_incremental.csv",index=False); ch.to_csv(out/"channel_concentration.csv",index=False)
     manifest={"evidence_class":"retrospective signal-level screening; not NAV or fresh OOS","combo_proxy":"50/50 same-date already-cost-adjusted list returns","turnover_proxy":"1-Jaccard consecutive monthly selected sets","new_replay":False,"production_changes":False,"broad_tuning":False,"position_gate_reopened":False}
     (out/"analysis_manifest.json").write_text(json.dumps(manifest,indent=2)+"\n"); return 0
 if __name__=="__main__": raise SystemExit(main())
