@@ -2049,6 +2049,20 @@ def build_cross_section_asof(
             continue
 
         raw = f.fact_records
+        visible_filing_dates = [
+            record.filed
+            for fact_map in (
+                raw,
+                f.nonrecurring_expense_facts,
+                f.nonrecurring_gain_facts,
+            )
+            for records in fact_map.values()
+            for record in records
+            if record.filed is not None and record.filed <= asof.date()
+        ]
+        fundamental_data_asof = (
+            max(visible_filing_dates).isoformat() if visible_filing_dates else None
+        )
         revenue, revenue_prev = flow_pair_asof(
             raw.get("revenue", []),
             f.revenue_series,
@@ -2341,6 +2355,7 @@ def build_cross_section_asof(
                 "shares_outstanding": shares,
                 "shares_asof_end": shares_asof_end,
                 "shares_stale": shares_stale,
+                "fundamental_data_asof": fundamental_data_asof,
                 "revenue": revenue,
                 "net_income": net_income,
                 "operating_cash_flow": operating_cash_flow,
