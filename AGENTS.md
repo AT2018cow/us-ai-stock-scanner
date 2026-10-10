@@ -21,6 +21,8 @@
 > Watch Breakout / Hold/Monitor / Trend Damaged / Overextended /
 > Avoid/Deteriorating。**这些是人工研究提示，不是自动买卖指令。**
 >
+> **ETF 成分股语义（硬约束）：** source ETF 只用于发现/刷新候选 watchlist 和提供主题来源元数据；本项目研究和筛选的是 ETF 背后的个股，不复制 ETF 组合、不按 ETF 权重建仓，也不把 ETF membership 当作 Quality/Entry 结论。历史验证优先使用仓库实际归档的 watchlist snapshot；早期无快照日期只能使用明确标注的 frozen/union universe approximation，不能声称是真实 PIT ETF 历史成分。**MVP 不建设历史 ETF 持仓数据库，不抓取/重建过去每日 ETF 成分或权重。** 只有未来有具体证据表明 universe drift materially biases 决策验证、且现有 snapshot/frozen 方法无法回答时，才重新评估该工作。
+>
 > **当前研发优先级：** 先定义统一的 Quality / Entry / Action output contract，
 > 再做 Company Quality baseline、Entry Quality baseline、Action List +
 > Detailed Report 和 prospective observation。现有 `low_value` / `momentum` /
