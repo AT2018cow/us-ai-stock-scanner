@@ -213,8 +213,8 @@ def _scanner_unit_from_fact(row: Mapping[str, object]) -> str | None:
     """Map a FactQuery row to the scanner's Company Facts unit contract.
 
     ``currency`` is authoritative for monetary facts. ``unit_ref`` is used only
-    for exact, already-supported unit shapes such as shares / USD-per-share, or
-    as a strict USD unit fallback for non-core rows when currency is absent.
+    for exact, already-supported non-monetary / per-share unit shapes. Plain
+    monetary facts require a resolved ``currency`` value.
     """
 
     currency_token = _clean(row.get("currency"))
@@ -235,7 +235,8 @@ def _scanner_unit_from_fact(row: Mapping[str, object]) -> str | None:
     if currency_token:
         return "USD" if currency == "USD" else None
 
-    return "USD" if unit_ref_unit == "USD" else None
+    return None
+
 
 def _facts_dataframe(xbrl: object) -> pd.DataFrame:
     """Return explicitly undimensioned filing facts.
