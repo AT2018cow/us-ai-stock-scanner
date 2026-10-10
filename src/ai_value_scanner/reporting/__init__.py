@@ -18,6 +18,13 @@ __all__ = [
     "resolve_backtest_output_paths",
     "resolve_output_paths",
     "write_csv_atomic",
+    "write_decision_snapshot",
+    "resolve_git_commit_sha",
+    "load_snapshot_decisions",
+    "load_previous_snapshot",
+    "decision_snapshot_paths",
+    "build_run_manifest",
+    "DecisionSnapshotPaths",
 ]
 
 from .snapshot import (
