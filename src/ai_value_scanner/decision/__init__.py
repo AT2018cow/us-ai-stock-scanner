@@ -1,6 +1,7 @@
 """Canonical decision contract for the low-frequency selection MVP."""
 
 from .action import map_action_state
+from .quality import QUALITY_POLICY_VERSION, build_company_quality_v1
 from .model import (
     DECISION_SCHEMA_VERSION,
     ActionState,
@@ -26,7 +27,9 @@ __all__ = [
     "EvidenceItem",
     "QualityDecision",
     "QualityGrade",
+    "QUALITY_POLICY_VERSION",
     "StockDecision",
+    "build_company_quality_v1",
     "map_action_state",
     "stock_decision_from_dict",
     "stock_decision_from_json",

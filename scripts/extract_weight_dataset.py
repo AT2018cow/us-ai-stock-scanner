@@ -1,7 +1,12 @@
-"""Extract per-date hard-gate survivor dataset for offline score-weight sweeps.
+"""Extract historical PIT feature datasets.
 
-Runs the same PIT replay as run_backtest.py (base scenario only) but, instead of
-saving only the selected top-N symbols, saves EVERY hard-gate survivor per
+Default behavior is the existing hard-gate survivor dataset for offline
+score-weight sweeps. `--dataset-kind company_quality` reuses the same replay
+infrastructure but captures the watchlist cross-section BEFORE legacy
+list-specific hard gates, so Company Quality can be evaluated against weak and
+mediocre companies rather than only old-strategy survivors.
+
+The default weight dataset saves every hard-gate survivor per
 (signal_date, list_type, channel) together with:
 
 - all cross-section metric columns (raw inputs for score_and_rank)
@@ -116,6 +121,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Extract hard-gate survivor dataset for weight sweeps.")
     p.add_argument("--scan-config", default="configs/config.risk_off.json")
     p.add_argument("--output", default=None, help="Output CSV path (default: outputs/weight_dataset_<style>.csv)")
+    p.add_argument(
+        "--dataset-kind",
+        default="weight",
+        choices=["weight", "company_quality"],
+        help=(
+            "weight keeps legacy hard-gate survivor extraction; company_quality "
+            "captures the PIT watchlist cross-section before list-specific gates."
+        ),
+    )
     p.add_argument("--list-types", default="low_value,momentum")
     p.add_argument("--start-date", default="2023-01-01")
     p.add_argument("--end-date", default=None)
@@ -169,7 +183,12 @@ def main() -> None:
 
     scan_config_path = str(args.scan_config)
     style = "risk_on" if "risk_on" in Path(scan_config_path).name else "risk_off"
-    output_path = Path(args.output) if args.output else Path(f"outputs/weight_dataset_{style}.csv")
+    if args.output:
+        output_path = Path(args.output)
+    elif args.dataset_kind == "company_quality":
+        output_path = Path(f"outputs/company_quality_dataset_{style}.csv")
+    else:
+        output_path = Path(f"outputs/weight_dataset_{style}.csv")
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
     list_types = [x.strip() for x in str(args.list_types).split(",") if x.strip()]
     research_skip_steps = [
@@ -182,6 +201,11 @@ def main() -> None:
             "--research-skip-low-value-hard-steps requires "
             "--list-types low_value to keep the expanded research universe "
             "narrow and auditable"
+        )
+    if args.dataset_kind == "company_quality" and research_skip_steps:
+        raise ValueError(
+            "--research-skip-low-value-hard-steps is incompatible with "
+            "--dataset-kind company_quality because Quality uses the pre-strategy cross-section"
         )
     roundtrip_cost = (2.0 * args.trading_cost_bps) / 10000.0
     allow_fallback = args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
@@ -418,6 +442,63 @@ def main() -> None:
         if df.empty:
             continue
 
+        if args.dataset_kind == "company_quality":
+            current_watchlist_symbols = {
+                str(symbol).upper() for symbol in watchlist_by_symbol.keys()
+            }
+            quality_rows = df[
+                df["symbol"].astype(str).str.upper().isin(current_watchlist_symbols)
+            ].copy()
+            for _, row in quality_rows.iterrows():
+                symbol = str(row.get("symbol", "")).upper()
+                frame = apply_split_adjustment_to_frame(
+                    bar_db.get(symbol), split_events.get(symbol)
+                )
+                rec = {
+                    "signal_date": asof.date().isoformat(),
+                    "symbol": symbol,
+                    "regime": regime,
+                    "benchmark_trailing_60d": benchmark_trailing_60d,
+                    "watchlist_source": watchlist_source,
+                }
+                for col in df.columns:
+                    if col == "symbol":
+                        continue
+                    rec[col] = row.get(col)
+                for h in horizons:
+                    if frame is not None and not frame.empty:
+                        fwd, label_end = forward_return_with_exit(
+                            frame,
+                            asof.date().isoformat(),
+                            h,
+                            roundtrip_cost,
+                            entry_price_mode=args.entry_price_mode,
+                            exit_price_mode=args.exit_price_mode,
+                            global_end_date=global_end_date,
+                            delist_return_assumption=args.delist_return_assumption,
+                            delist_detection_buffer_days=args.delist_detection_buffer_days,
+                        )
+                    elif (
+                        args.delist_return_assumption is not None
+                        and _hold_window_mature(
+                            asof.date().isoformat(),
+                            h,
+                            args.delist_detection_buffer_days,
+                            global_end_date,
+                        )
+                    ):
+                        fwd = float(args.delist_return_assumption) - roundtrip_cost
+                        label_end = None
+                    else:
+                        fwd = None
+                        label_end = None
+                    rec[f"fwd_ret_{h}"] = fwd
+                    rec[f"label_end_{h}"] = (
+                        label_end.date().isoformat() if label_end is not None else None
+                    )
+                rows.append(rec)
+            continue
+
         for list_type in list_types:
             for channel_name, channel_profile in channel_profiles.items():
                 steps, _weights = build_steps_and_weights(scan_config, channel_name, channel_profile, list_type)
@@ -557,6 +638,8 @@ def main() -> None:
     meta = {
         "scan_config": scan_config_path,
         "style": style,
+        "dataset_kind": str(args.dataset_kind),
+        "pre_strategy_cross_section": bool(args.dataset_kind == "company_quality"),
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "start_date": str(args.start_date),
         "end_date": str(args.end_date),
@@ -589,7 +672,7 @@ def main() -> None:
     meta_path.write_text(json.dumps(meta, indent=2))
 
     log(
-        f"done: {len(dataset)} survivor rows | {meta['n_dates']} dates | "
+        f"done: {len(dataset)} {args.dataset_kind} rows | {meta['n_dates']} dates | "
         f"saved {output_path} (+ {meta_path.name})",
         started,
     )
