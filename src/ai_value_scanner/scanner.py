@@ -257,7 +257,16 @@ FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
 )
 
 CORE_MONETARY_CURRENCY_TAGS = frozenset(
-    REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
+    REVENUE_TAGS
+    + NET_INCOME_TAGS
+    + OPERATING_CASH_FLOW_TAGS
+    + [
+        # Common IFRS taxonomy concepts used only to detect reporting
+        # currency. They are not silently promoted into the USD accounting
+        # path without explicit normalization.
+        "Revenue",
+        "CashFlowsFromUsedInOperatingActivities",
+    ]
 )
 _CURRENCY_UNIT_PATTERN = re.compile(r"^[A-Z]{3}$")
 
