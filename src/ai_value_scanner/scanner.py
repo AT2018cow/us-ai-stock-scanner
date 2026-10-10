@@ -2433,6 +2433,25 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
     fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
+    latest_periodic = latest_periodic_filing(submissions)
+    latest_periodic_filing_date = (
+        latest_periodic["filed"] if latest_periodic is not None else None
+    )
+    latest_periodic_form = (
+        latest_periodic["form"] if latest_periodic is not None else None
+    )
+    latest_periodic_accession = (
+        latest_periodic["accession"] if latest_periodic is not None else None
+    )
+    fact_accessions = relevant_fundamental_fact_accessions(companyfacts)
+    fundamental_facts_cover_latest_periodic = (
+        None
+        if not latest_periodic_accession
+        else latest_periodic_accession in fact_accessions
+    )
+    fundamental_reporting_currency, fundamental_currency_supported = (
+        fundamental_currency_support(companyfacts)
+    )
 
     def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
         if config.use_ttm_metrics:
@@ -2656,6 +2675,12 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "shares_asof_end": shares_asof_end,
         "shares_stale": shares_stale,
         "fundamental_data_asof": fundamental_data_asof,
+        "fundamental_latest_periodic_filing_date": latest_periodic_filing_date,
+        "fundamental_latest_periodic_form": latest_periodic_form,
+        "fundamental_latest_periodic_accession": latest_periodic_accession,
+        "fundamental_facts_cover_latest_periodic": fundamental_facts_cover_latest_periodic,
+        "fundamental_reporting_currency": fundamental_reporting_currency,
+        "fundamental_currency_supported": fundamental_currency_supported,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -2769,6 +2794,12 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income_form": None,
                         "shares_outstanding": None,
                         "fundamental_data_asof": None,
+                        "fundamental_latest_periodic_filing_date": None,
+                        "fundamental_latest_periodic_form": None,
+                        "fundamental_latest_periodic_accession": None,
+                        "fundamental_facts_cover_latest_periodic": None,
+                        "fundamental_reporting_currency": None,
+                        "fundamental_currency_supported": None,
                         "revenue_ttm_history_json": None,
                         "net_income_ttm_history_json": None,
                         "shares_history_json": None,
@@ -3417,6 +3448,12 @@ def run_scan(
         "avg_dollar_volume_20d",
         "market_asof",
         "fundamental_data_asof",
+        "fundamental_latest_periodic_filing_date",
+        "fundamental_latest_periodic_form",
+        "fundamental_latest_periodic_accession",
+        "fundamental_facts_cover_latest_periodic",
+        "fundamental_reporting_currency",
+        "fundamental_currency_supported",
         "regime",
         "benchmark_trend_ok",
         "market_cap",
