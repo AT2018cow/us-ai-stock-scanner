@@ -573,7 +573,45 @@ def build_company_quality_v1(
     decision_dt = _parse_iso_date(decision_date)
     data_dt = _parse_iso_date(data_asof)
     stale_unrated = False
+    data_integrity_blocked = False
     normalized_data_asof = data_dt.isoformat() if data_dt is not None else None
+
+    if metrics.get("fundamental_facts_cover_latest_periodic") is False:
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="latest_periodic_filing_not_covered",
+                label="Latest periodic filing not covered",
+                polarity="missing",
+                metric="fundamental_latest_periodic_filing_date",
+                value=metrics.get("fundamental_latest_periodic_filing_date"),
+                threshold="latest periodic filing must be represented in recognized Company Facts",
+                message=(
+                    "SEC submissions show a newer periodic filing than the recognized "
+                    "Company Facts used for Quality; stale metrics are not promoted."
+                ),
+            )
+        )
+
+    if metrics.get("fundamental_currency_supported") is False:
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="fundamental_currency_unsupported",
+                label="Fundamental reporting currency unsupported",
+                polarity="missing",
+                metric="fundamental_reporting_currency",
+                value=metrics.get("fundamental_reporting_currency"),
+                threshold="USD monetary facts required by live valuation path",
+                message=(
+                    "Core monetary facts are available only in a non-USD reporting "
+                    "currency; the live scanner will not mix them with USD market cap "
+                    "without an explicit FX normalization layer."
+                ),
+            )
+        )
     if decision_dt is not None and data_dt is not None:
         if data_dt > decision_dt:
             raise ValueError(
@@ -608,7 +646,7 @@ def build_company_quality_v1(
                     message="Fundamental evidence is older than the preferred freshness window.",
                 )
             )
-        else:
+        elif not data_integrity_blocked:
             positives.append(
                 _metric_item(
                     code="fundamental_data_fresh",
