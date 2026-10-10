@@ -152,6 +152,31 @@ class TestPeriodicFilingSemantics(unittest.TestCase):
             scanner.relevant_fundamental_fact_accessions(companyfacts),
         )
 
+    def test_noncore_fact_does_not_false_positive_latest_filing_coverage(self) -> None:
+        companyfacts = {
+            "facts": {
+                "us-gaap": {
+                    "InventoryNet": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "val": 10,
+                                    "end": "2026-06-30",
+                                    "filed": "2026-08-01",
+                                    "form": "10-Q",
+                                    "accn": "q2",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        self.assertEqual(
+            scanner.relevant_fundamental_fact_accessions(companyfacts),
+            set(),
+        )
+
 
 class TestFundamentalCurrencySafety(unittest.TestCase):
     def test_non_usd_core_facts_are_explicitly_unsupported(self) -> None:
