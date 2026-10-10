@@ -256,6 +256,11 @@ FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
     + INVENTORY_TAGS
 )
 
+CORE_MONETARY_CURRENCY_TAGS = frozenset(
+    REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
+)
+_CURRENCY_UNIT_PATTERN = re.compile(r"^[A-Z]{3}$")
+
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 AI_DISCLOSURE_KEYWORD_GROUPS: dict[str, list[str]] = {
@@ -1235,13 +1240,13 @@ class SecClient:
         subs_path = self.cache_dir / f"submissions_{cik}.json"
         need_fetch = not cache_path.exists()
         latest_accn: str | None = None
+        latest_periodic: dict[str, str] | None = None
         if subs_path.exists():
             try:
                 subs = json.loads(subs_path.read_text())
-                recent = subs.get("filings", {}).get("recent", {}) or {}
-                accessions = recent.get("accessionNumber", []) or []
-                if accessions:
-                    latest_accn = str(accessions[0])
+                latest_periodic = latest_periodic_filing(subs)
+                if latest_periodic is not None:
+                    latest_accn = latest_periodic["accession"] or None
             except Exception:
                 pass  # fall back to metadata/mtime heuristics below
         if cache_path.exists() and not need_fetch:
@@ -1280,9 +1285,9 @@ class SecClient:
                             os.replace(meta_tmp, meta_path)
                     if not need_fetch:
                         subs = json.loads(subs_path.read_text())
-                        filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
-                        if filing_dates:
-                            latest_filing = pd.Timestamp(filing_dates[0]).timestamp()
+                        periodic = latest_periodic_filing(subs)
+                        if periodic is not None:
+                            latest_filing = pd.Timestamp(periodic["filed"]).timestamp()
                             if latest_filing > cache_path.stat().st_mtime:
                                 need_fetch = True
                 except Exception:
@@ -2190,6 +2195,102 @@ def collect_candidates(
     return out
 
 
+def latest_periodic_filing(
+    submissions: dict[str, Any],
+) -> dict[str, str] | None:
+    """Return the newest periodic filing relevant to Company Quality.
+
+    SEC submissions also contain 8-K, 6-K, ownership and other filings that do
+    not necessarily update Company Facts. Cache invalidation and freshness
+    diagnostics therefore track only 10-Q/10-K/20-F/40-F (including amended
+    forms after normalization).
+    """
+    recent = submissions.get("filings", {}).get("recent", {}) or {}
+    forms = recent.get("form", []) or []
+    filing_dates = recent.get("filingDate", []) or []
+    accessions = recent.get("accessionNumber", []) or []
+    best: dict[str, str] | None = None
+    for index, raw_form in enumerate(forms):
+        form = normalize_form(raw_form)
+        if form not in QUARTERLY_FORMS:
+            continue
+        if index >= len(filing_dates):
+            continue
+        filed = str(filing_dates[index] or "").strip()[:10]
+        try:
+            datetime.strptime(filed, "%Y-%m-%d")
+        except ValueError:
+            continue
+        accession = (
+            str(accessions[index]).strip()
+            if index < len(accessions) and accessions[index]
+            else ""
+        )
+        candidate = {
+            "form": form,
+            "filed": filed,
+            "accession": accession,
+        }
+        if best is None or filed > best["filed"]:
+            best = candidate
+    return best
+
+
+def relevant_fundamental_fact_accessions(
+    companyfacts: dict[str, Any],
+) -> set[str]:
+    """Accessions represented by financial facts actually recognized by the scanner."""
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    accessions: set[str] = set()
+    for tag in FUNDAMENTAL_DATA_ASOF_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for entries in units.values():
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_form(item.get("form")) not in QUARTERLY_FORMS:
+                    continue
+                accession = str(item.get("accn") or "").strip()
+                if accession:
+                    accessions.add(accession)
+    return accessions
+
+
+def fundamental_currency_support(
+    companyfacts: dict[str, Any],
+) -> tuple[str | None, bool | None]:
+    """Detect whether core monetary facts are available in USD.
+
+    Live valuation combines SEC monetary facts with USD market prices. We do
+    not silently mix local-currency facts with USD market cap. Non-USD-only
+    foreign issuers are therefore explicitly unsupported until an FX-aware
+    normalization layer is intentionally introduced.
+    """
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    currencies: set[str] = set()
+    for tag in CORE_MONETARY_CURRENCY_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for unit, entries in units.items():
+            token = str(unit).strip().upper()
+            if not _CURRENCY_UNIT_PATTERN.fullmatch(token):
+                continue
+            if isinstance(entries, list) and entries:
+                currencies.add(token)
+    if "USD" in currencies:
+        return "USD", True
+    if currencies:
+        return ",".join(sorted(currencies)), False
+    return None, None
+
+
 def latest_fundamental_filing_date(companyfacts: dict[str, Any]) -> str | None:
     """Latest filed date among financial facts used by the live Quality layer."""
     facts = merged_standard_taxonomy_facts(companyfacts)
@@ -2232,7 +2333,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 5
+PARSED_FUND_CACHE_VERSION = 6
 
 
 def _parsed_fund_cache_meta(
@@ -2252,20 +2353,18 @@ def _parsed_fund_cache_meta(
 
 def _submissions_latest_filing(subs_cache: Path) -> str | None:
     try:
-        subs = json.loads(subs_cache.read_text())
-        filings = subs.get("filings", {}).get("recent", {}) or {}
-        dates = filings.get("filingDate", []) or []
-        return str(dates[0]) if dates else None
+        filing = latest_periodic_filing(json.loads(subs_cache.read_text()))
+        return filing["filed"] if filing is not None else None
     except Exception:
         return None
 
 
 def _submissions_latest_accession(subs_cache: Path) -> str | None:
     try:
-        subs = json.loads(subs_cache.read_text())
-        filings = subs.get("filings", {}).get("recent", {}) or {}
-        accessions = filings.get("accessionNumber", []) or []
-        return str(accessions[0]) if accessions else None
+        filing = latest_periodic_filing(json.loads(subs_cache.read_text()))
+        if filing is None:
+            return None
+        return filing["accession"] or None
     except Exception:
         return None
 
