@@ -326,7 +326,7 @@ def summarize_entry_state_concentration(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
+def _entry_transition_pairs(frame: pd.DataFrame) -> pd.DataFrame:
     required = {"symbol", "signal_date", "entry_state"}
     missing = sorted(required - set(frame.columns))
     if missing:
@@ -334,11 +334,12 @@ def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(
             columns=[
+                "symbol",
                 "from_state",
                 "to_state",
-                "n_transitions",
-                "share_from_state",
-                "median_gap_days",
+                "from_date",
+                "to_date",
+                "gap_days",
             ]
         )
 
@@ -349,10 +350,35 @@ def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
     )
     work["_prev_state"] = work.groupby("symbol")["entry_state"].shift(1)
     work["_prev_dt"] = work.groupby("symbol")["_signal_dt"].shift(1)
-    work["_gap_days"] = (
-        work["_signal_dt"] - work["_prev_dt"]
-    ).dt.days
     pairs = work.dropna(subset=["_prev_state", "_prev_dt"]).copy()
+    if pairs.empty:
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "from_state",
+                "to_state",
+                "from_date",
+                "to_date",
+                "gap_days",
+            ]
+        )
+
+    return pd.DataFrame(
+        {
+            "symbol": pairs["symbol"].astype(str),
+            "from_state": pairs["_prev_state"].astype(str),
+            "to_state": pairs["entry_state"].astype(str),
+            "from_date": pairs["_prev_dt"].dt.date.astype(str),
+            "to_date": pairs["_signal_dt"].dt.date.astype(str),
+            "gap_days": (
+                pairs["_signal_dt"] - pairs["_prev_dt"]
+            ).dt.days.astype(int),
+        }
+    ).reset_index(drop=True)
+
+
+def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
+    pairs = _entry_transition_pairs(frame)
     if pairs.empty:
         return pd.DataFrame(
             columns=[
@@ -365,18 +391,12 @@ def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
         )
 
     grouped = (
-        pairs.groupby(["_prev_state", "entry_state"], dropna=False)
+        pairs.groupby(["from_state", "to_state"], dropna=False)
         .agg(
             n_transitions=("symbol", "size"),
-            median_gap_days=("_gap_days", "median"),
+            median_gap_days=("gap_days", "median"),
         )
         .reset_index()
-        .rename(
-            columns={
-                "_prev_state": "from_state",
-                "entry_state": "to_state",
-            }
-        )
     )
     totals = grouped.groupby("from_state")["n_transitions"].transform("sum")
     grouped["share_from_state"] = grouped["n_transitions"] / totals
@@ -395,8 +415,8 @@ def build_entry_state_transitions(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def summarize_entry_state_persistence(frame: pd.DataFrame) -> pd.DataFrame:
-    transitions = build_entry_state_transitions(frame)
-    if transitions.empty:
+    pairs = _entry_transition_pairs(frame)
+    if pairs.empty:
         return pd.DataFrame(
             columns=[
                 "from_state",
@@ -407,35 +427,22 @@ def summarize_entry_state_persistence(frame: pd.DataFrame) -> pd.DataFrame:
         )
 
     rows: list[dict[str, Any]] = []
-    for state, part in transitions.groupby("from_state", sort=True):
-        n = int(part["n_transitions"].sum())
-        same = int(
-            part.loc[part["to_state"] == state, "n_transitions"].sum()
-        )
-        weighted_gaps = np.repeat(
-            pd.to_numeric(part["median_gap_days"], errors="coerce").fillna(0).to_numpy(),
-            pd.to_numeric(part["n_transitions"], errors="coerce").fillna(0).astype(int).to_numpy(),
-        )
+    for state, part in pairs.groupby("from_state", sort=True):
+        n = int(len(part))
+        same = int((part["to_state"] == state).sum())
         rows.append(
             {
                 "from_state": str(state),
                 "n_transitions": n,
                 "same_state_rate": float(same / n) if n > 0 else np.nan,
-                "median_gap_days": (
-                    float(np.median(weighted_gaps))
-                    if weighted_gaps.size > 0
-                    else np.nan
+                "median_gap_days": float(
+                    pd.to_numeric(part["gap_days"], errors="coerce").median()
                 ),
             }
         )
 
-    total_n = int(transitions["n_transitions"].sum())
-    total_same = int(
-        transitions.loc[
-            transitions["from_state"] == transitions["to_state"],
-            "n_transitions",
-        ].sum()
-    )
+    total_n = int(len(pairs))
+    total_same = int((pairs["from_state"] == pairs["to_state"]).sum())
     rows.append(
         {
             "from_state": "ALL",
@@ -443,11 +450,12 @@ def summarize_entry_state_persistence(frame: pd.DataFrame) -> pd.DataFrame:
             "same_state_rate": (
                 float(total_same / total_n) if total_n > 0 else np.nan
             ),
-            "median_gap_days": np.nan,
+            "median_gap_days": float(
+                pd.to_numeric(pairs["gap_days"], errors="coerce").median()
+            ),
         }
     )
     return pd.DataFrame(rows)
-
 
 def serialize_entry_evidence(frame: pd.DataFrame) -> pd.Series:
     """Compact deterministic evidence payload for downstream audit artifacts."""
