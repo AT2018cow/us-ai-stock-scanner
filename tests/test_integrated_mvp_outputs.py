@@ -316,6 +316,8 @@ class TestIntegratedActionEvaluation(unittest.TestCase):
             ready.update(
                 {
                     "signal_date": signal_date,
+                    "fundamental_data_asof": "2025-12-31",
+                    "market_asof": signal_date,
                     "fwd_ret_20": 0.10,
                     "qqq_return_20": 0.03,
                 }
@@ -324,6 +326,8 @@ class TestIntegratedActionEvaluation(unittest.TestCase):
             weak.update(
                 {
                     "signal_date": signal_date,
+                    "fundamental_data_asof": "2025-12-31",
+                    "market_asof": signal_date,
                     "fwd_ret_20": -0.10,
                     "qqq_return_20": 0.03,
                 }
