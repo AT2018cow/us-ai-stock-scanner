@@ -3737,9 +3737,14 @@ def run_scan(
     decision_output_error: str | None = None
     try:
         decision_date = started_at.date().isoformat()
+        default_decision_dir = (
+            "decisions"
+            if config.max_symbols is None
+            else "decision_samples"
+        )
         snapshot_root = Path(
             decision_output_root
-            or (Path(config.output_dir) / "decisions")
+            or (Path(config.output_dir) / default_decision_dir)
         )
         previous = load_previous_snapshot(
             snapshot_root,
