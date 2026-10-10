@@ -13,6 +13,7 @@ from ai_value_scanner.decision.quality import (
     build_company_quality_v1,
 )
 from ai_value_scanner.evaluation.company_quality import (
+    _spearman_rank_correlation,
     apply_company_quality_v1,
     summarize_quality_cohorts,
     summarize_quality_concentration,
@@ -195,6 +196,33 @@ class TestCompanyQualityV1(unittest.TestCase):
         a_conc = concentration[concentration["quality_grade"] == "A"].iloc[0]
         self.assertEqual(int(a_conc["n_symbols"]), 2)
         self.assertAlmostEqual(float(a_conc["top_date_share"]), 1.0, places=12)
+
+    def test_scipy_spearman_handles_ties_missing_and_degenerate_inputs(self) -> None:
+        tied = _spearman_rank_correlation(
+            pd.Series([1.0, 1.0, 2.0, 3.0, np.nan]),
+            pd.Series([1.0, 2.0, 2.0, 4.0, 5.0]),
+        )
+        self.assertIsNotNone(tied)
+        self.assertAlmostEqual(float(tied), 5.0 / 6.0, places=12)
+
+        negative = _spearman_rank_correlation(
+            pd.Series([1.0, 2.0, 3.0, 4.0]),
+            pd.Series([4.0, 3.0, 2.0, 1.0]),
+        )
+        self.assertAlmostEqual(float(negative), -1.0, places=12)
+
+        self.assertIsNone(
+            _spearman_rank_correlation(
+                pd.Series([1.0, 1.0, 1.0]),
+                pd.Series([1.0, 2.0, 3.0]),
+            )
+        )
+        self.assertIsNone(
+            _spearman_rank_correlation(
+                pd.Series([1.0, 2.0]),
+                pd.Series([2.0, 1.0]),
+            )
+        )
 
     def test_apply_decisions_and_rank_ic_use_numeric_quality_score(self) -> None:
         base = _strong_metrics()
