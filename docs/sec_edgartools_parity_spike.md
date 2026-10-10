@@ -1,6 +1,12 @@
 # EdgarTools SEC parity spike
 
-Status: diagnostic-only MVP correctness experiment.
+Status: historical diagnostic evidence. The spike established that exact-filing
+XBRL recovers the large majority of observed ordinary 10-Q Company Facts gaps.
+The bounded production follow-up is documented in
+`docs/sec_edgartools_live_fallback.md`.
+
+This document preserves the original diagnostic protocol; it is not the current
+production installation/runtime guide.
 
 This spike evaluates whether filing-level XBRL parsing from EdgarTools can explain
 the SEC Company Facts coverage gaps observed in the first prospective-style MVP
@@ -33,11 +39,9 @@ The diagnostic also records:
 - detected taxonomies;
 - whether a standardized core concept comes from a custom taxonomy.
 
-## Why EdgarTools is optional
+## Original spike installation
 
-The production scanner still uses the repository's current SEC/PIT/accounting path.
-
-EdgarTools is installed only through the optional extra:
+At the time of this diagnostic spike, EdgarTools was installed only through the optional extra:
 
 ```bash
 pip install -e '.[sec-diagnostic]'
