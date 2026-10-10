@@ -94,7 +94,7 @@ def analyze(root):
                 r={"style":style,"candidate":name,"horizon_days":h,**return_stats(x),**set_stats(setmap[name])}
                 r["component_corr"]=ce.momentum_excess.corr(ce.industry_excess) if name==COMBO else np.nan
                 r["std_ratio_vs_momentum"]=ce.excess_vs_qqq.std(ddof=1)/me.excess_vs_qqq.std(ddof=1) if name==COMBO else np.nan
-                hit=conc[(conc.style.eq(style))&(conc.list_type.eq("momentum"))&(conc.horizon.eq(h))] if name=="momentum" else pd.DataFrame()
+                hit=conc[(conc["style"].eq(style))&(conc["list_type"].eq("momentum"))&(conc["horizon"].eq(h))] if name=="momentum" else pd.DataFrame()
                 r["return_top1_share"]=float(hit.iloc[0].top1_share) if len(hit)==1 else np.nan; r["return_top3_share"]=float(hit.iloc[0].top3_share) if len(hit)==1 else np.nan
                 r["after_top1_positive"]=bool(hit.iloc[0].sum_after_removing_top1>0) if len(hit)==1 else ""
                 rows.append(r)
@@ -113,7 +113,7 @@ def channel_concentration(root):
     rows=[]
     for style in ("risk_off","risk_on"):
         for list_type in LISTS:
-            g=x[(x.style.eq(style))&(x.list_type.eq(list_type))]
+            g=x[(x["style"].eq(style))&(x["list_type"].eq(list_type))]
             vals={r.channel:int(r.total_selected) for _,r in g.iterrows()}; total=sum(vals.values())
             rows.append({"style":style,"list_type":list_type,"core_ai_slots":vals.get("core_ai",0),"ai_enabler_slots":vals.get("ai_enabler",0),"ai_peripheral_slots":vals.get("ai_peripheral",0),"total_channel_slots":total,"max_channel_share":max(vals.values())/total})
     return pd.DataFrame(rows)
