@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -57,7 +58,6 @@ from ai_value_scanner.fundamentals.edgartools_fallback import (
     EDGARTOOLS_FALLBACK_VERSION,
     fetch_usd_10q_companyfacts_patch,
     merge_companyfacts_patch,
-    remove_companyfacts_patch,
 )
 from ai_value_scanner.fundamentals.reconstruction import (
     ReconstructedFlows,
@@ -2578,6 +2578,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         )
         fallback_status = fallback.status
         if fallback.used:
+            # Preserve the exact original in-memory facts on failed validation.
+            # Deleting by content can also delete pre-existing identical SEC rows.
+            original_companyfacts = copy.deepcopy(companyfacts)
             fallback_fact_count = merge_companyfacts_patch(
                 companyfacts,
                 fallback.patch,
@@ -2598,7 +2601,8 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                     )
                 )
                 if not ttm_fresh:
-                    remove_companyfacts_patch(companyfacts, fallback.patch)
+                    companyfacts.clear()
+                    companyfacts.update(original_companyfacts)
                     fallback_used = False
                     fallback_fact_count = 0
                     fallback_status = "ttm_not_fresh"
