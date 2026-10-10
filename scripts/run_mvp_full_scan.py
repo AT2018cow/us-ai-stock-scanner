@@ -154,6 +154,14 @@ def main() -> None:
         ]
         mode = "experiment"
 
+    expected_day = datetime.now(timezone.utc).date().isoformat()
+    expected_snapshot = decision_root / expected_day / style
+    if expected_snapshot.exists():
+        raise SystemExit(
+            "Target snapshot already exists and will not be reused for acceptance: "
+            f"{expected_snapshot}"
+        )
+
     log_path = Path("outputs") / f"mvp_full_scan_{style}_{stamp}.log"
     print(f"=== 2/3 Full scan ({mode}) ===")
     print("Command:", " ".join(scan_command))
