@@ -122,3 +122,4 @@ A second PR27 audit finding affects the original `weight_dataset_risk_on.csv`: t
   See `decision_note.md` and `provenance_correction.md`.
 - `weightsweep_parity_*` — **superseded pre-PR27 artifacts**. PR27 audit found that the old offline sweep applied multiplier=1 without first multiplying by each channel's configured production base-weight vector. Do not use the recorded candidate-zero scores for research conclusions; rerun candidate zero with the corrected sweep before any weight study.
 - `research_decision.md` — conclusions, limits, next hypotheses.
+- `portfolio_viability_stage1/` — Stage 1 offline list-triage from canonical replay evidence: momentum vs industry_trend vs a 50/50 signal-level proxy, with annual/regime stability, date/symbol/channel concentration, selected-set overlap/turnover proxy, style similarity, provenance manifest, and the frozen two-candidate decision. **Not account NAV or fresh OOS evidence; no production change/replay/tuning.**

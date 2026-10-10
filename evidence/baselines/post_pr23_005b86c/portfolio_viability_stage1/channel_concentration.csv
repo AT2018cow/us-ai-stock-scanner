@@ -1,0 +1,5 @@
+style,list_type,core_ai_slots,ai_enabler_slots,ai_peripheral_slots,total_channel_slots,max_channel_share
+risk_off,momentum,420,420,420,1260,0.3333333333333333
+risk_off,industry_trend,420,420,420,1260,0.3333333333333333
+risk_on,momentum,420,420,420,1260,0.3333333333333333
+risk_on,industry_trend,420,420,420,1260,0.3333333333333333
