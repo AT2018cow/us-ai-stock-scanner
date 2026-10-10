@@ -1,0 +1,50 @@
+{
+  "action_state": "PRIORITY_REVIEW",
+  "company_name": "Example Corp",
+  "decision_date": "2026-10-10",
+  "entry": {
+    "confidence": 0.7,
+    "market_asof": "2026-10-09",
+    "positives": [],
+    "risks": [],
+    "score": null,
+    "state": "ENTRY_READY"
+  },
+  "generated_at_utc": "2026-10-10T10:00:00+00:00",
+  "previous_action_state": null,
+  "priority": 1,
+  "provenance": {
+    "code_sha": "abc123",
+    "synthetic": true
+  },
+  "quality": {
+    "component_scores": {
+      "cash_quality": null
+    },
+    "confidence": 0.8,
+    "data_asof": null,
+    "grade": "A",
+    "missing": [
+      {
+        "code": "fundamental_data_missing",
+        "label": "Fundamental data missing",
+        "message": "Synthetic fixture intentionally leaves an as-of date missing.",
+        "metric": "filing_asof",
+        "polarity": "missing",
+        "threshold": null,
+        "value": null
+      }
+    ],
+    "positives": [],
+    "risks": [],
+    "score": null
+  },
+  "rationale": [],
+  "review_trigger": null,
+  "schema_version": "1",
+  "source_lists": [
+    "research_pool"
+  ],
+  "state_change_reason": null,
+  "symbol": "EXM"
+}
