@@ -387,6 +387,27 @@ class TestLoadOneFundamentalFallbackIntegration(unittest.TestCase):
         self.assertEqual(result["net_income"], 94.0)
         self.assertEqual(result["operating_cash_flow"], 130.0)
 
+    def test_rejected_patch_preserves_preexisting_identical_fact(self) -> None:
+        original = _old_companyfacts(enough_history=False)
+        # A latest-accession revenue row can already exist in the raw source
+        # while OCF history is insufficient to construct current TTM.
+        original["facts"]["us-gaap"][
+            "RevenueFromContractWithCustomerExcludingAssessedTax"
+        ]["units"]["USD"].append(
+            _entry("2026-04-01", "2026-06-30", 140.0, "2026-07-29", "q2-26")
+        )
+        pristine = copy.deepcopy(original)
+        sec = _FakeSec(original, self._submissions())
+        with tempfile.TemporaryDirectory() as td:
+            cfg = ScanConfig(cache_dir=td, use_ttm_metrics=True)
+            with patch.object(
+                scanner,
+                "fetch_usd_10q_companyfacts_patch",
+                return_value=self._fallback_result(),
+            ):
+                scanner.load_one_fundamental(sec, "EXLS", "0000000001", cfg)
+        self.assertEqual(original, pristine)
+
     def test_load_rolls_back_when_latest_ttm_cannot_be_built(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             cfg = ScanConfig(
