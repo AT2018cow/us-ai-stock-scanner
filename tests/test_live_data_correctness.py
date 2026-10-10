@@ -97,37 +97,20 @@ class TestPeriodicFilingSemantics(unittest.TestCase):
             {"form": "10-Q", "filed": "2026-08-03", "accession": "q2a"},
         )
 
-    def test_companyfacts_cache_is_not_invalidated_by_newer_8k(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            cik = "0000000001"
-            facts = {"facts": {"us-gaap": {}}}
-            (tmp / f"facts_{cik}.json").write_text(json.dumps(facts))
-            (tmp / f"facts_meta_{cik}.json").write_text(
-                json.dumps(
-                    {
-                        "covered_accession": "periodic-q2",
-                        "pending_accession": None,
-                    }
-                )
-            )
-            (tmp / f"submissions_{cik}.json").write_text(
-                json.dumps(
-                    {
-                        "filings": {
-                            "recent": {
-                                "form": ["8-K", "10-Q"],
-                                "filingDate": ["2026-10-09", "2026-08-01"],
-                                "accessionNumber": ["newer-8k", "periodic-q2"],
-                            }
-                        }
-                    }
-                )
-            )
-            client, requested = _make_sec_client(tmp)
-            out = client.get_companyfacts(cik)
-            self.assertEqual(requested, [])
-            self.assertEqual(out, facts)
+    def test_periodic_filing_diagnostic_is_separate_from_conservative_cache_refresh(self) -> None:
+        submissions = {
+            "filings": {
+                "recent": {
+                    "form": ["8-K", "10-Q"],
+                    "filingDate": ["2026-10-09", "2026-08-01"],
+                    "accessionNumber": ["newer-8k", "periodic-q2"],
+                }
+            }
+        }
+        self.assertEqual(
+            scanner.latest_periodic_filing(submissions),
+            {"form": "10-Q", "filed": "2026-08-01", "accession": "periodic-q2"},
+        )
 
     def test_latest_periodic_coverage_is_accession_specific(self) -> None:
         companyfacts = {
