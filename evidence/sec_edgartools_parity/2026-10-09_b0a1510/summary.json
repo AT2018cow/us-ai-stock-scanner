@@ -1,0 +1,34 @@
+{
+  "cases": 65,
+  "classifications": {
+    "CONTROL_EDGARTOOLS_CORE_FOUND": 1,
+    "CURRENT_PATH_GAP_EDGARTOOLS_CORE_FOUND": 49,
+    "CURRENT_PATH_GAP_EDGARTOOLS_CORE_FOUND_CUSTOM": 2,
+    "CURRENT_PATH_GAP_EDGARTOOLS_CORE_NOT_FOUND": 2,
+    "CURRENT_PATH_NON_USD_EDGARTOOLS_NON_USD_ONLY": 3,
+    "CURRENT_PATH_NON_USD_EDGARTOOLS_USD_SEEN": 8
+  },
+  "current_path_gap_by_form": {
+    "10-Q": {
+      "cases": 47,
+      "core_found_rate": 0.978723,
+      "edgartools_core_found": 46
+    },
+    "20-F": {
+      "cases": 4,
+      "core_found_rate": 0.75,
+      "edgartools_core_found": 3
+    },
+    "40-F": {
+      "cases": 2,
+      "core_found_rate": 1.0,
+      "edgartools_core_found": 2
+    }
+  },
+  "current_path_gap_cases": 53,
+  "current_path_gap_core_found_rate": 0.962264,
+  "current_path_gap_edgartools_core_found": 51,
+  "custom_core_taxonomy_cases": 6,
+  "edgartools_fetch_failures": 0,
+  "edgartools_xbrl_unavailable": 0
+}

@@ -1,0 +1,9 @@
+{
+  "case_count": 65,
+  "code_sha": "b0a151050fab2af14f13c9b7996b1f1cad708e74",
+  "decisions_sha256": "36197e1926c55d89b3c9ca1a116abdbbde5ae4cfb738e2202865deb85bebf528",
+  "edgartools_version": "5.61.1",
+  "generated_at_utc": "2026-10-10T15:39:28.579563+00:00",
+  "identity_source": "EDGAR_IDENTITY",
+  "snapshot_root": "outputs/decision_experiments/risk_off_20261010T143355Z/2026-10-09/risk_off"
+}
