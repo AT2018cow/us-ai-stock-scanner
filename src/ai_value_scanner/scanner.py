@@ -235,6 +235,10 @@ BACKLOG_TAGS = [
     "ContractWithCustomerLiability",
     "DeferredRevenueCurrentAndNoncurrent",
 ]
+FUNDAMENTAL_FILING_COVERAGE_TAGS = frozenset(
+    REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
+)
+
 FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
     REVENUE_TAGS
     + NET_INCOME_TAGS
@@ -2284,10 +2288,10 @@ def latest_periodic_filing(
 def relevant_fundamental_fact_accessions(
     companyfacts: dict[str, Any],
 ) -> set[str]:
-    """Accessions represented by financial facts actually recognized by the scanner."""
+    """Accessions represented by core P&L/cash-flow facts recognized by the scanner."""
     facts = merged_standard_taxonomy_facts(companyfacts)
     accessions: set[str] = set()
-    for tag in FUNDAMENTAL_DATA_ASOF_TAGS:
+    for tag in FUNDAMENTAL_FILING_COVERAGE_TAGS:
         tag_obj = facts.get(tag, {})
         units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
         if not isinstance(units, dict):
