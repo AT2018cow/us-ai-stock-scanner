@@ -19,3 +19,13 @@ __all__ = [
     "resolve_output_paths",
     "write_csv_atomic",
 ]
+
+from .snapshot import (
+    DecisionSnapshotPaths,
+    build_run_manifest,
+    decision_snapshot_paths,
+    load_previous_snapshot,
+    load_snapshot_decisions,
+    resolve_git_commit_sha,
+    write_decision_snapshot,
+)
