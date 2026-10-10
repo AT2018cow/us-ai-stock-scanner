@@ -1,6 +1,15 @@
-# 实盘试点协议（Live Pilot Protocol，预注册）
+# 实盘试点协议（Live Pilot Protocol，历史预注册）
 
-> 状态：生效（2026-09-27）
+> **状态：历史参考 / 当前暂停（2026-10-10）**
+>
+> 2026-10-10 项目北极星已调整为“低频、人工决策辅助型选股系统：先找到值得拥有的公司，
+> 再判断现在是不是相对合理的买入时点”。当前核心用户产物是 **Daily / Weekly Action List**
+> 和支持它的 **Detailed Report**。本协议不再是当前产品路线或开发前置要求。
+> 不要据此新增 account-NAV、自动仓位管理、broker 下单或 staged-capital 自动化。
+> 现有内容保留用于审计过去研究结论和人工交易参考。
+> 当前方向见 `docs/product_direction_low_frequency_manual_selection.md`。
+>
+> 原状态：生效（2026-09-27）
 > 定位：**受控实盘实验**——截面排名能力已被大样本验证（IC t=3~7），但组合级
 > 超额未达统计显著（risk_on low_value 120d +4.94pp，t=1.82）。本协议用分级
 > 放量在真实市场中检验体系，观察期协议（two_style_observation_protocol.md）
