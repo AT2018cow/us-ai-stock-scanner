@@ -236,6 +236,9 @@ def build_stock_decisions(
             "fundamental_latest_periodic_form",
             "fundamental_latest_periodic_accession",
             "fundamental_reporting_currency",
+            "fundamental_source",
+            "fundamental_edgartools_fallback_status",
+            "fundamental_edgartools_fallback_version",
         ):
             value = _text(row.get(key))
             if value is not None:
@@ -243,6 +246,7 @@ def build_stock_decisions(
         for key in (
             "fundamental_facts_cover_latest_periodic",
             "fundamental_currency_supported",
+            "fundamental_edgartools_fallback_used",
         ):
             value = row.get(key)
             if isinstance(value, bool):
@@ -250,6 +254,13 @@ def build_stock_decisions(
         etf_count = _number(row.get("watchlist_etf_count"))
         if etf_count is not None:
             provenance["watchlist_etf_count"] = int(etf_count)
+        fallback_fact_count = _number(
+            row.get("fundamental_edgartools_fallback_fact_count")
+        )
+        if fallback_fact_count is not None:
+            provenance["fundamental_edgartools_fallback_fact_count"] = int(
+                fallback_fact_count
+            )
 
         provisional.append(
             StockDecision(
