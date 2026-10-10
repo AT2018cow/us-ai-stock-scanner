@@ -511,38 +511,47 @@ def fetch_usd_10q_companyfacts_patch(
                 error=str(exc),
             )
 
-    try:
-        # collect_fundamentals is multi-threaded, while this fallback is rare
-        # and low-frequency. Serialize exact-filing retrieval so it cannot
-        # create a second uncontrolled SEC request fan-out beside SecClient.
-        with _EDGARTOOLS_FETCH_LOCK:
+    # collect_fundamentals is multi-threaded, while this fallback is rare
+    # and low-frequency. Serialize exact-filing retrieval so it cannot create
+    # a second uncontrolled SEC request fan-out beside SecClient.
+    with _EDGARTOOLS_FETCH_LOCK:
+        try:
             filing = resolver(accession)
-            if filing is None:
-                return EdgarToolsFallbackResult(
-                    status=_STATUS_FETCH_FAILED,
-                    accession=accession,
-                    filing_date=filed or None,
-                    form=form,
-                    error="filing_not_found",
-                )
-            raw_form = _clean(getattr(filing, "form", None)).upper()
-            if raw_form and raw_form != _SUPPORTED_FORM:
-                return EdgarToolsFallbackResult(
-                    status=_STATUS_FILING_MISMATCH,
-                    accession=accession,
-                    filing_date=filed or None,
-                    form=raw_form,
-                    error=f"expected 10-Q, got {raw_form}",
-                )
+        except Exception as exc:
+            return EdgarToolsFallbackResult(
+                status=_STATUS_FETCH_FAILED,
+                accession=accession,
+                filing_date=filed or None,
+                form=form,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        if filing is None:
+            return EdgarToolsFallbackResult(
+                status=_STATUS_FETCH_FAILED,
+                accession=accession,
+                filing_date=filed or None,
+                form=form,
+                error="filing_not_found",
+            )
+        raw_form = _clean(getattr(filing, "form", None)).upper()
+        if raw_form and raw_form != _SUPPORTED_FORM:
+            return EdgarToolsFallbackResult(
+                status=_STATUS_FILING_MISMATCH,
+                accession=accession,
+                filing_date=filed or None,
+                form=raw_form,
+                error=f"expected 10-Q, got {raw_form}",
+            )
+        try:
             xbrl = filing.xbrl()
-    except Exception as exc:
-        return EdgarToolsFallbackResult(
-            status=_STATUS_FETCH_FAILED,
-            accession=accession,
-            filing_date=filed or None,
-            form=form,
-            error=f"{type(exc).__name__}: {exc}",
-        )
+        except Exception as exc:
+            return EdgarToolsFallbackResult(
+                status=_STATUS_XBRL_UNAVAILABLE,
+                accession=accession,
+                filing_date=filed or None,
+                form=form,
+                error=f"{type(exc).__name__}: {exc}",
+            )
     if xbrl is None:
         return EdgarToolsFallbackResult(
             status=_STATUS_XBRL_UNAVAILABLE,
