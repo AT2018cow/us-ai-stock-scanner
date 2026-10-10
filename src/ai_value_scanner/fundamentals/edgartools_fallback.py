@@ -193,6 +193,50 @@ def _normalize_scanner_unit(value: object) -> str | None:
     return None
 
 
+def _fact_currency(row: Mapping[str, object]) -> str | None:
+    """Resolve the EdgarTools 5.61.1 FactQuery currency field conservatively.
+
+    Monetary facts on the filing-level FactQuery DataFrame expose ``currency``;
+    they do not expose the EntityFacts-style ``unit`` column. If ``currency`` is
+    present but malformed or ambiguous, fail closed instead of overriding it
+    from ``unit_ref``.
+    """
+
+    raw = row.get("currency")
+    token = _clean(raw)
+    if not token:
+        return None
+    return _normalize_currency_unit(raw)
+
+
+def _scanner_unit_from_fact(row: Mapping[str, object]) -> str | None:
+    """Map a FactQuery row to the scanner's Company Facts unit contract.
+
+    ``currency`` is authoritative for monetary facts. ``unit_ref`` is used only
+    for exact, already-supported unit shapes such as shares / USD-per-share, or
+    as a strict USD unit fallback for non-core rows when currency is absent.
+    """
+
+    currency_token = _clean(row.get("currency"))
+    currency = (
+        _normalize_currency_unit(row.get("currency"))
+        if currency_token
+        else None
+    )
+    unit_ref_unit = _normalize_scanner_unit(row.get("unit_ref"))
+
+    if unit_ref_unit == "shares":
+        return "shares" if not currency_token else None
+    if unit_ref_unit == "USD/shares":
+        if currency_token:
+            return "USD/shares" if currency == "USD" else None
+        return "USD/shares"
+
+    if currency_token:
+        return "USD" if currency == "USD" else None
+
+    return "USD" if unit_ref_unit == "USD" else None
+
 def _facts_dataframe(xbrl: object) -> pd.DataFrame:
     """Return explicitly undimensioned filing facts.
 
@@ -247,7 +291,7 @@ def _sec_like_entry(
     if _has_dimensions(row):
         return None
 
-    unit = _normalize_scanner_unit(row.get("unit"))
+    unit = _scanner_unit_from_fact(row)
     if unit is None:
         return None
 
@@ -304,7 +348,7 @@ def _core_currency_sets(
             _row_value(raw, "period_end", "period_instant", "end", "instant")
         ) is None:
             continue
-        currency = _normalize_currency_unit(raw.get("unit"))
+        currency = _fact_currency(raw)
         if currency is None:
             continue
         for group in groups:
