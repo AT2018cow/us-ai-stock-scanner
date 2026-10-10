@@ -126,6 +126,7 @@ def _latest_rows(
         )
     return rows
 
+
 def _entry(start: str, end: str, value: float, filed: str, accn: str, form: str = "10-Q") -> dict[str, object]:
     return {
         "start": start,
@@ -232,6 +233,17 @@ class TestEdgarToolsUsd10QFallback(unittest.TestCase):
                 period_instant="2026-06-30",
             )
         )
+        rows.append(
+            _row(
+                "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+                456.0,
+                start=None,
+                end=None,
+                currency=None,
+                unit_ref="USD",
+                period_instant="2026-06-30",
+            )
+        )
         result = build_usd_10q_companyfacts_patch(
             _FakeXbrl(rows),
             accession="q2-26",
@@ -247,6 +259,10 @@ class TestEdgarToolsUsd10QFallback(unittest.TestCase):
         ]["units"]["shares"]
         self.assertEqual(len(share_rows), 1)
         self.assertEqual(share_rows[0]["end"], "2026-06-30")
+        self.assertNotIn(
+            "CashAndCashEquivalentsAtCarryingValue",
+            result.patch["facts"]["us-gaap"],
+        )
 
     def test_missing_undimensioned_query_contract_fails_closed(self) -> None:
         class UnsafeFacts:
