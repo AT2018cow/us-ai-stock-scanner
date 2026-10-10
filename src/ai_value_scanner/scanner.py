@@ -157,9 +157,13 @@ QUARTERLY_FORMS = {"10-Q", "10-K", "20-F", "40-F"}
 REVENUE_TAGS = [
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet",
+]
+# Live-only aliases proven by the PR #44 exact-filing evidence. Keep the
+# historical/replay REVENUE_TAGS contract unchanged in this correctness PR.
+LIVE_REVENUE_TAGS = REVENUE_TAGS + [
     "RevenueFromContractWithCustomerIncludingAssessedTax",
     "RegulatedAndUnregulatedOperatingRevenue",
-    "SalesRevenueNet",
 ]
 NET_INCOME_TAGS = ["NetIncomeLoss", "ProfitLoss"]
 SHARES_TAGS = [
@@ -244,11 +248,11 @@ BACKLOG_TAGS = [
     "DeferredRevenueCurrentAndNoncurrent",
 ]
 FUNDAMENTAL_FILING_COVERAGE_TAGS = frozenset(
-    REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
+    LIVE_REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
 )
 
 FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
-    REVENUE_TAGS
+    LIVE_REVENUE_TAGS
     + NET_INCOME_TAGS
     + SHARES_TAGS
     + EPS_TAGS
@@ -269,7 +273,7 @@ FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
 )
 
 CORE_MONETARY_CURRENCY_TAGS = frozenset(
-    REVENUE_TAGS
+    LIVE_REVENUE_TAGS
     + NET_INCOME_TAGS
     + OPERATING_CASH_FLOW_TAGS
     + [
@@ -289,7 +293,7 @@ EDGARTOOLS_FALLBACK_ALLOWED_TAGS = frozenset(
     .union(BACKLOG_TAGS)
 )
 EDGARTOOLS_FALLBACK_CORE_TAG_GROUPS: dict[str, tuple[str, ...]] = {
-    "revenue": tuple(REVENUE_TAGS),
+    "revenue": tuple(LIVE_REVENUE_TAGS),
     "net_income": tuple(NET_INCOME_TAGS),
     "operating_cash_flow": tuple(OPERATING_CASH_FLOW_TAGS),
 }
@@ -2588,7 +2592,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                         latest_periodic_accession or "",
                     )
                     for tags in (
-                        REVENUE_TAGS,
+                        LIVE_REVENUE_TAGS,
                         NET_INCOME_TAGS,
                         OPERATING_CASH_FLOW_TAGS,
                     )
@@ -2663,7 +2667,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                 has_prev = has_prev or prev_val > 0
         return (latest_sum if has_latest else None, prev_sum if has_prev else None)
 
-    revenue, revenue_prev, revenue_form = pick_flow_pair(REVENUE_TAGS, "USD")
+    revenue, revenue_prev, revenue_form = pick_flow_pair(LIVE_REVENUE_TAGS, "USD")
     net_income, net_income_prev, net_income_form = pick_flow_pair(NET_INCOME_TAGS, "USD")
     ocf, ocf_prev, operating_cash_flow_form = pick_flow_pair(OPERATING_CASH_FLOW_TAGS, "USD")
     capex_raw, _, _ = pick_flow_pair(CAPEX_TAGS, "USD")
@@ -2684,7 +2688,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         ),
         metric_record_groups=(
             extract_fact_records(
-                companyfacts, REVENUE_TAGS, "USD", QUARTERLY_FORMS
+                companyfacts, LIVE_REVENUE_TAGS, "USD", QUARTERLY_FORMS
             ),
             extract_fact_records(
                 companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
@@ -2698,7 +2702,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         else None
     )
     shares_stale = bool(share_integrity.stale)
-    revenue_ttm_history = build_ttm_history(companyfacts, REVENUE_TAGS, "USD")
+    revenue_ttm_history = build_ttm_history(companyfacts, LIVE_REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
     shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
     shares_form = "periodic" if shares is not None else None
