@@ -2,6 +2,14 @@
 
 from .action import map_action_state
 from .entry import ENTRY_POLICY_VERSION, build_entry_quality_v1
+from .integrated import (
+    DEFAULT_ATTENTION_CAP,
+    build_source_list_membership,
+    build_stock_decisions,
+    decisions_by_symbol,
+    select_daily_attention,
+    select_weekly_attention,
+)
 from .quality import QUALITY_POLICY_VERSION, build_company_quality_v1
 from .model import (
     DECISION_SCHEMA_VERSION,
@@ -21,6 +29,12 @@ from .model import (
 )
 
 __all__ = [
+    "select_weekly_attention",
+    "select_daily_attention",
+    "decisions_by_symbol",
+    "build_stock_decisions",
+    "build_source_list_membership",
+    "DEFAULT_ATTENTION_CAP",
     "DECISION_SCHEMA_VERSION",
     "ENTRY_POLICY_VERSION",
     "ActionState",
