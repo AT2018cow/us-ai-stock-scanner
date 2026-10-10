@@ -51,6 +51,7 @@ from ai_value_scanner.fundamentals.facts import (
     collapse_fact_records_by_end,
     extract_fact_records,
     merged_standard_taxonomy_facts,
+    normalize_form,
 )
 from ai_value_scanner.fundamentals.reconstruction import (
     ReconstructedFlows,
@@ -122,6 +123,20 @@ from ai_value_scanner.strategy.selection import (
     dedupe_symbol_by_best_channel,
     drop_symbols,
 )
+from ai_value_scanner.decision import (
+    DEFAULT_ATTENTION_CAP,
+    build_source_list_membership,
+    build_stock_decisions,
+    decisions_by_symbol,
+    select_daily_attention,
+    select_weekly_attention,
+)
+from ai_value_scanner.reporting.snapshot import (
+    load_previous_snapshot,
+    resolve_git_commit_sha,
+    write_decision_snapshot,
+)
+
 from ai_value_scanner.reporting.scan import (
     build_run_report_markdown,
     default_run_stem,
@@ -220,6 +235,27 @@ BACKLOG_TAGS = [
     "ContractWithCustomerLiability",
     "DeferredRevenueCurrentAndNoncurrent",
 ]
+FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
+    REVENUE_TAGS
+    + NET_INCOME_TAGS
+    + SHARES_TAGS
+    + EPS_TAGS
+    + OPERATING_CASH_FLOW_TAGS
+    + CAPEX_TAGS
+    + CASH_AND_EQUIVALENTS_TAGS
+    + LONG_TERM_DEBT_TAGS
+    + CURRENT_DEBT_TAGS
+    + EBIT_TAGS
+    + NONRECURRING_EXPENSE_TAGS
+    + NONRECURRING_GAIN_TAGS
+    + INTEREST_EXPENSE_TAGS
+    + DA_TAGS
+    + ASSETS_CURRENT_TAGS
+    + LIABILITIES_CURRENT_TAGS
+    + RECEIVABLES_CURRENT_TAGS
+    + INVENTORY_TAGS
+)
+
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 AI_DISCLOSURE_KEYWORD_GROUPS: dict[str, list[str]] = {
@@ -2154,6 +2190,36 @@ def collect_candidates(
     return out
 
 
+def latest_fundamental_filing_date(companyfacts: dict[str, Any]) -> str | None:
+    """Latest filed date among financial facts used by the live Quality layer."""
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    latest: str | None = None
+    for tag in FUNDAMENTAL_DATA_ASOF_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for entries in units.values():
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_form(item.get("form")) not in QUARTERLY_FORMS:
+                    continue
+                raw = item.get("filed")
+                if raw is None:
+                    continue
+                token = str(raw).strip()[:10]
+                try:
+                    datetime.strptime(token, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                if latest is None or token > latest:
+                    latest = token
+    return latest
+
+
 def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     # Only fields that change the financial computation inside
     # load_one_fundamental. Output-count or scoring-only knobs must not
@@ -2166,7 +2232,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 4
+PARSED_FUND_CACHE_VERSION = 5
 
 
 def _parsed_fund_cache_meta(
@@ -2267,6 +2333,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
+    fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
 
     def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
         if config.use_ttm_metrics:
@@ -2489,6 +2556,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "shares_outstanding": shares,
         "shares_asof_end": shares_asof_end,
         "shares_stale": shares_stale,
+        "fundamental_data_asof": fundamental_data_asof,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -2601,6 +2669,7 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income": None,
                         "net_income_form": None,
                         "shares_outstanding": None,
+                        "fundamental_data_asof": None,
                         "revenue_ttm_history_json": None,
                         "net_income_ttm_history_json": None,
                         "shares_history_json": None,
@@ -2674,6 +2743,8 @@ def run_scan(
     network_report_output_path: str | None = None,
     report_output_path: str | None = None,
     scan_config_path: str | None = None,
+    decision_output_root: str | None = None,
+    decision_attention_cap: int = DEFAULT_ATTENTION_CAP,
 ) -> Path:
     def resolve_top_n(value: Any, fallback: int) -> int:
         try:
@@ -3246,6 +3317,7 @@ def run_scan(
         "volatility_60d",
         "avg_dollar_volume_20d",
         "market_asof",
+        "fundamental_data_asof",
         "regime",
         "benchmark_trend_ok",
         "market_cap",
@@ -3661,6 +3733,108 @@ def run_scan(
             sec_cache_summary = f"hits={hits}, misses={misses}, hit_rate={hit_rate:.2f}%"
             log_status(started_at, "INFO", f"SEC cache: {sec_cache_summary}")
 
+    decision_snapshot_root: Path | None = None
+    decision_output_error: str | None = None
+    try:
+        decision_date = started_at.date().isoformat()
+        default_decision_dir = (
+            "decisions"
+            if config.max_symbols is None
+            else "decision_samples"
+        )
+        snapshot_root = Path(
+            decision_output_root
+            or (Path(config.output_dir) / default_decision_dir)
+        )
+        previous = load_previous_snapshot(
+            snapshot_root,
+            decision_date,
+            strategy_style=config.strategy_style,
+        )
+        previous_by_symbol = decisions_by_symbol(previous)
+        source_lists = build_source_list_membership(
+            {
+                "low_value": ranked,
+                "industry_trend": industry_trend,
+                "momentum": momentum,
+                "research_pool": research_pool,
+            }
+        )
+        config_payload = json.dumps(
+            vars(config),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        config_fingerprint = hashlib.sha256(
+            config_payload.encode("utf-8")
+        ).hexdigest()
+        code_sha = resolve_git_commit_sha()
+        decisions = build_stock_decisions(
+            df,
+            decision_date=decision_date,
+            generated_at_utc=finished_at.isoformat(),
+            previous_by_symbol=previous_by_symbol,
+            source_lists_by_symbol=source_lists,
+            run_provenance={
+                "code_sha": code_sha,
+                "config_fingerprint": config_fingerprint,
+                "strategy_style": config.strategy_style,
+                "scan_config_path": scan_config_path,
+                "watchlist_csv_path": config.watchlist_csv_path,
+            },
+        )
+        daily_attention = select_daily_attention(
+            decisions,
+            cap=decision_attention_cap,
+        )
+        weekly_attention = select_weekly_attention(
+            decisions,
+            cap=decision_attention_cap,
+        )
+        decision_paths = write_decision_snapshot(
+            output_root=snapshot_root,
+            strategy_style=config.strategy_style,
+            decisions=decisions,
+            daily_attention=daily_attention,
+            weekly_attention=weekly_attention,
+            generated_at_utc=finished_at.isoformat(),
+            decision_date=decision_date,
+            config_fingerprint=config_fingerprint,
+            code_sha=code_sha,
+            input_provenance={
+                "watchlist_csv_path": config.watchlist_csv_path,
+                "legacy_ranked_csv": str(out_path),
+                "industry_trend_csv": str(trend_out_path),
+                "momentum_csv": str(momentum_out_path),
+                "research_pool_csv": str(research_pool_out_path),
+                "network_issue_flag": bool(
+                    report.get("had_rate_limit_or_network_issue")
+                ),
+                "stale_market_data_fallback_used": bool(
+                    report.get("stale_market_data_fallback_used")
+                ),
+                "market_data_provenance": report.get("data_provenance", {}),
+            },
+        )
+        decision_snapshot_root = decision_paths.root
+        log_status(
+            started_at,
+            "INFO",
+            "MVP decision snapshot: "
+            f"{decision_paths.root} | decisions={len(decisions)} "
+            f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
+        )
+    except Exception as exc:
+        decision_output_error = f"{type(exc).__name__}: {exc}"
+        log_status(
+            started_at,
+            "WARN",
+            "MVP decision output failed without affecting legacy outputs: "
+            f"{decision_output_error}",
+        )
+
     md_report = build_run_report_markdown(
         started_at=started_at,
         finished_at=finished_at,
@@ -3686,6 +3860,20 @@ def run_scan(
         diagnostics_layer_summary=diagnostics_layer_summary,
         first_fail_concentration_summary=first_fail_concentration_summary,
     )
+    if decision_snapshot_root is not None:
+        md_report += (
+            "\n## MVP Decision Outputs\n\n"
+            f"- snapshot root: {decision_snapshot_root}\n"
+            f"- canonical decisions: {decision_snapshot_root / 'decisions.jsonl'}\n"
+            f"- daily Action List: {decision_snapshot_root / 'action_list.md'}\n"
+            f"- weekly Review List: {decision_snapshot_root / 'weekly_review.md'}\n"
+        )
+    elif decision_output_error is not None:
+        md_report += (
+            "\n## MVP Decision Outputs\n\n"
+            "- decision output failed without affecting legacy scan artifacts: "
+            f"{decision_output_error}\n"
+        )
     paths["report_md"].write_text(md_report)
     log_status(started_at, "INFO", f"Detailed report: {paths['report_md']}")
 
@@ -3837,6 +4025,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional markdown path for detailed run analysis report.",
     )
+    parser.add_argument(
+        "--decision-output-root",
+        default=None,
+        help=(
+            "Root for immutable MVP decision snapshots. "
+            "Defaults to <output_dir>/decisions."
+        ),
+    )
+    parser.add_argument(
+        "--decision-attention-cap",
+        type=int,
+        default=DEFAULT_ATTENTION_CAP,
+        help="Maximum names in Daily/Weekly Action List outputs (default: 15).",
+    )
     return parser
 
 
@@ -3857,6 +4059,8 @@ def main() -> None:
             args.network_report_output,
             args.report_output,
             scan_config_path=str(args.config),
+            decision_output_root=args.decision_output_root,
+            decision_attention_cap=args.decision_attention_cap,
         )
         if config.archive_watchlist_snapshots:
             snapshot_path = archive_watchlist_snapshot(config, started_at)

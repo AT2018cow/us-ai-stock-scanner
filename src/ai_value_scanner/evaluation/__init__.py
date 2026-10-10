@@ -1,5 +1,12 @@
 """Backtest evaluation primitives."""
 
+from .action import (
+    build_action_evaluation_frame,
+    summarize_action_cohorts,
+    summarize_action_compactness,
+    summarize_action_concentration,
+    summarize_action_transitions,
+)
 from .entry_quality import (
     apply_entry_quality_v1,
     build_entry_quality_evaluation_frame,
@@ -32,6 +39,11 @@ from .backtest import (
 )
 
 __all__ = [
+    "summarize_action_transitions",
+    "summarize_action_concentration",
+    "summarize_action_compactness",
+    "summarize_action_cohorts",
+    "build_action_evaluation_frame",
     "validate_entry_replay_frame",
     "summarize_entry_state_persistence",
     "summarize_entry_state_concentration",
