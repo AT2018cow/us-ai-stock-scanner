@@ -86,14 +86,21 @@ outputs/decision_experiments/risk_off_20261010T143355Z/2026-10-09/risk_off
 If that local output has been removed, use an equivalent checked-out evidence
 snapshot containing the same `decisions.jsonl`.
 
-Run the full flagged diagnostic plus the representative controls:
+Run the full flagged diagnostic plus the representative controls. Use the SHA
+of the code that is actually checked out for the experiment:
 
 ```bash
+CODE_SHA7="$(git rev-parse --short=7 HEAD)"
+
 python scripts/diagnose_sec_with_edgartools.py \
   --snapshot-root outputs/decision_experiments/risk_off_20261010T143355Z/2026-10-09/risk_off \
   --all-flagged \
-  --output-dir outputs/sec_edgartools_diagnostic/2026-10-09_<CODE_SHA7>
+  --output-dir "outputs/sec_edgartools_diagnostic/2026-10-09_${CODE_SHA7}"
 ```
+
+You may run on the exact PR head before merge or on `main` after merge. The
+evidence must record the SHA actually used; do not copy a stale PR-head SHA after
+a squash merge.
 
 The default representative symbol set is:
 
@@ -200,7 +207,7 @@ current `UNRATED` fail-closed behavior and move on to prospective observation.
 After running the full diagnostic, create a separate evidence PR with:
 
 ```text
-evidence/sec_edgartools_parity/2026-10-09_<CODE_SHA7>/
+evidence/sec_edgartools_parity/2026-10-09_<ACTUAL_CODE_SHA7>/
   README.md
   diagnostics.jsonl
   summary.json
