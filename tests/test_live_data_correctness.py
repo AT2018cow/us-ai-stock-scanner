@@ -239,6 +239,56 @@ class TestFundamentalCurrencySafety(unittest.TestCase):
             ("USD", True),
         )
 
+    def test_exact_accession_currency_does_not_inherit_historical_usd(self) -> None:
+        companyfacts = {
+            "facts": {
+                "ifrs-full": {
+                    "Revenue": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "val": 90,
+                                    "end": "2024-12-31",
+                                    "filed": "2025-02-01",
+                                    "form": "20-F",
+                                    "accn": "old",
+                                }
+                            ],
+                            "EUR": [
+                                {
+                                    "val": 100,
+                                    "end": "2025-12-31",
+                                    "filed": "2026-02-01",
+                                    "form": "20-F",
+                                    "accn": "latest",
+                                }
+                            ],
+                        }
+                    },
+                    "ProfitLoss": {
+                        "units": {
+                            "EUR": [
+                                {
+                                    "val": 20,
+                                    "end": "2025-12-31",
+                                    "filed": "2026-02-01",
+                                    "form": "20-F",
+                                    "accn": "latest",
+                                }
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        self.assertEqual(
+            scanner.fundamental_currency_support(
+                companyfacts,
+                accession="latest",
+            ),
+            ("EUR", False),
+        )
+
     def test_quality_fails_closed_when_latest_filing_is_not_covered(self) -> None:
         metrics = _strong_metrics()
         metrics.update(
@@ -329,6 +379,11 @@ class TestMarketDecisionDate(unittest.TestCase):
             "fundamental_facts_cover_latest_periodic": True,
             "fundamental_reporting_currency": "USD",
             "fundamental_currency_supported": True,
+            "fundamental_source": "companyfacts+edgartools_exact_10q",
+            "fundamental_edgartools_fallback_used": True,
+            "fundamental_edgartools_fallback_status": "used",
+            "fundamental_edgartools_fallback_version": "usd_10q_v1",
+            "fundamental_edgartools_fallback_fact_count": 12,
         }
         decision = build_stock_decisions(
             pd.DataFrame([row]),
@@ -346,6 +401,22 @@ class TestMarketDecisionDate(unittest.TestCase):
         self.assertIs(
             decision.provenance["fundamental_currency_supported"],
             True,
+        )
+        self.assertEqual(
+            decision.provenance["fundamental_source"],
+            "companyfacts+edgartools_exact_10q",
+        )
+        self.assertIs(
+            decision.provenance["fundamental_edgartools_fallback_used"],
+            True,
+        )
+        self.assertEqual(
+            decision.provenance["fundamental_edgartools_fallback_status"],
+            "used",
+        )
+        self.assertEqual(
+            decision.provenance["fundamental_edgartools_fallback_fact_count"],
+            12,
         )
 
 
