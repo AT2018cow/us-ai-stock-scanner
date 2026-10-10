@@ -109,6 +109,47 @@ python run_scan.py --config configs/config.risk_off.json --max-symbols 300
 python run_scan.py --config configs/config.risk_off.json
 ```
 
+### 3.4.1 MVP Action List / Detailed Report
+
+同一条 `run_scan.py` 命令现在会在保留所有 legacy CSV/report 的同时，额外生成
+Quality × Entry 的 MVP 决策快照。完整扫描默认写入：
+
+```text
+outputs/decisions/
+  YYYY-MM-DD/
+    <strategy_style>/
+      decisions.jsonl
+      action_list.md
+      weekly_review.md
+      detailed/
+        NVDA.md
+        ...
+      run_manifest.json
+```
+
+其中：
+
+- `decisions.jsonl` 是唯一 canonical decision artifact；
+- `action_list.md` 是 Daily Action List，优先显示当前 `PRIORITY_REVIEW` 和状态变化；
+- `weekly_review.md` 是较完整但仍 capped 的 Weekly Review List；
+- `detailed/*.md` 只解释同一个 `StockDecision`，不重新计算状态；
+- 默认 attention cap 为 15，可用 `--decision-attention-cap` 调整；
+- `--max-symbols` 的试运行会写到 `outputs/decision_samples/`，避免污染正式 prospective archive；
+- 同一日期、同一 style 的正式 snapshot 不会被覆盖；如需保留第二次独立运行，可显式指定新的
+  `--decision-output-root`。
+
+新 decision 输出采用 failure-contained 集成：若 snapshot 写入失败，legacy scanner CSV、
+network report 和旧 Markdown report 仍继续生成，并在日志中记录 WARN。
+
+历史 integrated Action-state 诊断可基于 PR3 的 pre-strategy Entry dataset 运行：
+
+```bash
+python scripts/evaluate_action_states.py \
+  --dataset outputs/entry_quality_dataset_risk_off.csv
+```
+
+该诊断是 retrospective evidence，不会自动修改 Quality / Entry 阈值。
+
 ### 3.5 官方配置
 
 自 2026-09-24 起采用**两风格架构**（原 balanced 与 risk_off 收益相关性 0.999，已归档）：
