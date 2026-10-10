@@ -130,6 +130,7 @@ outputs/decisions/
 其中：
 
 - `decisions.jsonl` 是唯一 canonical decision artifact；
+- snapshot `decision_date` 绑定到实际市场 session（优先 QQQ market-as-of），不是扫描机器的 UTC 日历日期；
 - `action_list.md` 是 Daily Action List，优先显示当前 `PRIORITY_REVIEW` 和状态变化；
 - `weekly_review.md` 是较完整但仍 capped 的 Weekly Review List；
 - `detailed/*.md` 只解释同一个 `StockDecision`，不重新计算状态；
@@ -140,6 +141,12 @@ outputs/decisions/
 
 新 decision 输出采用 failure-contained 集成：若 snapshot 写入失败，legacy scanner CSV、
 network report 和旧 Markdown report 仍继续生成，并在日志中记录 WARN。
+
+Live Company Quality 对 SEC 数据采用保守完整性语义：submissions 中更新的
+10-Q/10-K/20-F/40-F 必须能在本项目识别的 Company Facts 中找到对应 accession；
+否则不会继续用旧 facts 产生高质量评级。当前 live valuation 也不会把非 USD monetary
+facts 与 USD 市值静默混用；这类 foreign-issuer 情况会明确降级为数据不足，等待未来
+有明确需求时再引入 FX-aware normalization。
 
 历史 integrated Action-state 诊断可基于 PR3 的 pre-strategy Entry dataset 运行：
 

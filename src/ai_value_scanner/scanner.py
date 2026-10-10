@@ -235,6 +235,10 @@ BACKLOG_TAGS = [
     "ContractWithCustomerLiability",
     "DeferredRevenueCurrentAndNoncurrent",
 ]
+FUNDAMENTAL_FILING_COVERAGE_TAGS = frozenset(
+    REVENUE_TAGS + NET_INCOME_TAGS + OPERATING_CASH_FLOW_TAGS
+)
+
 FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
     REVENUE_TAGS
     + NET_INCOME_TAGS
@@ -255,6 +259,20 @@ FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
     + RECEIVABLES_CURRENT_TAGS
     + INVENTORY_TAGS
 )
+
+CORE_MONETARY_CURRENCY_TAGS = frozenset(
+    REVENUE_TAGS
+    + NET_INCOME_TAGS
+    + OPERATING_CASH_FLOW_TAGS
+    + [
+        # Common IFRS taxonomy concepts used only to detect reporting
+        # currency. They are not silently promoted into the USD accounting
+        # path without explicit normalization.
+        "Revenue",
+        "CashFlowsFromUsedInOperatingActivities",
+    ]
+)
+_CURRENCY_UNIT_PATTERN = re.compile(r"^[A-Z]{3}$")
 
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
@@ -1845,6 +1863,42 @@ def bars_return_from_lookback(bars: list[dict[str, Any]], lookback_days: int) ->
     return (latest / base) - 1.0
 
 
+def bars_market_asof(bars: list[dict[str, Any]]) -> str | None:
+    """Latest valid daily-bar date, normalized to YYYY-MM-DD."""
+    dates = [
+        pd.to_datetime(item.get("t"), utc=True, errors="coerce")
+        for item in bars
+        if item.get("t")
+    ]
+    valid = [ts for ts in dates if pd.notna(ts)]
+    if not valid:
+        return None
+    return max(valid).date().isoformat()
+
+
+def resolve_market_decision_date(
+    frame: pd.DataFrame,
+    *,
+    benchmark_market_asof: str | None = None,
+) -> str:
+    """Resolve the canonical decision date from observed market data.
+
+    Prefer the QQQ benchmark session because Entry Quality is benchmark-aware.
+    If that provenance is unavailable, fall back to the latest valid symbol
+    market_asof. Never silently use wall-clock UTC date for a prospective
+    decision snapshot.
+    """
+    if benchmark_market_asof:
+        parsed = pd.to_datetime(benchmark_market_asof, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.date().isoformat()
+    if "market_asof" in frame.columns:
+        parsed = pd.to_datetime(frame["market_asof"], errors="coerce").dropna()
+        if not parsed.empty:
+            return parsed.max().date().isoformat()
+    raise ValueError("cannot resolve decision_date from market data")
+
+
 def bars_closes(bars: list[dict[str, Any]]) -> list[float]:
     """Chronological list of valid close prices from daily bars."""
     closes: list[float] = []
@@ -2190,6 +2244,102 @@ def collect_candidates(
     return out
 
 
+def latest_periodic_filing(
+    submissions: dict[str, Any],
+) -> dict[str, str] | None:
+    """Return the newest periodic filing relevant to Company Quality.
+
+    SEC submissions also contain 8-K, 6-K, ownership and other filings that do
+    not necessarily update Company Facts. Cache invalidation and freshness
+    diagnostics therefore track only 10-Q/10-K/20-F/40-F (including amended
+    forms after normalization).
+    """
+    recent = submissions.get("filings", {}).get("recent", {}) or {}
+    forms = recent.get("form", []) or []
+    filing_dates = recent.get("filingDate", []) or []
+    accessions = recent.get("accessionNumber", []) or []
+    best: dict[str, str] | None = None
+    for index, raw_form in enumerate(forms):
+        form = normalize_form(raw_form)
+        if form not in QUARTERLY_FORMS:
+            continue
+        if index >= len(filing_dates):
+            continue
+        filed = str(filing_dates[index] or "").strip()[:10]
+        try:
+            datetime.strptime(filed, "%Y-%m-%d")
+        except ValueError:
+            continue
+        accession = (
+            str(accessions[index]).strip()
+            if index < len(accessions) and accessions[index]
+            else ""
+        )
+        candidate = {
+            "form": form,
+            "filed": filed,
+            "accession": accession,
+        }
+        if best is None or filed > best["filed"]:
+            best = candidate
+    return best
+
+
+def relevant_fundamental_fact_accessions(
+    companyfacts: dict[str, Any],
+) -> set[str]:
+    """Accessions represented by core P&L/cash-flow facts recognized by the scanner."""
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    accessions: set[str] = set()
+    for tag in FUNDAMENTAL_FILING_COVERAGE_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for entries in units.values():
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_form(item.get("form")) not in QUARTERLY_FORMS:
+                    continue
+                accession = str(item.get("accn") or "").strip()
+                if accession:
+                    accessions.add(accession)
+    return accessions
+
+
+def fundamental_currency_support(
+    companyfacts: dict[str, Any],
+) -> tuple[str | None, bool | None]:
+    """Detect whether core monetary facts are available in USD.
+
+    Live valuation combines SEC monetary facts with USD market prices. We do
+    not silently mix local-currency facts with USD market cap. Non-USD-only
+    foreign issuers are therefore explicitly unsupported until an FX-aware
+    normalization layer is intentionally introduced.
+    """
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    currencies: set[str] = set()
+    for tag in CORE_MONETARY_CURRENCY_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for unit, entries in units.items():
+            token = str(unit).strip().upper()
+            if not _CURRENCY_UNIT_PATTERN.fullmatch(token):
+                continue
+            if isinstance(entries, list) and entries:
+                currencies.add(token)
+    if "USD" in currencies:
+        return "USD", True
+    if currencies:
+        return ",".join(sorted(currencies)), False
+    return None, None
+
+
 def latest_fundamental_filing_date(companyfacts: dict[str, Any]) -> str | None:
     """Latest filed date among financial facts used by the live Quality layer."""
     facts = merged_standard_taxonomy_facts(companyfacts)
@@ -2232,7 +2382,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 5
+PARSED_FUND_CACHE_VERSION = 6
 
 
 def _parsed_fund_cache_meta(
@@ -2334,6 +2484,25 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
     fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
+    latest_periodic = latest_periodic_filing(submissions)
+    latest_periodic_filing_date = (
+        latest_periodic["filed"] if latest_periodic is not None else None
+    )
+    latest_periodic_form = (
+        latest_periodic["form"] if latest_periodic is not None else None
+    )
+    latest_periodic_accession = (
+        latest_periodic["accession"] if latest_periodic is not None else None
+    )
+    fact_accessions = relevant_fundamental_fact_accessions(companyfacts)
+    fundamental_facts_cover_latest_periodic = (
+        None
+        if not latest_periodic_accession
+        else latest_periodic_accession in fact_accessions
+    )
+    fundamental_reporting_currency, fundamental_currency_supported = (
+        fundamental_currency_support(companyfacts)
+    )
 
     def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
         if config.use_ttm_metrics:
@@ -2557,6 +2726,12 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "shares_asof_end": shares_asof_end,
         "shares_stale": shares_stale,
         "fundamental_data_asof": fundamental_data_asof,
+        "fundamental_latest_periodic_filing_date": latest_periodic_filing_date,
+        "fundamental_latest_periodic_form": latest_periodic_form,
+        "fundamental_latest_periodic_accession": latest_periodic_accession,
+        "fundamental_facts_cover_latest_periodic": fundamental_facts_cover_latest_periodic,
+        "fundamental_reporting_currency": fundamental_reporting_currency,
+        "fundamental_currency_supported": fundamental_currency_supported,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -2670,6 +2845,12 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income_form": None,
                         "shares_outstanding": None,
                         "fundamental_data_asof": None,
+                        "fundamental_latest_periodic_filing_date": None,
+                        "fundamental_latest_periodic_form": None,
+                        "fundamental_latest_periodic_accession": None,
+                        "fundamental_facts_cover_latest_periodic": None,
+                        "fundamental_reporting_currency": None,
+                        "fundamental_currency_supported": None,
                         "revenue_ttm_history_json": None,
                         "net_income_ttm_history_json": None,
                         "shares_history_json": None,
@@ -2871,6 +3052,7 @@ def run_scan(
         bars_map.get(entry_benchmark_symbol, []),
         split_events.get(entry_benchmark_symbol),
     )
+    qqq_market_asof = bars_market_asof(qqq_bars)
     qqq_trailing_return_60d = bars_return_from_lookback(qqq_bars, 60)
     if qqq_trailing_return_60d is not None and not np.isfinite(
         qqq_trailing_return_60d
@@ -2909,15 +3091,7 @@ def run_scan(
             split_events.get(row.symbol),
         )
         features = price_dimension_from_bars(row.price, symbol_bars)
-        market_asof = None
-        bar_dates = [
-            pd.to_datetime(item.get("t"), utc=True, errors="coerce")
-            for item in symbol_bars
-            if item.get("t")
-        ]
-        valid_bar_dates = [ts for ts in bar_dates if pd.notna(ts)]
-        if valid_bar_dates:
-            market_asof = max(valid_bar_dates).date().isoformat()
+        market_asof = bars_market_asof(symbol_bars)
         stock_return_60d = features.get("return_60d")
         relative_strength_60d_qqq = None
         if (
@@ -3318,6 +3492,12 @@ def run_scan(
         "avg_dollar_volume_20d",
         "market_asof",
         "fundamental_data_asof",
+        "fundamental_latest_periodic_filing_date",
+        "fundamental_latest_periodic_form",
+        "fundamental_latest_periodic_accession",
+        "fundamental_facts_cover_latest_periodic",
+        "fundamental_reporting_currency",
+        "fundamental_currency_supported",
         "regime",
         "benchmark_trend_ok",
         "market_cap",
@@ -3736,7 +3916,10 @@ def run_scan(
     decision_snapshot_root: Path | None = None
     decision_output_error: str | None = None
     try:
-        decision_date = started_at.date().isoformat()
+        decision_date = resolve_market_decision_date(
+            df,
+            benchmark_market_asof=qqq_market_asof,
+        )
         default_decision_dir = (
             "decisions"
             if config.max_symbols is None
@@ -3805,6 +3988,10 @@ def run_scan(
             code_sha=code_sha,
             input_provenance={
                 "watchlist_csv_path": config.watchlist_csv_path,
+                "decision_date_source": (
+                    "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
+                ),
+                "qqq_market_asof": qqq_market_asof,
                 "legacy_ranked_csv": str(out_path),
                 "industry_trend_csv": str(trend_out_path),
                 "momentum_csv": str(momentum_out_path),

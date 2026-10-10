@@ -229,9 +229,23 @@ def build_stock_decisions(
                 "entry_policy_version": ENTRY_POLICY_VERSION,
             }
         )
-        for key in ("watchlist_bucket", "watchlist_etfs"):
+        for key in (
+            "watchlist_bucket",
+            "watchlist_etfs",
+            "fundamental_latest_periodic_filing_date",
+            "fundamental_latest_periodic_form",
+            "fundamental_latest_periodic_accession",
+            "fundamental_reporting_currency",
+        ):
             value = _text(row.get(key))
             if value is not None:
+                provenance[key] = value
+        for key in (
+            "fundamental_facts_cover_latest_periodic",
+            "fundamental_currency_supported",
+        ):
+            value = row.get(key)
+            if isinstance(value, bool):
                 provenance[key] = value
         etf_count = _number(row.get("watchlist_etf_count"))
         if etf_count is not None:

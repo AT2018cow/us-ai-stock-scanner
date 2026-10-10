@@ -85,16 +85,12 @@ def _run_streamed(command: list[str], *, log_path: Path | None = None) -> int:
             handle.close()
 
 
-def _latest_snapshot(root: Path, style: str) -> Path | None:
-    candidates = sorted(
-        (
-            path.parent
-            for path in root.glob(f"*/{style}/decisions.jsonl")
-            if path.is_file()
-        ),
-        key=lambda path: path.as_posix(),
-    )
-    return candidates[-1] if candidates else None
+def _snapshot_roots(root: Path, style: str) -> set[Path]:
+    return {
+        path.parent
+        for path in root.glob(f"*/{style}/decisions.jsonl")
+        if path.is_file()
+    }
 
 
 def main() -> None:
@@ -154,13 +150,7 @@ def main() -> None:
         ]
         mode = "experiment"
 
-    expected_day = datetime.now(timezone.utc).date().isoformat()
-    expected_snapshot = decision_root / expected_day / style
-    if expected_snapshot.exists():
-        raise SystemExit(
-            "Target snapshot already exists and will not be reused for acceptance: "
-            f"{expected_snapshot}"
-        )
+    snapshots_before = _snapshot_roots(decision_root, style)
 
     log_path = Path("outputs") / f"mvp_full_scan_{style}_{stamp}.log"
     print(f"=== 2/3 Full scan ({mode}) ===")
@@ -171,13 +161,19 @@ def main() -> None:
     if scan_code != 0:
         raise SystemExit(scan_code)
 
-    snapshot = _latest_snapshot(decision_root, style)
-    if snapshot is None:
+    snapshots_after = _snapshot_roots(decision_root, style)
+    new_snapshots = sorted(
+        snapshots_after - snapshots_before,
+        key=lambda path: path.as_posix(),
+    )
+    if len(new_snapshots) != 1:
         raise SystemExit(
-            "Scan process completed, but no canonical decision snapshot was "
-            f"found under {decision_root}. Inspect {log_path} for a contained "
-            "decision-output warning."
+            "Scan process completed, but acceptance expected exactly one new "
+            f"canonical decision snapshot and found {len(new_snapshots)}. "
+            f"Inspect {log_path} for a contained decision-output warning or "
+            "an immutable same-session collision."
         )
+    snapshot = new_snapshots[0]
 
     print("=== 3/3 Snapshot acceptance ===")
     result = validate_snapshot(snapshot, attention_cap=attention_cap)

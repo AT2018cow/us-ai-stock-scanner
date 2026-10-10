@@ -216,6 +216,25 @@ universe approximation, record it honestly in metadata.
 A new expensive full replay / dataset regeneration requires a specific reason why
 existing frozen evidence cannot answer the question.
 
+### External experiment review contract
+
+If a PR requires the user to run a credentialed / external experiment that the coding
+agent cannot execute itself, the PR description must include a **Review evidence to
+submit** section before asking for the run.
+
+That section must state:
+
+- the exact command(s) to run;
+- whether the run is experiment / formal / retrospective;
+- the exact files or directories that must be committed for review;
+- any small derived review summary that is required;
+- sensitive or bulky files that must **not** be committed;
+- the concrete questions / acceptance criteria the reviewer will check.
+
+Prefer a small immutable evidence package under `evidence/` over screenshots or pasted
+terminal fragments. Never request credentials, `.env`, raw API secrets, raw caches, or
+bulk outputs that are not needed for review.
+
 ## 9. Data and computation invariants
 
 ### Fundamentals / SEC
