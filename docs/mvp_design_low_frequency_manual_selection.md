@@ -151,6 +151,62 @@ This design deliberately separates:
 
 ---
 
+### 3.1 ETF holdings semantics — hard constraint
+
+ETF holdings have a **special, deliberately limited role** in this project.
+
+> **Source-ETF constituents are a discovery / candidate-universe input. They are
+> not a portfolio that this project is trying to replicate, and historical ETF
+> constituent reconstruction is not an MVP objective.**
+
+Current intended use:
+
+- selected AI / theme ETFs are periodically inspected to discover relevant underlying stocks;
+- the union of those underlying names helps seed / refresh the current watchlist or theme candidate pool;
+- metadata such as source ETF names or ETF-count consensus may be retained as **theme / discovery context**;
+- the scanner then evaluates the **underlying companies** using our own Company Quality and Entry Quality logic.
+
+ETF membership must **not** by itself mean:
+
+- the company is high quality;
+- the entry is attractive;
+- the stock should be selected;
+- the system should copy the ETF's weight;
+- the system should trade or track the ETF itself.
+
+#### Historical validation rule
+
+For historical decision replay:
+
+1. use our actually archived watchlist snapshots when they exist;
+2. preserve their as-of provenance;
+3. where the repository lacks an old watchlist snapshot, an explicitly frozen union / fixed-pool approximation may be used for retrospective diagnostics;
+4. such an approximation must be labelled as a **universe approximation**, not as true point-in-time ETF constituent history and not as fresh OOS evidence.
+
+The existing canonical post-PR23 evidence already documents a union approximation before the first reliable watchlist snapshots. That limitation should remain visible rather than being "fixed" by inventing historical ETF holdings after the fact.
+
+#### What agents must not build by default
+
+Do **not** make any of the following an MVP prerequisite:
+
+- a historical ETF holdings database;
+- daily reconstruction of past ETF constituents;
+- scraping archived ETF holdings pages;
+- reconstructing historical ETF portfolio weights;
+- ETF tracking-error / replication infrastructure.
+
+Those tasks add substantial data-engineering complexity without directly improving the MVP's core questions:
+
+> Is this a good company, and is this a good entry?
+
+Historical ETF constituent reconstruction should only be reconsidered if a specific future study demonstrates that universe drift materially biases a decision-quality result and that no simpler frozen/snapshot approach can answer the question.
+
+#### Forward-looking rule
+
+Going forward, when the candidate watchlist is refreshed from ETF holdings, archive/version the resulting watchlist and its provenance. Prospective validation should use those real snapshots. We should improve future evidence quality prospectively rather than attempting to manufacture a perfect ETF history retrospectively.
+
+---
+
 ## 4. Build vs Borrow policy
 
 The project should not reimplement mature generic infrastructure unless our
