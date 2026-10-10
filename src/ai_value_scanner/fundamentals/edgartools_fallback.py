@@ -194,8 +194,23 @@ def _normalize_scanner_unit(value: object) -> str | None:
 
 
 def _facts_dataframe(xbrl: object) -> pd.DataFrame:
+    """Return explicitly undimensioned filing facts.
+
+    EdgarTools 5.x can include dimensional rows while omitting dimension
+    metadata from a default DataFrame. Production fallback therefore requires
+    the query API's explicit by_dimension(None) filter; if that contract is not
+    available, fail closed instead of guessing which row is consolidated.
+    """
     facts = getattr(xbrl, "facts", None)
-    converter = getattr(facts, "to_dataframe", None)
+    query_factory = getattr(facts, "query", None)
+    if not callable(query_factory):
+        return pd.DataFrame()
+    query = query_factory()
+    by_dimension = getattr(query, "by_dimension", None)
+    if not callable(by_dimension):
+        return pd.DataFrame()
+    query = by_dimension(None)
+    converter = getattr(query, "to_dataframe", None)
     if not callable(converter):
         return pd.DataFrame()
     frame = converter()
