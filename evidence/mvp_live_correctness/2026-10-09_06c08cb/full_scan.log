@@ -1,0 +1,447 @@
+[14:34:00][INFO][+    0.0s] Scan started.
+[14:34:00][INFO][+    0.0s] Ranked output target: outputs/ai_value_scan_20261010T143400Z_full_ranked.csv
+[14:34:00][INFO][+    0.0s] [1/6] Loading AI watchlist and tradable universe.
+[14:34:00][INFO][+    0.0s] Watchlist rows loaded: 687
+[14:34:00][INFO][+    0.0s] Watchlist unique symbols: 687
+[14:34:03][INFO][+    2.6s] Universe symbols after tradable/mapping merge: 678
+[14:34:03][INFO][+    2.6s] After price/liquidity prefilter: 510
+[14:34:03][INFO][+    2.6s] [2/6] Computing price-dimension features.
+[14:37:12][INFO][+  192.1s] Split events (corporate actions): 13 symbols, e.g. ['AMCR', 'APH', 'BKNG', 'CRWD', 'CVNA']
+[14:37:12][INFO][+  192.2s] Benchmark trend filter (QQQ): close=751.26 sma200=672.14 trend_ok=True
+[14:38:31][INFO][+  271.0s] [3/6] Fetching SEC fundamentals (cached locally).
+  [progress] SEC fundamentals: 46/510 (9%)
+  [progress] SEC fundamentals: 97/510 (19%)
+  [progress] SEC fundamentals: 148/510 (29%)
+  [progress] SEC fundamentals: 199/510 (39%)
+  [progress] SEC fundamentals: 250/510 (49%)
+  [progress] SEC fundamentals: 301/510 (59%)
+  [progress] SEC fundamentals: 352/510 (69%)
+  [progress] SEC fundamentals: 403/510 (79%)
+  [progress] SEC fundamentals: 454/510 (89%)
+  [progress] SEC fundamentals: 505/510 (99%)
+  [progress] SEC fundamentals: 510/510 (100%)
+[14:40:21][INFO][+  381.4s] SEC fundamentals merge complete.
+[14:40:21][INFO][+  381.4s] [4/6] Computing valuation and watchlist funnel.
+[14:41:52][INFO][+  472.4s] [5/6] Applying watchlist attributes.
+[14:41:52][INFO][+  472.4s] Watchlist candidates by channel:
+[14:41:52][INFO][+  472.4s]   core_ai: 142
+[14:41:52][INFO][+  472.4s]   ai_enabler: 178
+[14:41:52][INFO][+  472.4s]   ai_peripheral: 198
+[14:41:52][INFO][+  472.4s]   ai_smallcap: 122
+[14:41:52][INFO][+  472.4s] Watchlist matched symbols: 510
+[14:41:52][INFO][+  472.4s] Per-channel output caps => low_value=10, trend=10, momentum=10
+[14:41:52][INFO][+  472.5s] Channel=core_ai: filter diagnostics
+[14:41:52][INFO][+  472.5s]   price_notna: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   min_price: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   min_dollar_volume: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   market_cap_notna: -5 => 505 (pass=99.02%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   min_market_cap: -1 => 504 (pass=99.80%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   min_drawdown_from_52w_high: -53 => 451 (pass=89.48%, layer=valuation_hard)
+[14:41:52][INFO][+  472.5s]   max_range_position_52w: -30 => 421 (pass=93.35%, layer=valuation_hard)
+[14:41:52][INFO][+  472.5s]   max_price_to_sma200: -82 => 339 (pass=80.52%, layer=valuation_hard)
+[14:41:52][INFO][+  472.5s]   benchmark_trend_filter: -0 => 339 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:52][INFO][+  472.5s]   max_adv_participation: -60 => 279 (pass=82.30%, layer=quality_or_theme_hard)
+[14:41:52][INFO][+  472.5s]   max_estimated_slippage_bps: -0 => 279 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:52][INFO][+  472.5s]   watchlist_membership: -0 => 279 (pass=100.00%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   channel_bucket_match: -215 => 64 (pass=22.94%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   sic_filter: -0 => 64 (pass=100.00%, layer=base_hard)
+[14:41:52][INFO][+  472.5s]   Layer base_hard: before=510 remaining=64 removed=221 pass=12.55%
+[14:41:52][INFO][+  472.5s]   Layer quality_or_theme_hard: before=339 remaining=279 removed=60 pass=82.30%
+[14:41:52][INFO][+  472.5s]   Layer valuation_hard: before=504 remaining=339 removed=165 pass=67.26%
+[14:41:52][INFO][+  472.5s]   First-fail summary:
+[14:41:52][INFO][+  472.5s]   max_ev_to_ebit: 96 (18.82%)
+[14:41:52][INFO][+  472.5s]   positive_net_income: 74 (14.51%)
+[14:41:52][INFO][+  472.5s]   positive_free_cash_flow: 52 (10.20%)
+[14:41:52][INFO][+  472.5s]   min_avg_dollar_volume_20d: 35 (6.86%)
+[14:41:52][INFO][+  472.5s]   min_net_income_yoy: 34 (6.67%)
+[14:41:52][INFO][+  472.5s]   min_return_60d: 28 (5.49%)
+[14:41:52][INFO][+  472.5s]   positive_revenue: 24 (4.71%)
+[14:41:52][INFO][+  472.5s]   positive_ebit: 23 (4.51%)
+[14:41:52][INFO][+  472.5s]   min_return_20d: 19 (3.73%)
+[14:41:52][INFO][+  472.5s]   min_drawdown_from_52w_high: 14 (2.75%)
+[14:41:52][INFO][+  472.5s]   max_price_to_sma200: 14 (2.75%)
+[14:41:52][INFO][+  472.5s]   min_revenue_yoy: 13 (2.55%)
+[14:41:52][INFO][+  472.5s]   min_avg_dollar_volume_20d_percentile: 11 (2.16%)
+[14:41:52][INFO][+  472.5s]   min_net_margin: 10 (1.96%)
+[14:41:52][INFO][+  472.5s]   positive_operating_cash_flow: 8 (1.57%)
+[14:41:52][INFO][+  472.5s]   min_fcf_yield: 8 (1.57%)
+[14:41:52][INFO][+  472.5s]   max_range_position_52w: 7 (1.37%)
+[14:41:52][INFO][+  472.5s]   min_current_ratio: 7 (1.37%)
+[14:41:52][INFO][+  472.5s]   market_cap_notna: 5 (0.98%)
+[14:41:52][INFO][+  472.5s]   min_drawdown_percentile: 5 (0.98%)
+[14:41:52][INFO][+  472.5s]   max_ps_hist_percentile: 4 (0.78%)
+[14:41:52][INFO][+  472.5s]   min_interest_coverage: 3 (0.59%)
+[14:41:52][INFO][+  472.5s]   min_net_income: 3 (0.59%)
+[14:41:52][INFO][+  472.5s]   max_20d_return: 3 (0.59%)
+[14:41:52][INFO][+  472.5s]   channel_bucket_match: 2 (0.39%)
+[14:41:52][INFO][+  472.5s]   min_fundamental_quality_score: 2 (0.39%)
+[14:41:52][INFO][+  472.5s]   min_market_cap: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   min_ai_link_score: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   min_value_discount_any: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   max_pe_hist_percentile: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   passed: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   max_net_debt_to_ebitda: 1 (0.20%)
+[14:41:52][INFO][+  472.5s]   First-fail concentration: reason=max_ev_to_ebit count=96 pct=18.82%
+[14:41:52][INFO][+  472.5s]   Diagnostics: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_core_ai.csv
+[14:41:52][INFO][+  472.5s]   First-fail: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_core_ai_first_fail.csv
+[14:41:53][INFO][+  472.6s]   Low-Value research gate: 64 => 16
+[14:41:53][INFO][+  472.6s]   Filtered candidates: 64
+[14:41:53][INFO][+  472.7s] Channel=ai_enabler: filter diagnostics
+[14:41:53][INFO][+  472.7s]   price_notna: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   min_price: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   min_dollar_volume: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   market_cap_notna: -5 => 505 (pass=99.02%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   min_market_cap: -1 => 504 (pass=99.80%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   min_drawdown_from_52w_high: -0 => 504 (pass=100.00%, layer=valuation_hard)
+[14:41:53][INFO][+  472.7s]   max_range_position_52w: -41 => 463 (pass=91.87%, layer=valuation_hard)
+[14:41:53][INFO][+  472.7s]   max_price_to_sma200: -89 => 374 (pass=80.78%, layer=valuation_hard)
+[14:41:53][INFO][+  472.7s]   benchmark_trend_filter: -0 => 374 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.7s]   max_adv_participation: -64 => 310 (pass=82.89%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.7s]   max_estimated_slippage_bps: -0 => 310 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.7s]   watchlist_membership: -0 => 310 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   sic_filter: -0 => 310 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.7s]   Layer base_hard: before=510 remaining=310 removed=6 pass=60.78%
+[14:41:53][INFO][+  472.7s]   Layer quality_or_theme_hard: before=374 remaining=310 removed=64 pass=82.89%
+[14:41:53][INFO][+  472.7s]   Layer valuation_hard: before=504 remaining=374 removed=130 pass=74.21%
+[14:41:53][INFO][+  472.7s]   First-fail summary:
+[14:41:53][INFO][+  472.7s]   max_ev_to_ebit: 82 (16.08%)
+[14:41:53][INFO][+  472.7s]   positive_net_income: 74 (14.51%)
+[14:41:53][INFO][+  472.7s]   positive_free_cash_flow: 52 (10.20%)
+[14:41:53][INFO][+  472.7s]   min_net_income_yoy: 43 (8.43%)
+[14:41:53][INFO][+  472.7s]   min_return_60d: 35 (6.86%)
+[14:41:53][INFO][+  472.7s]   min_avg_dollar_volume_20d: 27 (5.29%)
+[14:41:53][INFO][+  472.7s]   positive_revenue: 24 (4.71%)
+[14:41:53][INFO][+  472.7s]   positive_ebit: 23 (4.51%)
+[14:41:53][INFO][+  472.7s]   max_price_to_sma200: 21 (4.12%)
+[14:41:53][INFO][+  472.7s]   min_return_20d: 19 (3.73%)
+[14:41:53][INFO][+  472.7s]   min_drawdown_percentile: 13 (2.55%)
+[14:41:53][INFO][+  472.7s]   max_range_position_52w: 12 (2.35%)
+[14:41:53][INFO][+  472.7s]   min_revenue_yoy: 10 (1.96%)
+[14:41:53][INFO][+  472.7s]   max_ps_hist_percentile: 9 (1.76%)
+[14:41:53][INFO][+  472.7s]   min_avg_dollar_volume_20d_percentile: 9 (1.76%)
+[14:41:53][INFO][+  472.7s]   min_current_ratio: 9 (1.76%)
+[14:41:53][INFO][+  472.7s]   positive_operating_cash_flow: 8 (1.57%)
+[14:41:53][INFO][+  472.7s]   min_ai_link_score: 7 (1.37%)
+[14:41:53][INFO][+  472.7s]   min_fundamental_quality_score: 6 (1.18%)
+[14:41:53][INFO][+  472.7s]   market_cap_notna: 5 (0.98%)
+[14:41:53][INFO][+  472.7s]   min_fcf_yield: 3 (0.59%)
+[14:41:53][INFO][+  472.7s]   min_interest_coverage: 3 (0.59%)
+[14:41:53][INFO][+  472.7s]   passed: 3 (0.59%)
+[14:41:53][INFO][+  472.7s]   min_net_income: 3 (0.59%)
+[14:41:53][INFO][+  472.7s]   min_value_discount_any: 3 (0.59%)
+[14:41:53][INFO][+  472.7s]   max_20d_return: 2 (0.39%)
+[14:41:53][INFO][+  472.7s]   max_net_debt_to_ebitda: 2 (0.39%)
+[14:41:53][INFO][+  472.7s]   min_market_cap: 1 (0.20%)
+[14:41:53][INFO][+  472.7s]   max_pe_hist_percentile: 1 (0.20%)
+[14:41:53][INFO][+  472.7s]   min_expectation_proxy: 1 (0.20%)
+[14:41:53][INFO][+  472.7s]   First-fail concentration: reason=max_ev_to_ebit count=82 pct=16.08%
+[14:41:53][INFO][+  472.7s]   Diagnostics: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_enabler.csv
+[14:41:53][INFO][+  472.7s]   First-fail: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_enabler_first_fail.csv
+[14:41:53][INFO][+  472.9s]   Low-Value research gate: 310 => 40
+[14:41:53][INFO][+  472.9s]   Filtered candidates: 310
+[14:41:53][INFO][+  472.9s] Channel=ai_peripheral: filter diagnostics
+[14:41:53][INFO][+  472.9s]   price_notna: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   min_price: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   min_dollar_volume: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   market_cap_notna: -5 => 505 (pass=99.02%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   min_market_cap: -1 => 504 (pass=99.80%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   min_drawdown_from_52w_high: -0 => 504 (pass=100.00%, layer=valuation_hard)
+[14:41:53][INFO][+  472.9s]   max_range_position_52w: -31 => 473 (pass=93.85%, layer=valuation_hard)
+[14:41:53][INFO][+  472.9s]   max_price_to_sma200: -83 => 390 (pass=82.45%, layer=valuation_hard)
+[14:41:53][INFO][+  472.9s]   benchmark_trend_filter: -0 => 390 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.9s]   max_adv_participation: -64 => 326 (pass=83.59%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.9s]   max_estimated_slippage_bps: -0 => 326 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  472.9s]   watchlist_membership: -0 => 326 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   channel_bucket_match: -156 => 170 (pass=52.15%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   sic_filter: -0 => 170 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  472.9s]   Layer base_hard: before=510 remaining=170 removed=162 pass=33.33%
+[14:41:53][INFO][+  472.9s]   Layer quality_or_theme_hard: before=390 remaining=326 removed=64 pass=83.59%
+[14:41:53][INFO][+  472.9s]   Layer valuation_hard: before=504 remaining=390 removed=114 pass=77.38%
+[14:41:53][INFO][+  472.9s]   First-fail summary:
+[14:41:53][INFO][+  472.9s]   max_ev_to_ebit: 82 (16.08%)
+[14:41:53][INFO][+  472.9s]   positive_net_income: 74 (14.51%)
+[14:41:53][INFO][+  472.9s]   positive_free_cash_flow: 52 (10.20%)
+[14:41:53][INFO][+  472.9s]   min_net_income_yoy: 43 (8.43%)
+[14:41:53][INFO][+  472.9s]   min_return_60d: 36 (7.06%)
+[14:41:53][INFO][+  472.9s]   positive_revenue: 24 (4.71%)
+[14:41:53][INFO][+  472.9s]   min_avg_dollar_volume_20d: 23 (4.51%)
+[14:41:53][INFO][+  472.9s]   positive_ebit: 23 (4.51%)
+[14:41:53][INFO][+  472.9s]   min_return_20d: 19 (3.73%)
+[14:41:53][INFO][+  472.9s]   max_price_to_sma200: 18 (3.53%)
+[14:41:53][INFO][+  472.9s]   max_ps_hist_percentile: 16 (3.14%)
+[14:41:53][INFO][+  472.9s]   channel_bucket_match: 11 (2.16%)
+[14:41:53][INFO][+  472.9s]   min_current_ratio: 11 (2.16%)
+[14:41:53][INFO][+  472.9s]   min_fundamental_quality_score: 10 (1.96%)
+[14:41:53][INFO][+  472.9s]   min_revenue_yoy: 9 (1.76%)
+[14:41:53][INFO][+  472.9s]   max_range_position_52w: 8 (1.57%)
+[14:41:53][INFO][+  472.9s]   positive_operating_cash_flow: 8 (1.57%)
+[14:41:53][INFO][+  472.9s]   min_avg_dollar_volume_20d_percentile: 7 (1.37%)
+[14:41:53][INFO][+  472.9s]   min_drawdown_percentile: 5 (0.98%)
+[14:41:53][INFO][+  472.9s]   min_interest_coverage: 5 (0.98%)
+[14:41:53][INFO][+  472.9s]   market_cap_notna: 5 (0.98%)
+[14:41:53][INFO][+  472.9s]   passed: 4 (0.78%)
+[14:41:53][INFO][+  472.9s]   max_net_debt_to_ebitda: 4 (0.78%)
+[14:41:53][INFO][+  472.9s]   min_net_income: 3 (0.59%)
+[14:41:53][INFO][+  472.9s]   max_20d_return: 2 (0.39%)
+[14:41:53][INFO][+  472.9s]   min_ocf_to_net_income: 2 (0.39%)
+[14:41:53][INFO][+  472.9s]   min_ai_link_score: 2 (0.39%)
+[14:41:53][INFO][+  472.9s]   min_market_cap: 1 (0.20%)
+[14:41:53][INFO][+  472.9s]   min_value_discount_any: 1 (0.20%)
+[14:41:53][INFO][+  472.9s]   max_pe_hist_percentile: 1 (0.20%)
+[14:41:53][INFO][+  472.9s]   min_expectation_proxy: 1 (0.20%)
+[14:41:53][INFO][+  472.9s]   First-fail concentration: reason=max_ev_to_ebit count=82 pct=16.08%
+[14:41:53][INFO][+  472.9s]   Diagnostics: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_peripheral.csv
+[14:41:53][INFO][+  472.9s]   First-fail: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_peripheral_first_fail.csv
+[14:41:53][INFO][+  473.1s]   Low-Value research gate: 170 => 26
+[14:41:53][INFO][+  473.1s]   Filtered candidates: 170
+[14:41:53][INFO][+  473.1s] Channel=ai_smallcap: filter diagnostics
+[14:41:53][INFO][+  473.1s]   price_notna: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   min_price: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   min_dollar_volume: -0 => 510 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   market_cap_notna: -5 => 505 (pass=99.02%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   min_market_cap: -1 => 504 (pass=99.80%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   min_drawdown_from_52w_high: -53 => 451 (pass=89.48%, layer=valuation_hard)
+[14:41:53][INFO][+  473.1s]   max_range_position_52w: -4 => 447 (pass=99.11%, layer=valuation_hard)
+[14:41:53][INFO][+  473.1s]   max_price_to_sma200: -59 => 388 (pass=86.80%, layer=valuation_hard)
+[14:41:53][INFO][+  473.1s]   benchmark_trend_filter: -0 => 388 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  473.1s]   max_adv_participation: -64 => 324 (pass=83.51%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  473.1s]   max_estimated_slippage_bps: -0 => 324 (pass=100.00%, layer=quality_or_theme_hard)
+[14:41:53][INFO][+  473.1s]   watchlist_membership: -0 => 324 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   channel_bucket_match: -265 => 59 (pass=18.21%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   sic_filter: -0 => 59 (pass=100.00%, layer=base_hard)
+[14:41:53][INFO][+  473.1s]   Layer base_hard: before=510 remaining=59 removed=271 pass=11.57%
+[14:41:53][INFO][+  473.1s]   Layer quality_or_theme_hard: before=388 remaining=324 removed=64 pass=83.51%
+[14:41:53][INFO][+  473.1s]   Layer valuation_hard: before=504 remaining=388 removed=116 pass=76.98%
+[14:41:53][INFO][+  473.1s]   First-fail summary:
+[14:41:53][INFO][+  473.1s]   max_ev_to_ebit: 80 (15.69%)
+[14:41:53][INFO][+  473.1s]   positive_net_income: 74 (14.51%)
+[14:41:53][INFO][+  473.1s]   min_days_below_sma200: 63 (12.35%)
+[14:41:53][INFO][+  473.1s]   positive_free_cash_flow: 52 (10.20%)
+[14:41:53][INFO][+  473.1s]   min_net_income_yoy: 40 (7.84%)
+[14:41:53][INFO][+  473.1s]   channel_bucket_match: 33 (6.47%)
+[14:41:53][INFO][+  473.1s]   positive_revenue: 24 (4.71%)
+[14:41:53][INFO][+  473.1s]   positive_ebit: 23 (4.51%)
+[14:41:53][INFO][+  473.1s]   min_drawdown_from_52w_high: 16 (3.14%)
+[14:41:53][INFO][+  473.1s]   min_fundamental_quality_score: 16 (3.14%)
+[14:41:53][INFO][+  473.1s]   max_price_to_sma200: 11 (2.16%)
+[14:41:53][INFO][+  473.1s]   min_fcf_yield: 8 (1.57%)
+[14:41:53][INFO][+  473.1s]   min_revenue_yoy: 8 (1.57%)
+[14:41:53][INFO][+  473.1s]   positive_operating_cash_flow: 8 (1.57%)
+[14:41:53][INFO][+  473.1s]   max_net_debt_to_ebitda: 7 (1.37%)
+[14:41:53][INFO][+  473.1s]   min_ai_link_score: 7 (1.37%)
+[14:41:53][INFO][+  473.1s]   min_interest_coverage: 7 (1.37%)
+[14:41:53][INFO][+  473.1s]   min_current_ratio: 6 (1.18%)
+[14:41:53][INFO][+  473.1s]   max_adv_participation: 6 (1.18%)
+[14:41:53][INFO][+  473.1s]   max_ps_hist_percentile: 6 (1.18%)
+[14:41:53][INFO][+  473.1s]   market_cap_notna: 5 (0.98%)
+[14:41:53][INFO][+  473.1s]   min_net_income: 3 (0.59%)
+[14:41:53][INFO][+  473.1s]   max_receivables_growth_gap: 2 (0.39%)
+[14:41:53][INFO][+  473.1s]   max_shares_yoy: 1 (0.20%)
+[14:41:53][INFO][+  473.1s]   min_market_cap: 1 (0.20%)
+[14:41:53][INFO][+  473.1s]   max_range_position_52w: 1 (0.20%)
+[14:41:53][INFO][+  473.1s]   max_pe_hist_percentile: 1 (0.20%)
+[14:41:53][INFO][+  473.1s]   max_60d_volatility: 1 (0.20%)
+[14:41:53][INFO][+  473.1s]   First-fail concentration: reason=max_ev_to_ebit count=80 pct=15.69%
+[14:41:53][INFO][+  473.1s]   Diagnostics: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_smallcap.csv
+[14:41:53][INFO][+  473.1s]   First-fail: outputs/ai_value_scan_20261010T143400Z_full_ranked_diagnostics_ai_smallcap_first_fail.csv
+[14:41:53][INFO][+  473.3s]   Low-Value research gate: 59 => 0
+[14:41:53][INFO][+  473.3s]   Filtered candidates: 59
+[14:41:53][INFO][+  473.3s] Channel output (core_ai): outputs/ai_value_scan_20261010T143400Z_full_ranked_core_ai.csv
+[14:41:53][INFO][+  473.3s] Channel output (ai_enabler): outputs/ai_value_scan_20261010T143400Z_full_ranked_ai_enabler.csv
+[14:41:53][INFO][+  473.3s] Channel output (ai_peripheral): outputs/ai_value_scan_20261010T143400Z_full_ranked_ai_peripheral.csv
+[14:41:53][INFO][+  473.3s] Channel output (ai_smallcap): outputs/ai_value_scan_20261010T143400Z_full_ranked_ai_smallcap.csv
+[14:41:54][INFO][+  473.9s] Industry trend output (core_ai): outputs/ai_value_scan_20261010T143400Z_full_ranked_industry_trend_core_ai.csv
+[14:41:54][INFO][+  473.9s] Industry trend output (ai_enabler): outputs/ai_value_scan_20261010T143400Z_full_ranked_industry_trend_ai_enabler.csv
+[14:41:54][INFO][+  473.9s] Industry trend output (ai_peripheral): outputs/ai_value_scan_20261010T143400Z_full_ranked_industry_trend_ai_peripheral.csv
+[14:41:54][INFO][+  473.9s] Industry trend output (ai_smallcap): outputs/ai_value_scan_20261010T143400Z_full_ranked_industry_trend_ai_smallcap.csv
+[14:41:54][INFO][+  473.9s] Industry trend output: outputs/ai_value_scan_20261010T143400Z_full_ranked_industry_trend.csv
+[14:41:55][INFO][+  474.5s] Momentum output (core_ai): outputs/ai_value_scan_20261010T143400Z_full_ranked_momentum_core_ai.csv
+[14:41:55][INFO][+  474.5s] Momentum output (ai_enabler): outputs/ai_value_scan_20261010T143400Z_full_ranked_momentum_ai_enabler.csv
+[14:41:55][INFO][+  474.5s] Momentum output (ai_peripheral): outputs/ai_value_scan_20261010T143400Z_full_ranked_momentum_ai_peripheral.csv
+[14:41:55][INFO][+  474.5s] Momentum output (ai_smallcap): outputs/ai_value_scan_20261010T143400Z_full_ranked_momentum_ai_smallcap.csv
+[14:41:55][INFO][+  474.5s] Momentum output: outputs/ai_value_scan_20261010T143400Z_full_ranked_momentum.csv
+[14:41:55][INFO][+  474.6s] Research pool output: outputs/ai_value_scan_20261010T143400Z_full_ranked_research_pool.csv
+[14:41:55][INFO][+  474.6s] [6/6] Finalizing outputs.
+[14:41:55][INFO][+  474.6s] Total ranked rows: 30
+[14:41:55][INFO][+  474.6s] core_ai filtered candidates: 64
+[14:41:55][INFO][+  474.6s] ai_enabler filtered candidates: 310
+[14:41:55][INFO][+  474.6s] ai_peripheral filtered candidates: 170
+[14:41:55][INFO][+  474.6s] ai_smallcap filtered candidates: 59
+[14:41:55][INFO][+  474.6s] Ranked output: outputs/ai_value_scan_20261010T143400Z_full_ranked.csv
+[14:41:55][INFO][+  474.6s] Network report: outputs/ai_value_scan_20261010T143400Z_full_ranked_network.json
+[14:41:55][INFO][+  474.6s] Network issues observed: NO
+[14:41:55][INFO][+  474.6s] SEC cache: hits=528, misses=492, hit_rate=51.76%
+[14:41:55][INFO][+  475.0s] MVP decision snapshot: outputs/decision_experiments/risk_off_20261010T143355Z/2026-10-09/risk_off | decisions=510 | daily=15 | weekly=15
+[14:41:55][INFO][+  475.0s] Detailed report: outputs/ai_value_scan_20261010T143400Z_full_ranked_report.md
+
+=== Low-Value Shortlist (All Selected Per Channel) ===
+[core_ai]
+  - ORCL | triage=keep | research=research_now | score=0.814 | ai_link=0.605 | psd=0.070 | ped=0.469 | risks=no_major_risk_flag | bucket=ai_enabler,core_ai | etf_count=8 | etfs=AIQ,FDN,GRID,IGM,IGV,IRBO,SKYY,WTAI
+  - ADBE | triage=keep | research=research_now | score=0.789 | ai_link=0.434 | psd=0.434 | ped=0.670 | risks=no_major_risk_flag | bucket=core_ai | etf_count=2 | etfs=IGV,PNQI
+  - PYPL | triage=keep | research=research_now | score=0.763 | ai_link=0.437 | psd=0.443 | ped=0.406 | risks=no_major_risk_flag | bucket=ai_peripheral,core_ai | etf_count=3 | etfs=FDN,FXR,PNQI
+  - AMZN | triage=watch | research=watch_for_pullback | score=0.710 | ai_link=0.561 | psd=0.000 | ped=0.000 | risks=high_absolute_valuation | bucket=ai_enabler,core_ai | etf_count=6 | etfs=AIQ,ARKQ,FDN,PNQI,SKYY,WTAI
+  - CAT | triage=watch | research=watch_for_pullback | score=0.708 | ai_link=0.613 | psd=0.000 | ped=0.000 | risks=high_absolute_valuation | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=ARKQ,IFRA,VIS,XLI
+  - AVGO | triage=watch | research=watch_for_pullback | score=0.682 | ai_link=0.630 | psd=-0.602 | ped=0.394 | risks=expensive_relative_to_peers,high_absolute_valuation | bucket=ai_enabler,core_ai | etf_count=11 | etfs=AIQ,ARKQ,CIBR,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - LHX | triage=watch | research=research_now | score=0.679 | ai_link=0.392 | psd=0.369 | ped=0.000 | risks=no_major_risk_flag | bucket=ai_peripheral,core_ai | etf_count=2 | etfs=ARKQ,ITA
+  - GEV | triage=watch | research=watch_for_pullback | score=0.661 | ai_link=0.631 | psd=-0.024 | ped=0.134 | risks=high_absolute_valuation | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=GRID,VIS,WTAI,XLI
+  - KLAC | triage=watch | research=watch_for_pullback | score=0.598 | ai_link=0.571 | psd=-0.478 | ped=0.000 | risks=expensive_relative_to_peers,high_absolute_valuation | bucket=core_ai | etf_count=5 | etfs=IGM,KOMP,SMH,SOXQ,SOXX
+  - BWXT | triage=watch | research=watch_for_pullback | score=0.589 | ai_link=0.489 | psd=-0.288 | ped=-0.146 | risks=expensive_relative_to_peers,high_absolute_valuation | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=3 | etfs=ARKQ,ITA,NLR
+[ai_enabler]
+  - CHKP | triage=keep | research=research_now | score=0.819 | ai_link=0.541 | psd=0.172 | ped=0.651 | risks=no_major_risk_flag | bucket=ai_enabler | etf_count=3 | etfs=BUG,CIBR,IHAK
+  - ADBE | triage=keep | research=research_now | score=0.815 | ai_link=0.434 | psd=0.434 | ped=0.670 | risks=no_major_risk_flag | bucket=core_ai | etf_count=2 | etfs=IGV,PNQI
+  - CRM | triage=keep | research=research_now | score=0.804 | ai_link=0.559 | psd=0.331 | ped=0.537 | risks=no_major_risk_flag | bucket=ai_enabler,core_ai | etf_count=7 | etfs=CLOU,FDN,IGM,IGV,PNQI,ROBT,SKYY
+  - LMT | triage=keep | research=research_now | score=0.790 | ai_link=0.530 | psd=0.718 | ped=0.851 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=ITA,VIS,XLI
+  - TXN | triage=watch | research=watch_for_pullback | score=0.730 | ai_link=0.530 | psd=-0.102 | ped=0.450 | risks=expensive_relative_to_peers,high_absolute_valuation | bucket=ai_enabler,core_ai | etf_count=6 | etfs=GRID,IGM,SMH,SOXQ,SOXX,XSD
+  - FCX | triage=keep | research=research_now | score=0.724 | ai_link=0.497 | psd=0.460 | ped=0.199 | risks=weak_growth | bucket=ai_peripheral | etf_count=4 | etfs=COPX,IGE,PICK,XLB
+  - UNP | triage=watch | research=research_now | score=0.720 | ai_link=0.520 | psd=-0.079 | ped=0.165 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=5 | etfs=IFRA,IYT,PAVE,VIS,XLI
+  - VMC | triage=keep | research=research_now | score=0.713 | ai_link=0.401 | psd=0.232 | ped=0.141 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,PAVE,XLB
+  - GE | triage=watch | research=watch_for_pullback | score=0.711 | ai_link=0.502 | psd=0.000 | ped=-0.039 | risks=high_absolute_valuation | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=ITA,VIS,XLI
+  - EME | triage=keep | research=research_now | score=0.711 | ai_link=0.542 | psd=0.266 | ped=0.221 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=FXR,IFRA,PAVE
+[ai_peripheral]
+  - LMT | triage=keep | research=research_now | score=0.799 | ai_link=0.530 | psd=0.718 | ped=0.851 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=ITA,VIS,XLI
+  - PYPL | triage=keep | research=research_now | score=0.782 | ai_link=0.437 | psd=0.443 | ped=0.406 | risks=no_major_risk_flag | bucket=ai_peripheral,core_ai | etf_count=3 | etfs=FDN,FXR,PNQI
+  - FCX | triage=keep | research=research_now | score=0.704 | ai_link=0.497 | psd=0.460 | ped=0.199 | risks=weak_growth | bucket=ai_peripheral | etf_count=4 | etfs=COPX,IGE,PICK,XLB
+  - EME | triage=keep | research=research_now | score=0.698 | ai_link=0.542 | psd=0.266 | ped=0.221 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=FXR,IFRA,PAVE
+  - GE | triage=watch | research=watch_for_pullback | score=0.687 | ai_link=0.502 | psd=0.000 | ped=-0.039 | risks=high_absolute_valuation | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=ITA,VIS,XLI
+  - VMC | triage=keep | research=research_now | score=0.685 | ai_link=0.401 | psd=0.232 | ped=0.141 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,PAVE,XLB
+  - UNP | triage=watch | research=research_now | score=0.678 | ai_link=0.520 | psd=-0.079 | ped=0.165 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=5 | etfs=IFRA,IYT,PAVE,VIS,XLI
+  - NUE | triage=keep | research=research_now | score=0.671 | ai_link=0.528 | psd=0.055 | ped=0.072 | risks=no_major_risk_flag | bucket=ai_enabler,ai_peripheral | etf_count=4 | etfs=IFRA,PAVE,PICK,XLB
+  - LHX | triage=keep | research=research_now | score=0.669 | ai_link=0.392 | psd=0.369 | ped=0.000 | risks=no_major_risk_flag | bucket=ai_peripheral,core_ai | etf_count=2 | etfs=ARKQ,ITA
+  - CAT | triage=watch | research=watch_for_pullback | score=0.655 | ai_link=0.613 | psd=0.000 | ped=0.000 | risks=high_absolute_valuation | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=ARKQ,IFRA,VIS,XLI
+[ai_smallcap]
+  - none
+=== End Low-Value Shortlist ===
+
+=== Industry Trend Shortlist (All Selected Per Channel) ===
+[core_ai]
+  - MU | research=research_now | score=1.028 | ai_link=0.603 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=9 | etfs=AIQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - META | research=watch_for_pullback | score=0.985 | ai_link=0.520 | tags=quality_compounder,sales_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,FDN,IGM,IXP,KOMP,PNQI,WTAI
+  - AMZN | research=watch_for_pullback | score=0.973 | ai_link=0.561 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=AIQ,ARKQ,FDN,PNQI,SKYY,WTAI
+  - MSFT | research=watch_for_pullback | score=0.971 | ai_link=0.567 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=8 | etfs=AIQ,CIBR,CLOU,IGM,IGV,IRBO,PNQI,SKYY
+  - GOOGL | research=watch_for_pullback | score=0.964 | ai_link=0.638 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,core_ai | etf_count=8 | etfs=AIQ,BOTZ,CIBR,FDN,IGM,IXP,SKYY,WTAI
+  - NVDA | research=watch_for_pullback | score=0.955 | ai_link=0.531 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=13 | etfs=AIQ,ARKQ,BOTZ,DTCR,GRID,IGM,IRBO,KOMP,SMH,SOXQ,SOXX,WTAI,XSD
+  - ANET | research=watch_for_pullback | score=0.944 | ai_link=0.577 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=5 | etfs=CIBR,FDN,IGM,IRBO,SKYY
+  - CSCO | research=watch_for_pullback | score=0.942 | ai_link=0.631 | tags=cheap_relative_to_peers,acceptable_quality,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,CIBR,FDN,GRID,IGM,SKYY,WTAI
+  - AMD | research=watch_for_pullback | score=0.928 | ai_link=0.475 | tags=quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=10 | etfs=AIQ,ARKQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - PANW | research=watch_for_pullback | score=0.925 | ai_link=0.556 | tags=acceptable_quality,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=7 | etfs=BUG,CIBR,IGM,IGV,IHAK,ROBT,WTAI
+[ai_enabler]
+  - ANET | research=watch_for_pullback | score=1.081 | ai_link=0.577 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=5 | etfs=CIBR,FDN,IGM,IRBO,SKYY
+  - MU | research=research_now | score=1.072 | ai_link=0.603 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=9 | etfs=AIQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - LRCX | research=watch_for_pullback | score=1.061 | ai_link=0.584 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=core_ai | etf_count=5 | etfs=IGM,SMH,SOXQ,SOXX,WTAI
+  - META | research=watch_for_pullback | score=1.054 | ai_link=0.520 | tags=quality_compounder,sales_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,FDN,IGM,IXP,KOMP,PNQI,WTAI
+  - FTNT | research=watch_for_pullback | score=1.050 | ai_link=0.555 | tags=quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=4 | etfs=BUG,CIBR,IGV,IHAK
+  - AMZN | research=watch_for_pullback | score=1.046 | ai_link=0.561 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=AIQ,ARKQ,FDN,PNQI,SKYY,WTAI
+  - TXN | research=watch_for_pullback | score=1.045 | ai_link=0.530 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=GRID,IGM,SMH,SOXQ,SOXX,XSD
+  - GOOG | research=watch_for_pullback | score=1.027 | ai_link=0.637 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,core_ai | etf_count=5 | etfs=ARKQ,FDN,IGM,IXP,PNQI
+  - AMAT | research=watch_for_pullback | score=1.026 | ai_link=0.554 | tags=cheap_relative_to_peers,quality_compounder,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=core_ai | etf_count=4 | etfs=IGM,SMH,SOXQ,SOXX
+  - MSFT | research=watch_for_pullback | score=1.024 | ai_link=0.567 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=8 | etfs=AIQ,CIBR,CLOU,IGM,IGV,IRBO,PNQI,SKYY
+[ai_peripheral]
+  - PWR | research=watch_for_pullback | score=1.093 | ai_link=0.615 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=6 | etfs=FXR,GRID,IFRA,PAVE,VIS,XLI
+  - GEV | research=watch_for_pullback | score=1.086 | ai_link=0.631 | tags=cheap_relative_to_history,cheap_relative_to_peers,acceptable_quality,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=GRID,VIS,WTAI,XLI
+  - FCX | research=research_now | score=1.082 | ai_link=0.497 | tags=cheap_relative_to_peers,quality_compounder,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_peripheral | etf_count=4 | etfs=COPX,IGE,PICK,XLB
+  - ETN | research=watch_for_pullback | score=1.065 | ai_link=0.553 | tags=quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral | etf_count=4 | etfs=GRID,PAVE,VIS,XLI
+  - AMT | research=theme_only | score=1.062 | ai_link=0.538 | tags=cheap_relative_to_history,cheap_relative_to_peers,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,ai_peripheral | etf_count=4 | etfs=DTCR,SRVR,VNQ,XLRE
+  - JCI | research=watch_for_pullback | score=1.050 | ai_link=0.517 | tags=cheap_relative_to_history,acceptable_quality,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=GRID,VIS,XLI
+  - VST | research=watch_for_pullback | score=1.014 | ai_link=0.527 | tags=acceptable_quality,medium_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,VPU,XLU
+  - CAT | research=watch_for_pullback | score=1.007 | ai_link=0.613 | tags=acceptable_quality,sales_growth,strong_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=ARKQ,IFRA,VIS,XLI
+  - EMR | research=theme_only | score=0.996 | ai_link=0.510 | tags=cheap_relative_to_peers,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=PAVE,VIS,XLI
+  - KMI | research=theme_only | score=0.991 | ai_link=0.517 | tags=cheap_relative_to_history,cheap_relative_to_peers,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,IGE,IGF
+[ai_smallcap]
+  - DELL | research=theme_only | score=0.864 | ai_link=0.158 | tags=acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:MANUAL
+  - TEL | research=theme_only | score=0.859 | ai_link=0.137 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,pullback_value | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - GDDY | research=theme_only | score=0.830 | ai_link=0.227 | tags=cheap_relative_to_peers,cash_flow_value,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - DOCU | research=theme_only | score=0.819 | ai_link=0.167 | tags=cheap_relative_to_peers,cash_flow_value,acceptable_quality,profit_growth,ai_infrastructure_exposure,momentum_breakout | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - FDS | research=theme_only | score=0.818 | ai_link=0.115 | tags=cheap_relative_to_peers,cash_flow_value,acceptable_quality,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN,SRC:YAHOO_HOT
+  - SYNA | research=theme_only | score=0.801 | ai_link=0.109 | tags=cheap_relative_to_peers,cash_flow_value,sales_growth,profit_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - FORM | research=theme_only | score=0.798 | ai_link=0.048 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,momentum_breakout | bucket=ai_smallcap | etf_count=0 | etfs=SRC:MANUAL,SRC:NASDAQ_SCREEN,SRC:YAHOO_HOT
+  - FLEX | research=theme_only | score=0.797 | ai_link=0.146 | tags=quality_compounder,sales_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - TLN | research=theme_only | score=0.773 | ai_link=0.205 | tags=cheap_relative_to_history,sales_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - VLTO | research=theme_only | score=0.771 | ai_link=0.177 | tags=cheap_relative_to_peers,quality_compounder,ai_infrastructure_exposure,pullback_value | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+=== End Industry Trend Shortlist ===
+
+=== Momentum Shortlist (All Selected Per Channel) ===
+[core_ai]
+  - FTNT | research=watch_for_pullback | score=1.121 | ai_link=0.555 | r20=0.247 | tags=quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=4 | etfs=BUG,CIBR,IGV,IHAK
+  - MU | research=research_now | score=1.112 | ai_link=0.603 | r20=0.055 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=9 | etfs=AIQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - PANW | research=watch_for_pullback | score=1.106 | ai_link=0.556 | r20=0.267 | tags=acceptable_quality,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=7 | etfs=BUG,CIBR,IGM,IGV,IHAK,ROBT,WTAI
+  - META | research=watch_for_pullback | score=1.077 | ai_link=0.520 | r20=0.108 | tags=quality_compounder,sales_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,FDN,IGM,IXP,KOMP,PNQI,WTAI
+  - ZS | research=theme_only | score=1.075 | ai_link=0.500 | r20=0.421 | tags=cheap_relative_to_peers,cash_flow_value,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=5 | etfs=BUG,CIBR,CLOU,IGV,IHAK
+  - AMD | research=watch_for_pullback | score=1.059 | ai_link=0.475 | r20=0.177 | tags=quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=10 | etfs=AIQ,ARKQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - CSCO | research=watch_for_pullback | score=1.057 | ai_link=0.631 | r20=0.055 | tags=cheap_relative_to_peers,acceptable_quality,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,CIBR,FDN,GRID,IGM,SKYY,WTAI
+  - MSFT | research=watch_for_pullback | score=1.044 | ai_link=0.567 | r20=0.080 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=8 | etfs=AIQ,CIBR,CLOU,IGM,IGV,IRBO,PNQI,SKYY
+  - AMZN | research=watch_for_pullback | score=1.018 | ai_link=0.561 | r20=0.022 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=AIQ,ARKQ,FDN,PNQI,SKYY,WTAI
+  - TXN | research=watch_for_pullback | score=1.018 | ai_link=0.530 | r20=0.056 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=GRID,IGM,SMH,SOXQ,SOXX,XSD
+[ai_enabler]
+  - FTNT | research=watch_for_pullback | score=1.280 | ai_link=0.555 | r20=0.247 | tags=quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=4 | etfs=BUG,CIBR,IGV,IHAK
+  - ANET | research=watch_for_pullback | score=1.216 | ai_link=0.577 | r20=0.085 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=5 | etfs=CIBR,FDN,IGM,IRBO,SKYY
+  - ZS | research=theme_only | score=1.210 | ai_link=0.500 | r20=0.421 | tags=cheap_relative_to_peers,cash_flow_value,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=5 | etfs=BUG,CIBR,CLOU,IGV,IHAK
+  - MU | research=research_now | score=1.203 | ai_link=0.603 | r20=0.055 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=9 | etfs=AIQ,DTCR,IGM,IRBO,SMH,SOXQ,SOXX,WTAI,XSD
+  - PANW | research=watch_for_pullback | score=1.201 | ai_link=0.556 | r20=0.267 | tags=acceptable_quality,sales_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,core_ai | etf_count=7 | etfs=BUG,CIBR,IGM,IGV,IHAK,ROBT,WTAI
+  - META | research=watch_for_pullback | score=1.186 | ai_link=0.520 | r20=0.108 | tags=quality_compounder,sales_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=7 | etfs=AIQ,FDN,IGM,IXP,KOMP,PNQI,WTAI
+  - PWR | research=watch_for_pullback | score=1.179 | ai_link=0.615 | r20=0.085 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=6 | etfs=FXR,GRID,IFRA,PAVE,VIS,XLI
+  - AMAT | research=watch_for_pullback | score=1.171 | ai_link=0.554 | r20=0.110 | tags=cheap_relative_to_peers,quality_compounder,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=core_ai | etf_count=4 | etfs=IGM,SMH,SOXQ,SOXX
+  - TER | research=watch_for_pullback | score=1.171 | ai_link=0.506 | r20=0.060 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=core_ai | etf_count=5 | etfs=ARKQ,SMH,SOXQ,SOXX,WTAI
+  - TXN | research=watch_for_pullback | score=1.164 | ai_link=0.530 | r20=0.056 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,core_ai | etf_count=6 | etfs=GRID,IGM,SMH,SOXQ,SOXX,XSD
+[ai_peripheral]
+  - PWR | research=watch_for_pullback | score=1.274 | ai_link=0.615 | r20=0.085 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=6 | etfs=FXR,GRID,IFRA,PAVE,VIS,XLI
+  - FCX | research=research_now | score=1.241 | ai_link=0.497 | r20=0.036 | tags=cheap_relative_to_peers,quality_compounder,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_peripheral | etf_count=4 | etfs=COPX,IGE,PICK,XLB
+  - GEV | research=watch_for_pullback | score=1.229 | ai_link=0.631 | r20=0.050 | tags=cheap_relative_to_history,cheap_relative_to_peers,acceptable_quality,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral,core_ai | etf_count=4 | etfs=GRID,VIS,WTAI,XLI
+  - JCI | research=watch_for_pullback | score=1.228 | ai_link=0.517 | r20=0.078 | tags=cheap_relative_to_history,acceptable_quality,profit_growth,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=GRID,VIS,XLI
+  - AMT | research=theme_only | score=1.191 | ai_link=0.538 | r20=0.025 | tags=cheap_relative_to_history,cheap_relative_to_peers,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,ai_peripheral | etf_count=4 | etfs=DTCR,SRVR,VNQ,XLRE
+  - VST | research=watch_for_pullback | score=1.182 | ai_link=0.527 | r20=0.088 | tags=acceptable_quality,medium_ai_link,ai_infrastructure_exposure,pullback_value | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,VPU,XLU
+  - ETN | research=watch_for_pullback | score=1.179 | ai_link=0.553 | r20=0.010 | tags=quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral | etf_count=4 | etfs=GRID,PAVE,VIS,XLI
+  - KMI | research=theme_only | score=1.171 | ai_link=0.517 | r20=0.053 | tags=cheap_relative_to_history,cheap_relative_to_peers,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=IFRA,IGE,IGF
+  - EMR | research=theme_only | score=1.164 | ai_link=0.510 | r20=0.064 | tags=cheap_relative_to_peers,medium_ai_link,ai_infrastructure_exposure,momentum_breakout | bucket=ai_enabler,ai_peripheral | etf_count=3 | etfs=PAVE,VIS,XLI
+  - PYPL | research=research_now | score=1.143 | ai_link=0.437 | r20=0.034 | tags=cheap_relative_to_peers,cash_flow_value,quality_compounder,medium_ai_link,ai_infrastructure_exposure | bucket=ai_peripheral,core_ai | etf_count=3 | etfs=FDN,FXR,PNQI
+[ai_smallcap]
+  - PCTY | research=theme_only | score=0.873 | ai_link=0.160 | r20=0.087 | tags=cheap_relative_to_peers,cash_flow_value,acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure,momentum_breakout | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - FORM | research=theme_only | score=0.870 | ai_link=0.048 | r20=0.214 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,momentum_breakout | bucket=ai_smallcap | etf_count=0 | etfs=SRC:MANUAL,SRC:NASDAQ_SCREEN,SRC:YAHOO_HOT
+  - DOCU | research=theme_only | score=0.857 | ai_link=0.167 | r20=0.083 | tags=cheap_relative_to_peers,cash_flow_value,acceptable_quality,profit_growth,ai_infrastructure_exposure,momentum_breakout | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - GDDY | research=theme_only | score=0.857 | ai_link=0.227 | r20=0.065 | tags=cheap_relative_to_peers,cash_flow_value,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - SYNA | research=theme_only | score=0.854 | ai_link=0.109 | r20=0.187 | tags=cheap_relative_to_peers,cash_flow_value,sales_growth,profit_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - DELL | research=theme_only | score=0.829 | ai_link=0.158 | r20=0.033 | tags=acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:MANUAL
+  - TEL | research=theme_only | score=0.827 | ai_link=0.137 | r20=0.030 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,pullback_value | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - TSEM | research=theme_only | score=0.798 | ai_link=0.187 | r20=0.083 | tags=quality_compounder,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN,SRC:YAHOO_HOT
+  - TLN | research=theme_only | score=0.788 | ai_link=0.205 | r20=0.211 | tags=cheap_relative_to_history,sales_growth,ai_infrastructure_exposure | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+  - VLTO | research=theme_only | score=0.782 | ai_link=0.177 | r20=0.030 | tags=cheap_relative_to_peers,quality_compounder,ai_infrastructure_exposure,pullback_value | bucket=ai_smallcap | etf_count=0 | etfs=SRC:NASDAQ_SCREEN
+=== End Momentum Shortlist ===
+
+=== Research Pool (Broader Candidates) ===
+  - VMC | priority=research_now | score=7.100 | channel=ai_enabler | ai_link=0.401 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,profit_growth,ai_infrastructure_exposure,pullback_value | risks=no_major_risk_flag
+  - EME | priority=research_now | score=6.900 | channel=ai_enabler | ai_link=0.542 | tags=cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=no_major_risk_flag
+  - LHX | priority=research_now | score=6.700 | channel=core_ai | ai_link=0.392 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,acceptable_quality,ai_infrastructure_exposure,pullback_value | risks=no_major_risk_flag
+  - STLD | priority=research_now | score=4.700 | channel=ai_enabler | ai_link=0.440 | tags=quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | risks=no_major_risk_flag
+  - UNP | priority=research_now | score=4.500 | channel=ai_enabler | ai_link=0.520 | tags=cheap_relative_to_peers,acceptable_quality,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=no_major_risk_flag
+  - FCX | priority=research_now | score=4.500 | channel=ai_peripheral | ai_link=0.497 | tags=cheap_relative_to_peers,quality_compounder,profit_growth,medium_ai_link,ai_infrastructure_exposure | risks=weak_growth
+  - NUE | priority=research_now | score=3.900 | channel=ai_enabler | ai_link=0.528 | tags=acceptable_quality,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure | risks=no_major_risk_flag
+  - AVGO | priority=watch_for_pullback | score=7.200 | channel=core_ai | ai_link=0.630 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,pullback_value | risks=expensive_relative_to_peers,high_absolute_valuation
+  - CEG | priority=watch_for_pullback | score=6.100 | channel=core_ai | ai_link=0.609 | tags=cheap_relative_to_history,quality_compounder,sales_growth,strong_ai_link,ai_infrastructure_exposure,pullback_value | risks=expensive_relative_to_peers
+  - AMZN | priority=watch_for_pullback | score=6.000 | channel=core_ai | ai_link=0.561 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure | risks=high_absolute_valuation
+  - HWM | priority=watch_for_pullback | score=6.000 | channel=ai_enabler | ai_link=0.509 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=high_absolute_valuation
+  - BWXT | priority=watch_for_pullback | score=5.000 | channel=core_ai | ai_link=0.489 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=expensive_relative_to_peers,high_absolute_valuation
+  - PWR | priority=watch_for_pullback | score=4.500 | channel=ai_enabler | ai_link=0.615 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | risks=expensive_relative_to_peers,high_absolute_valuation
+  - ANET | priority=watch_for_pullback | score=4.500 | channel=core_ai | ai_link=0.577 | tags=quality_compounder,sales_growth,profit_growth,strong_ai_link,ai_infrastructure_exposure,momentum_breakout | risks=expensive_relative_to_peers,high_absolute_valuation
+  - EQIX | priority=watch_for_pullback | score=3.400 | channel=ai_enabler | ai_link=0.639 | tags=cheap_relative_to_history,acceptable_quality,profit_growth,strong_ai_link,ai_infrastructure_exposure | risks=expensive_relative_to_peers,high_absolute_valuation
+  - IESC | priority=left_side_watch | score=6.300 | channel=ai_peripheral | ai_link=0.300 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link,negative_momentum,possible_value_trap
+  - CRH | priority=left_side_watch | score=5.900 | channel=ai_enabler | ai_link=0.510 | tags=cheap_relative_to_history,cheap_relative_to_peers,quality_compounder,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=negative_momentum,possible_value_trap
+  - CRUS | priority=left_side_watch | score=5.500 | channel=ai_smallcap | ai_link=0.065 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,profit_growth,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link,negative_momentum,possible_value_trap
+  - CF | priority=left_side_watch | score=5.300 | channel=ai_peripheral | ai_link=0.283 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,pullback_value | risks=expensive_relative_to_peers,weak_ai_link,negative_momentum,possible_value_trap
+  - FDX | priority=left_side_watch | score=4.700 | channel=ai_peripheral | ai_link=0.204 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,quality_compounder,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link,negative_momentum,possible_value_trap
+  - NFLX | priority=left_side_watch | score=4.400 | channel=core_ai | ai_link=0.503 | tags=cheap_relative_to_history,acceptable_quality,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=negative_momentum,possible_value_trap
+  - NOC | priority=left_side_watch | score=4.300 | channel=ai_enabler | ai_link=0.504 | tags=cheap_relative_to_history,cheap_relative_to_peers,acceptable_quality,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=negative_momentum,possible_value_trap
+  - CBRE | priority=left_side_watch | score=2.800 | channel=ai_peripheral | ai_link=0.307 | tags=cheap_relative_to_history,acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link,negative_momentum,possible_value_trap
+  - MPC | priority=theme_only | score=7.100 | channel=ai_peripheral | ai_link=0.131 | tags=cheap_relative_to_peers,cash_flow_value,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,momentum_breakout | risks=weak_ai_link
+  - NEM | priority=theme_only | score=6.800 | channel=ai_peripheral | ai_link=0.266 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure | risks=weak_ai_link
+  - VLO | priority=theme_only | score=6.600 | channel=ai_peripheral | ai_link=0.139 | tags=cheap_relative_to_history,cash_flow_value,quality_compounder,profit_growth,ai_infrastructure_exposure,momentum_breakout | risks=weak_ai_link
+  - AMT | priority=theme_only | score=6.300 | channel=ai_enabler | ai_link=0.538 | tags=cheap_relative_to_history,cheap_relative_to_peers,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=no_major_risk_flag
+  - KEX | priority=theme_only | score=6.000 | channel=ai_peripheral | ai_link=0.233 | tags=cheap_relative_to_history,cash_flow_value,quality_compounder,profit_growth,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link
+  - DLR | priority=theme_only | score=5.500 | channel=ai_enabler | ai_link=0.531 | tags=cheap_relative_to_peers,cash_flow_value,sales_growth,profit_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=expensive_relative_to_peers
+  - CMS | priority=theme_only | score=5.100 | channel=ai_smallcap | ai_link=0.105 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link
+  - EOG | priority=theme_only | score=5.000 | channel=ai_peripheral | ai_link=0.236 | tags=cheap_relative_to_peers,cash_flow_value,acceptable_quality,sales_growth,profit_growth,ai_infrastructure_exposure | risks=weak_ai_link
+  - FORM | priority=theme_only | score=5.000 | channel=ai_smallcap | ai_link=0.048 | tags=cheap_relative_to_history,quality_compounder,sales_growth,profit_growth,ai_infrastructure_exposure,momentum_breakout | risks=high_absolute_valuation,weak_ai_link
+  - SHW | priority=theme_only | score=4.700 | channel=ai_peripheral | ai_link=0.323 | tags=cheap_relative_to_history,cheap_relative_to_peers,acceptable_quality,ai_infrastructure_exposure,pullback_value | risks=weak_ai_link
+  - BA | priority=theme_only | score=4.600 | channel=ai_enabler | ai_link=0.490 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,sales_growth,medium_ai_link,ai_infrastructure_exposure,pullback_value | risks=weak_growth,negative_momentum,possible_value_trap
+  - BAH | priority=theme_only | score=4.600 | channel=ai_enabler | ai_link=0.414 | tags=cheap_relative_to_history,cheap_relative_to_peers,cash_flow_value,acceptable_quality,ai_infrastructure_exposure,pullback_value | risks=weak_growth,possible_value_trap
+=== End Research Pool ===
+[14:41:55][INFO][+  475.0s] Scan completed successfully.
+[snapshot] watchlist archived for PIT backtests: data/watchlist_history/ai_watchlist_20261010T143400Z.csv
