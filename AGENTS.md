@@ -4,8 +4,9 @@
 > 本项目不再以“完备自动量化交易系统 / account-NAV / 自动实盘”为主路线。
 > 北极星是 **低频、人工决策辅助型选股系统：先找到值得拥有的公司，再判断现在是不是相对合理的买入时点。**
 > 所有 agent 开工前先完整阅读
-> `docs/product_direction_low_frequency_manual_selection.md` 和
-> `docs/work_handoff_after_pr31_20261010.md`。
+> `docs/product_direction_low_frequency_manual_selection.md`、
+> `docs/mvp_design_low_frequency_manual_selection.md` 和
+> `docs/work_handoff_after_pr31_20261010.md`。MVP 实现以设计文档的 contract、验证方式、Build-vs-Borrow 边界和四个实现 PR 为准。
 >
 > **最终用户产物：** 一个紧凑的每日 / 每周 **Action List**，辅以每只候选的
 > **Detailed Report**。Action List 回答“今天 / 本周该看谁、为什么、下一步等待什么”；
