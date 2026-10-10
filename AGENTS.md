@@ -1,102 +1,338 @@
 # AGENTS.md
 
-> **当前产品方向（2026-10-10 起，最高优先级）：**
-> 本项目不再以“完备自动量化交易系统 / account-NAV / 自动实盘”为主路线。
-> 北极星是 **低频、人工决策辅助型选股系统：先找到值得拥有的公司，再判断现在是不是相对合理的买入时点。**
-> 所有 agent 开工前先完整阅读
-> `docs/product_direction_low_frequency_manual_selection.md` 和
-> `docs/work_handoff_after_pr31_20261010.md`。
->
-> **最终用户产物：** 一个紧凑的每日 / 每周 **Action List**，辅以每只候选的
-> **Detailed Report**。Action List 回答“今天 / 本周该看谁、为什么、下一步等待什么”；
-> Detailed Report 提供完整基本面、估值、量价、风险、freshness、provenance 和状态历史。
-> 两者必须由同一套 Quality / Entry 判断生成，不能逻辑冲突。
->
-> 开发时必须把 **Company Quality** 与 **Entry Quality** 分开建模：
-> Quality 以 SEC 基本面、盈利质量、现金流、资产负债表、稀释、估值等慢变量为主；
-> Entry 以趋势、20d/60d momentum、SMA 结构、pullback/breakout、成交量、
-> 相对 QQQ/行业强弱、overextension 和 regime 等快变量为主。
-> 最终状态应少量、稳定、可解释，例如 Entry Ready / Watch Pullback /
-> Watch Breakout / Hold/Monitor / Trend Damaged / Overextended /
-> Avoid/Deteriorating。**这些是人工研究提示，不是自动买卖指令。**
->
-> **当前研发优先级：** 先定义统一的 Quality / Entry / Action output contract，
-> 再做 Company Quality baseline、Entry Quality baseline、Action List +
-> Detailed Report 和 prospective observation。现有 `low_value` / `momentum` /
-> `industry_trend` / `research_pool` 先作为证据来源和兼容接口。
->
-> **当前非目标：** broker 自动下单、账户状态同步、自动调仓、频繁交易、
-> account-NAV simulator、仓位优化、复杂 portfolio construction、broad tuner、
-> 为历史收益反复调 production 参数。PR #32 的 portfolio-triage 证据可保留，
-> 但其原计划的 account-NAV follow-up 已被本方向取代。不要恢复 position-gate
-> 路线；没有明确必要性不要 full replay / dataset regeneration；永远不要使用
-> Modal `--detach`.
+This file contains repository-wide instructions for coding agents. Keep it focused on
+rules that are stable, current, and broadly applicable. Historical experiment details
+belong in their evidence / handoff documents, not here.
 
-US AI stock scanner: Alpaca market data + SEC EDGAR fundamentals, used to build a low-frequency human-review shortlist by separating company quality from entry quality. The `ai_value_scanner` package lives in `src/`; root `run_scan.py` / `run_backtest.py` are thin CLI wrappers.
+## 1. Read first and follow precedence
 
-## Commands
-- Install: `.venv/bin/pip install -e .` (py>=3.10; venv is 3.12). `requirements.txt` mirrors pyproject deps.
-- Scan: `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]` (`--config` defaults to risk_off). Observation period: `python scripts/observation_scan.py` runs both styles (risk_off then risk_on); see docs/two_style_observation_protocol.md.
-- Refresh watchlist: `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
-- Build smallcap layer: `python scripts/build_smallcap_universe.py --config configs/config.risk_off.json` (merges Nasdaq screen + Yahoo hot + `data/ai_smallcap_manual.csv` into `ai_smallcap` bucket; idempotent rebuild). Run order: refresh ETF watchlist → smallcap builder → scan.
-- Backtest: `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`
-- E01 refactor baseline: follow `docs/refactor_baseline_protocol.md`. Freeze both the current watchlist and watchlist-history inputs, run fixed-prefix risk_off/risk_on replays plus the small anchored walk-forward tuner smoke, then capture with `python scripts/refactor_baseline.py capture ...`. The frozen baseline is stored in `evidence/baselines/pre_e01_f39d06f/`. **SEC EDGAR is live data**: same-day filing drops (e.g. the 10:00 UTC batch) change companyfacts between runs, so cross-day hash comparisons of full-window replays fail even with identical code — mechanical refactor PRs must verify behavior with a **back-to-back old-code vs new-code run on the same data state** (byte-identical events/benchmarks/summary CSVs), and use `scripts/refactor_baseline.py compare` only to confirm input contracts are unchanged. See the data-drift section in `evidence/baselines/pre_e01_f39d06f/README.md`.
-- Tune params: `python scripts/tune_parameters.py --base-config configs/config.risk_off.json --param-space configs/tuner.param_space.json` (add `--executor modal` for cloud parallelism). Tuning is evaluation-only by default; `--promote` is explicit and may only write back to the same style as `--base-config`.
-- Calibrate output volume: `python scripts/calibrate_thresholds.py --base-config configs/config.risk_off.json` (reads latest diagnostics, no backtest needed)
-- Smoke test pipeline: `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
-- Population TTM validation (weekly gate for live use): `python scripts/validate_ttm_population.py` — all-watchlist invariants (I1 annual closure, I2 discrete-ground-truth match); PASS requires I2=0 and operative-window violation rate <1%.
-- Trade-plan reference: `python scripts/generate_trade_plan.py --capital N` — historical filename retained for compatibility, but the output is only a compact manual-review summary of the two-style scan. It does not connect to a broker, read positions, maintain account state, create orders, or auto-trade. QQQ < SMA200 suppresses the new-entry reference list; `--allow-no-breaker` only bypasses unavailable/stale breaker data.
-- Tests: `python -m unittest discover -s tests` — stdlib `unittest`, NOT pytest; fully offline/fast, no env needed.
-- CI: `.github/workflows/tests.yml` runs `python -m unittest discover -s tests` on pull requests and main pushes. No lint/format/typecheck tooling exists.
-- Theme observation (P0 paper, five themes): `python scripts/theme_observation_scan.py` runs an observation only; `--archive-cohort` explicitly freezes the weekly paper cohort (daily runner does this on Friday only), and `--evaluate` settles matured rows with absolute / vs-QQQ / vs-theme-basket returns. See docs/theme_observation_protocol.md.
-- Daily runner (RECOMMENDED entry point): `python scripts/daily_run.py` — US-market weekdays: AI two-style + five-theme + venture observations; Friday freezes one weekly theme/venture paper cohort and settles matured cohorts; Monday adds population validation + theme basket refresh + venture universe rebuild. Business date is America/New_York (override with `--run-date YYYY-MM-DD`). It does NOT generate the trade-plan reference by default; use `--generate-trade-plan --capital N` only when a compact manual-review summary is wanted. Relevant upstream failures block fresh reference generation. Runner scheduling/result summaries go to `.debug_logs/daily_YYYYMMDD.log`; child-process output remains on the console. See README §15.
-- Venture sleeve universe: `python scripts/build_venture_universe.py --fts` — three-layer discovery funnel (ETF baskets in $100M-$3B window, basket new-membership events via data/theme_history/, SEC full-text-search pre-ETF names).
-- Historical live-pilot reference: `docs/live_pilot_protocol.md` is retained for research history but is **not the current roadmap**. Do not build new broker/position/account-NAV automation from it unless product direction explicitly changes again. Production scan reports still carry explicit `Strategy-Style:` metadata from `ScanConfig.strategy_style`; the Config path is provenance/legacy fallback only.
+Before starting substantive work, read:
 
-## Environment
-- `.env` (gitignored) must set `ALPACA_API_ENDPOINT`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `SEC_USER_AGENT`. Missing values fail at runtime (API client construction), not at import.
+1. `docs/product_direction_low_frequency_manual_selection.md` — product north star.
+2. `docs/mvp_design_low_frequency_manual_selection.md` — canonical MVP architecture,
+   decision contract, validation model, Build-vs-Borrow policy, and implementation sequence.
+3. `docs/work_handoff_after_pr31_20261010.md` — current handoff / next work.
+4. `README.md` — runtime commands, configuration, feature/filter semantics, and script reference.
 
-## Modal / heavy research execution
-- Use Modal for memory-heavy or highly parallel research jobs; keep the small experiment host as the launcher/orchestrator. The post-PR23 replay/dataset entry point is `scripts/modal_baseline_executor.py`; `scripts/modal_executor.py` is the tuner-side executor used by `scripts/tune_parameters.py --executor modal`. Tuner batch concurrency (`MODAL_TUNER_CONCURRENCY`) must not exceed **80** total in-flight candidate containers; durable tuner batch results live on the `ai-scanner-research` volume under `/batch_results/` and a re-run of the same batch resumes from them.
-- **Foreground only:** launch with plain `modal run`. Never use `--detach` or detached-app execution for research evidence runs. Keep launcher logs and failures attached to the experiment session.
-- **Test/experiment Modal workspace:** use the `infi` Modal profile/workspace explicitly. Prefer per-command `MODAL_PROFILE=infi .venv/bin/python -m modal run ...` rather than relying on whichever profile happens to be active on the host. The `ai-scanner-cache` and `ai-scanner-research` Volumes referenced by research runners are expected in this `infi` workspace. Before a long run, `MODAL_PROFILE=infi .venv/bin/python -m modal profile current` (or the installed CLI equivalent) should resolve to `infi`; stop rather than creating duplicate Volumes in another workspace.
-- Baseline replay/dataset resource policy: start with an elastic request/limit envelope, currently `cpu=(1.0, 2.0)` and `memory=(8192, 16384)` MiB. Do not pre-allocate 24+ GiB or extra CPU without evidence. Raise the hard memory limit to 24 GiB only after a reproducible OOM at 16 GiB; lower requests after observing comfortable headroom. Replay is primarily memory/network/Pandas/JSON work, so extra CPU is not assumed to improve throughput.
-- Long replay must use per-signal-date checkpoints on the persistent `ai-scanner-research` Volume. Re-running the same foreground command resumes committed dates. Do not bypass checkpoint manifest/run-spec mismatches; a mismatch means start a new evidence run or intentionally reset it.
-- Modal image inputs come from repository-local `configs/` and `data/`. Before a frozen experiment, verify those hashes match `outputs/<RUN_ID>/frozen_inputs`; never silently substitute a different watchlist/history/config state.
-- Persistent volumes: `ai-scanner-cache` is reusable SEC/Alpaca cache state, not evidence; `ai-scanner-research` stores resumable checkpoints and raw research outputs. Cache/checkpoint state must never be committed to Git.
-- After replay, copy back `/$RUN_ID/replay`; after survivor extraction, copy back `/$RUN_ID/datasets`. Required local working artifacts are both styles' signals/events/benchmarks/summary/segments/diagnostics/report/network files plus both survivor dataset CSVs and their `.meta.json` files. Checkpoints do not need to be downloaded for resume.
-- `outputs/` stays gitignored and is the local working area. After the evidence run passes, commit a compact audit bundle under `evidence/baselines/post_pr23_<MERGE_SHA_SHORT>/`: README, `baseline_manifest.json`, review-sized replay summaries/segments/diagnostics/reports/network files, review-sized signals/events/benchmarks (or hashes/row counts if unexpectedly large), survivor dataset `.meta.json` plus raw CSV hashes/row counts, anchored OOS fold summary, selection attribution, research decision, and compact tuner results/summary/report.
-- Do **not** commit full survivor dataset CSVs by default, tuner work directories/per-candidate raw replay trees, bulk Modal logs, cache contents, checkpoint trees, `.env`, API credentials, or secrets. For any off-repo artifact used by a conclusion, record SHA256, size/row count, schema/version and retained location in the baseline manifest.
-- Keep current-config retrospective replay separate from anchored OOS evidence even when both run on Modal. Cloud execution changes compute placement only; it does not upgrade retrospective evidence into OOS evidence.
-- Before any score-weight tuning, prove candidate 0 reproduces the **production base weights**: offline sweep multipliers are multiplicative around each channel's current weight vector, never absolute replacement weights. A multiplier vector of all 1.0 must therefore score with the configured production weights. Do not interpret pre-fix sweep artifacts that violate this invariant. Prefer `scripts/ic_analysis.py` + survivor datasets for ranking diagnostics before launching a weight search.
-- After the post-PR23 baseline, use frozen survivor datasets for cheap attribution first: production-score rank IC/deciles and low-value exclusion-stage analysis. A new full replay/tuner is justified only after an offline mechanism is stable across multiple dates and not driven by one year/channel/regime.
-- Survivor extraction must pass the explicit `ScanConfig.strategy_style` into hard/soft partitioning; never rely on the partition helper's risk_off default. The original post-PR23 `weight_dataset_risk_on.csv` predates this fix and is non-canonical for risk_on survivor-ranking/IC work because some soft conditions could have been hard-excluded. Rebuild risk_on once with the corrected extractor before canonical PR27 analysis; the original risk_off dataset is unaffected by this specific partition bug.
-- Research-only expanded survivor extraction may omit hard steps **only** through `extract_weight_dataset.py --research-skip-low-value-hard-steps`, and the requested names must be members of the active style's `STYLE_STRUCTURAL_STEP_NAMES`; core/base hard filters are never bypassable. Use a low_value-only dataset and a new run id, record omitted steps in `.meta.json`, and never reuse such an expanded dataset as a production-parity survivor dataset without reapplying the full baseline hard layer.
-- PR28 position-gate work is a fixed A/B mechanism test, not parameter tuning: A=current risk_off low_value; B=moves `max_range_position_52w`, `min_drawdown_from_52w_high`, and `max_price_to_sma200` from hard to soft with thresholds/weights/research gate/caps/Top-N unchanged. Baseline selected-symbol parity against canonical replay is a hard stop before interpreting B. Retrospective success cannot promote production settings.
-- PR28 evidence stopped at 114/126 historical replay-vs-extraction ordered parity because replay/extraction consumed mutable external/cache state at different times; retain that hard-stop record. For follow-up code-equivalence tests, compare the canonical `rank_and_pick_symbols_with_diagnostics` selector against the research reconstruction on the **same immutable cross-section rows**. A same-state parity test does not retroactively make the Oct-8/Oct-9 comparison pass.
-- The post-PR28 follow-up is pre-registered against the existing expanded risk_off low_value dataset SHA256 `bb6edd7a30d8347aeb2020f77255eb1d043d2417aa8892b1a62da8ff0cad0ad6`; do not regenerate it for that experiment. Reconstruct one-row-per-symbol input only after validating duplicate raw fields agree across channels. The only intervention is `max_range_position_52w` hard→soft; `min_drawdown_from_52w_high` and `max_price_to_sma200` stay hard. Same-state ordered parity must be 100% before outcomes are interpreted, and no production promotion is allowed from retrospective evidence.
-- For cost review after a large run, use Modal billing/resource reporting and container metrics; size the next run from observed usage instead of increasing resources prophylactically.
+If older research documents conflict with the three current direction documents above,
+treat the older document as historical evidence rather than current roadmap guidance.
 
-## Gotchas
-- Scan aborts if `data/ai_watchlist.csv` is missing/empty; it is the only scan input (regenerate via the refresh script).
-- `cache/` and `outputs/` are gitignored. Alpaca cache has TTLs (snapshots 120s, bars 6h). Alpaca network/cache provenance is recorded in each network diagnostics JSON and scan Markdown: source, feed, market-data `data_asof`, cache age, observation time and degradation reason. Stale fallback does **not** rewrite cache mtime, so old data cannot become falsely fresh on the next run. SEC cache is **incremental**: submissions (~176 KB each, ~2.3 min total) refresh when older than `sec_cache_ttl_submissions_sec` (code and production-config default 86400 = once daily; the 10:30-local cron refresher keeps them warm) and serve as the change detector; companyfacts (~4 MB each) refetch only when the submissions' latest `accessionNumber` differs from the accession recorded in `facts_meta_<cik>.json` (accession-based detection since 2026-10-05, with a `pending_accession` retry state while the facts API lags behind a same-day filing). A pre-parsed fundamentals cache `parsed_fund_<cik>.json` (v3, bound to the finance-relevant config fingerprint + latest filing) skips the parse/compute chain; it is written only when companyfacts is not lagging and is invalidated once on version/config changes. No need to manually `rm cache/` for fresh fundamentals. SEC is rate-limited (~5 req/s).
-- Bars are fetched RAW (Alpaca `adjustment=raw`) and the cache stays raw. Split correction happens at compute time: `AlpacaClient.get_corporate_action_splits` pulls authoritative forward/reverse splits from `/v1/corporate-actions`, and `apply_split_adjustment` rescales o/h/l/c (and volume by the inverse factor, keeping dollar volume split-institute invariant) at every bar read that feeds prices/features — scan price dimensions, backtest pricing/forward returns, theme/venture settlement, and weight extraction. Valuation history deliberately keeps raw close × raw filed shares (self-consistent across splits — adjusted closes there would understate pre-split multiples by the split factor). The corporate-actions call fails open to legacy unadjusted behavior; reorganization-type events (e.g. post-bankruptcy relistings) are not forward/reverse splits and remain uncorrected. No bars-cache invalidation is needed for this mechanism.
-- Channels: `core_ai`/`ai_enabler`/`ai_peripheral` (primary AI stock-selection buckets) + `ai_smallcap` (smallcap bucket, **auxiliary observation**: scanned and scored for the research pool, excluded from the trade plan unless `--include-smallcap`). Code iterates `channel_profiles.keys()` dynamically, but `ScanConfig.from_dict` **replaces** the whole dict — a new channel must be added to code defaults AND all production JSONs that declare `channel_profiles` (tuner promotion deep-copies base config, so it survives). `SRC:`-prefixed `etfs` tokens are provenance tags, excluded from `etf_count`.
-- Market-data feed is IEX (`ALPACA_FEED=iex`, ~3% of consolidated tape) unless overridden. Prices are venue-invariant, but ALL dollar-volume figures (`dollar_volume`, `avg_dollar_volume_20d`, `adv_participation`, slippage) are IEX-scale (~20-50x below true tape): thresholds were tuned on this scale so gates are internally consistent, but do not read report dollar figures as real liquidity, do not compare them 1:1 with SIP-based flow data, and rescale `assumed_position_usd` thinking in real trade size ($250K configured vs ~$10K live max). Switching feed redefines every liquidity gate — bundle it with a full re-tune, never alone.
-- Watchlist sources: stockanalysis.com holdings pages embed only ~top-25 holdings per ETF (server-side truncation, not code). Finviz export and stockanalysis.com `/list/` pages return 403 to plain scripts; Yahoo screener accepts one `scrIds` per request (combined → 400).
-- Config files: `config.risk_off.json` (default, defensive leg), `config.risk_on.json` (offensive leg), `config.strict_candidate.json` (candidate). Two-style architecture since 2026-09-24: balanced is archived (redundant with risk_off, corr 0.999). `configs/archive/` — never edit or run archived configs.
-- Config semantics: canonical config code lives in `src/ai_value_scanner/config.py` (`ScanConfig`, defaults, validation, `load_config`, `resolve_channel_profile`). `scanner.py` re-exports these names for compatibility; new low-level code should import from `ai_value_scanner.config`. `null` disables a nullable filter; `channel_profiles.<channel>` overrides global params per channel; config loading is fail-fast for unknown runtime keys, type errors, invalid ranges and cross-field contradictions. Metadata keys beginning with `_` are ignored by runtime validation. `config.risk_on.json` / `config.risk_off.json` must declare `config_schema_version=1` and matching `strategy_style`. Scanner and backtest hard/soft partitioning uses this explicit style; never infer style from enabled threshold names. `channel_profiles` still replaces the whole default dict (no implicit deep merge). CLI `--max-symbols` overrides config `max_symbols`.
-- Canonical pure accounting math lives in `src/ai_value_scanner/fundamentals/accounting.py`: YoY, adjusted NI/EBIT/EBITDA arithmetic, debt/FCF/coverage/current-ratio/accrual/growth-gap derivations, and fundamental-quality score. It must remain independent of SEC/PIT selection, caches, prices and strategy filters. Scanner/backtest may prepare different raw/PIT inputs, but derived accounting formulas should call this shared core.
-- `scripts/tune_parameters.py` does NOT auto-promote. Default `--selection-mode walk_forward` uses anchored chronological folds: prior windows select the candidate, the next window is held out; forward-return labels whose `label_end_date` crosses the held-out boundary are purged from training. Valid-event guardrails use an absolute target capped by a valid/available ratio (default 80%) so weekly defaults do not become structurally impossible on monthly annual folds; immature YTD windows can still fail. Promotion also requires the OOS fold sequence to meet minimum pass and positive-excess ratios, not merely the final fold. `--rescore-results <existing_results.csv>` recomputes these anchored selection/guardrail decisions **offline without rerunning backtests**; use this before spending Modal compute when only validation policy changes. `--selection-mode pooled` is research-only and cannot promote. `--promote` is explicit and only writes the OOS-validated winner back to the same style as `--base-config`. `low_value` is the primary pass/fail list; `industry_trend`, `momentum`, `research_pool` are diagnostic only.
-- Backtest `historical_replay` can run without PIT watchlist snapshots; `--allow-latest-watchlist-fallback` is OFF by default (avoid lookahead). `--theme-source rules_proxy|historical_news|latest_scan|zero` defaults to `rules_proxy`.
-- Refactor-baseline reproducibility: `run_backtest.py` and `tune_parameters.py` accept optional `--watchlist-csv-path` / `--watchlist-history-dir` overrides. Defaults remain the production paths. These overrides exist to pin the fixed-current pool and snapshot union during E01 comparisons; do not use them to invent historical ETF membership.
-- **Principle: ETFs are a shortcut for building today's watchlist and theme buckets, never a data dependency.** ETF holdings exist only to assemble the current stock-selection base list quickly; the watchlist is a universe convenience, not the strategy. ETF *historical* holdings are NOT an input to any backtest/tuning/validation artifact and must not be treated as missing data. Do not add historical ETF-constituent tracking/reconstruction to solve walk-forward or PIT questions; time isolation applies to features/labels/parameter selection, not ETF membership archaeology. Historical replay uses the fixed current candidate pool, with PIT market/fundamental availability naturally removing names that did not yet exist at a replay date. Watchlist snapshots are convenience records of the current method, not a prerequisite for multi-year replay; never gate a rebuild on "waiting for snapshots to accumulate".
-- PIT snapshots only exist from 2026-09-22 on. Any tuning / weight-dataset / validation artifact whose replay window predates snapshot coverage and was built with latest-watchlist fallback contains lookahead bias — treat pre-existing `outputs/tuning_*` and the Phase 4R baseline table as suspect (the weight datasets were regenerated on 2026-10-05 as `outputs/weight_dataset_*_p0fix.*` with the post-correction feature set; `outputs/tuning_*` have NOT been regenerated). `tune_parameters.py` / `extract_weight_dataset.py` default the fallback to OFF (research-only opt-in, warns loudly, honest `watchlist_source` in meta). Per the ETF-shortcut principle above, the replay universe is **the fixed current candidate pool**: backtest date T scans today's watchlist (stocks not yet listed at T drop out naturally via PIT data availability). No historical universe reconstruction is needed and none should be built (ETF-membership archaeology and disclosure-mining universes are both rejected). Signal dates come from the historical calendar (`build_rebalance_dates`), forward returns from PIT bars — so the full multi-year window is replayable now; do not gate rebuilds on snapshot accumulation. Pre-snapshot dates use `--pre-snapshot-universe union` (current list ∪ snapshot symbols; snapshots only add names that left the pool in the days they cover). Watchlist-dependent axes (`watchlist_etf_count`, ETF-consensus part of `ai_link_score`) are static per-stock pool attributes in replay, not time-varying signals — keep them static or neutral, recorded honestly in `watchlist_source` meta.
+## 2. Product north star
 
-## Conventions
-- Log format: scan `[HH:MM:SS][LEVEL][+elapsed]`, backtest `[scope HH:MM:SS +elapsed]`.
-- Outputs: scan → `outputs/ai_value_scan_<UTC>_<scope>_ranked.*`, backtest → `outputs/backtest_<mode>_<UTC>_*`, tuner → `outputs/tuning_<UTC>_*`. Baseline/migration experiments use explicit `--output-prefix` runs (e.g. `pre_e01_*`, `e01_*`) instead of timestamped names.
-- Frozen baseline artifacts live in `evidence/baselines/` (tracked in git, unlike `outputs/`); the canonical E01 baseline is `evidence/baselines/pre_e01_f39d06f/`.
-- To add a config parameter: add the field to `ScanConfig` (in `src/ai_value_scanner/config.py`), wire channel override in `resolve_channel_profile`, use it in the filter/scoring step, then update the README tables. README.md (Chinese) is the authoritative reference for all filter/threshold semantics.
+The project is a **low-frequency, human-decision-support stock-selection system**:
 
-All tool scripts are documented with usage examples in README.md §13 (工具脚本参考).
+> Find companies worth owning first; then decide whether the current price/volume
+> setup is a relatively reasonable entry.
+
+The system supports human research and manual trading. It is not currently trying to
+be a complete automated trading platform.
+
+The user-facing product is:
+
+> **Company Quality × Entry Quality → Action List → Detailed Report**
+
+- **Company Quality** is slow-moving and fundamentals-first: financial quality,
+  growth, free cash flow, margins, capital efficiency, balance sheet, dilution,
+  valuation, and material accounting / data risks.
+- **Entry Quality** is faster-moving and market-data-first: trend, SMA structure,
+  20d/60d momentum, pullback/breakout structure, volume, relative strength,
+  overextension, and market regime.
+- **Action List** is the primary daily / weekly product surface. It should normally
+  compress attention to roughly 5–15 names that deserve real human review.
+- **Detailed Report** is the evidence layer for the same decision.
+
+Action List and Detailed Report must be renderers of the **same canonical
+`StockDecision`**. Do not implement separate decision logic in reporting.
+
+Preferred MVP states are intentionally small and stable:
+
+- Entry: `ENTRY_READY`, `WATCH_PULLBACK`, `WATCH_BREAKOUT`,
+  `TREND_DAMAGED`, `INSUFFICIENT_DATA`.
+- Action: `PRIORITY_REVIEW`, `WATCH_PULLBACK`, `WATCH_BREAKOUT`,
+  `HOLD_MONITOR`, `AVOID`.
+
+These are research / attention states, not automated trade instructions.
+
+## 3. Current MVP sequence
+
+Unless a correctness defect blocks progress, follow the implementation sequence in the
+MVP design:
+
+1. decision contract + render skeleton;
+2. Company Quality v1 + historical cohort evaluation;
+3. Entry Quality v1 + historical state evaluation;
+4. integrated Action List + Detailed Report + immutable decision snapshots.
+
+At the end of step 4, the first MVP should be usable.
+
+Do not expand the MVP merely because an adjacent quantitative-finance feature would be
+interesting.
+
+## 4. ETF holdings semantics — hard constraint
+
+Source ETFs have a deliberately limited role:
+
+> **ETF constituents are candidate-discovery / watchlist inputs, not portfolios to
+> replicate and not investment conclusions.**
+
+Allowed uses:
+
+- periodically discover / refresh relevant underlying stocks;
+- seed AI or theme candidate pools;
+- retain source-ETF / ETF-count metadata as theme or discovery context.
+
+ETF membership must not by itself imply:
+
+- Company Quality;
+- Entry Quality;
+- Action State;
+- portfolio weight;
+- a requirement to trade or track the ETF.
+
+Historical validation policy:
+
+- use actually archived watchlist snapshots when they exist;
+- preserve snapshot / universe provenance;
+- for dates before reliable snapshot coverage, an explicitly frozen current-pool or
+  union approximation may be used for retrospective diagnostics;
+- label such periods as **universe approximations**, not true PIT ETF-constituent
+  history and not fresh OOS evidence.
+
+Do **not** build, scrape, or reconstruct a historical ETF holdings / weights database
+for the MVP. Reconsider that only if a specific future study shows that universe drift
+materially biases a decision-quality result and a simpler frozen/snapshot method cannot
+answer the question.
+
+Going forward, archive/version the watchlist produced by ETF refreshes so prospective
+validation uses real observed candidate-universe snapshots.
+
+## 5. Build vs Borrow
+
+Keep project-specific semantics in this repository:
+
+- point-in-time filing / as-of semantics;
+- accounting normalization and TTM reconstruction;
+- share-count integrity;
+- valuation definitions used by the product;
+- Company Quality / Entry Quality / Action mapping;
+- historical `StockDecision` reconstruction;
+- freshness / provenance;
+- Action List compression and Detailed Report explanation.
+
+Prefer mature libraries or thin adapters for generic infrastructure when they reduce
+maintenance cost. Do not rewrite working, tested primitives solely to adopt a library.
+
+Examples of generic capabilities that may be borrowed when needed:
+
+- SEC/XBRL access;
+- technical-indicator primitives;
+- performance statistics / tear sheets;
+- optional portfolio simulation.
+
+A third-party library must never become a second implementation of Quality, Entry, or
+Action logic.
+
+## 6. Current non-goals
+
+Do not make the following default work items:
+
+- broker order submission;
+- account / position synchronization;
+- automated rebalancing;
+- account-NAV simulator as an MVP prerequisite;
+- position-sizing optimization;
+- complex portfolio construction;
+- high-frequency / intraday trading;
+- broad parameter tuning;
+- repeated production-threshold changes to improve historical return;
+- ML / opaque composite models before the explainable MVP is validated;
+- historical ETF constituent reconstruction;
+- reopening the old position-gate research path.
+
+Existing `low_value`, `momentum`, `industry_trend`, and `research_pool`
+remain useful evidence sources / compatibility outputs. They are not the long-term
+user-facing product abstraction.
+
+PR #32 and earlier portfolio/live-pilot work remain historical evidence. They do not
+create an obligation to build account-NAV or automated execution.
+
+## 7. Repository layout and everyday commands
+
+Package code lives under `src/ai_value_scanner/`. Root `run_scan.py` and
+`run_backtest.py` are thin CLI wrappers.
+
+Common commands:
+
+- Install: `.venv/bin/pip install -e .`
+- Scan: `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]`
+- Refresh ETF-derived watchlist:
+  `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
+- Historical replay:
+  `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`
+- Small smoke test:
+  `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
+- Full unit tests:
+  `python -m unittest discover -s tests`
+
+Tests use stdlib `unittest`, not pytest. CI runs the same unittest command on pull
+requests and main pushes. There is currently no mandatory lint / format / typecheck
+job.
+
+Environment variables are loaded from gitignored `.env` and include
+`ALPACA_API_ENDPOINT`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, and
+`SEC_USER_AGENT`.
+
+Do not put credentials, cache contents, Modal volumes/checkpoints, or bulk research
+outputs in Git.
+
+## 8. Historical validation rules
+
+Historical validation exists to test the product decisions, not to justify building a
+large custom trading engine.
+
+The preferred unit is a historical decision snapshot:
+
+`decision_date + symbol + Quality + Entry + Action + evidence + data_asof + provenance`
+
+Attach future outcomes separately, typically:
+
+- 20d / 60d / 120d forward return;
+- QQQ excess over the same horizon;
+- optional adverse-move / drawdown diagnostics.
+
+Required discipline:
+
+- never call retrospective replay OOS merely because dates are chronological;
+- do not treat overlapping 60d/120d rows as independent samples;
+- aggregate by decision date where appropriate;
+- report year / regime / symbol / date concentration;
+- freeze thresholds before final comparison tables where practical;
+- retrospective results cannot auto-promote production behavior;
+- prospective immutable snapshots are the eventual strongest evidence.
+
+`--allow-latest-watchlist-fallback` is off by default. If a research run uses any
+universe approximation, record it honestly in metadata.
+
+A new expensive full replay / dataset regeneration requires a specific reason why
+existing frozen evidence cannot answer the question.
+
+## 9. Data and computation invariants
+
+### Fundamentals / SEC
+
+- SEC data is live and can change between runs when a new filing arrives; cross-day
+  byte/hash equality is therefore not a valid refactor parity expectation unless
+  inputs are frozen.
+- Preserve filing / accession / data-as-of provenance.
+- Canonical pure accounting math lives in
+  `src/ai_value_scanner/fundamentals/accounting.py`. Keep it independent of SEC/PIT
+  selection, caches, prices, and strategy filters.
+- Missing critical fundamental evidence must not silently become a positive Quality
+  contribution.
+
+### Prices / corporate actions
+
+- Alpaca bars are cached raw. Split adjustment is applied at compute time through the
+  existing corporate-action path.
+- Do not casually replace raw/adjusted-price semantics: valuation history intentionally
+  keeps raw close × raw filed shares where required for split consistency.
+
+### Liquidity
+
+- Default market-data feed is IEX unless explicitly changed.
+- Dollar-volume metrics are therefore IEX-scale proxies, not consolidated-tape
+  liquidity. Do not interpret them as real executable capacity or compare them 1:1
+  with SIP-derived figures.
+- Changing the feed changes liquidity semantics and must not be treated as a cosmetic
+  config edit.
+
+### Configuration
+
+- Canonical config code is `src/ai_value_scanner/config.py`.
+- New low-level code should import config names from that module; `scanner.py`
+  re-exports them for compatibility.
+- `channel_profiles` replaces the whole default mapping rather than deep-merging it.
+  If a production config declares the mapping, a new channel must be added consistently.
+- Do not infer strategy style from enabled thresholds; use explicit
+  `ScanConfig.strategy_style`.
+- `configs/archive/` is historical; do not edit or run archived configs as current
+  production configs.
+
+README is the detailed reference for current filter / threshold / CLI semantics.
+
+## 10. Research / tuning discipline
+
+Broad tuning is not part of the current MVP path.
+
+If research requires tuning:
+
+- use it as an explicit, bounded experiment;
+- never silently promote settings;
+- keep retrospective research separate from prospective evidence;
+- verify any offline score-weight baseline reproduces the configured production
+  weights before interpreting candidate changes;
+- prefer cheap diagnostics on frozen data before launching new replays.
+
+Do not revive historical PR-specific experiments simply because their scripts or
+artifacts still exist.
+
+## 11. Modal / heavy compute
+
+Use Modal only when local execution is materially impractical.
+
+Hard rules:
+
+- **never use `--detach` or detached app execution**;
+- run foreground only;
+- explicitly use `MODAL_PROFILE=infi`;
+- do not rely on whichever profile is currently active;
+- tuner candidate concurrency must not exceed 80 in-flight containers;
+- reuse persistent checkpoints/results where the run specification matches;
+- stop on run-spec / manifest mismatch rather than silently resuming incompatible
+  evidence;
+- size resources from observed need rather than pre-allocating excessive CPU/RAM.
+
+Cloud execution changes compute placement only. It does not make retrospective
+evidence OOS.
+
+Detailed historical Modal run procedures live in the relevant evidence / protocol
+documents; do not copy old experiment-specific steps into new work unless that
+experiment is intentionally being reproduced.
+
+## 12. Coding and PR conventions
+
+Prefer small, focused PRs with explicit acceptance criteria.
+
+For behavior changes:
+
+- add or update targeted unit tests;
+- preserve backward compatibility unless the PR explicitly removes it;
+- keep old list/report outputs working during the MVP migration unless a cleanup PR
+  intentionally retires them;
+- keep decision logic in shared pure functions where possible;
+- renderers must consume canonical decision objects rather than recompute states;
+- missing/stale data behavior must be explicit and tested.
+
+For research/evidence PRs:
+
+- record code/config/input provenance;
+- separate canonical evidence from local working artifacts;
+- keep `outputs/` and `cache/` untracked;
+- store only compact reviewable evidence in Git;
+- never commit `.env`, API credentials, secrets, bulk logs, or checkpoint trees.
+
+Before merging, the final PR head should have its own green CI run. Do not rely on a
+post-merge main build as the first validation of the final head.
+
+## 13. When unsure
+
+Before adding work, ask:
+
+1. Does this improve Company Quality?
+2. Does this improve Entry Quality?
+3. Does this make the Action List more useful?
+4. Does this make the Detailed Report more trustworthy?
+5. Does this improve PIT correctness / freshness / provenance?
+6. Is the generic part already available in a mature third-party tool?
+
+If the answer to all six is no, the work is probably outside the current MVP.

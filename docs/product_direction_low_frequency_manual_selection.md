@@ -3,7 +3,7 @@
 > 状态：**当前北极星文档（2026-10-10 起）**
 >
 > 所有 agent 在设计新功能、研究实验、重构输出或安排优先级前，应先阅读本文。
-> 当前交接与近期任务见 `docs/work_handoff_after_pr31_20261010.md`。
+> 当前 MVP 工程设计见 `docs/mvp_design_low_frequency_manual_selection.md`；交接与近期任务见 `docs/work_handoff_after_pr31_20261010.md`。
 
 ## 1. 一句话目标
 

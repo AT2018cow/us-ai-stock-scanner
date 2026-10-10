@@ -4,6 +4,8 @@
 >
 > First read: `docs/product_direction_low_frequency_manual_selection.md`.
 >
+> Then read: `docs/mvp_design_low_frequency_manual_selection.md`. It is the canonical implementation design for the first usable MVP.
+>
 > The previous roadmap in this file targeted portfolio NAV, prospective portfolio
 > validation and staged live deployment. That is no longer the primary product
 > objective. The repository is now being developed as a **low-frequency,
@@ -326,5 +328,6 @@ In a new conversation:
 5. identify the smallest next PR that improves Quality, Entry, Action List,
    Detailed Report, explainability or data correctness.
 
-Unless a correctness bug blocks progress, the expected next PR is the
-**Quality / Entry / Action output-contract PR**.
+Unless a correctness bug blocks progress, follow the four implementation PRs in
+`docs/mvp_design_low_frequency_manual_selection.md`, starting with the
+**Decision contract and render skeleton PR**.
