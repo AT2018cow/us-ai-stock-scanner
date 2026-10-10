@@ -148,6 +148,10 @@ Live Company Quality 对 SEC 数据采用保守完整性语义：submissions 中
 facts 与 USD 市值静默混用；这类 foreign-issuer 情况会明确降级为数据不足，等待未来
 有明确需求时再引入 FX-aware normalization。
 
+针对这些 fail-closed case 的 EdgarTools filing-level XBRL 对照实验是**可选诊断**，
+不会改变生产 decision。安装、SEC identity、运行命令和 evidence 提交格式见
+[docs/sec_edgartools_parity_spike.md](docs/sec_edgartools_parity_spike.md)。
+
 历史 integrated Action-state 诊断可基于 PR3 的 pre-strategy Entry dataset 运行：
 
 ```bash
