@@ -51,6 +51,7 @@ from ai_value_scanner.fundamentals.facts import (
     collapse_fact_records_by_end,
     extract_fact_records,
     merged_standard_taxonomy_facts,
+    normalize_form,
 )
 from ai_value_scanner.fundamentals.reconstruction import (
     ReconstructedFlows,
@@ -122,6 +123,20 @@ from ai_value_scanner.strategy.selection import (
     dedupe_symbol_by_best_channel,
     drop_symbols,
 )
+from ai_value_scanner.decision import (
+    DEFAULT_ATTENTION_CAP,
+    build_source_list_membership,
+    build_stock_decisions,
+    decisions_by_symbol,
+    select_daily_attention,
+    select_weekly_attention,
+)
+from ai_value_scanner.reporting.snapshot import (
+    load_previous_snapshot,
+    resolve_git_commit_sha,
+    write_decision_snapshot,
+)
+
 from ai_value_scanner.reporting.scan import (
     build_run_report_markdown,
     default_run_stem,
@@ -220,6 +235,27 @@ BACKLOG_TAGS = [
     "ContractWithCustomerLiability",
     "DeferredRevenueCurrentAndNoncurrent",
 ]
+FUNDAMENTAL_DATA_ASOF_TAGS = frozenset(
+    REVENUE_TAGS
+    + NET_INCOME_TAGS
+    + SHARES_TAGS
+    + EPS_TAGS
+    + OPERATING_CASH_FLOW_TAGS
+    + CAPEX_TAGS
+    + CASH_AND_EQUIVALENTS_TAGS
+    + LONG_TERM_DEBT_TAGS
+    + CURRENT_DEBT_TAGS
+    + EBIT_TAGS
+    + NONRECURRING_EXPENSE_TAGS
+    + NONRECURRING_GAIN_TAGS
+    + INTEREST_EXPENSE_TAGS
+    + DA_TAGS
+    + ASSETS_CURRENT_TAGS
+    + LIABILITIES_CURRENT_TAGS
+    + RECEIVABLES_CURRENT_TAGS
+    + INVENTORY_TAGS
+)
+
 STANDARD_EQUITY_SYMBOL_PATTERN = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 AI_DISCLOSURE_KEYWORD_GROUPS: dict[str, list[str]] = {
@@ -2154,6 +2190,36 @@ def collect_candidates(
     return out
 
 
+def latest_fundamental_filing_date(companyfacts: dict[str, Any]) -> str | None:
+    """Latest filed date among financial facts used by the live Quality layer."""
+    facts = merged_standard_taxonomy_facts(companyfacts)
+    latest: str | None = None
+    for tag in FUNDAMENTAL_DATA_ASOF_TAGS:
+        tag_obj = facts.get(tag, {})
+        units = tag_obj.get("units", {}) if isinstance(tag_obj, dict) else {}
+        if not isinstance(units, dict):
+            continue
+        for entries in units.values():
+            if not isinstance(entries, list):
+                continue
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_form(item.get("form")) not in QUARTERLY_FORMS:
+                    continue
+                raw = item.get("filed")
+                if raw is None:
+                    continue
+                token = str(raw).strip()[:10]
+                try:
+                    datetime.strptime(token, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                if latest is None or token > latest:
+                    latest = token
+    return latest
+
+
 def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     # Only fields that change the financial computation inside
     # load_one_fundamental. Output-count or scoring-only knobs must not
@@ -2166,7 +2232,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 4
+PARSED_FUND_CACHE_VERSION = 5
 
 
 def _parsed_fund_cache_meta(
@@ -2267,6 +2333,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
+    fundamental_data_asof = latest_fundamental_filing_date(companyfacts)
 
     def pick_flow_pair(tags: list[str], unit: str) -> tuple[float | None, float | None, str]:
         if config.use_ttm_metrics:
@@ -2489,6 +2556,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "shares_outstanding": shares,
         "shares_asof_end": shares_asof_end,
         "shares_stale": shares_stale,
+        "fundamental_data_asof": fundamental_data_asof,
         "revenue_ttm_history_json": serialize_history_pairs(revenue_ttm_history),
         "net_income_ttm_history_json": serialize_history_pairs(net_income_ttm_history),
         "shares_history_json": serialize_history_pairs(shares_history),
@@ -2601,6 +2669,7 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income": None,
                         "net_income_form": None,
                         "shares_outstanding": None,
+                        "fundamental_data_asof": None,
                         "revenue_ttm_history_json": None,
                         "net_income_ttm_history_json": None,
                         "shares_history_json": None,
@@ -3246,6 +3315,7 @@ def run_scan(
         "volatility_60d",
         "avg_dollar_volume_20d",
         "market_asof",
+        "fundamental_data_asof",
         "regime",
         "benchmark_trend_ok",
         "market_cap",
