@@ -1,0 +1,41 @@
+{
+  "analysis": "stage1_portfolio_viability_list_triage",
+  "date": "2026-10-10",
+  "base_main_sha": "5ea55046c35324af11daa1cc6407a860ba984116",
+  "evidence_class": "retrospective signal-level screening; not account NAV and not fresh OOS",
+  "source_cost_assumption": "canonical replay already includes 15 bps per side / 30 bps round-trip",
+  "canonical_sources": {
+    "post_pr23_baseline_202610_risk_off_events.csv": "25e6951664f930210c13b60c7e2e37e96b3c8399",
+    "post_pr23_baseline_202610_risk_on_events.csv": "2bb6e6c5d9aee3b29d2370a3fd204d7e876fe628",
+    "post_pr23_baseline_202610_risk_off_events_signals.csv": "2ea30f2bfe9bb252aa02dd408c62b0ece1a5a8c6",
+    "post_pr23_baseline_202610_risk_on_events_signals.csv": "42d3a9bb7a5b15b9db4db65fee3ac30e45e3e41b",
+    "post_pr23_baseline_202610_risk_off_benchmarks.csv": "ca33fbe9e19078a7c389bb3e9f2849cc457d51bd",
+    "selection_attribution_concentration.csv": "41504090567a1b3dabc244aedd8271f64db53177",
+    "selection_attribution_channel.csv": "f3345a33486ae1e637d48da0a0857c4edac6dc20"
+  },
+  "combo_proxy": "50/50 average of same-date already-cost-adjusted momentum and industry_trend signal-level returns",
+  "turnover_proxy": "1 - Jaccard(consecutive monthly selected-symbol sets)",
+  "channel_concentration": "canonical selected channel slots before account-level symbol deduplication",
+  "shortlisted_candidates": [
+    "momentum-only",
+    "momentum + industry_trend equal sleeves; exact symbol deduplication deferred to account-NAV simulator"
+  ],
+  "not_shortlisted": [
+    "industry_trend standalone as a third candidate",
+    "separate risk_on/risk_off style allocation"
+  ],
+  "guardrails": {
+    "production_changes": false,
+    "new_replay": false,
+    "dataset_regeneration": false,
+    "broad_tuning": false,
+    "position_gate_reopened": false
+  },
+  "limitations": [
+    "signal-label returns are not account NAV",
+    "turnover proxy is not realized account turnover",
+    "the compact canonical symbol-return concentration file has momentum and low_value but not industry_trend; no industry/combo return-contribution number is inferred",
+    "2025 contributes a large share of total 120d excess, although leave-2025-out excess remains positive",
+    "historical windows have been repeatedly researched; candidate freeze must be followed by robustness and prospective evidence"
+  ]
+}
