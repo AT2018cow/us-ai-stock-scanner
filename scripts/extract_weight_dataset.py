@@ -124,10 +124,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dataset-kind",
         default="weight",
-        choices=["weight", "company_quality"],
+        choices=["weight", "company_quality", "entry_quality"],
         help=(
             "weight keeps legacy hard-gate survivor extraction; company_quality "
-            "captures the PIT watchlist cross-section before list-specific gates."
+            "and entry_quality capture the PIT watchlist cross-section before "
+            "list-specific gates."
         ),
     )
     p.add_argument("--list-types", default="low_value,momentum")
@@ -187,6 +188,8 @@ def main() -> None:
         output_path = Path(args.output)
     elif args.dataset_kind == "company_quality":
         output_path = Path(f"outputs/company_quality_dataset_{style}.csv")
+    elif args.dataset_kind == "entry_quality":
+        output_path = Path(f"outputs/entry_quality_dataset_{style}.csv")
     else:
         output_path = Path(f"outputs/weight_dataset_{style}.csv")
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
@@ -202,10 +205,11 @@ def main() -> None:
             "--list-types low_value to keep the expanded research universe "
             "narrow and auditable"
         )
-    if args.dataset_kind == "company_quality" and research_skip_steps:
+    if args.dataset_kind in {"company_quality", "entry_quality"} and research_skip_steps:
         raise ValueError(
             "--research-skip-low-value-hard-steps is incompatible with "
-            "--dataset-kind company_quality because Quality uses the pre-strategy cross-section"
+            f"--dataset-kind {args.dataset_kind} because decision-quality "
+            "evaluation uses the pre-strategy cross-section"
         )
     roundtrip_cost = (2.0 * args.trading_cost_bps) / 10000.0
     allow_fallback = args.allow_latest_watchlist_fallback and not args.no_latest_watchlist_fallback
@@ -283,7 +287,10 @@ def main() -> None:
     trend_filter_symbol = str(scan_config.benchmark_trend_filter_symbol or "").upper().strip()
     regime_symbol = str(scan_config.benchmark_trend_filter_symbol or "QQQ").upper()
     bars_symbols = normalize_symbol_list(
-        symbols + benchmark_etfs + [s for s in (trend_filter_symbol, regime_symbol) if s]
+        symbols
+        + benchmark_etfs
+        + ["QQQ"]
+        + [s for s in (trend_filter_symbol, regime_symbol) if s]
     )
 
     start_dt = parse_date_utc(args.start_date) or datetime(2023, 1, 1, tzinfo=timezone.utc)
@@ -353,6 +360,9 @@ def main() -> None:
 
         benchmark_trailing_60d = benchmark_trailing_return_asof(
             bar_db, regime_symbol, asof, 60, split_events.get(regime_symbol)
+        )
+        qqq_trailing_return_60d = benchmark_trailing_return_asof(
+            bar_db, "QQQ", asof, 60, split_events.get("QQQ")
         )
         regime = "unknown"
         if benchmark_trailing_60d is not None:
@@ -429,6 +439,7 @@ def main() -> None:
             benchmark_return_60d=benchmark_median_return_60d,
             disclosure_lookback_days=args.disclosure_lookback_days,
             scan_config=scan_config,
+            qqq_return_60d=qqq_trailing_return_60d,
             benchmark_trend_ok=(
                 benchmark_trend_ok_asof(
                     bar_db, trend_filter_symbol, asof, scan_config.benchmark_trend_filter_sma_days,
@@ -442,14 +453,14 @@ def main() -> None:
         if df.empty:
             continue
 
-        if args.dataset_kind == "company_quality":
+        if args.dataset_kind in {"company_quality", "entry_quality"}:
             current_watchlist_symbols = {
                 str(symbol).upper() for symbol in watchlist_by_symbol.keys()
             }
-            quality_rows = df[
+            decision_rows = df[
                 df["symbol"].astype(str).str.upper().isin(current_watchlist_symbols)
             ].copy()
-            for _, row in quality_rows.iterrows():
+            for _, row in decision_rows.iterrows():
                 symbol = str(row.get("symbol", "")).upper()
                 frame = apply_split_adjustment_to_frame(
                     bar_db.get(symbol), split_events.get(symbol)
@@ -639,7 +650,9 @@ def main() -> None:
         "scan_config": scan_config_path,
         "style": style,
         "dataset_kind": str(args.dataset_kind),
-        "pre_strategy_cross_section": bool(args.dataset_kind == "company_quality"),
+        "pre_strategy_cross_section": bool(
+            args.dataset_kind in {"company_quality", "entry_quality"}
+        ),
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "start_date": str(args.start_date),
         "end_date": str(args.end_date),

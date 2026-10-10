@@ -2740,7 +2740,12 @@ def run_scan(
             if normalize_equity_symbol(sym)
         }
     )
-    bars_symbols = sorted(set(symbols_for_bars).union(set(benchmark_symbols)))
+    entry_benchmark_symbol = "QQQ"
+    bars_symbols = sorted(
+        set(symbols_for_bars)
+        .union(set(benchmark_symbols))
+        .union({entry_benchmark_symbol})
+    )
     trend_filter_symbol = normalize_equity_symbol(config.benchmark_trend_filter_symbol or "")
     if trend_filter_symbol and trend_filter_symbol not in bars_symbols:
         bars_symbols = sorted(set(bars_symbols).union({trend_filter_symbol}))
@@ -2791,6 +2796,23 @@ def run_scan(
         if benchmark_returns_60d
         else None
     )
+    qqq_bars = apply_split_adjustment(
+        bars_map.get(entry_benchmark_symbol, []),
+        split_events.get(entry_benchmark_symbol),
+    )
+    qqq_trailing_return_60d = bars_return_from_lookback(qqq_bars, 60)
+    if qqq_trailing_return_60d is not None and not np.isfinite(
+        qqq_trailing_return_60d
+    ):
+        qqq_trailing_return_60d = None
+    entry_regime = (
+        "up"
+        if qqq_trailing_return_60d is not None
+        and float(qqq_trailing_return_60d) >= 0.0
+        else "down"
+        if qqq_trailing_return_60d is not None
+        else "unknown"
+    )
     benchmark_trend_ok: bool | None = None
     if trend_filter_symbol:
         trend_bars = apply_split_adjustment(bars_map.get(trend_filter_symbol, []), split_events.get(trend_filter_symbol))
@@ -2811,9 +2833,39 @@ def run_scan(
             )
     price_feature_rows: list[dict[str, Any]] = []
     for row in df.itertuples(index=False):
-        symbol_bars = apply_split_adjustment(bars_map.get(row.symbol, []), split_events.get(row.symbol))
+        symbol_bars = apply_split_adjustment(
+            bars_map.get(row.symbol, []),
+            split_events.get(row.symbol),
+        )
         features = price_dimension_from_bars(row.price, symbol_bars)
-        price_feature_rows.append({"symbol": row.symbol, **features})
+        market_asof = None
+        bar_dates = [
+            pd.to_datetime(item.get("t"), utc=True, errors="coerce")
+            for item in symbol_bars
+            if item.get("t")
+        ]
+        valid_bar_dates = [ts for ts in bar_dates if pd.notna(ts)]
+        if valid_bar_dates:
+            market_asof = max(valid_bar_dates).date().isoformat()
+        stock_return_60d = features.get("return_60d")
+        relative_strength_60d_qqq = None
+        if (
+            stock_return_60d is not None
+            and qqq_trailing_return_60d is not None
+        ):
+            relative_strength_60d_qqq = (
+                float(stock_return_60d) - float(qqq_trailing_return_60d)
+            )
+        price_feature_rows.append(
+            {
+                "symbol": row.symbol,
+                **features,
+                "market_asof": market_asof,
+                "qqq_trailing_return_60d": qqq_trailing_return_60d,
+                "relative_strength_60d_qqq": relative_strength_60d_qqq,
+                "regime": entry_regime,
+            }
+        )
     df_price_features = pd.DataFrame(price_feature_rows)
     df = df.merge(df_price_features, on="symbol", how="left")
     if trend_filter_symbol:
@@ -3184,12 +3236,18 @@ def run_scan(
         "dollar_volume",
         "drawdown_from_52w_high",
         "range_position_52w",
+        "price_to_sma50",
         "price_to_sma200",
         "days_below_sma200",
         "return_20d",
         "return_60d",
+        "relative_strength_60d_qqq",
+        "qqq_trailing_return_60d",
         "volatility_60d",
         "avg_dollar_volume_20d",
+        "market_asof",
+        "regime",
+        "benchmark_trend_ok",
         "market_cap",
         "enterprise_value",
         "revenue",

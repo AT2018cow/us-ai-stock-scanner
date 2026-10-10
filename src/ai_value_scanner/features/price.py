@@ -10,6 +10,7 @@ import pandas as pd
 PRICE_HISTORY_FEATURE_KEYS = (
     "drawdown_from_52w_high",
     "range_position_52w",
+    "price_to_sma50",
     "price_to_sma200",
     "days_below_sma200",
     "return_20d",
@@ -39,9 +40,9 @@ def compute_price_history_features(
     - historical replay uses the last close visible at its explicit asof;
     - callers decide which bars belong to the range/drawdown lookback window.
 
-    price_to_sma200 is only defined with a complete SMA window. Calling a
-    shorter average SMA200 creates a different signal for recently listed
-    names and is not considered a valid fallback.
+    SMA ratios are only defined with complete windows. Calling a shorter
+    average SMA50/SMA200 creates a different signal for recently listed names
+    and is not considered a valid fallback.
     """
     if current_price is None or not range_highs or not range_lows:
         return empty_price_history_features()
@@ -62,6 +63,12 @@ def compute_price_history_features(
     range_pos = None
     if high_52w > low_52w:
         range_pos = (price - low_52w) / (high_52w - low_52w)
+
+    price_to_sma50 = None
+    if len(close_values) >= 50:
+        sma50 = float(np.mean(np.asarray(close_values[-50:], dtype="float64")))
+        if np.isfinite(sma50) and sma50 > 0:
+            price_to_sma50 = price / sma50
 
     price_to_sma200 = None
     days_below_sma200 = None
@@ -116,6 +123,9 @@ def compute_price_history_features(
         ),
         "range_position_52w": (
             round(range_pos, 6) if range_pos is not None else None
+        ),
+        "price_to_sma50": (
+            round(price_to_sma50, 6) if price_to_sma50 is not None else None
         ),
         "price_to_sma200": (
             round(price_to_sma200, 6) if price_to_sma200 is not None else None
