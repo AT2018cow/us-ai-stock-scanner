@@ -142,15 +142,18 @@ outputs/decisions/
 新 decision 输出采用 failure-contained 集成：若 snapshot 写入失败，legacy scanner CSV、
 network report 和旧 Markdown report 仍继续生成，并在日志中记录 WARN。
 
-Live Company Quality 对 SEC 数据采用保守完整性语义：submissions 中更新的
-10-Q/10-K/20-F/40-F 必须能在本项目识别的 Company Facts 中找到对应 accession；
-否则不会继续用旧 facts 产生高质量评级。当前 live valuation 也不会把非 USD monetary
-facts 与 USD 市值静默混用；这类 foreign-issuer 情况会明确降级为数据不足，等待未来
-有明确需求时再引入 FX-aware normalization。
+Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
+当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
+启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard
+`us-gaap` facts，并且 Revenue / Net Income / OCF 必须都能让现有 reconstruction
+形成由该 accession 驱动的最新 rolling TTM，才会解除 latest-filing blocker。raw SEC
+cache 不会被修改，Quality / Entry / Action 逻辑也不由 EdgarTools 重新实现。
 
-针对这些 fail-closed case 的 EdgarTools filing-level XBRL 对照实验是**可选诊断**，
-不会改变生产 decision。安装、SEC identity、运行命令和 evidence 提交格式见
-[docs/sec_edgartools_parity_spike.md](docs/sec_edgartools_parity_spike.md)。
+20-F / 40-F、IFRS、非 USD、FX、custom-taxonomy-only 或无法形成当前 TTM 的情况继续
+fail closed。币种判断绑定到 latest periodic accession，不再因为历史或附带 USD fact
+而把 foreign issuer 误判成 USD-supported。实现边界、provenance 和真实数据验收要求见
+[docs/sec_edgartools_live_fallback.md](docs/sec_edgartools_live_fallback.md)；此前的
+[EdgarTools parity spike](docs/sec_edgartools_parity_spike.md) 保留为历史诊断证据。
 
 历史 integrated Action-state 诊断可基于 PR3 的 pre-strategy Entry dataset 运行：
 

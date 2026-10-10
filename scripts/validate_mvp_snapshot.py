@@ -189,6 +189,19 @@ def validate_snapshot(
             for decision in decisions
         ),
     }
+    fallback_status_counts: dict[str, int] = {}
+    fallback_used_count = 0
+    for decision in decisions:
+        status = decision.provenance.get("fundamental_edgartools_fallback_status")
+        if status:
+            token = str(status)
+            fallback_status_counts[token] = fallback_status_counts.get(token, 0) + 1
+        if decision.provenance.get("fundamental_edgartools_fallback_used") is True:
+            fallback_used_count += 1
+    fallback_counts = {
+        "edgartools_10q_used": fallback_used_count,
+        "status": dict(sorted(fallback_status_counts.items())),
+    }
 
     n = len(decisions)
     if n > 0 and quality_counts[QualityGrade.UNRATED.value] / n > 0.50:
@@ -231,6 +244,7 @@ def validate_snapshot(
             "entry": entry_counts,
             "action": action_counts,
             "fundamental_integrity": integrity_counts,
+            "fundamental_fallback": fallback_counts,
         },
         "errors": errors,
         "warnings": warnings,
@@ -270,6 +284,7 @@ def main() -> None:
             print(f"entry={counts['entry']}")
             print(f"action={counts['action']}")
             print(f"fundamental_integrity={counts.get('fundamental_integrity', {})}")
+            print(f"fundamental_fallback={counts.get('fundamental_fallback', {})}")
         for warning in result.get("warnings", []):
             print(f"[WARN] {warning}")
         for error in result.get("errors", []):
