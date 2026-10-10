@@ -19,12 +19,33 @@ from ai_value_scanner.fundamentals.edgartools_fallback import (
 )
 
 
+class _FakeFactQuery:
+    def __init__(self, frame: pd.DataFrame):
+        self._frame = frame
+        self.dimension_filter = object()
+
+    def by_dimension(self, value):
+        self.dimension_filter = value
+        return self
+
+    def to_dataframe(self):
+        frame = self._frame.copy()
+        if self.dimension_filter is None and "dimensions" in frame.columns:
+            mask = frame["dimensions"].map(
+                lambda value: value is None
+                or value == {}
+                or value == []
+            )
+            frame = frame[mask]
+        return frame
+
+
 class _FakeFacts:
     def __init__(self, rows: list[dict[str, object]]):
         self._frame = pd.DataFrame(rows)
 
-    def to_dataframe(self):
-        return self._frame.copy()
+    def query(self):
+        return _FakeFactQuery(self._frame)
 
 
 class _FakeXbrl:
@@ -169,6 +190,25 @@ class TestEdgarToolsUsd10QFallback(unittest.TestCase):
         self.assertEqual(revenue_rows[0]["accn"], "q2-26")
         self.assertEqual(revenue_rows[0]["start"], "2026-04-01")
         self.assertEqual(revenue_rows[0]["end"], "2026-06-30")
+
+    def test_missing_undimensioned_query_contract_fails_closed(self) -> None:
+        class UnsafeFacts:
+            def to_dataframe(self):
+                return pd.DataFrame(_latest_rows())
+
+        class UnsafeXbrl:
+            facts = UnsafeFacts()
+
+        result = build_usd_10q_companyfacts_patch(
+            UnsafeXbrl(),
+            accession="q2-26",
+            filed="2026-07-29",
+            form="10-Q",
+            allowed_tags=scanner.EDGARTOOLS_FALLBACK_ALLOWED_TAGS,
+            core_tag_groups=_core_groups(),
+        )
+        self.assertFalse(result.used)
+        self.assertEqual(result.status, "facts_unavailable")
 
     def test_non_usd_core_filing_is_rejected(self) -> None:
         result = build_usd_10q_companyfacts_patch(
