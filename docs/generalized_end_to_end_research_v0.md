@@ -39,6 +39,12 @@ stocks. Any invalid security / missing Alpaca asset / SEC mapping must be
 reported by existing exclusion contracts, never quietly replaced after
 seeing Quality/Entry outcomes.
 
+Coverage labels (e.g. `software_platforms_devices`,
+`semiconductors_and_equipment`) intentionally encompass businesses with
+different accounting structures; they are *review strata*, not validated
+common business models or GICS sectors. Group-level Quality statistics
+must not be read as issuer-comparable scores.
+
 Coverage labels are deliberately `research_provisional` in the metadata,
 not an official sector feed; their purpose is to identify accounting
 differences in a bounded controlled experiment. In particular:
@@ -188,6 +194,7 @@ runs/generalized-v0/<session>_<scanner_sha7>_<run_id>/
   discovery_memberships.jsonl
   discovery_source_rejections.jsonl
   discovery_source_inputs/*.csv # frozen, byte-identical snapshot source files
+  coverage_strata.csv           # frozen provisional accounting-group labels from code SHA
   universe_exclusions.jsonl
   decisions.jsonl
   action_list.md
