@@ -36,6 +36,11 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
     if manifest["candidate_universe"]["market_data_feed"]!="iex":
         raise ValueError("study must use the identical IEX market-data feed")
     config=load_config(config_path)
+    if (config.strategy_style!="risk_off" or
+            config.max_symbols is not None or
+            config.min_dollar_volume!=2_000_000 or
+            config.min_price!=1.0):
+        raise ValueError("bar research requires unchanged v1 risk_off and liquidity gates")
     if not config.discovery_source_files:
         raise ValueError("must use the opt-in experiment config")
     if set(config.discovery_source_files)!=set(cohort["paths"]):
