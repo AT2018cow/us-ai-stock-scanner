@@ -210,14 +210,14 @@ class TestGeneralizedResearch(unittest.TestCase):
                 "discovery_sources":summary,
                 "candidate_universe":{"market_data_feed":"iex","min_dollar_volume":2000000},
             }
-            (snapshot/"run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             config_path=root/"experiment.json"
-            config_path.write_text(json.dumps({
-                "strategy_style":"risk_off",
-                "min_dollar_volume":2000000,
-                "min_price":1.0,
-                "discovery_source_files":{k:str(v) for k,v in cohort["paths"].items()},
-            }),encoding="utf-8")
+            prepare(ROOT/"configs/config.risk_off.json", config_path, ROOT/COHORT)
+            manifest["config_fingerprint"] = config_fingerprint(
+                load_config(str(config_path))
+            )
+            (snapshot/"run_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
 
             class FakeAlpaca:
                 feed="iex"
