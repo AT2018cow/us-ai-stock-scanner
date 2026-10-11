@@ -162,6 +162,26 @@ def load_discovery_sources(paths: dict[str, str]) -> tuple[
 
     memberships.sort(key=lambda x: (x["symbol"], x["source_kind"], x["source_id"]))
     rejected.sort(key=lambda x: (x["source_kind"], x["source_file"], x["row_number"]))
+    # The v1 score adapter appends empty buckets when fed multiple rows for a
+    # shared symbol. Aggregate first; do NOT change that legacy adapter.
+    combined: dict[str, dict[str, set[str]]] = {}
+    for row in watchlist_rows:
+        symbol = row["symbol"]
+        item = combined.setdefault(symbol, {"buckets": set(), "etfs": set()})
+        if row["bucket"]:
+            item["buckets"].update(x for x in row["bucket"].split(",") if x)
+        if row["etfs"]:
+            item["etfs"].update(x for x in row["etfs"].split(",") if x)
+    watchlist_rows = [
+        {
+            "symbol": symbol,
+            "bucket": ",".join(sorted(values["buckets"])),
+            "etf_count": len(values["etfs"]),
+            "etfs": ",".join(sorted(values["etfs"])),
+            "enabled": 1,
+        }
+        for symbol, values in sorted(combined.items())
+    ]
     symbols = {x["symbol"] for x in memberships}
     summary = {
         "schema_version": DISCOVERY_SCHEMA_VERSION,
