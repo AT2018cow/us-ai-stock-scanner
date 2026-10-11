@@ -95,9 +95,9 @@ def classify_asset_mapping_universe(
         }
 
     exchange_allow = {
-        str(value).strip().upper()
+        str(value)
         for value in (enabled_exchanges or ())
-        if str(value).strip()
+        if str(value)
     }
 
     eligible: set[str] = set()
@@ -123,7 +123,7 @@ def classify_asset_mapping_universe(
                 )
             )
             continue
-        exchange = str(asset.get("exchange") or "").strip().upper()
+        exchange = str(asset.get("exchange") or "")
         if exchange_allow and exchange not in exchange_allow:
             exclusions.append(
                 _base_exclusion(
