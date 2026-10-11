@@ -165,7 +165,7 @@ find "$EXP/frozen_inputs/watchlist_history" -type f -print0 \
 - **最大同时执行的远程重型提取容器数为 1**：先 Quality 完成再 Entry，避免共享 SEC/Alpaca 缓存的竞态、重复网络和不同数据状态。缓存协同瓶颈不靠盲目提高并发解决。离线小型分析可以本机顺序完成；独立离线 CPU 工作如确有必要再以 2–4 vCPU、4–8GiB 的小容器并行最多 2 项。
 
 \`\`\`bash
-set -o pipefail
+set -euo pipefail
 
 MODAL_PROFILE=infi .venv/bin/python -m modal run \
   scripts/modal_baseline_executor.py \
