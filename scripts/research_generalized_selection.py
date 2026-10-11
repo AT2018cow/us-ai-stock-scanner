@@ -25,7 +25,7 @@ COHORT = Path("data/research/generalized_v0")
 FIRST_ELIGIBLE_MARKET_DATE = "2026-10-12"
 KINDS = ("us_core", "thematic", "manual")
 PROXY = {
-    "asset_light_software": "XLK", "semiconductor_equipment": "SMH",
+    "software_platforms_devices": "XLK", "semiconductors_and_equipment": "SMH",
     "healthcare_pharma_medtech": "XLV", "industrials_machinery": "XLI",
     "consumer_staples": "XLP", "consumer_discretionary": "XLY",
     "energy_oil_gas": "XLE", "materials_chemicals_mining": "XLB",
