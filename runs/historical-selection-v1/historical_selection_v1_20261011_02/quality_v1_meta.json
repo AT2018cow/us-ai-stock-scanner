@@ -1,0 +1,60 @@
+{
+  "evaluation": "company_quality_v1_retrospective",
+  "horizons": [
+    20,
+    60,
+    120
+  ],
+  "input_dataset": "outputs/historical_selection_v1_20261011_02/modal_download/datasets/datasets/company_quality_dataset_risk_off.csv",
+  "input_dataset_meta": {
+    "allow_latest_watchlist_fallback": false,
+    "channels": [
+      "ai_enabler",
+      "ai_peripheral",
+      "core_ai"
+    ],
+    "dataset_kind": "company_quality",
+    "delist_return_assumption": -0.55,
+    "disclosure_lookback_days": 720,
+    "end_date": "2026-03-31",
+    "entry_price_mode": "next_open",
+    "exit_price_mode": "close",
+    "generated_utc": "2026-10-11T12:16:18.126523+00:00",
+    "horizons": [
+      20,
+      60,
+      120
+    ],
+    "list_types": [
+      "low_value",
+      "momentum"
+    ],
+    "n_dates": 39,
+    "n_rows": 25025,
+    "pre_snapshot_universe": "union",
+    "pre_strategy_cross_section": true,
+    "rebalance_frequency": "monthly",
+    "replay_asset_status": "all",
+    "replay_max_symbols": 800,
+    "research_expanded_survivor_dataset": false,
+    "research_skipped_low_value_hard_steps": [],
+    "roundtrip_cost": 0.003,
+    "scan_config": "/root/configs/config.risk_off.json",
+    "start_date": "2023-01-01",
+    "style": "risk_off",
+    "theme_source": "rules_proxy",
+    "trading_cost_bps": 15.0,
+    "watchlist_csv_path": "/root/data/ai_watchlist.csv",
+    "watchlist_history_dir": "/root/data/watchlist_history",
+    "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)"
+  },
+  "n_decisions": 25025,
+  "outputs": {
+    "cohorts": "outputs/historical_selection_v1_20261011_02/analysis/quality_v1_cohorts.csv",
+    "concentration": "outputs/historical_selection_v1_20261011_02/analysis/quality_v1_concentration.csv",
+    "decisions": "outputs/historical_selection_v1_20261011_02/analysis/quality_v1_decisions.csv",
+    "rank_ic": "outputs/historical_selection_v1_20261011_02/analysis/quality_v1_rank_ic.csv",
+    "report": "outputs/historical_selection_v1_20261011_02/analysis/quality_v1_report.md"
+  },
+  "quality_policy_version": "company_quality_v1_2026-10-10"
+}
