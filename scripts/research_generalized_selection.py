@@ -186,6 +186,41 @@ def load_bars(path, asof, *, feed="iex"):
     return out
 
 
+def validate_bar_export_provenance(path, *, asof, scanner_manifest, cohort):
+    """Fail closed on a detached or substituted IEX bar CSV.
+
+    The export manifest attests the scanner SHA/config fingerprint and frozen
+    cohort used for acquisition; hashes do not prove market-data truth but
+    catch unintentional substitution in the evidence chain.
+    """
+    csv_path = Path(path)
+    source = csv_path.with_name("pit_bars_manifest.json")
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+    problems = []
+    if metadata.get("bar_dataset_sha256") != hash_file(csv_path):
+        problems.append("IEX bar CSV SHA256 mismatch")
+    if metadata.get("session") != asof:
+        problems.append("IEX bar export market session mismatch")
+    if metadata.get("feed") != "iex":
+        problems.append("IEX bar export feed mismatch")
+    if metadata.get("snapshot_code_sha") != scanner_manifest.get("code_sha"):
+        problems.append("IEX bar export scanner SHA mismatch")
+    if metadata.get("config_fingerprint") != scanner_manifest.get("config_fingerprint"):
+        problems.append("IEX bar export config fingerprint mismatch")
+    if metadata.get("source_cohort_hashes") != cohort["source_hashes"]:
+        problems.append("IEX bar export source cohort SHA mismatch")
+    expected_symbols = cohort["symbols"] | {"QQQ", "SPY"} | set(PROXY.values())
+    if metadata.get("symbols_requested") != len(expected_symbols):
+        problems.append("IEX bar export symbol budget mismatch")
+    if metadata.get("rows") != len(read_csv(csv_path)):
+        problems.append("IEX bar export row count mismatch")
+    if metadata.get("network_monitor", {}).get("stale_market_data_fallback_used"):
+        problems.append("stale bar-data fallback is unacceptable")
+    if problems:
+        raise ValueError("; ".join(problems))
+    return metadata
+
+
 def liquidity_diagnostic(symbol, bars, asof, threshold=2_000_000):
     obs = sorted((day,*values) for day, values in bars.get(symbol, {}).items() if day <= asof)
     result = {
@@ -321,7 +356,17 @@ def audit(
         raise ValueError("source membership incorrectly backdated")
     if len(manifest.get("daily_symbols",[]))>15 or len(manifest.get("weekly_symbols",[]))>15:
         raise ValueError("v1 Attention cap exceeded")
+    bar_export_review = (
+        validate_bar_export_provenance(
+            bars_csv, asof=asof, scanner_manifest=manifest, cohort=cohort
+        )
+        if bars_csv else None
+    )
     bars=load_bars(bars_csv,asof)
+    if bars and set(bars) - (
+        cohort["symbols"] | {"QQQ", "SPY"} | set(PROXY.values())
+    ):
+        raise ValueError("unexpected symbols in IEX bar export")
     per_symbol=[]
     for symbol in sorted(observed):
         decision=ds.get(symbol)
@@ -430,6 +475,13 @@ def audit(
         "daily_symbols":manifest["daily_symbols"],
         "weekly_symbols":manifest["weekly_symbols"],
         "same_feed_bars_sha256":hash_file(bars_csv) if bars_csv else None,
+        "bar_export_review": {
+            "session": bar_export_review["session"],
+            "feed": bar_export_review["feed"],
+            "symbols_requested": bar_export_review["symbols_requested"],
+            "rows": bar_export_review["rows"],
+            "sha256_verified": True,
+        } if bar_export_review is not None else None,
         "experiment_config_review":config_review,
         "20session_turnover_coverage":sum(x["coverage"]=="20_session_valid" for x in liquidity),
         "60session_qqq_spy_comparison_coverage":sum(
