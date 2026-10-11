@@ -189,6 +189,8 @@ def main() -> None:
         print(f"quality={counts['quality']}")
         print(f"entry={counts['entry']}")
         print(f"action={counts['action']}")
+        if counts.get("candidate_universe"):
+            print(f"candidate_universe={counts['candidate_universe']}")
     for warning in result.get("warnings", []):
         print(f"[WARN] {warning}")
     for error in result.get("errors", []):
@@ -196,6 +198,7 @@ def main() -> None:
 
     print("Action List:", snapshot / "action_list.md")
     print("Weekly Review:", snapshot / "weekly_review.md")
+    print("Universe exclusions:", snapshot / "universe_exclusions.jsonl")
     print("Manifest:", snapshot / "run_manifest.json")
     print("Full log:", log_path)
 
