@@ -1,9 +1,12 @@
 # 产品方向：低频、人工决策辅助型选股系统
 
-> 状态：**当前北极星文档（2026-10-10 起）**
+> 状态：**当前北极星文档（2026-10-11 更新通用候选池长期方向）**
 >
 > 所有 agent 在设计新功能、研究实验、重构输出或安排优先级前，应先阅读本文。
-> 当前 MVP 工程设计见 `docs/mvp_design_low_frequency_manual_selection.md`；交接与近期任务见 `docs/work_handoff_after_pr31_20261010.md`。
+> 当前 MVP 工程设计见 `docs/mvp_design_low_frequency_manual_selection.md`；
+> 通用候选池与业务模式感知 Quality 的设计边界见
+> `docs/general_purpose_discovery_and_quality_v2_design.md`。
+> 原有工作交接文档是历史记录，不覆盖本次产品方向。
 
 ## 1. 一句话目标
 
@@ -13,7 +16,17 @@
 
 > **低频、人工决策辅助型选股系统。**
 
-系统应把较大的 AI / 科技相关观察池压缩成少量值得人工研究的候选，并把两个问题分开回答：
+长期系统面向**跨行业的美国上市公司研究**，把多个来源的候选池压缩成少量
+值得人工研究的公司。AI 保留为**可选研究主题**，而不是决定哪些公司有资格
+被发现或参与 Company Quality 评价的必要条件。
+
+候选发现层独立包含三类可重叠来源：
+**US Core Universe**（跨行业基础发现池）、
+**Thematic Universe**（可选 AI 等专题研究池）与
+**Manual Research Universe**（人工维护的研究名单）。
+每个来源都必须可追溯、版本化，并与实际公司行业/业务模式分类区分开。
+
+系统仍然把两个问题分开回答：
 
 1. **Company Quality：这家公司是否值得长期关注或拥有？**
 2. **Entry Quality：如果公司值得关注，现在是否处于相对合理的介入位置？**
@@ -61,7 +74,8 @@
 - 股本稀释；
 - 应收账款、存货等异常；
 - 相对自身历史和同行的估值；
-- AI / 产业链相关性及业务质量。
+- 业务模式特征与行业经济结构；
+- 可选主题/产业链相关性，仅作发现和解释性背景，**不直接决定 Quality 分级**。
 
 推荐产品语义：
 
@@ -265,7 +279,26 @@ Action State 应由简单、可审计的规则产生。复杂模型可以提供�
 
 系统价值应来自少量高质量决策，而不是增加交易次数。
 
-## 8. 现有列表如何迁移
+## 8. 候选来源与现有列表如何迁移
+
+当前投入生产的 `core_ai`、`ai_enabler`、`ai_peripheral`、
+`ai_smallcap` 保留为**旧 AI 发现池的来源 provenance**，
+不应被解释为通用行业分类、真实市值分组或永续的策略。
+未来应将它们迁移到 Thematic Universe 的可选 AI 子集，
+与独立的 US Core 和 Manual 发现源合并、去重后，再使用相同
+Company Quality × Entry Quality 决策契约。
+
+迁移期间**不替换**目前已验收的 watchlist、`risk_off` 兼容基线、
+美元流动性门槛和已冻结的 prospective / experiment 历史；
+必须通过独立实施 PR、数据覆盖对照及 evidence GO 才能切换。
+候选来源不应为手工添加公司赋予自动通过流动性/SEC 门槛的特权。
+
+跨行业 Company Quality v2 应采用**统一的财务质量核心 + 少量经
+会计语义验证的业务模式感知解释规则**。在银行、保险、REIT 等
+特别会计类型可靠验证之前不得给出虚假的跨行业可比评级。
+`StockDecision`、Action List、Detailed Report 仍是唯一对外决策链路。
+
+### 历史策略清单作为证据来源
 
 现有 `low_value`、`momentum`、`industry_trend` 和 `research_pool`
 不需要立即删除。
