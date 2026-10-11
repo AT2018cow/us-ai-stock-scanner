@@ -1,6 +1,14 @@
 # AI US Stock Research Scanner (Alpaca + SEC)
 
-基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，对美股 AI 观察池做低频、可解释的人工决策辅助筛选。
+基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
+
+> **当前运行状态：** 已验收的 v1 扫描仍然使用历史 AI/主题 watchlist，
+> `configs/config.risk_off.json` 以及固定的 Quality/Entry/Action 规则。
+> **长期产品方向：** 将候选发现解耦为 **US Core Universe / Thematic Universe /
+> Manual Research Universe**；AI 为可选主题而非唯一股票来源。
+> 本项目前瞻方向为设计阶段，**尚未切换实际 scanner、候选底单或门槛**。
+> 设计与迁移前置条件见
+> [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md)。
 
 > **当前产品目标（2026-10-10 起）：**
 > **先找到值得拥有的公司，再判断现在是不是一个相对合理的买入时点。**
