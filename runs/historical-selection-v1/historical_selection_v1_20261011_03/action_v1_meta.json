@@ -1,0 +1,20 @@
+{
+  "attention_cap": 15,
+  "entry_policy_version": "entry_quality_v1_2026-10-10",
+  "evaluation": "integrated_action_state_retrospective",
+  "horizons": [
+    20,
+    60,
+    120
+  ],
+  "input_dataset": "outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv",
+  "outputs": {
+    "cohorts": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_cohorts.csv",
+    "compactness": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_compactness.csv",
+    "concentration": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_concentration.csv",
+    "decisions": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_decisions.csv",
+    "report": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_report.md",
+    "transitions": "outputs/historical_selection_v1_20261011_03/analysis/action_v1_transitions.csv"
+  },
+  "quality_policy_version": "company_quality_v1_2026-10-10"
+}
