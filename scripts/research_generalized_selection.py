@@ -214,9 +214,15 @@ def liquidity_diagnostic(symbol, bars, asof, threshold=2_000_000):
     return result
 
 
-def relative_trailing(symbol, benchmark, bars, asof):
+def relative_trailing(symbol, benchmark, bars, asof, *, shared_benchmarks=()):
     a,b=bars.get(symbol,{}),bars.get(benchmark,{})
-    joint=sorted(x for x in set(a)&set(b) if x<=asof)
+    # QQQ and SPY must use the exact same stock/benchmark sessions for
+    # a fair sign/rank comparison; otherwise differing provider gaps
+    # quietly shift the start observation.
+    common = set(a) & set(b)
+    for peer in shared_benchmarks:
+        common &= set(bars.get(peer, {}))
+    joint=sorted(x for x in common if x<=asof)
     row={"symbol":symbol,"benchmark":benchmark,"joint_sessions":len(joint),
          "asof_joint":joint[-1] if joint else ""}
     for window in (20,60):
@@ -365,8 +371,14 @@ def audit(
         group=cohort["classifications"].get(symbol,{}).get("coverage_stratum","manual_only_unknown")
         for ref in ("QQQ","SPY",PROXY.get(group)):
             if ref and ref!=symbol:
-                entry.append(dict(relative_trailing(symbol,ref,bars,asof),
-                    coverage_stratum=group,entry_v1=ds.get(symbol,{}).get("entry",{}).get("state","")))
+                entry.append(dict(
+                    relative_trailing(
+                        symbol, ref, bars, asof,
+                        shared_benchmarks=("QQQ", "SPY") if ref in {"QQQ", "SPY"} else (),
+                    ),
+                    coverage_stratum=group,
+                    entry_v1=ds.get(symbol,{}).get("entry",{}).get("state",""),
+                ))
     # Observe whether the same IEX bar series behaves differently as a
     # one-session gate versus a 20-session proxy. Neither is the snapshot gate.
     liquidity_by_group = []
@@ -422,8 +434,12 @@ def audit(
         "20session_turnover_coverage":sum(x["coverage"]=="20_session_valid" for x in liquidity),
         "60session_qqq_spy_comparison_coverage":sum(
             bool(bars) and
-            relative_trailing(x,"QQQ",bars,asof)["trailing_excess_60"] is not None and
-            relative_trailing(x,"SPY",bars,asof)["trailing_excess_60"] is not None
+            relative_trailing(
+                x, "QQQ", bars, asof, shared_benchmarks=("QQQ", "SPY")
+            )["trailing_excess_60"] is not None and
+            relative_trailing(
+                x, "SPY", bars, asof, shared_benchmarks=("QQQ", "SPY")
+            )["trailing_excess_60"] is not None
             for x in observed
         ),
         "limitations":[
