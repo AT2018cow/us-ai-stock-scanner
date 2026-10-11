@@ -116,6 +116,32 @@ class TestGeneralDiscoveryUnion(unittest.TestCase):
                 ), [],
             )
 
+    def test_same_source_distinct_thematic_tags_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "multi_themes.csv"
+            _csv(path, [
+                _row("AAA", "same_research_source", theme="ai",
+                     bucket="core_ai", etfs="AIQ"),
+                _row("AAA", "same_research_source", theme="energy"),
+            ])
+            rows, members, rejected, summary = load_discovery_sources({
+                "thematic": str(path)
+            })
+            self.assertEqual(len(members), 2)
+            self.assertEqual(len(rejected), 0)
+            self.assertEqual(summary["unique_symbols"], 1)
+            self.assertEqual(
+                {m["theme_id"] for m in members}, {"ai", "energy"}
+            )
+            scores = watchlist_rows_to_scores(pd.DataFrame(rows))
+            self.assertEqual(scores.iloc[0]["watchlist_etf_count"], 1)
+            self.assertEqual(
+                validate_discovery_snapshot(
+                    memberships=members, rejected=rejected, summary=summary,
+                    discovery_symbols={"AAA"}, decision_date="2026-10-09"
+                ), [],
+            )
+
     def test_fail_closed_future_asof_identity_and_source_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
