@@ -9,18 +9,24 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
     from research_generalized_selection import (
         COHORT, audit, frozen_cohort, hash_file, liquidity_diagnostic,
-        load_bars, prepare, relative_trailing,
+        load_bars, prepare, read_csv, relative_trailing,
     )
 finally:
     sys.path.pop(0)
 
 from ai_value_scanner.decision.discovery import load_discovery_sources
+sys.path.insert(0, str(ROOT / "scripts"))
+try:
+    from export_generalized_pit_bars import export_bars
+finally:
+    sys.path.pop(0)
 
 
 class TestGeneralizedResearch(unittest.TestCase):
@@ -117,6 +123,77 @@ class TestGeneralizedResearch(unittest.TestCase):
         self.assertAlmostEqual(row["trailing_excess_20"],20/140,places=6)
         self.assertAlmostEqual(row["trailing_excess_60"],0.6,places=6)
         self.assertIsNone(relative_trailing("AAA","SPY",bars,asof.isoformat())["trailing_excess_20"])
+
+    def test_bars_export_rejects_stale_cache_and_excludes_future_sessions(self):
+        cohort=frozen_cohort(ROOT/COHORT)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            snapshot=root/"snapshot"
+            snapshot.mkdir()
+            archive=snapshot/"discovery_source_inputs"
+            archive.mkdir()
+            for kind, path in cohort["paths"].items():
+                shutil.copyfile(path, archive/(kind+".csv"))
+            _, members, rejected, summary=load_discovery_sources(
+                {k:str(v) for k,v in cohort["paths"].items()}
+            )
+            manifest={
+                "code_sha":"test",
+                "decision_date":"2026-10-12",
+                "discovery_sources":summary,
+                "candidate_universe":{"market_data_feed":"iex","min_dollar_volume":2000000},
+            }
+            (snapshot/"run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            config_path=root/"experiment.json"
+            config_path.write_text(json.dumps({
+                "strategy_style":"risk_off",
+                "min_dollar_volume":2000000,
+                "min_price":1.0,
+                "discovery_source_files":{k:str(v) for k,v in cohort["paths"].items()},
+            }),encoding="utf-8")
+
+            class FakeAlpaca:
+                feed="iex"
+                def get_daily_bars(self, symbols, start, chunks):
+                    return {
+                        symbol:[
+                            {"t":"2026-10-09T04:00:00Z","c":10.0,"v":100.0},
+                            {"t":"2026-10-12T04:00:00Z","c":11.0,"v":120.0},
+                            {"t":"2026-10-13T04:00:00Z","c":999.0,"v":1000.0},
+                        ]
+                        for symbol in symbols
+                    }
+                def get_corporate_action_splits(self, symbols, begin, end):
+                    return {}
+
+            class FakeMonitor:
+                def __init__(self, stale=False): self.stale=stale
+                def to_dict(self):
+                    return {"stale_market_data_fallback_used":self.stale}
+
+            with patch(
+                "export_generalized_pit_bars.load_runtime_settings",
+                return_value=(FakeAlpaca(),None,FakeMonitor()),
+            ):
+                result=export_bars(
+                    snapshot, config_path, root/"export",
+                    cohort_dir=ROOT/COHORT
+                )
+            self.assertEqual(result["feed"],"iex")
+            self.assertEqual(result["symbols_requested"]*2,result["rows"])
+            exported=read_csv(root/"export"/"pit_iex_daily_bars.csv")
+            self.assertEqual({r["session"] for r in exported},
+                             {"2026-10-09","2026-10-12"})
+            with patch(
+                "export_generalized_pit_bars.load_runtime_settings",
+                return_value=(FakeAlpaca(),None,FakeMonitor(stale=True)),
+            ):
+                with self.assertRaisesRegex(ValueError,"stale market-data fallback"):
+                    export_bars(
+                        snapshot, config_path, root/"bad_export",
+                        cohort_dir=ROOT/COHORT
+                    )
+            self.assertFalse((root/"bad_export").exists())
 
     def test_end_to_end_audit_and_source_hash_tamper(self):
         cohort=frozen_cohort(ROOT/COHORT)
