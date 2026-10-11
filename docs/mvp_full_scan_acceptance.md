@@ -57,6 +57,7 @@ outputs/decisions/
   YYYY-MM-DD/
     <strategy_style>/
       decisions.jsonl
+      universe_exclusions.jsonl
       action_list.md
       weekly_review.md
       detailed/
@@ -73,6 +74,7 @@ The validator requires:
 
 - `decisions.jsonl`, `action_list.md`, `weekly_review.md`,
   `run_manifest.json`, and `detailed/` all exist;
+- when the manifest declares the candidate-universe contract, `universe_exclusions.jsonl` exists and is valid JSONL;
 - the decision JSONL is readable and non-empty;
 - symbols are unique;
 - priorities are exactly `1..N`;
@@ -84,7 +86,10 @@ The validator requires:
 - selected symbols exist in the canonical JSONL;
 - Action List / Weekly Review are exact renderings of the selected
   `StockDecision` objects;
-- every selected name has an exact canonical Detailed Report rendering.
+- every selected name has an exact canonical Detailed Report rendering;
+- candidate-universe counts conserve exactly from discovery symbols to decisions plus exclusions;
+- exclusion symbols are unique, never overlap decisions, and reason/stage counts match the manifest;
+- price/liquidity exclusions preserve the actual market-data feed, observed value and configured threshold.
 
 These are correctness checks. A failure should be investigated before creating a formal
 prospective snapshot.
