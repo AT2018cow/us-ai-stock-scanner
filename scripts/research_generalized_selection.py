@@ -112,23 +112,25 @@ def config_fingerprint(config):
 
 def validate_experiment_config(config_path, base_config, *, root=COHORT):
     cohort = frozen_cohort(root)
-    experiment = load_config(str(config_path))
-    baseline = load_config(str(base_config))
+    raw_experiment = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    raw_baseline = json.loads(Path(base_config).read_text(encoding="utf-8"))
+    if not isinstance(raw_experiment, dict) or not isinstance(raw_baseline, dict):
+        raise ValueError("experiment/base configs must be JSON objects")
     expected_sources = {k: p.as_posix() for k, p in cohort["paths"].items()}
-    if experiment.discovery_source_files != expected_sources:
+    if raw_experiment.get("discovery_source_files") != expected_sources:
         raise ValueError("experiment discovery_source_files do not match frozen v0")
-    exp = _config_identity(experiment)
-    base = _config_identity(baseline)
-    exp.pop("discovery_source_files", None)
-    if exp != base:
+    comparable = dict(raw_experiment)
+    comparable.pop("discovery_source_files", None)
+    if comparable != raw_baseline:
         changed = sorted(
-            key for key in set(exp) | set(base)
-            if exp.get(key) != base.get(key)
+            key for key in set(comparable) | set(raw_baseline)
+            if comparable.get(key) != raw_baseline.get(key)
         )
         raise ValueError(
             "experiment config changed frozen v1 policy outside discovery sources: "
             + ", ".join(changed)
         )
+    experiment = load_config(str(config_path))
     for kind, source_path in expected_sources.items():
         if hash_file(source_path) != cohort["source_hashes"][kind]:
             raise ValueError("experiment source file hash drift: " + kind)
