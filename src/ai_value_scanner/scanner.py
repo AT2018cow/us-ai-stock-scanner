@@ -4217,8 +4217,12 @@ def run_scan(
                 "research_pool": research_pool,
             }
         )
+        config_identity = vars(config).copy()
+        # New opt-in field must not change v1 fingerprints when absent.
+        if config_identity.get("discovery_source_files") is None:
+            config_identity.pop("discovery_source_files", None)
         config_payload = json.dumps(
-            vars(config),
+            config_identity,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -4279,6 +4283,14 @@ def run_scan(
             discovery_source_summary=discovery_source_summary,
             input_provenance={
                 "watchlist_csv_path": config.watchlist_csv_path,
+                **(
+                    {
+                        "discovery_mode": "multi_source_opt_in",
+                        "discovery_source_files": dict(config.discovery_source_files),
+                    }
+                    if config.discovery_source_files is not None
+                    else {}
+                ),
                 "decision_date_source": (
                     "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
                 ),
@@ -4305,6 +4317,9 @@ def run_scan(
             f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
         )
     except Exception as exc:
+        if discovery_source_summary is not None:
+            # Opt-in provenance and as-of violations must never be soft warnings.
+            raise
         decision_output_error = f"{type(exc).__name__}: {exc}"
         log_status(
             started_at,
