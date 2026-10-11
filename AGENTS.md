@@ -231,13 +231,20 @@ That section must state:
 - sensitive or bulky files that must **not** be committed;
 - the concrete questions / acceptance criteria the reviewer will check.
 
-Prefer a small immutable evidence package under `evidence/` over screenshots or pasted
-terminal fragments. Never request credentials, `.env`, raw API secrets, raw caches, or
-bulk outputs that are not needed for review.
+Prefer browsable original Markdown/JSON/JSONL/CSV evidence files over ZIP,
+screenshots or pasted terminal fragments. A routine experiment does **not** require
+a second evidence-only PR or a merge into main. See
+`docs/research_evidence_workflow.md` for the proposed append-only branch layout,
+commit pinning and SHA256 review workflow. Do not create that branch until the user
+approves the storage choice.
+
+Never request credentials, `.env`, raw API secrets, raw caches, or bulk outputs
+that are not needed for review.
 
 For every future PR that requires a credentialed, post-merge, or otherwise external
 experiment, keep this `Review evidence to submit` contract in the PR body before asking
-the user to run it. Do not defer evidence requirements until after the experiment.
+the user to run it. State the target evidence location and identity by commit SHA;
+do not defer evidence requirements until after the experiment.
 
 ## 9. Data and computation invariants
 
