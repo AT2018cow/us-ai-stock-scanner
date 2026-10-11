@@ -15,6 +15,11 @@ import json
 import math
 from pathlib import Path
 
+from ai_value_scanner.decision.discovery import (
+    load_discovery_sources,
+    validate_discovery_snapshot,
+)
+
 COHORT = Path("data/research/generalized_v0")
 KINDS = ("us_core", "thematic", "manual")
 PROXY = {
@@ -192,6 +197,30 @@ def audit(snapshot, root=COHORT, bars_csv=None):
             raise ValueError("source does not match frozen research cohort")
         if hash_file(directory/source["archived_file"])!=source["sha256"]:
             raise ValueError("archived source CSV corrupted")
+    # Independent reconstruction: source hashes and aggregate counts are not
+    # sufficient. Reject a same-count edit of source_id, theme, legacy bucket,
+    # symbol provenance or the manual research reason in the snapshot.
+    archived_paths = {}
+    original_paths = {}
+    for source in sources["source_files"]:
+        kind = source["source_kind"]
+        archived_paths[kind] = str(directory / source["archived_file"])
+        original_paths[kind] = source["source_file"]
+    _, reconstructed, reconstructed_rejects, _ = load_discovery_sources(archived_paths)
+    def identity(row):
+        item = dict(row)
+        item["source_file"] = original_paths[item["source_kind"]]
+        return json.dumps(item, sort_keys=True, ensure_ascii=False)
+    if sorted(map(identity, members)) != sorted(map(identity, reconstructed)):
+        raise ValueError("discovery membership rows diverge from frozen input CSV")
+    if sorted(map(identity, rejected)) != sorted(map(identity, reconstructed_rejects)):
+        raise ValueError("discovery source rejections diverge from frozen input CSV")
+    errors = validate_discovery_snapshot(
+        memberships=members, rejected=rejected, summary=sources,
+        discovery_symbols=set(ds) | set(xs), decision_date=asof,
+    )
+    if errors:
+        raise ValueError("invalid discovery snapshot: " + "; ".join(errors))
     if any(m["source_asof"]>asof for m in members):
         raise ValueError("source membership incorrectly backdated")
     if len(manifest.get("daily_symbols",[]))>15 or len(manifest.get("weekly_symbols",[]))>15:
@@ -248,6 +277,43 @@ def audit(snapshot, root=COHORT, bars_csv=None):
             if ref and ref!=symbol:
                 entry.append(dict(relative_trailing(symbol,ref,bars,asof),
                     coverage_stratum=group,entry_v1=ds.get(symbol,{}).get("entry",{}).get("state","")))
+    # Observe whether the same IEX bar series behaves differently as a
+    # one-session gate versus a 20-session proxy. Neither is the snapshot gate.
+    liquidity_by_group = []
+    for group in sorted({x["coverage_stratum"] for x in liquidity}):
+        rows = [x for x in liquidity if x["coverage_stratum"] == group]
+        valid = [x for x in rows if x["coverage"] == "20_session_valid"]
+        liquidity_by_group.append({
+            "group": group,
+            "symbols": len(rows),
+            "valid_20session": len(valid),
+            "bar_gate_disagreements": sum(x["disagreement"] is True for x in valid),
+            "last_bar_fails": sum(x["last_bar_pass"] is False for x in valid),
+            "mean_20session_fails": sum(x["mean_20session_pass"] is False for x in valid),
+        })
+    # Do not force sector-proxy equivalence. QQQ and SPY must be available
+    # on the SAME stock/benchmark as-of date before their rankings can differ.
+    entry_reference_diagnostics = []
+    for group in sorted({x["coverage_stratum"] for x in per_symbol}):
+        symbols = {x["symbol"] for x in per_symbol if x["coverage_stratum"] == group}
+        examples = []
+        for sym in sorted(symbols):
+            refs = {x["benchmark"]: x for x in entry if x["symbol"] == sym}
+            qqq = refs.get("QQQ", {})
+            spy = refs.get("SPY", {})
+            x = qqq.get("trailing_excess_60")
+            y = spy.get("trailing_excess_60")
+            if x is not None and y is not None:
+                examples.append((sym, x, y))
+        entry_reference_diagnostics.append({
+            "group": group,
+            "symbols": len(symbols),
+            "aligned_60session_qqq_spy": len(examples),
+            "sign_disagreement": sum((x > 0) != (y > 0) for _, x, y in examples),
+            "opposite_sign_examples": [
+                sym for sym, x, y in examples if (x > 0) != (y > 0)
+            ],
+        })
     report={
         "study":"generalized_research_v0",
         "mode":"read_only_diagnostic_not_strategy_validation",
@@ -256,7 +322,10 @@ def audit(snapshot, root=COHORT, bars_csv=None):
         "cohort_source_hashes":cohort["source_hashes"],
         "discovered":len(observed),"decisions":len(ds),"exclusions":len(xs),
         "source_rejections":len(rejected),"source_memberships":len(members),
-        "groups":strata,"daily_symbols":manifest["daily_symbols"],
+        "groups":strata,
+        "liquidity_by_group": liquidity_by_group,
+        "entry_reference_diagnostics": entry_reference_diagnostics,
+        "daily_symbols":manifest["daily_symbols"],
         "weekly_symbols":manifest["weekly_symbols"],
         "same_feed_bars_sha256":hash_file(bars_csv) if bars_csv else None,
         "20session_turnover_coverage":sum(x["coverage"]=="20_session_valid" for x in liquidity),
@@ -304,6 +373,20 @@ def markdown(report):
             json.dumps(x["entry_states"],sort_keys=True),
             x["daily_attention"],"specialized review" if x["specialized_accounting_review"] else "unverified",
         ))
+    out+=["","## IEX bar-only liquidity comparison by provisional group", "",
+          "| Group | Symbols | 20-session valid | Bar proxy threshold disagreements |",
+          "| --- | ---: | ---: | ---: |"]
+    for x in report["liquidity_by_group"]:
+        out.append("| {} | {} | {} | {} |".format(
+            x["group"], x["symbols"], x["valid_20session"],
+            x["bar_gate_disagreements"]))
+    out+=["","## QQQ vs SPY trailing 60-session comparison", "",
+          "| Group | Symbols | Comparable observations | Excess-return sign disagreements |",
+          "| --- | ---: | ---: | ---: |"]
+    for x in report["entry_reference_diagnostics"]:
+        out.append("| {} | {} | {} | {} |".format(
+            x["group"], x["symbols"], x["aligned_60session_qqq_spy"],
+            x["sign_disagreement"]))
     out+=["","## Research limitations",""]
     out+=["- "+s for s in report["limitations"]]
     out+=["","See the accompanying machine-readable symbol-level quality/entry/action,",
