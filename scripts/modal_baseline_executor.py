@@ -101,6 +101,15 @@ def _style_config(style: str) -> str:
     return f"/root/configs/config.{style}.json"
 
 
+def _dataset_output_stem(kind: str, style: str) -> str:
+    """Separate Quality/Entry pre-strategy extracts from legacy weight datasets."""
+    if kind not in {"weight", "company_quality", "entry_quality"}:
+        raise ValueError(f"unsupported historical dataset kind: {kind!r}")
+    if style not in {"risk_off", "risk_on"}:
+        raise ValueError(f"unsupported style: {style!r}")
+    return f"weight_dataset_{style}" if kind == "weight" else f"{kind}_dataset_{style}"
+
+
 def _durable_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in spec.items() if key != "resume"}
 
@@ -266,8 +275,10 @@ def run_dataset_remote(payload_json: str) -> str:
     root = Path("/root/research") / run_id
     output_dir = root / "datasets"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"weight_dataset_{style}.csv"
-    success_path = output_dir / f"weight_dataset_{style}.SUCCESS.json"
+    dataset_kind = str(spec.get("dataset_kind", "weight"))
+    stem = _dataset_output_stem(dataset_kind, style)
+    output_path = output_dir / f"{stem}.csv"
+    success_path = output_dir / f"{stem}.SUCCESS.json"
 
     if resume and _success_matches(success_path, spec):
         return json.dumps(
@@ -317,6 +328,8 @@ def run_dataset_remote(payload_json: str) -> str:
         "--include-channels",
         "core_ai,ai_enabler,ai_peripheral",
     ]
+    if dataset_kind != "weight":
+        cmd.extend(["--dataset-kind", dataset_kind])
     if research_skip_steps:
         cmd.extend(
             [
@@ -441,6 +454,7 @@ def main(
     frozen_input_dir: str = "",
     resume: bool = True,
     dataset_list_types: str = "low_value,momentum",
+    dataset_kind: str = "weight",
     research_skip_low_value_hard_steps: str = "",
 ) -> None:
     """Launch heavy baseline stages on Modal."""
@@ -451,6 +465,11 @@ def main(
         raise ValueError("styles must contain risk_on and/or risk_off")
     if stage not in {"replay", "dataset", "all"}:
         raise ValueError("stage must be replay, dataset, or all")
+    _dataset_output_stem(dataset_kind, style_list[0])
+    if stage == "replay" and dataset_kind != "weight":
+        raise ValueError("dataset_kind applies only to dataset/all stage")
+    if dataset_kind != "weight" and research_skip_low_value_hard_steps:
+        raise ValueError("pre-strategy Quality/Entry datasets cannot skip legacy hard steps")
     if research_skip_low_value_hard_steps and stage not in {"dataset", "all"}:
         raise ValueError(
             "research_skip_low_value_hard_steps applies only to dataset stage"
@@ -487,6 +506,8 @@ def main(
     dataset_specs: list[str] = []
     for base_spec in spec_dicts:
         spec = dict(base_spec)
+        if dataset_kind != "weight":
+            spec["dataset_kind"] = str(dataset_kind)
         if dataset_list_types != "low_value,momentum":
             spec["dataset_list_types"] = str(dataset_list_types)
         if research_skip_low_value_hard_steps:
