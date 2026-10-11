@@ -17,7 +17,12 @@ import sys
 
 from ai_value_scanner.config import load_config
 from ai_value_scanner.scanner import load_runtime_settings, apply_split_adjustment
-from research_generalized_selection import PROXY, frozen_cohort
+from research_generalized_selection import (
+    FIRST_ELIGIBLE_MARKET_DATE,
+    PROXY,
+    frozen_cohort,
+    validate_experiment_config,
+)
 
 
 def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
@@ -25,8 +30,10 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
     root=Path(snapshot)
     manifest=json.loads((root/"run_manifest.json").read_text(encoding="utf-8"))
     asof=manifest["decision_date"]
-    if asof<"2026-10-11":
-        raise ValueError("frozen v0 may not be backdated")
+    if asof < FIRST_ELIGIBLE_MARKET_DATE:
+        raise ValueError(
+            "frozen v0 decision date must be >= " + FIRST_ELIGIBLE_MARKET_DATE
+        )
     discovery=manifest.get("discovery_sources")
     if not isinstance(discovery,dict):
         raise ValueError("requires generalized opt-in snapshot")
@@ -35,19 +42,14 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
         raise ValueError("snapshot is not the frozen generalized-v0 research cohort")
     if manifest["candidate_universe"]["market_data_feed"]!="iex":
         raise ValueError("study must use the identical IEX market-data feed")
+    config_review = validate_experiment_config(
+        config_path,
+        "configs/config.risk_off.json",
+        root=cohort_dir,
+    )
+    if manifest.get("config_fingerprint") != config_review["config_fingerprint"]:
+        raise ValueError("snapshot config fingerprint does not match experiment config")
     config=load_config(config_path)
-    if (config.strategy_style!="risk_off" or
-            config.max_symbols is not None or
-            config.min_dollar_volume!=2_000_000 or
-            config.min_price!=1.0):
-        raise ValueError("bar research requires unchanged v1 risk_off and liquidity gates")
-    if not config.discovery_source_files:
-        raise ValueError("must use the opt-in experiment config")
-    if set(config.discovery_source_files)!=set(cohort["paths"]):
-        raise ValueError("all three frozen source files must be configured")
-    for kind,path in config.discovery_source_files.items():
-        if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=cohort["source_hashes"][kind]:
-            raise ValueError("research config source input is not frozen v0")
     archived={row.get("source_kind"):row for row in discovery.get("source_files",[])}
     if set(archived)!=set(cohort["paths"]):
         raise ValueError("snapshot source file manifest is not the v0 cohort")
@@ -111,6 +113,8 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
         "exported_at_utc":datetime.now(timezone.utc).isoformat(),
         "snapshot_code_sha":manifest["code_sha"],
         "input_config_sha256":hashlib.sha256(Path(base).read_bytes()).hexdigest(),
+        "config_fingerprint":config_review["config_fingerprint"],
+        "base_config_sha256":config_review["base_config_sha256"],
         "source_cohort_hashes":cohort["source_hashes"],
         "feed":"iex",
         "adjustment":"split_adjusted_close_and_volume_alpaca_corporate_actions",
