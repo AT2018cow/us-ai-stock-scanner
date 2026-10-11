@@ -1,0 +1,115 @@
+{
+  "code_sha": "313c5ffedc9c1cf837b70d5e95d01d545d5c592f",
+  "config_fingerprint": "a9f081748727d4a2affcf8aae93c05cfa607d45b4a2e6a6d61b413adc1070a6c",
+  "counts": {
+    "action": {
+      "AVOID": 122,
+      "HOLD_MONITOR": 281,
+      "PRIORITY_REVIEW": 19,
+      "WATCH_BREAKOUT": 55,
+      "WATCH_PULLBACK": 33
+    },
+    "daily_attention": 15,
+    "decisions": 510,
+    "entry": {
+      "ENTRY_READY": 47,
+      "INSUFFICIENT_DATA": 7,
+      "TREND_DAMAGED": 230,
+      "WATCH_BREAKOUT": 141,
+      "WATCH_PULLBACK": 85
+    },
+    "quality": {
+      "A": 183,
+      "B": 205,
+      "C": 92,
+      "UNRATED": 30
+    },
+    "weekly_attention": 15
+  },
+  "daily_symbols": [
+    "TEL",
+    "APH",
+    "FAST",
+    "ADI",
+    "PAYC",
+    "ETN",
+    "NVT",
+    "EOG",
+    "EME",
+    "PCTY",
+    "EXLS",
+    "MSFT",
+    "MGNI",
+    "SSNC",
+    "SCCO"
+  ],
+  "decision_date": "2026-10-09",
+  "generated_at_utc": "2026-10-11T00:04:32.471511+00:00",
+  "input_provenance": {
+    "decision_date_source": "qqq_market_asof",
+    "industry_trend_csv": "outputs/ai_value_scan_20261010T235820Z_full_ranked_industry_trend.csv",
+    "legacy_ranked_csv": "outputs/ai_value_scan_20261010T235820Z_full_ranked.csv",
+    "market_data_provenance": {
+      "alpaca": {
+        "assets": {
+          "counts": {
+            "network": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-10T23:58:23.093235+00:00",
+          "latest_data_asof_utc": null,
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        },
+        "bars": {
+          "counts": {
+            "network": 3
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-10T23:58:34.644070+00:00",
+          "latest_data_asof_utc": "2026-10-09T04:00:00Z",
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        },
+        "snapshots": {
+          "counts": {
+            "network": 4
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-10T23:58:25.225334+00:00",
+          "latest_data_asof_utc": "2026-10-09T20:58:50.887275257Z",
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        }
+      }
+    },
+    "momentum_csv": "outputs/ai_value_scan_20261010T235820Z_full_ranked_momentum.csv",
+    "network_issue_flag": false,
+    "qqq_market_asof": "2026-10-09",
+    "research_pool_csv": "outputs/ai_value_scan_20261010T235820Z_full_ranked_research_pool.csv",
+    "stale_market_data_fallback_used": false,
+    "watchlist_csv_path": "data/ai_watchlist.csv"
+  },
+  "schema_version": "1",
+  "strategy_style": "risk_off",
+  "weekly_symbols": [
+    "TEL",
+    "APH",
+    "FAST",
+    "ADI",
+    "PAYC",
+    "ETN",
+    "NVT",
+    "EOG",
+    "EME",
+    "PCTY",
+    "EXLS",
+    "MSFT",
+    "MGNI",
+    "SSNC",
+    "SCCO"
+  ]
+}
