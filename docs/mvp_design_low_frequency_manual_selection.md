@@ -7,9 +7,12 @@
 > Product north star:
 > `docs/product_direction_low_frequency_manual_selection.md`
 >
-> This document turns the new product direction into a concrete MVP architecture,
-> validation plan, and PR sequence. Implementation PRs should follow this design
-> unless a correctness issue proves a change is necessary.
+> This document records the **implemented v1 MVP architecture** and validation
+> invariants. The *long-term target* is a source-agnostic US-listed-company
+> research assistant, not a permanent AI-themed scanner.
+> The proposed discovery-universe and business-model-aware Quality v2 contract
+> is in `docs/general_purpose_discovery_and_quality_v2_design.md`.
+> This design addendum is **not** authorization to change v1 runtime behavior.
 
 ---
 
@@ -204,6 +207,48 @@ Historical ETF constituent reconstruction should only be reconsidered if a speci
 #### Forward-looking rule
 
 Going forward, when the candidate watchlist is refreshed from ETF holdings, archive/version the resulting watchlist and its provenance. Prospective validation should use those real snapshots. We should improve future evidence quality prospectively rather than attempting to manufacture a perfect ETF history retrospectively.
+
+---
+
+### 3.2 Future market-agnostic discovery-universe contract (design only)
+
+**The three future candidate sources are US Core Universe, Thematic Universe,
+and Manual Research Universe.** These are independent, overlapping *discovery*
+paths, not competing portfolios/strategies and not substitutes for the
+Quality × Entry two-stage judgment.
+
+- **US Core:** frozen, bounded, sector-diverse discovery sample of
+  US-listed operating-company common stocks, chosen by documented non-performance
+  criteria rather than AI/technology relevance.
+- **Thematic:** optional registered themes; AI is one theme. Existing
+  `core_ai` / `ai_enabler` / `ai_peripheral` / `ai_smallcap` are
+  backward-compatible *legacy discovery tags*, not sector or size truth.
+- **Manual:** explicit user-supplied names with reason/source date; neither
+  guaranteed Action List attention nor exempt from audit and eligibility.
+
+The future union must preserve multi-source membership, input dates, origin
+files and hashes, versioned symbol/CIK identity resolution, and a strict
+`discovered = decisions + exclusions` audit for enabled unique symbols.
+Source tags, accounting business models and investment theme tags must be
+stored separately. Do **not** reconstruct missing historical source memberships.
+
+**Company Quality v2 must keep a common financial-quality core**, with narrow
+business-model-aware evidence interpretation only after accounting-semantic
+verification. Banks, insurers, REITs, foreign/unsupported reporting and
+unknown models must remain explicitly uncertain / fail-closed until validated;
+do not use unverified sector-based multipliers or extrapolate the old AI
+universe's observed selection rates to the general US universe.
+
+**Migration gate:** this PR updates documents only. Current
+`data/ai_watchlist.csv`, `configs/config.risk_off.json`, v1 Company Quality,
+Entry Quality, Action mapping, IEX liquidity prefilter, SEC fallback scope,
+formal snapshots and historical experiment evidence **remain unchanged**.
+Separate future code PRs must provide fixture parity, frozen-universe coverage,
+cost, exclusion provenance, stable snapshots and independent GO.
+
+See `docs/general_purpose_discovery_and_quality_v2_design.md` for the
+proposed field-level membership contract, rollout sequence and the research
+evidence contract.
 
 ---
 
