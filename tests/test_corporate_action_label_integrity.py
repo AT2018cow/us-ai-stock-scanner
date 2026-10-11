@@ -18,6 +18,7 @@ import pandas as pd
 
 from ai_value_scanner.backtest import apply_split_adjustment_to_frame
 from ai_value_scanner.evaluation.backtest import (
+    fetch_split_events_or_raise,
     forward_return_with_exit,
     split_query_end_iso,
 )
@@ -50,8 +51,7 @@ def _label_frame(rows: list[tuple]) -> pd.DataFrame:
 
 
 class SplitQueryEndTests(unittest.TestCase):
-    def test_covers_longest_label_end(self) -> None:
-        # The exact production case: 2026-03-31 window + 120d labels end
+    def test_covers_longest_label_end(self) -> None:        # The exact production case: 2026-03-31 window + 120d labels end
         # 2026-09-22; the query end must not precede any label end.
         self.assertEqual(split_query_end_iso("2026-03-31", [20, 60, 120]), "2026-09-25")
         self.assertGreaterEqual(split_query_end_iso("2026-03-31", [20, 60, 120]), "2026-09-22")
@@ -248,6 +248,37 @@ class EquityContinuityTests(unittest.TestCase):
         patched, audit = repair_labels(df, {"MOVE": [("2024-10-29", 15.0)]})
         self.assertEqual(len(audit), 0)
         self.assertEqual(int(patched["equity_discontinuity_flag"].sum()), 0)
+
+
+class FailClosedSplitFetchTests(unittest.TestCase):
+    def test_fetch_failure_raises_instead_of_silent_unadjusted(self) -> None:
+        class _Down:
+            def get_corporate_action_splits(self, *a: object, **k: object) -> object:
+                raise ConnectionError("endpoint down")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            fetch_split_events_or_raise(_Down(), ["BKNG"], "2021-11-07", "2026-09-25")
+        self.assertIn("refusing to emit unadjusted", str(ctx.exception))
+
+    def test_fetch_success_passes_extended_window_through(self) -> None:
+        seen: dict = {}
+
+        class _Up:
+            def get_corporate_action_splits(self, symbols: object,
+                                            start: object, end: object) -> object:
+                seen.update(symbols=symbols, start=start, end=end)
+                return {"BKNG": [("2026-04-06", 0.04)]}
+
+        out = fetch_split_events_or_raise(_Up(), ["BKNG"], "2021-11-07", "2026-09-25")
+        self.assertEqual(out, {"BKNG": [("2026-04-06", 0.04)]})
+        self.assertEqual(seen["end"], "2026-09-25")
+
+    def test_empty_response_returns_empty_dict(self) -> None:
+        class _Empty:
+            def get_corporate_action_splits(self, *a: object, **k: object) -> object:
+                return {}
+
+        self.assertEqual(fetch_split_events_or_raise(_Empty(), ["X"], "2021-11-07", "2026-09-25"), {})
 
 
 if __name__ == "__main__":

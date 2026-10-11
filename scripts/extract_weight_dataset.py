@@ -64,6 +64,7 @@ from ai_value_scanner.backtest import (
 from ai_value_scanner.config import load_config
 from ai_value_scanner.evaluation.backtest import (
     _hold_window_mature,
+    fetch_split_events_or_raise,
     forward_return,
     forward_return_with_exit,
     split_query_end_iso,
@@ -311,14 +312,14 @@ def main() -> None:
     split_events: dict[str, list[tuple[str, float]]] = {}
     split_query_start = bars_start
     split_query_end = split_query_end_iso(end_dt or datetime.now(timezone.utc), horizons)
-    try:
-        split_events = client.get_corporate_action_splits(
-            bars_symbols, split_query_start, split_query_end,
-        )
-        if split_events:
-            log(f"split events: {len(split_events)} symbols", started)
-    except Exception as exc:
-        log(f"corporate-actions split fetch failed ({exc.__class__.__name__}); replay unadjusted", started)
+    # Fail closed: a split fetch failure aborts label production instead of
+    # emitting unadjusted forward returns (BKNG/KLAC class). No try/except
+    # here by design; see fetch_split_events_or_raise.
+    split_events = fetch_split_events_or_raise(
+        client, bars_symbols, split_query_start, split_query_end,
+    )
+    if split_events:
+        log(f"split events: {len(split_events)} symbols", started)
 
     universe = prefetch_universe[prefetch_universe["symbol"].isin(set(bar_db.keys()))].copy()
     universe = universe.dropna(subset=["cik"]).copy()

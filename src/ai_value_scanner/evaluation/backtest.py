@@ -109,6 +109,28 @@ def split_query_end_iso(end_dt: object, horizons: object) -> str:
     return (base + pd.Timedelta(days=days)).date().isoformat()
 
 
+def fetch_split_events_or_raise(client: object, symbols: list[str],
+                                start_iso: str, end_iso: str) -> dict:
+    """Fail-closed corporate-action fetch for research label production.
+
+    An unavailable splits endpoint must abort the extract instead of
+    emitting unadjusted forward labels: a single missed split inside a
+    holding window prints as a near-total loss or windfall (BKNG/KLAC
+    class) and silently corrupts every downstream cohort. Callers must
+    not catch this exception to continue unadjusted.
+    """
+    try:
+        result = client.get_corporate_action_splits(  # type: ignore[union-attr]
+            symbols, start_iso, end_iso)
+    except Exception as exc:
+        raise RuntimeError(
+            "corporate-actions split fetch failed "
+            f"({exc.__class__.__name__}); refusing to emit unadjusted "
+            "forward labels"
+        ) from exc
+    return result or {}
+
+
 def forward_return(
     price_frame: pd.DataFrame,
     signal_date: str,
