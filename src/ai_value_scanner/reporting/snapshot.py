@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,7 @@ class DecisionSnapshotPaths:
     universe_exclusions_jsonl: Path
     discovery_memberships_jsonl: Path
     discovery_source_rejections_jsonl: Path
+    discovery_source_inputs_dir: Path
     run_manifest_json: Path
 
 
@@ -59,6 +61,7 @@ def decision_snapshot_paths(
         universe_exclusions_jsonl=root / "universe_exclusions.jsonl",
         discovery_memberships_jsonl=root / "discovery_memberships.jsonl",
         discovery_source_rejections_jsonl=root / "discovery_source_rejections.jsonl",
+        discovery_source_inputs_dir=root / "discovery_source_inputs",
         run_manifest_json=root / "run_manifest.json",
     )
 
@@ -239,6 +242,16 @@ def write_decision_snapshot(
         )
 
         if discovery_source_summary is not None:
+            frozen_inputs = tmp_root / "discovery_source_inputs"
+            frozen_inputs.mkdir()
+            for item in discovery_source_summary["source_files"]:
+                kind = item["source_kind"]
+                if kind not in {"us_core", "thematic", "manual"}:
+                    raise ValueError("unexpected discovery source kind")
+                raw_bytes = Path(item["source_file"]).read_bytes()
+                if hashlib.sha256(raw_bytes).hexdigest() != item["sha256"]:
+                    raise ValueError("discovery source changed since scan: " + str(kind))
+                (frozen_inputs / (kind + ".csv")).write_bytes(raw_bytes)
             (tmp_root / "discovery_memberships.jsonl").write_text(
                 _mappings_to_jsonl(discovery_memberships_tuple), encoding="utf-8"
             )
