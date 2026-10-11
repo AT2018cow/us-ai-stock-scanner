@@ -191,6 +191,48 @@ class TestGeneralizedResearch(unittest.TestCase):
         self.assertAlmostEqual(row["trailing_excess_60"],0.6,places=6)
         self.assertIsNone(relative_trailing("AAA","SPY",bars,asof.isoformat())["trailing_excess_20"])
 
+    def test_qqq_spy_comparison_uses_identical_common_sessions(self):
+        asof = date(2026, 10, 12)
+        sessions = []
+        day = asof
+        while len(sessions) < 63:
+            if day.weekday() < 5:
+                sessions.append(day.isoformat())
+            day -= timedelta(days=1)
+        sessions.reverse()
+        bars = {
+            "AAA": {d: (100.0 + i, 100.0) for i, d in enumerate(sessions)},
+            "QQQ": {d: (100.0 + i / 2, 100.0) for i, d in enumerate(sessions)},
+            "SPY": {d: (100.0 + i / 3, 100.0) for i, d in enumerate(sessions)},
+        }
+        # A missing SPY date creates different pair-only lookback windows.
+        del bars["SPY"][sessions[5]]
+        unpaired_qqq = relative_trailing("AAA", "QQQ", bars, asof.isoformat())
+        unpaired_spy = relative_trailing("AAA", "SPY", bars, asof.isoformat())
+        self.assertNotEqual(unpaired_qqq["joint_sessions"], unpaired_spy["joint_sessions"])
+        aligned_qqq = relative_trailing(
+            "AAA", "QQQ", bars, asof.isoformat(), shared_benchmarks=("QQQ", "SPY")
+        )
+        aligned_spy = relative_trailing(
+            "AAA", "SPY", bars, asof.isoformat(), shared_benchmarks=("QQQ", "SPY")
+        )
+        self.assertEqual(aligned_qqq["joint_sessions"], aligned_spy["joint_sessions"])
+        self.assertEqual(aligned_qqq["joint_sessions"], 62)
+        self.assertIsNotNone(aligned_qqq["trailing_excess_60"])
+        self.assertIsNotNone(aligned_spy["trailing_excess_60"])
+        # Removing enough of a benchmark's sessions makes BOTH comparisons
+        # unavailable, rather than comparing misaligned 60-day windows.
+        for d in sessions[1:5]:
+            del bars["SPY"][d]
+        aligned_qqq = relative_trailing(
+            "AAA", "QQQ", bars, asof.isoformat(), shared_benchmarks=("QQQ", "SPY")
+        )
+        aligned_spy = relative_trailing(
+            "AAA", "SPY", bars, asof.isoformat(), shared_benchmarks=("QQQ", "SPY")
+        )
+        self.assertIsNone(aligned_qqq["trailing_excess_60"])
+        self.assertIsNone(aligned_spy["trailing_excess_60"])
+
     def test_bars_export_rejects_stale_cache_and_excludes_future_sessions(self):
         cohort=frozen_cohort(ROOT/COHORT)
         with tempfile.TemporaryDirectory() as tmp:
