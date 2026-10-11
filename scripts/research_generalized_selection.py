@@ -67,6 +67,18 @@ def frozen_cohort(root=COHORT):
             if (r["source_asof"] != "2026-10-11" or
                     r["security_type"] != "common_stock" or r["enabled"] != "1"):
                 raise ValueError("v0 source date/type/enable status drift")
+    if any(r.get("theme_id") != "ai" for r in sources["thematic"]):
+        raise ValueError("v0 frozen thematic diagnostic is AI-only")
+    if not {r["symbol"] for r in sources["thematic"]} <= core_syms:
+        raise ValueError("v0 theme sources must overlap the frozen core")
+    if len({r["symbol"] for r in sources["manual"]} - core_syms) != 2:
+        raise ValueError("v0 manual cohort must add exactly two independent probes")
+    _, parsed_memberships, parsed_rejections, parsed_summary = load_discovery_sources(
+        {kind: str(path) for kind, path in paths.items()}
+    )
+    if (parsed_rejections or len(parsed_memberships) != 75 or
+            parsed_summary["unique_symbols"] != 62):
+        raise ValueError("frozen source parser rejects rows or yields different membership counts")
     symbols = {r["symbol"] for rows in sources.values() for r in rows}
     if len(symbols) != 62:
         raise ValueError("v0 union expected 62 unique securities")
@@ -83,6 +95,10 @@ def prepare(base_config, output_config, root=COHORT):
     config = json.loads(Path(base_config).read_text(encoding="utf-8"))
     if config.get("discovery_source_files") is not None or config.get("max_symbols") is not None:
         raise ValueError("base config must be legacy and max_symbols=null")
+    if (config.get("strategy_style") != "risk_off" or
+            config.get("min_dollar_volume") != 2_000_000 or
+            config.get("min_price") != 1.0):
+        raise ValueError("base must use frozen v1 risk_off, $2m dollar volume, $1 price floor")
     config["discovery_source_files"] = {k: p.as_posix() for k,p in cohort["paths"].items()}
     destination = Path(output_config)
     if destination.exists():
@@ -211,6 +227,12 @@ def audit(snapshot, root=COHORT, bars_csv=None):
         item = dict(row)
         item["source_file"] = original_paths[item["source_kind"]]
         return json.dumps(item, sort_keys=True, ensure_ascii=False)
+    if any(m.get("source_file") != original_paths.get(m.get("source_kind"))
+           for m in members):
+        raise ValueError("discovery membership source file provenance mismatch")
+    if any(r.get("source_file") != original_paths.get(r.get("source_kind"))
+           for r in rejected):
+        raise ValueError("discovery source rejection file provenance mismatch")
     if sorted(map(identity, members)) != sorted(map(identity, reconstructed)):
         raise ValueError("discovery membership rows diverge from frozen input CSV")
     if sorted(map(identity, rejected)) != sorted(map(identity, reconstructed_rejects)):
