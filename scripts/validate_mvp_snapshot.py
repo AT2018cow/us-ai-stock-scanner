@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -144,6 +145,17 @@ def validate_snapshot(
                 ),
                 decision_date=manifest_date,
             ))
+            for item in discovery_sources.get("source_files", []):
+                kind = item["source_kind"]
+                if kind not in {"us_core", "thematic", "manual"}:
+                    errors.append("unknown archived discovery source kind")
+                    continue
+                expected = "discovery_source_inputs/" + kind + ".csv"
+                if item.get("archived_file") != expected:
+                    errors.append("discovery source archive path mismatch: " + kind)
+                actual_bytes = (root_path / expected).read_bytes()
+                if hashlib.sha256(actual_bytes).hexdigest() != item["sha256"]:
+                    errors.append("discovery source archive SHA256 mismatch: " + kind)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             errors.append(
                 "invalid discovery source snapshot: " +
