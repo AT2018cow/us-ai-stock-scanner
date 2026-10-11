@@ -15,6 +15,20 @@ A full-scan acceptance run answers one operational question:
 The acceptance run is not a parameter-tuning exercise and is not a comparison of
 legacy strategy styles.
 
+### Opt-in generalized discovery experiment (not the default)
+
+By default the command below still scans the **legacy AI watchlist**.
+A future US Core / Thematic / Manual experiment must first use a bounded
+frozen source cohort and a **separate** config setting `discovery_source_files`;
+its new snapshot files include `discovery_memberships.jsonl`,
+`discovery_source_rejections.jsonl`, and frozen CSV copies under
+`discovery_source_inputs/`. `run_manifest.json.discovery_sources` records
+source file SHA256 and raw/membership/rejection counts.
+
+See [general-discovery implementation](general_discovery_implementation.md)
+for the exact offline preview, credentialed experiment command and the
+required review evidence. Do **not** run `--formal` for unreviewed multi-source
+inputs; such an experiment does not replace the v1 prospective baseline.
 ## 2. One-command experiment
 
 For the first real-data check, use an isolated experiment:
