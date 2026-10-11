@@ -15,12 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
     from research_generalized_selection import (
-        COHORT, audit, frozen_cohort, hash_file, liquidity_diagnostic,
-        load_bars, prepare, read_csv, relative_trailing,
+        COHORT, FIRST_ELIGIBLE_MARKET_DATE, audit, config_fingerprint,
+        frozen_cohort, hash_file, liquidity_diagnostic, load_bars, prepare,
+        read_csv, relative_trailing, validate_experiment_config,
     )
 finally:
     sys.path.pop(0)
 
+from ai_value_scanner.config import load_config
 from ai_value_scanner.decision.discovery import load_discovery_sources
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
@@ -62,6 +64,71 @@ class TestGeneralizedResearch(unittest.TestCase):
             base.write_text('{"max_symbols":null,"strategy_style":"risk_off","min_price":1.0,"min_dollar_volume":1000000}',encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"frozen v1"):
                 prepare(base,Path(tmp)/"wrong_gate.json",ROOT/COHORT)
+
+    def test_experiment_config_parity_and_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = ROOT / "configs" / "config.risk_off.json"
+            dest = Path(tmp) / "config.generalized.json"
+            prepare(base, dest, ROOT / COHORT)
+            review = validate_experiment_config(
+                dest, base, root=ROOT / COHORT
+            )
+            self.assertEqual(
+                review["config_fingerprint"],
+                config_fingerprint(load_config(dest)),
+            )
+            raw = json.loads(dest.read_text(encoding="utf-8"))
+            raw["min_price"] = 2.0
+            drift = Path(tmp) / "config.drift.json"
+            drift.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "outside discovery sources"):
+                validate_experiment_config(
+                    drift, base, root=ROOT / COHORT
+                )
+
+    def test_first_eligible_market_session_is_enforced(self):
+        self.assertEqual(FIRST_ELIGIBLE_MARKET_DATE, "2026-10-12")
+        cohort=frozen_cohort(ROOT/COHORT)
+        paths={k:str(p) for k,p in cohort["paths"].items()}
+        _,members,rejected,summary=load_discovery_sources(paths)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            def write(name,rows):
+                (root/name).write_text(
+                    "".join(json.dumps(x)+"\n" for x in rows),encoding="utf-8"
+                )
+            decisions=[
+                {
+                    "symbol":symbol,
+                    "quality":{"grade":"B","score":0.7,"confidence":0.8,
+                               "risks":[],"missing":[]},
+                    "entry":{"state":"WATCH_PULLBACK","score":0.6,"risks":[]},
+                    "action_state":"WATCH_PULLBACK",
+                    "provenance":{},
+                }
+                for symbol in sorted(cohort["symbols"])
+            ]
+            write("decisions.jsonl",decisions)
+            write("universe_exclusions.jsonl",[])
+            write("discovery_memberships.jsonl",members)
+            write("discovery_source_rejections.jsonl",rejected)
+            manifest={
+                "decision_date":"2026-10-11",
+                "code_sha":"frozen",
+                "discovery_sources":summary,
+                "counts":{"decisions":62},
+                "candidate_universe":{
+                    "market_data_feed":"iex",
+                    "min_dollar_volume":2000000,
+                },
+                "daily_symbols":[],
+                "weekly_symbols":[],
+            }
+            (root/"run_manifest.json").write_text(
+                json.dumps(manifest),encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "decision date must be"):
+                audit(root,ROOT/COHORT)
 
     def test_bar_gate_requires_pit_same_feed_complete_sessions(self):
         asof=date(2026,10,12)
