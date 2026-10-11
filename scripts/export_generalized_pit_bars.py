@@ -1,7 +1,9 @@
 """Bounded, credentialed, same-IEX-feed research bar export for a frozen v0 snapshot.
 
 Raw Alpaca bars are split-adjusted with documented corporate actions, preserving
-turnover. Never query future bars, rewrite a snapshot, or silently accept a
+turnover. The installed Alpaca client fetches by START date and may receive bars
+after the requested snapshot session; all later bars are discarded before any
+research export or calculation. Never rewrite a snapshot or silently accept a
 failed split request. Run only after the PR has merged and the user approves.
 """
 from __future__ import annotations
