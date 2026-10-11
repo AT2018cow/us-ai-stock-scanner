@@ -62,11 +62,20 @@ differences in a bounded controlled experiment. In particular:
   Alpaca client for at most **76** stock/ETF securities, from 185 calendar
   days before the **snapshot market-as-of**, with `feed=iex`; it requests
   stock-split events and preserves dollar volume through split adjustment.
+  The current Alpaca client requests bars with a **start date only**: the
+  provider may return bars after the decision session, but exporter discards
+  every future-dated bar before writing the dataset. Split actions are bounded
+  through the snapshot as-of date; stale market-data fallback aborts the export.
   No SEC fundamentals are fetched by this export step.
 - `scripts/research_generalized_selection.py audit` loads the real immutable
   generalized snapshot and optionally the IEX bar CSV; checks all 62
   symbols, source hashes, manifest counts, source dates, prefilter/feed,
   and creates the same research reports for all three dimensions.
+  It reconstructs **every source membership/rejection row** from the
+  snapshotted CSVs (not just SHA256 and aggregate counts) and refuses changes
+  in symbol, source, manual note or AI theme assignment. The aggregate
+  review includes group-level bar-gate disagreement counts and QQQ/SPY
+  trailing-excess sign disagreements, alongside raw per-symbol CSVs.
 
 Outputs from the read-only audit:
 
@@ -189,6 +198,8 @@ notes, raw SEC/Alpaca/EdgarTools caches, or verbose unredacted logs.
 ### Acceptance and scoped GO/NO-GO
 
 **Engineering GO:** exact-head CI PASS; same frozen inputs and SHA256;
+archived source membership content byte-equivalent after normalized origin
+paths, unmodified source identifiers and notes;
 source membership raw-row accounting; 62 unique discovery symbols each
 exactly one Decision OR universe exclusion; no future source membership;
 validator PASS; report generator completes; no v1 policy change or
