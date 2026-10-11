@@ -235,6 +235,10 @@ Prefer a small immutable evidence package under `evidence/` over screenshots or 
 terminal fragments. Never request credentials, `.env`, raw API secrets, raw caches, or
 bulk outputs that are not needed for review.
 
+For every future PR that requires a credentialed, post-merge, or otherwise external
+experiment, keep this `Review evidence to submit` contract in the PR body before asking
+the user to run it. Do not defer evidence requirements until after the experiment.
+
 ## 9. Data and computation invariants
 
 ### Fundamentals / SEC

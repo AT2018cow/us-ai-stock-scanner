@@ -137,6 +137,13 @@ from ai_value_scanner.decision import (
     select_daily_attention,
     select_weekly_attention,
 )
+from ai_value_scanner.decision.universe import (
+    apply_price_liquidity_prefilter,
+    attach_watchlist_provenance,
+    build_candidate_universe_summary,
+    classify_asset_mapping_universe,
+    sample_limit_exclusions,
+)
 from ai_value_scanner.reporting.snapshot import (
     load_previous_snapshot,
     resolve_git_commit_sha,
@@ -2226,27 +2233,53 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
     return alpaca, sec, monitor
 
 
-def collect_candidates(
+def collect_candidates_with_universe_audit(
     alpaca: AlpacaClient,
     sec: SecClient,
     config: ScanConfig,
     asset_status: str = "active",
     symbol_allowlist: set[str] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, int]]:
+    """Collect the legacy candidate frame plus explicit pre-decision exclusions."""
     assets = alpaca.get_assets(status=asset_status)
-    df_assets = pd.DataFrame(assets)
-    df_assets = df_assets[df_assets["tradable"] == True].copy()
-    if config.enabled_exchanges:
-        df_assets = df_assets[df_assets["exchange"].isin(config.enabled_exchanges)]
-    df_assets["symbol"] = df_assets["symbol"].str.upper()
-    if symbol_allowlist is not None:
-        df_assets = df_assets[df_assets["symbol"].isin(symbol_allowlist)].copy()
+    df_assets_all = pd.DataFrame(assets)
+    if not df_assets_all.empty and "symbol" in df_assets_all.columns:
+        df_assets_all["symbol"] = df_assets_all["symbol"].astype(str).str.upper()
 
-    mapping = sec.ticker_mapping()
-    merged = df_assets.merge(mapping, on="symbol", how="inner")
-    merged = merged[["symbol", "name", "exchange", "cik", "company_name"]].drop_duplicates(
-        subset=["symbol"]
+    if symbol_allowlist is None:
+        discovery_symbols = set(
+            df_assets_all.get("symbol", pd.Series(dtype=str)).dropna().astype(str)
+        )
+    else:
+        discovery_symbols = {
+            str(symbol).strip().upper()
+            for symbol in symbol_allowlist
+            if str(symbol).strip()
+        }
+
+    mapping = sec.ticker_mapping().copy()
+    if not mapping.empty and "symbol" in mapping.columns:
+        mapping["symbol"] = mapping["symbol"].astype(str).str.upper()
+    eligible_symbols, exclusions = classify_asset_mapping_universe(
+        discovery_symbols=discovery_symbols,
+        assets=assets,
+        sec_mapping=mapping,
+        enabled_exchanges=config.enabled_exchanges,
     )
+
+    if df_assets_all.empty:
+        df_assets = pd.DataFrame(
+            columns=["symbol", "name", "exchange", "cik", "company_name"]
+        )
+    else:
+        df_assets = df_assets_all[
+            df_assets_all["symbol"].isin(eligible_symbols)
+        ].copy()
+
+    merged = df_assets.merge(mapping, on="symbol", how="inner")
+    merged = merged[
+        ["symbol", "name", "exchange", "cik", "company_name"]
+    ].drop_duplicates(subset=["symbol"])
 
     symbols = merged["symbol"].tolist()
     snapshots = alpaca.get_snapshots(symbols, config.chunk_size)
@@ -2256,16 +2289,46 @@ def collect_candidates(
         px_rows.append(
             {"symbol": symbol, "price": price, "dollar_volume": dollar_volume}
         )
-    df_px = pd.DataFrame(px_rows)
-    out = merged.merge(df_px, on="symbol", how="left")
+    df_px = pd.DataFrame(px_rows, columns=["symbol", "price", "dollar_volume"])
+    out_all = merged.merge(df_px, on="symbol", how="left")
+    tradable_mapped_count = len(out_all)
+
+    out = out_all
     if config.max_symbols:
-        # Use liquidity-aware sampling instead of dataframe order to avoid biased subsets.
-        out = out.sort_values(
+        # Preserve the legacy liquidity-aware sampling semantics, but record every
+        # omitted symbol so sample runs also conserve the discovery universe.
+        out = out_all.sort_values(
             by=["dollar_volume", "symbol"],
             ascending=[False, True],
             na_position="last",
         ).head(config.max_symbols)
-    return out
+        exclusions.extend(
+            sample_limit_exclusions(all_mapped=out_all, selected=out)
+        )
+
+    counts = {
+        "tradable_mapped_symbols": int(tradable_mapped_count),
+        "post_sample_symbols": int(len(out)),
+    }
+    return out, exclusions, counts
+
+
+def collect_candidates(
+    alpaca: AlpacaClient,
+    sec: SecClient,
+    config: ScanConfig,
+    asset_status: str = "active",
+    symbol_allowlist: set[str] | None = None,
+) -> pd.DataFrame:
+    """Backward-compatible candidate collector used by existing callers/tests."""
+    frame, _, _ = collect_candidates_with_universe_audit(
+        alpaca,
+        sec,
+        config,
+        asset_status=asset_status,
+        symbol_allowlist=symbol_allowlist,
+    )
+    return frame
 
 
 def latest_periodic_filing(
@@ -3098,22 +3161,44 @@ def run_scan(
     log_status(started_at, "INFO", f"Watchlist rows loaded: {len(watchlist_scores)}")
     log_status(started_at, "INFO", f"Watchlist unique symbols: {len(watchlist_allowlist)}")
 
-    df = collect_candidates(
-        alpaca,
-        sec,
-        config,
-        symbol_allowlist=watchlist_allowlist,
+    df, universe_exclusions, universe_collection_counts = (
+        collect_candidates_with_universe_audit(
+            alpaca,
+            sec,
+            config,
+            symbol_allowlist=watchlist_allowlist,
+        )
     )
-    merged_count = len(df)
+    merged_count = universe_collection_counts["tradable_mapped_symbols"]
     log_status(started_at, "INFO", f"Universe symbols after tradable/mapping merge: {merged_count}")
+    if config.max_symbols:
+        log_status(
+            started_at,
+            "INFO",
+            f"Universe symbols after max_symbols sample: {len(df)}",
+        )
 
-    df = df[
-        df["price"].notna()
-        & (pd.to_numeric(df["price"], errors="coerce") >= config.min_price)
-        & (pd.to_numeric(df["dollar_volume"], errors="coerce").fillna(0) >= config.min_dollar_volume)
-    ].copy()
+    df, prefilter_exclusions = apply_price_liquidity_prefilter(
+        df,
+        min_price=config.min_price,
+        min_dollar_volume=config.min_dollar_volume,
+        market_data_feed=alpaca.feed,
+    )
+    universe_exclusions.extend(prefilter_exclusions)
+    universe_exclusions = attach_watchlist_provenance(
+        universe_exclusions,
+        watchlist_scores,
+    )
     prefilter_count = len(df)
     log_status(started_at, "INFO", f"After price/liquidity prefilter: {prefilter_count}")
+    log_status(
+        started_at,
+        "INFO",
+        "Candidate-universe exclusions: "
+        f"{len(universe_exclusions)} "
+        f"(feed={alpaca.feed}, min_price={config.min_price}, "
+        f"min_dollar_volume={config.min_dollar_volume})",
+    )
 
     log_status(started_at, "INFO", "[2/6] Computing price-dimension features.")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
@@ -4134,6 +4219,18 @@ def run_scan(
                 "watchlist_csv_path": config.watchlist_csv_path,
             },
         )
+        candidate_universe_summary = build_candidate_universe_summary(
+            discovery_symbols=watchlist_allowlist,
+            decision_symbols=[decision.symbol for decision in decisions],
+            exclusions=universe_exclusions,
+            tradable_mapped_symbols=universe_collection_counts[
+                "tradable_mapped_symbols"
+            ],
+            post_sample_symbols=universe_collection_counts["post_sample_symbols"],
+            market_data_feed=alpaca.feed,
+            min_price=config.min_price,
+            min_dollar_volume=config.min_dollar_volume,
+        )
         daily_attention = select_daily_attention(
             decisions,
             cap=decision_attention_cap,
@@ -4152,6 +4249,8 @@ def run_scan(
             decision_date=decision_date,
             config_fingerprint=config_fingerprint,
             code_sha=code_sha,
+            universe_exclusions=universe_exclusions,
+            candidate_universe_summary=candidate_universe_summary,
             input_provenance={
                 "watchlist_csv_path": config.watchlist_csv_path,
                 "decision_date_source": (

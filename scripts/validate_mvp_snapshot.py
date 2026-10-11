@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
 from typing import Any
 
 from ai_value_scanner.decision.action import map_action_state
 from ai_value_scanner.decision.model import ActionState, EntryState, QualityGrade
+from ai_value_scanner.decision.universe import (
+    ACTIVE_ASSET_MISSING,
+    ASSET_STAGE,
+    CANDIDATE_UNIVERSE_CONTRACT_VERSION,
+    DOLLAR_VOLUME_BELOW_MIN,
+    DOLLAR_VOLUME_MISSING,
+    EXCHANGE_NOT_ENABLED,
+    NOT_TRADABLE,
+    PRICE_BELOW_MIN,
+    PRICE_LIQUIDITY_STAGE,
+    PRICE_MISSING,
+    SAMPLE_MAX_SYMBOLS_LIMIT,
+    SAMPLE_STAGE,
+    SEC_MAPPING_MISSING,
+    SEC_MAPPING_STAGE,
+)
 from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
@@ -91,6 +108,214 @@ def validate_snapshot(
                 f"{decision.symbol}: action {decision.action_state.value} "
                 f"!= canonical mapping {expected_action.value}"
             )
+
+    candidate_universe = manifest.get("candidate_universe")
+    universe_exclusions: list[dict[str, Any]] = []
+    if candidate_universe is not None:
+        if not isinstance(candidate_universe, dict):
+            errors.append("candidate_universe manifest section must be an object")
+            candidate_universe = {}
+        universe_path = root_path / "universe_exclusions.jsonl"
+        if not universe_path.exists():
+            errors.append(
+                "manifest declares candidate_universe but universe_exclusions.jsonl is missing"
+            )
+        else:
+            try:
+                universe_exclusions = [
+                    json.loads(line)
+                    for line in universe_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            except Exception as exc:
+                errors.append(
+                    "invalid universe_exclusions.jsonl: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                universe_exclusions = []
+
+        if candidate_universe.get("contract_version") != CANDIDATE_UNIVERSE_CONTRACT_VERSION:
+            errors.append(
+                "candidate_universe contract_version does not match current contract"
+            )
+        reason_to_stage = {
+            ACTIVE_ASSET_MISSING: ASSET_STAGE,
+            NOT_TRADABLE: ASSET_STAGE,
+            EXCHANGE_NOT_ENABLED: ASSET_STAGE,
+            SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
+            SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
+            PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
+            PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+            DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
+            DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+        }
+
+        exclusion_symbols: list[str] = []
+        for index, item in enumerate(universe_exclusions, start=1):
+            if not isinstance(item, dict):
+                errors.append(f"universe exclusion row {index} is not an object")
+                continue
+            symbol = str(item.get("symbol") or "").strip().upper()
+            stage = str(item.get("exclusion_stage") or "").strip()
+            reason = str(item.get("reason_code") or "").strip()
+            if not symbol:
+                errors.append(f"universe exclusion row {index} has empty symbol")
+            else:
+                exclusion_symbols.append(symbol)
+            if item.get("status") != "excluded":
+                errors.append(f"{symbol or index}: universe exclusion status must be excluded")
+            if not stage:
+                errors.append(f"{symbol or index}: exclusion_stage is missing")
+            if not reason:
+                errors.append(f"{symbol or index}: reason_code is missing")
+            elif reason not in reason_to_stage:
+                errors.append(f"{symbol or index}: unknown exclusion reason {reason}")
+            elif stage != reason_to_stage[reason]:
+                errors.append(
+                    f"{symbol or index}: exclusion stage {stage} "
+                    f"does not match reason {reason}"
+                )
+
+            if stage == PRICE_LIQUIDITY_STAGE:
+                if str(item.get("market_data_feed") or "") != str(
+                    candidate_universe.get("market_data_feed") or ""
+                ):
+                    errors.append(
+                        f"{symbol}: price/liquidity exclusion feed does not match manifest"
+                    )
+                try:
+                    if float(item.get("min_price")) != float(
+                        candidate_universe.get("min_price")
+                    ):
+                        errors.append(f"{symbol}: min_price does not match manifest")
+                    if float(item.get("min_dollar_volume")) != float(
+                        candidate_universe.get("min_dollar_volume")
+                    ):
+                        errors.append(
+                            f"{symbol}: min_dollar_volume does not match manifest"
+                        )
+                except (TypeError, ValueError):
+                    errors.append(
+                        f"{symbol}: invalid price/liquidity threshold provenance"
+                    )
+
+            if reason in {DOLLAR_VOLUME_BELOW_MIN, DOLLAR_VOLUME_MISSING}:
+                if str(item.get("market_data_feed") or "") != str(
+                    candidate_universe.get("market_data_feed") or ""
+                ):
+                    errors.append(
+                        f"{symbol}: liquidity exclusion feed does not match manifest"
+                    )
+                try:
+                    row_threshold = float(item.get("min_dollar_volume"))
+                    manifest_threshold = float(
+                        candidate_universe.get("min_dollar_volume")
+                    )
+                    if row_threshold != manifest_threshold:
+                        errors.append(
+                            f"{symbol}: min_dollar_volume does not match manifest"
+                        )
+                except (TypeError, ValueError):
+                    errors.append(f"{symbol}: invalid min_dollar_volume provenance")
+                if reason == DOLLAR_VOLUME_BELOW_MIN:
+                    try:
+                        if float(item.get("dollar_volume")) >= float(
+                            item.get("min_dollar_volume")
+                        ):
+                            errors.append(
+                                f"{symbol}: DOLLAR_VOLUME_BELOW_MIN value is not below threshold"
+                            )
+                    except (TypeError, ValueError):
+                        errors.append(f"{symbol}: invalid dollar_volume provenance")
+
+            if reason == PRICE_BELOW_MIN:
+                try:
+                    if float(item.get("price")) >= float(item.get("min_price")):
+                        errors.append(
+                            f"{symbol}: PRICE_BELOW_MIN value is not below threshold"
+                        )
+                    if float(item.get("min_price")) != float(
+                        candidate_universe.get("min_price")
+                    ):
+                        errors.append(f"{symbol}: min_price does not match manifest")
+                except (TypeError, ValueError):
+                    errors.append(f"{symbol}: invalid price threshold provenance")
+
+        if len(exclusion_symbols) != len(set(exclusion_symbols)):
+            errors.append("universe_exclusions.jsonl contains duplicate symbols")
+        decision_symbol_set = set(symbols)
+        exclusion_symbol_set = set(exclusion_symbols)
+        overlap = sorted(decision_symbol_set.intersection(exclusion_symbol_set))
+        if overlap:
+            errors.append(f"decision/exclusion symbol overlap: {overlap[:10]}")
+
+        reason_counts = dict(
+            sorted(
+                Counter(
+                    str(item.get("reason_code") or "")
+                    for item in universe_exclusions
+                    if isinstance(item, dict)
+                ).items()
+            )
+        )
+        stage_counts = dict(
+            sorted(
+                Counter(
+                    str(item.get("exclusion_stage") or "")
+                    for item in universe_exclusions
+                    if isinstance(item, dict)
+                ).items()
+            )
+        )
+        expected_reason_counts = dict(
+            sorted((candidate_universe.get("exclusion_reason_counts") or {}).items())
+        )
+        expected_stage_counts = dict(
+            sorted((candidate_universe.get("exclusion_stage_counts") or {}).items())
+        )
+        if reason_counts != expected_reason_counts:
+            errors.append(
+                "candidate_universe exclusion_reason_counts do not match JSONL"
+            )
+        if stage_counts != expected_stage_counts:
+            errors.append(
+                "candidate_universe exclusion_stage_counts do not match JSONL"
+            )
+
+        try:
+            discovery_n = int(candidate_universe.get("discovery_unique_symbols"))
+            decision_n = int(candidate_universe.get("decision_universe_symbols"))
+            excluded_n = int(candidate_universe.get("excluded_symbols"))
+            mapped_n = int(candidate_universe.get("tradable_mapped_symbols"))
+            post_sample_n = int(candidate_universe.get("post_sample_symbols"))
+        except (TypeError, ValueError):
+            errors.append("candidate_universe count fields must be integers")
+        else:
+            if decision_n != len(decisions):
+                errors.append(
+                    f"candidate_universe decision count {decision_n} != JSONL {len(decisions)}"
+                )
+            if excluded_n != len(universe_exclusions):
+                errors.append(
+                    "candidate_universe excluded count "
+                    f"{excluded_n} != exclusions JSONL {len(universe_exclusions)}"
+                )
+            if discovery_n != decision_n + excluded_n:
+                errors.append(
+                    "candidate-universe conservation failed: discovery != decisions + exclusions"
+                )
+            sample_excluded = stage_counts.get("sample_limit", 0)
+            price_liquidity_excluded = stage_counts.get(
+                "price_liquidity_prefilter", 0
+            )
+            if mapped_n != post_sample_n + sample_excluded:
+                errors.append(
+                    "candidate-universe mapped/sample conservation failed"
+                )
+            if post_sample_n != decision_n + price_liquidity_excluded:
+                errors.append(
+                    "candidate-universe prefilter conservation failed"
+                )
 
     counts = manifest.get("counts", {}) or {}
     if int(counts.get("decisions", -1)) != len(decisions):
@@ -245,6 +470,11 @@ def validate_snapshot(
             "action": action_counts,
             "fundamental_integrity": integrity_counts,
             "fundamental_fallback": fallback_counts,
+            "candidate_universe": (
+                dict(candidate_universe)
+                if isinstance(candidate_universe, dict)
+                else None
+            ),
         },
         "errors": errors,
         "warnings": warnings,
@@ -283,6 +513,8 @@ def main() -> None:
             print(f"quality={counts['quality']}")
             print(f"entry={counts['entry']}")
             print(f"action={counts['action']}")
+            if counts.get("candidate_universe"):
+                print(f"candidate_universe={counts['candidate_universe']}")
             print(f"fundamental_integrity={counts.get('fundamental_integrity', {})}")
             print(f"fundamental_fallback={counts.get('fundamental_fallback', {})}")
         for warning in result.get("warnings", []):

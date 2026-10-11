@@ -30,6 +30,7 @@ class DecisionSnapshotPaths:
     action_list_md: Path
     weekly_review_md: Path
     detailed_dir: Path
+    universe_exclusions_jsonl: Path
     run_manifest_json: Path
 
 
@@ -53,6 +54,7 @@ def decision_snapshot_paths(
         action_list_md=root / "action_list.md",
         weekly_review_md=root / "weekly_review.md",
         detailed_dir=root / "detailed",
+        universe_exclusions_jsonl=root / "universe_exclusions.jsonl",
         run_manifest_json=root / "run_manifest.json",
     )
 
@@ -93,6 +95,19 @@ def _counts(
     return dict(sorted(Counter(values).items()))
 
 
+def _mappings_to_jsonl(rows: Iterable[Mapping[str, Any]]) -> str:
+    materialized = sorted(
+        (dict(row) for row in rows),
+        key=lambda row: str(row.get("symbol") or ""),
+    )
+    if not materialized:
+        return ""
+    return "\n".join(
+        json.dumps(row, ensure_ascii=False, sort_keys=True)
+        for row in materialized
+    ) + "\n"
+
+
 def build_run_manifest(
     *,
     decisions: Iterable[StockDecision],
@@ -104,6 +119,7 @@ def build_run_manifest(
     config_fingerprint: str,
     code_sha: str | None,
     input_provenance: Mapping[str, Any] | None = None,
+    candidate_universe_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     materialized = tuple(decisions)
     daily = tuple(daily_attention)
@@ -126,6 +142,11 @@ def build_run_manifest(
         "daily_symbols": [decision.symbol for decision in daily],
         "weekly_symbols": [decision.symbol for decision in weekly],
         "input_provenance": dict(input_provenance or {}),
+        **(
+            {"candidate_universe": dict(candidate_universe_summary)}
+            if candidate_universe_summary is not None
+            else {}
+        ),
     }
 
 
@@ -141,6 +162,8 @@ def write_decision_snapshot(
     config_fingerprint: str,
     code_sha: str | None = None,
     input_provenance: Mapping[str, Any] | None = None,
+    universe_exclusions: Iterable[Mapping[str, Any]] = (),
+    candidate_universe_summary: Mapping[str, Any] | None = None,
 ) -> DecisionSnapshotPaths:
     """Write an immutable prospective snapshot with derived Markdown views.
 
@@ -151,6 +174,7 @@ def write_decision_snapshot(
     decisions_tuple = tuple(decisions)
     daily_tuple = tuple(daily_attention)
     weekly_tuple = tuple(weekly_attention)
+    universe_exclusions_tuple = tuple(dict(row) for row in universe_exclusions)
     paths = decision_snapshot_paths(
         output_root,
         decision_date,
@@ -192,6 +216,10 @@ def write_decision_snapshot(
             ),
             encoding="utf-8",
         )
+        (tmp_root / "universe_exclusions.jsonl").write_text(
+            _mappings_to_jsonl(universe_exclusions_tuple),
+            encoding="utf-8",
+        )
 
         detailed_symbols = {
             decision.symbol: decision
@@ -213,6 +241,7 @@ def write_decision_snapshot(
             config_fingerprint=config_fingerprint,
             code_sha=code_sha,
             input_provenance=input_provenance,
+            candidate_universe_summary=candidate_universe_summary,
         )
         (tmp_root / "run_manifest.json").write_text(
             json.dumps(
