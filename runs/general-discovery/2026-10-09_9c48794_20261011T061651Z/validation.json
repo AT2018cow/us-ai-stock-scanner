@@ -1,0 +1,56 @@
+{
+  "counts": {
+    "action": {
+      "AVOID": 0,
+      "HOLD_MONITOR": 3,
+      "PRIORITY_REVIEW": 2,
+      "WATCH_BREAKOUT": 0,
+      "WATCH_PULLBACK": 0
+    },
+    "candidate_universe": {
+      "contract_version": "candidate_universe_v1_2026-10-11",
+      "decision_universe_symbols": 5,
+      "discovery_unique_symbols": 5,
+      "excluded_symbols": 0,
+      "exclusion_reason_counts": {},
+      "exclusion_stage_counts": {},
+      "market_data_feed": "iex",
+      "min_dollar_volume": 2000000.0,
+      "min_price": 1.0,
+      "post_sample_symbols": 5,
+      "tradable_mapped_symbols": 5
+    },
+    "daily_attention": 5,
+    "decisions": 5,
+    "entry": {
+      "ENTRY_READY": 4,
+      "INSUFFICIENT_DATA": 0,
+      "TREND_DAMAGED": 1,
+      "WATCH_BREAKOUT": 0,
+      "WATCH_PULLBACK": 0
+    },
+    "fundamental_fallback": {
+      "edgartools_10q_used": 0,
+      "status": {
+        "not_needed": 5
+      }
+    },
+    "fundamental_integrity": {
+      "fundamental_currency_unsupported": 0,
+      "latest_periodic_filing_not_covered": 0
+    },
+    "quality": {
+      "A": 3,
+      "B": 2,
+      "C": 0,
+      "UNRATED": 0
+    },
+    "weekly_attention": 5
+  },
+  "decision_date": "2026-10-09",
+  "errors": [],
+  "ok": true,
+  "root": "outputs/decision_experiments/risk_off_20261011T061651Z/2026-10-09/risk_off",
+  "strategy_style": "risk_off",
+  "warnings": []
+}

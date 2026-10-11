@@ -1,0 +1,3 @@
+symbol,source_id,source_asof,security_type,enabled,theme_id,legacy_bucket,etfs,research_note
+COST,manual_smoke_20261009,2026-10-09,common_stock,1,,,,Smoke-test manual pick: consumer staple cross-industry coverage probe.
+SBUX,manual_smoke_20261009,2026-10-09,common_stock,0,,,,Disabled-path exercise row: must appear in source rejections, never in decisions.

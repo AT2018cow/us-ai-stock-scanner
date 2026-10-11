@@ -1,0 +1,150 @@
+{
+  "candidate_universe": {
+    "contract_version": "candidate_universe_v1_2026-10-11",
+    "decision_universe_symbols": 5,
+    "discovery_unique_symbols": 5,
+    "excluded_symbols": 0,
+    "exclusion_reason_counts": {},
+    "exclusion_stage_counts": {},
+    "market_data_feed": "iex",
+    "min_dollar_volume": 2000000.0,
+    "min_price": 1.0,
+    "post_sample_symbols": 5,
+    "tradable_mapped_symbols": 5
+  },
+  "code_sha": "9c4879438265a94f9301b2197340a350a518cad6",
+  "config_fingerprint": "1c1f08871f7a804c1baef0ecdcca9f8c286bf3939a4d022cc99496c4fe8de8ca",
+  "counts": {
+    "action": {
+      "HOLD_MONITOR": 3,
+      "PRIORITY_REVIEW": 2
+    },
+    "daily_attention": 5,
+    "decisions": 5,
+    "entry": {
+      "ENTRY_READY": 4,
+      "TREND_DAMAGED": 1
+    },
+    "quality": {
+      "A": 3,
+      "B": 2
+    },
+    "weekly_attention": 5
+  },
+  "daily_symbols": [
+    "JNJ",
+    "MSFT",
+    "COST",
+    "NVDA",
+    "XOM"
+  ],
+  "decision_date": "2026-10-09",
+  "discovery_sources": {
+    "membership_counts_by_kind": {
+      "manual": 1,
+      "thematic": 2,
+      "us_core": 3
+    },
+    "multi_source_symbols": 1,
+    "rejected_rows": 1,
+    "rejection_reason_counts": {
+      "SOURCE_DISABLED": 1
+    },
+    "schema_version": "discovery_sources_v1",
+    "source_files": [
+      {
+        "archived_file": "discovery_source_inputs/us_core.csv",
+        "memberships": 3,
+        "raw_rows": 3,
+        "rejected_rows": 0,
+        "sha256": "fd6ab9379c66bbf6deb333bf930c9d6aa6085b1a1a447b2428aacdc008481005",
+        "source_file": "data/discovery/us_core_20261009.csv",
+        "source_kind": "us_core"
+      },
+      {
+        "archived_file": "discovery_source_inputs/thematic.csv",
+        "memberships": 2,
+        "raw_rows": 2,
+        "rejected_rows": 0,
+        "sha256": "fcbbd52f9fbe7e7f49cd19f6d8023bf6ee3a606026f8626fc9a857e5ce13813a",
+        "source_file": "data/discovery/thematic_20261009.csv",
+        "source_kind": "thematic"
+      },
+      {
+        "archived_file": "discovery_source_inputs/manual.csv",
+        "memberships": 1,
+        "raw_rows": 2,
+        "rejected_rows": 1,
+        "sha256": "d3f50ac12a727579a76355c7147447a60874e488b84e9ee8ac5cebb0be0b4546",
+        "source_file": "data/discovery/manual_20261009.csv",
+        "source_kind": "manual"
+      }
+    ],
+    "source_memberships": 6,
+    "unique_symbols": 5
+  },
+  "generated_at_utc": "2026-10-11T06:17:06.548890+00:00",
+  "input_provenance": {
+    "decision_date_source": "qqq_market_asof",
+    "discovery_mode": "multi_source_opt_in",
+    "discovery_source_files": {
+      "manual": "data/discovery/manual_20261009.csv",
+      "thematic": "data/discovery/thematic_20261009.csv",
+      "us_core": "data/discovery/us_core_20261009.csv"
+    },
+    "industry_trend_csv": "outputs/ai_value_scan_20261011T061656Z_full_ranked_industry_trend.csv",
+    "legacy_ranked_csv": "outputs/ai_value_scan_20261011T061656Z_full_ranked.csv",
+    "market_data_provenance": {
+      "alpaca": {
+        "assets": {
+          "counts": {
+            "network": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-11T06:16:59.076708+00:00",
+          "latest_data_asof_utc": null,
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        },
+        "bars": {
+          "counts": {
+            "network": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-11T06:17:01.005364+00:00",
+          "latest_data_asof_utc": "2026-10-09T04:00:00Z",
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        },
+        "snapshots": {
+          "counts": {
+            "network": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-11T06:16:59.989768+00:00",
+          "latest_data_asof_utc": "2026-10-09T20:11:35.087037687Z",
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        }
+      }
+    },
+    "momentum_csv": "outputs/ai_value_scan_20261011T061656Z_full_ranked_momentum.csv",
+    "network_issue_flag": false,
+    "qqq_market_asof": "2026-10-09",
+    "research_pool_csv": "outputs/ai_value_scan_20261011T061656Z_full_ranked_research_pool.csv",
+    "stale_market_data_fallback_used": false,
+    "watchlist_csv_path": "data/ai_watchlist.csv"
+  },
+  "schema_version": "1",
+  "strategy_style": "risk_off",
+  "weekly_symbols": [
+    "JNJ",
+    "MSFT",
+    "COST",
+    "NVDA",
+    "XOM"
+  ]
+}

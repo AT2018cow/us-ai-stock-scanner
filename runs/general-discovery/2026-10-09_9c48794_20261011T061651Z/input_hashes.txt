@@ -1,0 +1,8 @@
+data/discovery/us_core_20261009.csv
+data/discovery/thematic_20261009.csv
+data/discovery/manual_20261009.csv
+outputs/config.discovery.experiment.json
+fd6ab9379c66bbf6deb333bf930c9d6aa6085b1a1a447b2428aacdc008481005  data/discovery/us_core_20261009.csv
+fcbbd52f9fbe7e7f49cd19f6d8023bf6ee3a606026f8626fc9a857e5ce13813a  data/discovery/thematic_20261009.csv
+d3f50ac12a727579a76355c7147447a60874e488b84e9ee8ac5cebb0be0b4546  data/discovery/manual_20261009.csv
+3713181214bd139a20ca0c86df81ea97212fdbfea7886a4814cd1d34b9d6bfdc  outputs/config.discovery.experiment.json

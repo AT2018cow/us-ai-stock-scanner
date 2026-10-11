@@ -1,0 +1,4 @@
+symbol,source_id,source_asof,security_type,enabled,theme_id,legacy_bucket,etfs,research_note
+MSFT,us_core_smoke_20261009,2026-10-09,common_stock,1,,,,
+JNJ,us_core_smoke_20261009,2026-10-09,common_stock,1,,,,
+XOM,us_core_smoke_20261009,2026-10-09,common_stock,1,,,,

@@ -1,0 +1,3 @@
+symbol,source_id,source_asof,security_type,enabled,theme_id,legacy_bucket,etfs,research_note
+MSFT,thematic_ai_smoke_20261009,2026-10-09,common_stock,1,ai,core_ai,AIQ,
+NVDA,thematic_ai_smoke_20261009,2026-10-09,common_stock,1,ai,core_ai,AIQ,
