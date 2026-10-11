@@ -31,6 +31,8 @@ class DecisionSnapshotPaths:
     weekly_review_md: Path
     detailed_dir: Path
     universe_exclusions_jsonl: Path
+    discovery_memberships_jsonl: Path
+    discovery_source_rejections_jsonl: Path
     run_manifest_json: Path
 
 
@@ -55,6 +57,8 @@ def decision_snapshot_paths(
         weekly_review_md=root / "weekly_review.md",
         detailed_dir=root / "detailed",
         universe_exclusions_jsonl=root / "universe_exclusions.jsonl",
+        discovery_memberships_jsonl=root / "discovery_memberships.jsonl",
+        discovery_source_rejections_jsonl=root / "discovery_source_rejections.jsonl",
         run_manifest_json=root / "run_manifest.json",
     )
 
@@ -120,6 +124,7 @@ def build_run_manifest(
     code_sha: str | None,
     input_provenance: Mapping[str, Any] | None = None,
     candidate_universe_summary: Mapping[str, Any] | None = None,
+    discovery_source_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     materialized = tuple(decisions)
     daily = tuple(daily_attention)
@@ -147,6 +152,11 @@ def build_run_manifest(
             if candidate_universe_summary is not None
             else {}
         ),
+        **(
+            {"discovery_sources": dict(discovery_source_summary)}
+            if discovery_source_summary is not None
+            else {}
+        ),
     }
 
 
@@ -164,6 +174,9 @@ def write_decision_snapshot(
     input_provenance: Mapping[str, Any] | None = None,
     universe_exclusions: Iterable[Mapping[str, Any]] = (),
     candidate_universe_summary: Mapping[str, Any] | None = None,
+    discovery_memberships: Iterable[Mapping[str, Any]] = (),
+    discovery_source_rejections: Iterable[Mapping[str, Any]] = (),
+    discovery_source_summary: Mapping[str, Any] | None = None,
 ) -> DecisionSnapshotPaths:
     """Write an immutable prospective snapshot with derived Markdown views.
 
@@ -175,6 +188,10 @@ def write_decision_snapshot(
     daily_tuple = tuple(daily_attention)
     weekly_tuple = tuple(weekly_attention)
     universe_exclusions_tuple = tuple(dict(row) for row in universe_exclusions)
+    discovery_memberships_tuple = tuple(dict(row) for row in discovery_memberships)
+    discovery_rejections_tuple = tuple(dict(row) for row in discovery_source_rejections)
+    if discovery_source_summary is None and (discovery_memberships_tuple or discovery_rejections_tuple):
+        raise ValueError("discovery records require a discovery_source_summary")
     paths = decision_snapshot_paths(
         output_root,
         decision_date,
@@ -221,6 +238,14 @@ def write_decision_snapshot(
             encoding="utf-8",
         )
 
+        if discovery_source_summary is not None:
+            (tmp_root / "discovery_memberships.jsonl").write_text(
+                _mappings_to_jsonl(discovery_memberships_tuple), encoding="utf-8"
+            )
+            (tmp_root / "discovery_source_rejections.jsonl").write_text(
+                _mappings_to_jsonl(discovery_rejections_tuple), encoding="utf-8"
+            )
+
         detailed_symbols = {
             decision.symbol: decision
             for decision in (*weekly_tuple, *daily_tuple)
@@ -242,6 +267,7 @@ def write_decision_snapshot(
             code_sha=code_sha,
             input_provenance=input_provenance,
             candidate_universe_summary=candidate_universe_summary,
+            discovery_source_summary=discovery_source_summary,
         )
         (tmp_root / "run_manifest.json").write_text(
             json.dumps(
