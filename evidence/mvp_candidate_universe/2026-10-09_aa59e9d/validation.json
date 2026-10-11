@@ -1,0 +1,72 @@
+{
+  "counts": {
+    "action": {
+      "AVOID": 122,
+      "HOLD_MONITOR": 281,
+      "PRIORITY_REVIEW": 19,
+      "WATCH_BREAKOUT": 55,
+      "WATCH_PULLBACK": 33
+    },
+    "candidate_universe": {
+      "contract_version": "candidate_universe_v1_2026-10-11",
+      "decision_universe_symbols": 510,
+      "discovery_unique_symbols": 687,
+      "excluded_symbols": 177,
+      "exclusion_reason_counts": {
+        "ALPACA_ACTIVE_ASSET_MISSING": 6,
+        "DOLLAR_VOLUME_BELOW_MIN": 167,
+        "PRICE_BELOW_MIN": 1,
+        "SEC_MAPPING_MISSING": 3
+      },
+      "exclusion_stage_counts": {
+        "asset_eligibility": 6,
+        "price_liquidity_prefilter": 168,
+        "sec_mapping": 3
+      },
+      "market_data_feed": "iex",
+      "min_dollar_volume": 2000000.0,
+      "min_price": 1.0,
+      "post_sample_symbols": 678,
+      "tradable_mapped_symbols": 678
+    },
+    "daily_attention": 15,
+    "decisions": 510,
+    "entry": {
+      "ENTRY_READY": 47,
+      "INSUFFICIENT_DATA": 7,
+      "TREND_DAMAGED": 230,
+      "WATCH_BREAKOUT": 141,
+      "WATCH_PULLBACK": 85
+    },
+    "fundamental_fallback": {
+      "edgartools_10q_used": 44,
+      "status": {
+        "filing_mismatch": 2,
+        "ineligible_form": 6,
+        "not_needed": 457,
+        "ttm_not_fresh": 1,
+        "used": 44
+      }
+    },
+    "fundamental_integrity": {
+      "fundamental_currency_unsupported": 17,
+      "latest_periodic_filing_not_covered": 9
+    },
+    "quality": {
+      "A": 183,
+      "B": 205,
+      "C": 92,
+      "UNRATED": 30
+    },
+    "weekly_attention": 15
+  },
+  "decision_date": "2026-10-09",
+  "errors": [],
+  "ok": true,
+  "root": "outputs/decision_experiments/risk_off_20261011T023956Z/2026-10-09/risk_off",
+  "strategy_style": "risk_off",
+  "warnings": [
+    "latest periodic filing is not covered by recognized Company Facts for 9 decision(s)",
+    "non-USD core monetary facts are unsupported for 17 decision(s)"
+  ]
+}
