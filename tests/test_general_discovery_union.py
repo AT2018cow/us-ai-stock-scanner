@@ -183,6 +183,19 @@ class TestGeneralDiscoveryUnion(unittest.TestCase):
             )
             self.assertTrue(output.discovery_memberships_jsonl.exists())
             self.assertTrue(output.discovery_source_rejections_jsonl.exists())
+            self.assertTrue(output.discovery_source_inputs_dir.is_dir())
+            self.assertEqual(
+                (output.discovery_source_inputs_dir / "us_core.csv").read_bytes(),
+                Path(paths["us_core"]).read_bytes(),
+            )
+            self.assertTrue(validate_snapshot(output.root)["ok"])
+            archive = output.discovery_source_inputs_dir / "us_core.csv"
+            original_source = archive.read_bytes()
+            archive.write_bytes(original_source + b"corruption")
+            bad_hash = validate_snapshot(output.root)
+            self.assertFalse(bad_hash["ok"])
+            self.assertTrue(any("SHA256 mismatch" in e for e in bad_hash["errors"]))
+            archive.write_bytes(original_source)
             self.assertTrue(validate_snapshot(output.root)["ok"])
             original = output.discovery_memberships_jsonl.read_bytes()
             with self.assertRaises(FileExistsError):
