@@ -52,6 +52,29 @@ Illustrations: ARQQ $261k, QUBT $1.407m; MATX/LSTR are just below $2m.
 **These dollar amounts are IEX observations and cannot be compared 1:1 to SIP
 or assumed as actual trade capacity.**
 
+## Applicability boundary: legacy AI/theme discovery universe only
+
+This baseline covers the **specific frozen 2026-10-09 AI/theme-oriented
+discovery watchlist**, not a representative cross-section of US equities.
+The four labels `core_ai`, `ai_enabler`, `ai_peripheral`, and `ai_smallcap`
+are legacy discovery-source tags and **not** the future product's top-level
+universe, industry classifications, market-cap cohorts, or strategy sleeves.
+
+Accordingly:
+
+- The 52.5% `ai_smallcap` gate attrition measures this input pool only;
+  it does not estimate the rate among all US small-cap equities.
+- This PR does **not** assert anything about US Core, non-AI thematic, or
+  manual research candidates, which were not sampled as independent cohorts.
+- Retain these four tags only as backward-compatible provenance for the
+  legacy AI-themed discovery source; do not use them as universal investability
+  or scoring weights.
+- The next independent design PR defines US Core / Thematic / Manual discovery
+  layers while preserving the frozen v1 comparator and current source labels.
+- After a frozen, genuinely diversified comparison universe is defined, repeat
+  the same liquidity analysis **stratified by actual business model and size**
+  with source coverage and PIT status. Do not reuse the one-day proportions
+  as threshold recommendations for the generalized universe.
 ## Research hypotheses and tests — pre-register before comparison
 
 1. **H1: discovery-source imbalance.** With fixed input watchlist and
