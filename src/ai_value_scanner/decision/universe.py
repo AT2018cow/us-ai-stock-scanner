@@ -45,7 +45,8 @@ def _base_exclusion(
     reason_code: str,
     asset: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    asset = asset or {}
+    if asset is None:
+        asset = {}
     return {
         "symbol": _symbol(symbol),
         "status": "excluded",
