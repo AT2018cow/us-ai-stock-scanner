@@ -15,12 +15,14 @@ import json
 import math
 from pathlib import Path
 
+from ai_value_scanner.config import load_config
 from ai_value_scanner.decision.discovery import (
     load_discovery_sources,
     validate_discovery_snapshot,
 )
 
 COHORT = Path("data/research/generalized_v0")
+FIRST_ELIGIBLE_MARKET_DATE = "2026-10-12"
 KINDS = ("us_core", "thematic", "manual")
 PROXY = {
     "asset_light_software": "XLK", "semiconductor_equipment": "SMH",
@@ -90,6 +92,53 @@ def frozen_cohort(root=COHORT):
     }
 
 
+def _config_identity(config):
+    payload = vars(config).copy()
+    if payload.get("discovery_source_files") is None:
+        payload.pop("discovery_source_files", None)
+    return payload
+
+
+def config_fingerprint(config):
+    payload = json.dumps(
+        _config_identity(config),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def validate_experiment_config(config_path, base_config, *, root=COHORT):
+    cohort = frozen_cohort(root)
+    experiment = load_config(str(config_path))
+    baseline = load_config(str(base_config))
+    expected_sources = {k: p.as_posix() for k, p in cohort["paths"].items()}
+    if experiment.discovery_source_files != expected_sources:
+        raise ValueError("experiment discovery_source_files do not match frozen v0")
+    exp = _config_identity(experiment)
+    base = _config_identity(baseline)
+    exp.pop("discovery_source_files", None)
+    if exp != base:
+        changed = sorted(
+            key for key in set(exp) | set(base)
+            if exp.get(key) != base.get(key)
+        )
+        raise ValueError(
+            "experiment config changed frozen v1 policy outside discovery sources: "
+            + ", ".join(changed)
+        )
+    for kind, source_path in expected_sources.items():
+        if hash_file(source_path) != cohort["source_hashes"][kind]:
+            raise ValueError("experiment source file hash drift: " + kind)
+    return {
+        "config_fingerprint": config_fingerprint(experiment),
+        "raw_config_sha256": hash_file(config_path),
+        "base_config_sha256": hash_file(base_config),
+    }
+
+
 def prepare(base_config, output_config, root=COHORT):
     cohort = frozen_cohort(root)
     config = json.loads(Path(base_config).read_text(encoding="utf-8"))
@@ -111,7 +160,7 @@ def prepare(base_config, output_config, root=COHORT):
         "metadata_sha256": cohort["metadata_sha256"],
         "unique_symbols": len(cohort["symbols"]),
         "source_rows": cohort["raw_source_rows"],
-        "first_eligible_market_date": "2026-10-12",
+        "first_eligible_market_date": FIRST_ELIGIBLE_MARKET_DATE,
         "mode": "experiment_only",
     }
 
@@ -178,14 +227,31 @@ def relative_trailing(symbol, benchmark, bars, asof):
     return row
 
 
-def audit(snapshot, root=COHORT, bars_csv=None):
+def audit(
+    snapshot,
+    root=COHORT,
+    bars_csv=None,
+    *,
+    config_path=None,
+    base_config="configs/config.risk_off.json",
+):
     cohort=frozen_cohort(root)
     directory=Path(snapshot)
     manifest=json.loads((directory/"run_manifest.json").read_text(encoding="utf-8"))
     sources=manifest.get("discovery_sources")
     asof=manifest.get("decision_date","")
-    if not isinstance(sources,dict) or asof<"2026-10-11":
-        raise ValueError("snapshot is not a valid prospective generalized-v0 experiment")
+    if not isinstance(sources,dict) or asof < FIRST_ELIGIBLE_MARKET_DATE:
+        raise ValueError(
+            "snapshot is not a valid prospective generalized-v0 experiment; "
+            "decision date must be >= " + FIRST_ELIGIBLE_MARKET_DATE
+        )
+    config_review = None
+    if config_path is not None:
+        config_review = validate_experiment_config(
+            config_path, base_config, root=root
+        )
+        if manifest.get("config_fingerprint") != config_review["config_fingerprint"]:
+            raise ValueError("snapshot config fingerprint does not match experiment config")
     if manifest["candidate_universe"]["market_data_feed"]!="iex" or float(manifest["candidate_universe"]["min_dollar_volume"])!=2_000_000:
         raise ValueError("different feed or liquidity threshold: not frozen v1 comparator")
     members=jsonl(directory/"discovery_memberships.jsonl")
@@ -350,6 +416,7 @@ def audit(snapshot, root=COHORT, bars_csv=None):
         "daily_symbols":manifest["daily_symbols"],
         "weekly_symbols":manifest["weekly_symbols"],
         "same_feed_bars_sha256":hash_file(bars_csv) if bars_csv else None,
+        "experiment_config_review":config_review,
         "20session_turnover_coverage":sum(x["coverage"]=="20_session_valid" for x in liquidity),
         "60session_qqq_spy_comparison_coverage":sum(
             bool(bars) and
@@ -427,12 +494,20 @@ def main():
     au.add_argument("--snapshot",required=True)
     au.add_argument("--cohort-dir",default=str(COHORT))
     au.add_argument("--bars-csv")
+    au.add_argument("--config",required=True)
+    au.add_argument("--base-config",default="configs/config.risk_off.json")
     au.add_argument("--out-dir",required=True)
     args=p.parse_args()
     if args.cmd=="prepare":
         print(json.dumps(prepare(args.base_config,args.output_config,args.cohort_dir),indent=2))
         return
-    report,details,liquidity,entry=audit(args.snapshot,args.cohort_dir,args.bars_csv)
+    report,details,liquidity,entry=audit(
+        args.snapshot,
+        args.cohort_dir,
+        args.bars_csv,
+        config_path=args.config,
+        base_config=args.base_config,
+    )
     dest=Path(args.out_dir)
     if dest.exists():
         raise FileExistsError("will not overwrite frozen research results")
