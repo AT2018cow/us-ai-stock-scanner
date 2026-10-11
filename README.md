@@ -119,6 +119,7 @@ outputs/decisions/
   YYYY-MM-DD/
     <strategy_style>/
       decisions.jsonl
+      universe_exclusions.jsonl
       action_list.md
       weekly_review.md
       detailed/
@@ -129,7 +130,8 @@ outputs/decisions/
 
 其中：
 
-- `decisions.jsonl` 是唯一 canonical decision artifact；
+- `decisions.jsonl` 是唯一 canonical investment-decision artifact；
+- `universe_exclusions.jsonl` 记录 watchlist 中未进入 decision universe 的每个符号及唯一 pre-decision exclusion reason；manifest 同时保存 discovery/decision/exclusion 漏斗、实际 market-data feed 与 price/dollar-volume 门槛；
 - snapshot `decision_date` 绑定到实际市场 session（优先 QQQ market-as-of），不是扫描机器的 UTC 日历日期；
 - `action_list.md` 是 Daily Action List，优先显示当前 `PRIORITY_REVIEW` 和状态变化；
 - `weekly_review.md` 是较完整但仍 capped 的 Weekly Review List；
@@ -177,7 +179,8 @@ python scripts/run_mvp_full_scan.py --formal
 该入口会先跑 unittest，再执行 full watchlist scan，并自动校验 canonical JSONL、
 Action List、Weekly Review、Detailed Report、Action mapping 与 attention cap。
 完整验收标准见
-[docs/mvp_full_scan_acceptance.md](docs/mvp_full_scan_acceptance.md)。
+[docs/mvp_full_scan_acceptance.md](docs/mvp_full_scan_acceptance.md)。候选宇宙的三层语义、排除原因和外部实验提交规范见
+[docs/mvp_candidate_universe_provenance.md](docs/mvp_candidate_universe_provenance.md)。
 
 ### 3.5 官方配置
 
