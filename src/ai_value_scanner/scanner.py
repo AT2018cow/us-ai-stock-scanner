@@ -2257,7 +2257,9 @@ def collect_candidates_with_universe_audit(
             if str(symbol).strip()
         }
 
-    mapping = sec.ticker_mapping()
+    mapping = sec.ticker_mapping().copy()
+    if not mapping.empty and "symbol" in mapping.columns:
+        mapping["symbol"] = mapping["symbol"].astype(str).str.upper()
     eligible_symbols, exclusions = classify_asset_mapping_universe(
         discovery_symbols=discovery_symbols,
         assets=assets,
@@ -2287,7 +2289,7 @@ def collect_candidates_with_universe_audit(
         px_rows.append(
             {"symbol": symbol, "price": price, "dollar_volume": dollar_volume}
         )
-    df_px = pd.DataFrame(px_rows)
+    df_px = pd.DataFrame(px_rows, columns=["symbol", "price", "dollar_volume"])
     out_all = merged.merge(df_px, on="symbol", how="left")
     tradable_mapped_count = len(out_all)
 
@@ -3167,8 +3169,14 @@ def run_scan(
             symbol_allowlist=watchlist_allowlist,
         )
     )
-    merged_count = len(df)
+    merged_count = universe_collection_counts["tradable_mapped_symbols"]
     log_status(started_at, "INFO", f"Universe symbols after tradable/mapping merge: {merged_count}")
+    if config.max_symbols:
+        log_status(
+            started_at,
+            "INFO",
+            f"Universe symbols after max_symbols sample: {len(df)}",
+        )
 
     df, prefilter_exclusions = apply_price_liquidity_prefilter(
         df,
