@@ -3153,7 +3153,12 @@ def run_scan(
     log_status(started_at, "INFO", f"Ranked output target: {paths['ranked_csv']}")
     alpaca, sec, network_monitor = load_runtime_settings(config)
 
-    log_status(started_at, "INFO", "[1/6] Loading watchlist and tradable universe.")
+    log_status(
+        started_at, "INFO",
+        "[1/6] Loading AI watchlist and tradable universe."
+        if config.discovery_source_files is None
+        else "[1/6] Loading multi-source discovery universe.",
+    )
     discovery_memberships: list[dict[str, Any]] = []
     discovery_rejections: list[dict[str, Any]] = []
     discovery_source_summary: dict[str, Any] | None = None
