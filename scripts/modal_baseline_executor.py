@@ -33,6 +33,7 @@ image = (
     .pip_install(
         "pandas==2.3.0",
         "numpy==2.0.2",
+        "scipy==1.15.3",
         "requests==2.32.3",
         "python-dotenv==1.0.1",
         "urllib3==2.2.3",
