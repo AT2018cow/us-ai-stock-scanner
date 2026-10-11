@@ -10,6 +10,14 @@
 > 设计与迁移前置条件见
 > [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md)。
 
+> **通用候选池的可选实现：** 扫描器可通过新增的 `discovery_source_files`
+> 接入独立的 US Core / Thematic / Manual CSV，并在 snapshot 中保留
+> 各来源 membership、原始输入 CSV、被禁用/无效行及 SHA256。
+> **未设置该字段时默认仍使用原 AI 底单，行为保持兼容。**
+> 完整字段定义、离线检查、实验指令与审核证据清单见
+> [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)。
+> 本功能尚未向默认生产配置开启，也没有经真实凭证运行的多来源验收。
+
 > **当前产品目标（2026-10-10 起）：**
 > **先找到值得拥有的公司，再判断现在是不是一个相对合理的买入时点。**
 >

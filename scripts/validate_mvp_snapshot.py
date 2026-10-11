@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from ai_value_scanner.decision.action import map_action_state
+from ai_value_scanner.decision.discovery import validate_discovery_snapshot
 from ai_value_scanner.decision.model import ActionState, EntryState, QualityGrade
 from ai_value_scanner.decision.universe import (
     ACTIVE_ASSET_MISSING,
@@ -110,6 +112,55 @@ def validate_snapshot(
             )
 
     candidate_universe = manifest.get("candidate_universe")
+    discovery_sources = manifest.get("discovery_sources")
+    if discovery_sources is not None:
+        if not isinstance(discovery_sources, dict):
+            errors.append("discovery_sources manifest must be an object")
+            discovery_sources = {}
+        try:
+            membership_path = root_path / "discovery_memberships.jsonl"
+            rejected_path = root_path / "discovery_source_rejections.jsonl"
+            memberships = [
+                json.loads(line)
+                for line in membership_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            source_rejections = [
+                json.loads(line)
+                for line in rejected_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            excluded_path = root_path / "universe_exclusions.jsonl"
+            excluded_members = [
+                json.loads(line)
+                for line in excluded_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            errors.extend(validate_discovery_snapshot(
+                memberships=memberships,
+                rejected=source_rejections,
+                summary=discovery_sources,
+                discovery_symbols=set(symbols).union(
+                    row["symbol"] for row in excluded_members
+                ),
+                decision_date=manifest_date,
+            ))
+            for item in discovery_sources.get("source_files", []):
+                kind = item["source_kind"]
+                if kind not in {"us_core", "thematic", "manual"}:
+                    errors.append("unknown archived discovery source kind")
+                    continue
+                expected = "discovery_source_inputs/" + kind + ".csv"
+                if item.get("archived_file") != expected:
+                    errors.append("discovery source archive path mismatch: " + kind)
+                actual_bytes = (root_path / expected).read_bytes()
+                if hashlib.sha256(actual_bytes).hexdigest() != item["sha256"]:
+                    errors.append("discovery source archive SHA256 mismatch: " + kind)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            errors.append(
+                "invalid discovery source snapshot: " +
+                type(exc).__name__ + ": " + str(exc)
+            )
     universe_exclusions: list[dict[str, Any]] = []
     if candidate_universe is not None:
         if not isinstance(candidate_universe, dict):

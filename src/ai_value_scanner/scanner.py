@@ -137,6 +137,10 @@ from ai_value_scanner.decision import (
     select_daily_attention,
     select_weekly_attention,
 )
+from ai_value_scanner.decision.discovery import (
+    assert_memberships_asof,
+    load_discovery_sources,
+)
 from ai_value_scanner.decision.universe import (
     apply_price_liquidity_prefilter,
     attach_watchlist_provenance,
@@ -3149,8 +3153,30 @@ def run_scan(
     log_status(started_at, "INFO", f"Ranked output target: {paths['ranked_csv']}")
     alpaca, sec, network_monitor = load_runtime_settings(config)
 
-    log_status(started_at, "INFO", "[1/6] Loading AI watchlist and tradable universe.")
-    watchlist_scores = load_watchlist_scores(config)
+    log_status(
+        started_at, "INFO",
+        "[1/6] Loading AI watchlist and tradable universe."
+        if config.discovery_source_files is None
+        else "[1/6] Loading multi-source discovery universe.",
+    )
+    discovery_memberships: list[dict[str, Any]] = []
+    discovery_rejections: list[dict[str, Any]] = []
+    discovery_source_summary: dict[str, Any] | None = None
+    if config.discovery_source_files is not None:
+        source_rows, discovery_memberships, discovery_rejections, discovery_source_summary = (
+            load_discovery_sources(config.discovery_source_files)
+        )
+        watchlist_scores = watchlist_rows_to_scores(pd.DataFrame(source_rows))
+        log_status(
+            started_at,
+            "INFO",
+            "Opt-in discovery union: "
+            f"{discovery_source_summary['source_memberships']} memberships, "
+            f"{discovery_source_summary['unique_symbols']} symbols, "
+            f"{discovery_source_summary['rejected_rows']} rejected source rows",
+        )
+    else:
+        watchlist_scores = load_watchlist_scores(config)
     if watchlist_scores.empty:
         raise ValueError(
             "Watchlist is empty or missing. Run "
@@ -4171,6 +4197,8 @@ def run_scan(
             df,
             benchmark_market_asof=qqq_market_asof,
         )
+        if discovery_source_summary is not None:
+            assert_memberships_asof(discovery_memberships, decision_date)
         default_decision_dir = (
             "decisions"
             if config.max_symbols is None
@@ -4194,8 +4222,12 @@ def run_scan(
                 "research_pool": research_pool,
             }
         )
+        config_identity = vars(config).copy()
+        # New opt-in field must not change v1 fingerprints when absent.
+        if config_identity.get("discovery_source_files") is None:
+            config_identity.pop("discovery_source_files", None)
         config_payload = json.dumps(
-            vars(config),
+            config_identity,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -4251,8 +4283,19 @@ def run_scan(
             code_sha=code_sha,
             universe_exclusions=universe_exclusions,
             candidate_universe_summary=candidate_universe_summary,
+            discovery_memberships=discovery_memberships,
+            discovery_source_rejections=discovery_rejections,
+            discovery_source_summary=discovery_source_summary,
             input_provenance={
                 "watchlist_csv_path": config.watchlist_csv_path,
+                **(
+                    {
+                        "discovery_mode": "multi_source_opt_in",
+                        "discovery_source_files": dict(config.discovery_source_files),
+                    }
+                    if config.discovery_source_files is not None
+                    else {}
+                ),
                 "decision_date_source": (
                     "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
                 ),
@@ -4279,6 +4322,9 @@ def run_scan(
             f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
         )
     except Exception as exc:
+        if discovery_source_summary is not None:
+            # Opt-in provenance and as-of violations must never be soft warnings.
+            raise
         decision_output_error = f"{type(exc).__name__}: {exc}"
         log_status(
             started_at,
@@ -4514,7 +4560,7 @@ def main() -> None:
             decision_output_root=args.decision_output_root,
             decision_attention_cap=args.decision_attention_cap,
         )
-        if config.archive_watchlist_snapshots:
+        if config.archive_watchlist_snapshots and config.discovery_source_files is None:
             snapshot_path = archive_watchlist_snapshot(config, started_at)
             if snapshot_path is not None:
                 print(f"[snapshot] watchlist archived for PIT backtests: {snapshot_path}")
