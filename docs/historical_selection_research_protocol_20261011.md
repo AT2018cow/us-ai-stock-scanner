@@ -53,7 +53,7 @@ python3.12 -m venv .venv
 
 如本地 venv 已正确安装，可跳过重建 venv，但不能跳过测试及 SHA 记录。必须等 **本 PR exact final head 的 GitHub Actions 测试通过**再作为正式实验的代码来源。
 
-**不要打印/上传** `.env`、Alpaca 密钥、SEC user-agent 实际身份。代码读取 `.env` 并将其中列在白名单的必要键安全传入 Modal Secret；只允许向预期的 **infi** workspace 发送。首次使用 Modal 时先完成本机 `modal token set` 或已有 profile 的授权，命令始终显式加 `MODAL_PROFILE=infi`。
+**不要打印/上传** `.env`、Alpaca 密钥、SEC user-agent 实际身份。代码读取 `.env` 并将其中列在白名单的必要键安全传入 Modal Secret；只允许向预期的 **at2018cow** workspace 发送。首次使用 Modal 时先完成本机 `modal token set` 或已有 profile 的授权，命令始终显式加 `MODAL_PROFILE=at2018cow`。
 
 ### 2.2 先盘点本地和 Modal 已存在的资产
 
@@ -62,7 +62,7 @@ find outputs -type f \( -name '*company_quality*.meta.json' -o \
   -name '*entry_quality*.meta.json' -o -name '*weight*.meta.json' \) -print 2>/dev/null
 ls -ld data/watchlist_history 2>/dev/null || true
 
-MODAL_PROFILE=infi .venv/bin/python -m modal volume ls \
+MODAL_PROFILE=at2018cow .venv/bin/python -m modal volume ls \
   ai-scanner-research /post_pr23_baseline_202610/datasets
 ```
 
@@ -167,14 +167,14 @@ find "$EXP/frozen_inputs/watchlist_history" -type f -print0 \
 ```bash
 set -euo pipefail
 
-MODAL_PROFILE=infi .venv/bin/python -m modal run \
+MODAL_PROFILE=at2018cow .venv/bin/python -m modal run \
   scripts/modal_baseline_executor.py \
   --run-id "$RUN_ID" --stage dataset --styles risk_off \
   --dataset-kind company_quality \
   --start-date 2023-01-01 --end-date 2026-03-31 \
   2>&1 | tee "$EXP/logs/modal_company_quality.log"
 
-MODAL_PROFILE=infi .venv/bin/python -m modal run \
+MODAL_PROFILE=at2018cow .venv/bin/python -m modal run \
   scripts/modal_baseline_executor.py \
   --run-id "$RUN_ID" --stage dataset --styles risk_off \
   --dataset-kind entry_quality \
@@ -189,11 +189,11 @@ MODAL_PROFILE=infi .venv/bin/python -m modal run \
 检查结果路径：
 
 ```bash
-MODAL_PROFILE=infi .venv/bin/python -m modal volume ls \
+MODAL_PROFILE=at2018cow .venv/bin/python -m modal volume ls \
   ai-scanner-research "/$RUN_ID/datasets"
 
 mkdir -p "$EXP/modal_download/datasets"
-MODAL_PROFILE=infi .venv/bin/python -m modal volume get \
+MODAL_PROFILE=at2018cow .venv/bin/python -m modal volume get \
   --force ai-scanner-research \
   "/$RUN_ID/datasets" "$EXP/modal_download/datasets"
 ```

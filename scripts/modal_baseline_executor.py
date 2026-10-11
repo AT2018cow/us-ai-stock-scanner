@@ -26,7 +26,7 @@ import modal
 
 app = modal.App("ai-value-post-pr23-baseline")
 
-REQUIRED_MODAL_PROFILE = "infi"
+REQUIRED_MODAL_PROFILE = "at2018cow"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -429,8 +429,8 @@ def _require_experiment_modal_profile() -> None:
     profile = os.getenv("MODAL_PROFILE", "").strip()
     if profile != REQUIRED_MODAL_PROFILE:
         raise RuntimeError(
-            "post-PR23 research runs must explicitly target the infi Modal "
-            "workspace/profile. Prefix the command with MODAL_PROFILE=infi; "
+            "post-PR23 research runs must explicitly target the at2018cow Modal "
+            "workspace/profile. Prefix the command with MODAL_PROFILE=at2018cow; "
             f"got {profile!r}."
         )
 
