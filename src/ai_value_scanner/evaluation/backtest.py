@@ -83,6 +83,32 @@ def fallback_label_end_date(signal_date: str, horizon: int) -> pd.Timestamp | No
     return dt + pd.Timedelta(days=days)
 
 
+def split_query_end_iso(end_dt: object, horizons: object) -> str:
+    """Corporate-action query end that covers every forward label.
+
+    Forward labels extend up to max(horizons) TRADING days past each signal
+    date. A split whose ex-date falls inside a holding window but after the
+    signal-window end must still be known: otherwise the pre-split entry and
+    the post-split exit are compared in different price spaces and the label
+    prints the split as a near-total loss (observed: BKNG 25:1 split
+    2026-04-06 with a 2026-03-31 query cap produced fwd_ret_120 ≈ -0.97;
+    KLAC 10:1 2026-06-12 produced ≈ -0.88). Capping the split query at the
+    signal-window end therefore corrupts exactly the labels that cross a
+    later split. Extend by the same calendar envelope used for label-end
+    purging so every label end is covered by construction.
+    """
+    try:
+        base = pd.Timestamp(end_dt)
+    except (TypeError, ValueError):
+        base = pd.Timestamp(datetime.now(timezone.utc))
+    try:
+        hs = [max(1, int(x)) for x in (horizons or [])]
+    except (TypeError, ValueError):
+        hs = []
+    days = int(math.ceil((max(hs) if hs else 120) * 7.0 / 5.0)) + 10
+    return (base + pd.Timedelta(days=days)).date().isoformat()
+
+
 def forward_return(
     price_frame: pd.DataFrame,
     signal_date: str,

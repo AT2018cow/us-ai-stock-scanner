@@ -66,6 +66,7 @@ from ai_value_scanner.evaluation.backtest import (
     _hold_window_mature,
     forward_return,
     forward_return_with_exit,
+    split_query_end_iso,
 )
 from ai_value_scanner.strategy.filtering import (
     STYLE_STRUCTURAL_STEP_NAMES,
@@ -303,12 +304,16 @@ def main() -> None:
     # Authoritative splits for the replay window (same discipline as the live
     # scan and the backtest replay): price features, benchmark returns and
     # forward returns use split-adjusted series; valuation multiples keep raw
-    # closes x raw filed shares. Fail open.
+    # closes x raw filed shares. The query end MUST cover every forward label
+    # (signal end + longest holding window), not just the signal window end:
+    # a split inside a holding window but past the signal end would otherwise
+    # print as a near-total loss. Fail open.
     split_events: dict[str, list[tuple[str, float]]] = {}
+    split_query_start = bars_start
+    split_query_end = split_query_end_iso(end_dt or datetime.now(timezone.utc), horizons)
     try:
         split_events = client.get_corporate_action_splits(
-            bars_symbols, bars_start,
-            (end_dt or datetime.now(timezone.utc)).date().isoformat(),
+            bars_symbols, split_query_start, split_query_end,
         )
         if split_events:
             log(f"split events: {len(split_events)} symbols", started)
@@ -672,6 +677,12 @@ def main() -> None:
         "watchlist_csv_path": str(scan_config.watchlist_csv_path),
         "watchlist_history_dir": str(args.watchlist_history_dir),
         "pre_snapshot_universe": args.pre_snapshot_universe,
+        "split_query_start": split_query_start[:10],
+        "split_query_end": split_query_end,
+        "split_query_end_rule": (
+            "signal-window end + longest-horizon envelope (split_query_end_iso); "
+            "every forward label end is covered by construction"
+        ),
         "channels": sorted(channel_profiles.keys()),
         "n_rows": int(len(dataset)),
         "n_dates": int(dataset["signal_date"].nunique()) if not dataset.empty else 0,
@@ -683,10 +694,20 @@ def main() -> None:
     }
     meta_path = output_path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps(meta, indent=2))
+    splits_path = output_path.with_name(output_path.stem + ".splits.json")
+    splits_path.write_text(json.dumps({
+        "query_start": split_query_start[:10],
+        "query_end": split_query_end,
+        "n_symbols_with_events": int(len(split_events)),
+        "events": {
+            sym: [[str(d), float(m)] for d, m in evts]
+            for sym, evts in sorted(split_events.items())
+        },
+    }, indent=2))
 
     log(
         f"done: {len(dataset)} {args.dataset_kind} rows | {meta['n_dates']} dates | "
-        f"saved {output_path} (+ {meta_path.name})",
+        f"saved {output_path} (+ {meta_path.name}, {splits_path.name})",
         started,
     )
 

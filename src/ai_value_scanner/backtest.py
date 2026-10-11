@@ -64,6 +64,7 @@ from ai_value_scanner.evaluation.backtest import (
     next_trading_index,
     non_overlapping_cumulative,
     non_overlapping_event_returns,
+    split_query_end_iso,
     parse_json_object,
     summarize_backtest,
     summarize_backtest_by_segment,
@@ -2690,7 +2691,10 @@ def build_signal_events_historical_replay(
             split_events = client.get_corporate_action_splits(
                 bars_symbols,
                 bars_start,
-                (end_dt or datetime.now(timezone.utc)).date().isoformat(),
+                split_query_end_iso(
+                    end_dt or datetime.now(timezone.utc),
+                    cfg.horizons or [20, 60, 120],
+                ),
             )
             if split_events:
                 bt_log(
