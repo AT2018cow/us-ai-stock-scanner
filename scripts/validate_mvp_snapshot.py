@@ -8,6 +8,22 @@ from typing import Any
 
 from ai_value_scanner.decision.action import map_action_state
 from ai_value_scanner.decision.model import ActionState, EntryState, QualityGrade
+from ai_value_scanner.decision.universe import (
+    ACTIVE_ASSET_MISSING,
+    ASSET_STAGE,
+    CANDIDATE_UNIVERSE_CONTRACT_VERSION,
+    DOLLAR_VOLUME_BELOW_MIN,
+    DOLLAR_VOLUME_MISSING,
+    EXCHANGE_NOT_ENABLED,
+    NOT_TRADABLE,
+    PRICE_BELOW_MIN,
+    PRICE_LIQUIDITY_STAGE,
+    PRICE_MISSING,
+    SAMPLE_MAX_SYMBOLS_LIMIT,
+    SAMPLE_STAGE,
+    SEC_MAPPING_MISSING,
+    SEC_MAPPING_STAGE,
+)
 from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
@@ -118,6 +134,22 @@ def validate_snapshot(
                 )
                 universe_exclusions = []
 
+        if candidate_universe.get("contract_version") != CANDIDATE_UNIVERSE_CONTRACT_VERSION:
+            errors.append(
+                "candidate_universe contract_version does not match current contract"
+            )
+        reason_to_stage = {
+            ACTIVE_ASSET_MISSING: ASSET_STAGE,
+            NOT_TRADABLE: ASSET_STAGE,
+            EXCHANGE_NOT_ENABLED: ASSET_STAGE,
+            SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
+            SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
+            PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
+            PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+            DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
+            DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+        }
+
         exclusion_symbols: list[str] = []
         for index, item in enumerate(universe_exclusions, start=1):
             if not isinstance(item, dict):
@@ -136,8 +168,38 @@ def validate_snapshot(
                 errors.append(f"{symbol or index}: exclusion_stage is missing")
             if not reason:
                 errors.append(f"{symbol or index}: reason_code is missing")
+            elif reason not in reason_to_stage:
+                errors.append(f"{symbol or index}: unknown exclusion reason {reason}")
+            elif stage != reason_to_stage[reason]:
+                errors.append(
+                    f"{symbol or index}: exclusion stage {stage} "
+                    f"does not match reason {reason}"
+                )
 
-            if reason in {"DOLLAR_VOLUME_BELOW_MIN", "DOLLAR_VOLUME_MISSING"}:
+            if stage == PRICE_LIQUIDITY_STAGE:
+                if str(item.get("market_data_feed") or "") != str(
+                    candidate_universe.get("market_data_feed") or ""
+                ):
+                    errors.append(
+                        f"{symbol}: price/liquidity exclusion feed does not match manifest"
+                    )
+                try:
+                    if float(item.get("min_price")) != float(
+                        candidate_universe.get("min_price")
+                    ):
+                        errors.append(f"{symbol}: min_price does not match manifest")
+                    if float(item.get("min_dollar_volume")) != float(
+                        candidate_universe.get("min_dollar_volume")
+                    ):
+                        errors.append(
+                            f"{symbol}: min_dollar_volume does not match manifest"
+                        )
+                except (TypeError, ValueError):
+                    errors.append(
+                        f"{symbol}: invalid price/liquidity threshold provenance"
+                    )
+
+            if reason in {DOLLAR_VOLUME_BELOW_MIN, DOLLAR_VOLUME_MISSING}:
                 if str(item.get("market_data_feed") or "") != str(
                     candidate_universe.get("market_data_feed") or ""
                 ):
@@ -155,7 +217,7 @@ def validate_snapshot(
                         )
                 except (TypeError, ValueError):
                     errors.append(f"{symbol}: invalid min_dollar_volume provenance")
-                if reason == "DOLLAR_VOLUME_BELOW_MIN":
+                if reason == DOLLAR_VOLUME_BELOW_MIN:
                     try:
                         if float(item.get("dollar_volume")) >= float(
                             item.get("min_dollar_volume")
@@ -166,7 +228,7 @@ def validate_snapshot(
                     except (TypeError, ValueError):
                         errors.append(f"{symbol}: invalid dollar_volume provenance")
 
-            if reason == "PRICE_BELOW_MIN":
+            if reason == PRICE_BELOW_MIN:
                 try:
                     if float(item.get("price")) >= float(item.get("min_price")):
                         errors.append(
