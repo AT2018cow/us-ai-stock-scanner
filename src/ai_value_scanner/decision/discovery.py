@@ -109,7 +109,8 @@ def load_discovery_sources(paths: dict[str, str]) -> tuple[
                 reason = "SOURCE_THEME_ID_MISSING"
             if reason is None and kind == "manual" and not note:
                 reason = "SOURCE_MANUAL_REASON_MISSING"
-            membership_key = (kind, source_id, symbol)
+            # One source can put the same security into distinct registered themes.
+            membership_key = (kind, source_id, theme_id if kind == "thematic" else "", symbol)
             if reason is None and membership_key in seen_keys:
                 reason = "SOURCE_DUPLICATE_MEMBERSHIP"
 
@@ -226,7 +227,14 @@ def validate_discovery_snapshot(
     errors = []
     if summary.get("schema_version") != DISCOVERY_SCHEMA_VERSION:
         errors.append("discovery source schema version mismatch")
-    keys = [(m.get("source_kind"), m.get("source_id"), m.get("symbol")) for m in memberships]
+    keys = [
+        (
+            m.get("source_kind"), m.get("source_id"),
+            m.get("theme_id") if m.get("source_kind") == "thematic" else "",
+            m.get("symbol"),
+        )
+        for m in memberships
+    ]
     if len(keys) != len(set(keys)):
         errors.append("duplicate discovery membership identity")
     symbols = {m.get("symbol") for m in memberships}
