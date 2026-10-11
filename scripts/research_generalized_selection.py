@@ -180,6 +180,12 @@ def audit(snapshot, root=COHORT, bars_csv=None):
     if (sources["source_memberships"]!=len(members) or sources["rejected_rows"]!=len(rejected)
             or manifest["counts"]["decisions"]!=len(ds)):
         raise ValueError("manifest count mismatch")
+    # v0 is a deliberately frozen 75-membership, zero-rejection research cohort;
+    # accepting another pool with the same unique symbols would break parity.
+    if len(members)!=75 or rejected:
+        raise ValueError("v0 frozen memberships/rejected rows do not match contract")
+    if {x["source_kind"] for x in sources["source_files"]}!=set(KINDS) or len(sources["source_files"])!=3:
+        raise ValueError("v0 must archive all three independent source kinds")
     for source in sources["source_files"]:
         kind=source["source_kind"]
         if kind not in KINDS or source["sha256"]!=cohort["source_hashes"][kind]:
@@ -188,6 +194,8 @@ def audit(snapshot, root=COHORT, bars_csv=None):
             raise ValueError("archived source CSV corrupted")
     if any(m["source_asof"]>asof for m in members):
         raise ValueError("source membership incorrectly backdated")
+    if len(manifest.get("daily_symbols",[]))>15 or len(manifest.get("weekly_symbols",[]))>15:
+        raise ValueError("v1 Attention cap exceeded")
     bars=load_bars(bars_csv,asof)
     per_symbol=[]
     for symbol in sorted(observed):
