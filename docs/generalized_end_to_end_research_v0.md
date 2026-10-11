@@ -150,12 +150,12 @@ python scripts/research_generalized_selection.py audit \
   --out-dir outputs/generalized_research_v0
 ```
 
-The audit independently reloads the experiment config, compares its normalized
-runtime values to the frozen `configs/config.risk_off.json` baseline with only
-`discovery_source_files` removed, recomputes the scanner-compatible
-`config_fingerprint`, and requires it to match the snapshot manifest. This
-prevents an unnoticed threshold, Quality, Entry, Action, sampling or cache-policy
-change from being mixed into the generalized-universe experiment.
+The audit independently reloads the experiment config, compares the **raw JSON**
+byte-equivalent policy object to the frozen `configs/config.risk_off.json`
+baseline after removing only `discovery_source_files`, then recomputes the
+scanner-compatible normalized `config_fingerprint` and requires it to match
+the snapshot manifest. This catches both explicit policy edits and effective
+runtime drift before the generalized-universe evidence is interpreted.
 
 Use **new unique output directories** for reruns; never overwrite prior
 runs or snapshot bytes. Full scanner workload: 62 unique candidates,
