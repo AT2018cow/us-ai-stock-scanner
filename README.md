@@ -18,6 +18,13 @@
 > [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)。
 > 本功能尚未向默认生产配置开启，也没有经真实凭证运行的多来源验收。
 
+> **综合研究 PR #57：** 已冻结 62 个唯一证券代码的跨行业诊断候选池，
+> 并提供 Quality v1、Entry v1、IEX 流动性以及 Action List 的联合审计工具；
+> 可选的 IEX 20 日成交金额及 QQQ/SPY/行业代理基准对照只用于研究，
+> 不改动 v1 的评分或 Entry 买点。
+> 运行前请阅读 [综合研究与 Evidence 验收协议](docs/generalized_end_to_end_research_v0.md)。
+> 本研究池不是美股市场代表样本，业务模式标签尚待验证，也尚未执行需凭证的研究实验。
+
 > **当前产品目标（2026-10-10 起）：**
 > **先找到值得拥有的公司，再判断现在是不是一个相对合理的买入时点。**
 >
