@@ -530,8 +530,10 @@ The next conversation should:
 
 Use:
 
-> 请以 GitHub 项目 `AT2018cow/us-ai-stock-scanner` 中的
-> `docs/work_handoff_after_pr57_20261011.md` 为唯一最新交接入口。
+> 请以 GitHub 项目 `AT2018cow/us-ai-stock-scanner` 的分支
+> `docs/handoff-after-pr57-20261011` 中
+> `docs/work_handoff_after_pr57_20261011.md` 为唯一最新交接入口
+> （先核对该分支最新 commit，再读取文档）。
 > 先核对当前 `main`、PR #57 合并状态和 `evidence-observations` 分支；
 > 如果已经有 `runs/generalized-v0/` 证据，就优先完成端到端 evidence 审核，
 > 分别给出 Universe、Liquidity、Quality、Entry、Action 的
