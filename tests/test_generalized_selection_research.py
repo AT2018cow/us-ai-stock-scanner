@@ -42,7 +42,7 @@ class TestGeneralizedResearch(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dest=Path(tmp)/"out"/"config.json"
             base=Path(tmp)/"base.json"
-            base.write_text('{"max_symbols":null,"strategy_style":"risk_off"}',encoding="utf-8")
+            base.write_text('{"max_symbols":null,"strategy_style":"risk_off","min_price":1.0,"min_dollar_volume":2000000}',encoding="utf-8")
             meta=prepare(base,dest,ROOT/COHORT)
             self.assertEqual(meta["unique_symbols"],62)
             config=json.loads(dest.read_text())
@@ -53,6 +53,9 @@ class TestGeneralizedResearch(unittest.TestCase):
             base.write_text('{"max_symbols":5}',encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"max_symbols"):
                 prepare(base,Path(tmp)/"bad.json",ROOT/COHORT)
+            base.write_text('{"max_symbols":null,"strategy_style":"risk_off","min_price":1.0,"min_dollar_volume":1000000}',encoding="utf-8")
+            with self.assertRaisesRegex(ValueError,"frozen v1"):
+                prepare(base,Path(tmp)/"wrong_gate.json",ROOT/COHORT)
 
     def test_bar_gate_requires_pit_same_feed_complete_sessions(self):
         asof=date(2026,10,12)
