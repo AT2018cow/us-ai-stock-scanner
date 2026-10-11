@@ -145,9 +145,17 @@ python scripts/export_generalized_pit_bars.py \
 
 python scripts/research_generalized_selection.py audit \
   --snapshot "$SNAPSHOT" \
+  --config outputs/config.generalized_v0.experiment.json \
   --bars-csv outputs/generalized_bars_v0/pit_iex_daily_bars.csv \
   --out-dir outputs/generalized_research_v0
 ```
+
+The audit independently reloads the experiment config, compares its normalized
+runtime values to the frozen `configs/config.risk_off.json` baseline with only
+`discovery_source_files` removed, recomputes the scanner-compatible
+`config_fingerprint`, and requires it to match the snapshot manifest. This
+prevents an unnoticed threshold, Quality, Entry, Action, sampling or cache-policy
+change from being mixed into the generalized-universe experiment.
 
 Use **new unique output directories** for reruns; never overwrite prior
 runs or snapshot bytes. Full scanner workload: 62 unique candidates,
