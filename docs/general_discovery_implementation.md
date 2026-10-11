@@ -38,7 +38,9 @@ Use source-file keys to specify its kind; do not rely on column order.
   period, not an alias requiring guesswork; `BRK-B` is rejected rather than
   silently treated as `BRK.B`. Distinct listed share classes are distinct
   securities even when their CIK is shared.
-- `source_id` is a stable **within-kind** discovery-list ID. One CSV can
+- `source_id` is a stable **within-kind** discovery-list ID.
+  The same source can register distinct thematic memberships by `theme_id`.
+  One CSV can
   contain many thematic `source_id` and `theme_id` values.
 - `source_asof` is the `YYYY-MM-DD` date on which membership was known;
   the scanner rejects a membership dated **after the market decision session**.
