@@ -20,7 +20,7 @@ the input directory or call market-data/SEC endpoints.
 
 ## First-pass findings: 2026-10-09
 
-487? No — use the actual audited counts: **687 discovered = 510 decisions + 177 exclusions**.
+**687 discovered = 510 decisions + 177 exclusions**.
 9 were excluded at asset/SEC mapping stages; 168 at price/liquidity.
 Price/liquidity = 167 under the configured $2,000,000 IEX snapshot dollar-volume gate
 plus 1 under the $1 share-price floor.
