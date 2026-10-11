@@ -17,7 +17,8 @@ try:
     from research_generalized_selection import (
         COHORT, FIRST_ELIGIBLE_MARKET_DATE, audit, config_fingerprint,
         frozen_cohort, hash_file, liquidity_diagnostic, load_bars, prepare,
-        read_csv, relative_trailing, validate_experiment_config,
+        read_csv, relative_trailing, validate_bar_export_provenance,
+        validate_experiment_config,
     )
 finally:
     sys.path.pop(0)
@@ -293,6 +294,29 @@ class TestGeneralizedResearch(unittest.TestCase):
             exported=read_csv(root/"export"/"pit_iex_daily_bars.csv")
             self.assertEqual({r["session"] for r in exported},
                              {"2026-10-09","2026-10-12"})
+            bar_file = root/"export"/"pit_iex_daily_bars.csv"
+            valid_provenance = validate_bar_export_provenance(
+                bar_file, asof="2026-10-12",
+                scanner_manifest=manifest, cohort=cohort
+            )
+            self.assertEqual(valid_provenance["bar_dataset_sha256"], result["bar_dataset_sha256"])
+            bad_manifest = dict(valid_provenance, snapshot_code_sha="wrong SHA")
+            manifest_path = bar_file.with_name("pit_bars_manifest.json")
+            original_manifest = manifest_path.read_bytes()
+            manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "scanner SHA mismatch"):
+                validate_bar_export_provenance(
+                    bar_file, asof="2026-10-12",
+                    scanner_manifest=manifest, cohort=cohort
+                )
+            manifest_path.write_bytes(original_manifest)
+            with bar_file.open("a", encoding="utf-8") as modified:
+                modified.write("EXTRA,2026-10-12,iex,11,120\\n")
+            with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
+                validate_bar_export_provenance(
+                    bar_file, asof="2026-10-12",
+                    scanner_manifest=manifest, cohort=cohort
+                )
             with patch(
                 "export_generalized_pit_bars.load_runtime_settings",
                 return_value=(FakeAlpaca(),None,FakeMonitor(stale=True)),
