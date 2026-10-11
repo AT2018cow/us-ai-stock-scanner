@@ -27,16 +27,31 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
     asof=manifest["decision_date"]
     if asof<"2026-10-11":
         raise ValueError("frozen v0 may not be backdated")
-    if manifest.get("discovery_sources") is None:
+    discovery=manifest.get("discovery_sources")
+    if not isinstance(discovery,dict):
         raise ValueError("requires generalized opt-in snapshot")
+    if (discovery.get("unique_symbols")!=len(cohort["symbols"]) or
+            discovery.get("source_memberships")!=75):
+        raise ValueError("snapshot is not the frozen generalized-v0 research cohort")
     if manifest["candidate_universe"]["market_data_feed"]!="iex":
         raise ValueError("study must use the identical IEX market-data feed")
     config=load_config(config_path)
     if not config.discovery_source_files:
         raise ValueError("must use the opt-in experiment config")
+    if set(config.discovery_source_files)!=set(cohort["paths"]):
+        raise ValueError("all three frozen source files must be configured")
     for kind,path in config.discovery_source_files.items():
-        if kind not in cohort["paths"] or hashlib.sha256(Path(path).read_bytes()).hexdigest()!=cohort["source_hashes"][kind]:
+        if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=cohort["source_hashes"][kind]:
             raise ValueError("research config source input is not frozen v0")
+    archived={row.get("source_kind"):row for row in discovery.get("source_files",[])}
+    if set(archived)!=set(cohort["paths"]):
+        raise ValueError("snapshot source file manifest is not the v0 cohort")
+    for kind in cohort["paths"]:
+        row=archived[kind]
+        if row.get("sha256")!=cohort["source_hashes"][kind]:
+            raise ValueError("snapshot source file SHA does not match frozen cohort")
+        if hashlib.sha256((root/row["archived_file"]).read_bytes()).hexdigest()!=row["sha256"]:
+            raise ValueError("snapshot archived source file has changed")
     base=config_path
     symbols=sorted(cohort["symbols"]|{"QQQ","SPY"}|set(PROXY.values()))
     if len(symbols)>90:
@@ -57,6 +72,9 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
     splits=alpaca.get_corporate_action_splits(
         symbols,begin,asof
     )
+    network_state=monitor.to_dict()
+    if network_state.get("stale_market_data_fallback_used"):
+        raise ValueError("stale market-data fallback: bar research must not use it")
     rows=[]
     for symbol in symbols:
         adjusted=apply_split_adjustment(bars.get(symbol,[]),splits.get(symbol))
@@ -95,12 +113,13 @@ def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
         "symbols_requested":len(symbols),"symbols_exported_with_bars":sum(v>0 for v in coverage.values()),
         "rows":len(rows),
         "coverage_by_symbol":coverage,
-        "network_monitor":monitor.to_dict(),
+        "network_monitor":network_state,
         "limitations":[
             "Split adjustment preserves dollar turnover but not dividend-adjusted returns.",
             "ETF proxies are research approximations, not verified sector group assignments.",
             "Single-day daily bars are not identical to Alpaca snapshot hard gate.",
-            "No post-decision bars; no forward returns or v2 policy promotion.",
+            "The existing Alpaca client may fetch later bars; any bars after the decision session are discarded BEFORE analysis.",
+            "No post-decision bars are exported; no forward returns or v2 policy promotion.",
         ],
     }
     (output/"pit_bars_manifest.json").write_text(
