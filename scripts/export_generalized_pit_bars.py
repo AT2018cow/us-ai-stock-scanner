@@ -1,0 +1,131 @@
+"""Bounded, credentialed, same-IEX-feed research bar export for a frozen v0 snapshot.
+
+Raw Alpaca bars are split-adjusted with documented corporate actions, preserving
+turnover. Never query future bars, rewrite a snapshot, or silently accept a
+failed split request. Run only after the PR has merged and the user approves.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+from datetime import date, timedelta, timezone, datetime
+import hashlib
+import json
+import math
+from pathlib import Path
+import sys
+
+from ai_value_scanner.config import load_config
+from ai_value_scanner.scanner import load_runtime_settings, apply_split_adjustment
+from research_generalized_selection import PROXY, frozen_cohort
+
+
+def export_bars(snapshot, config_path, out_dir, *, cohort_dir):
+    cohort=frozen_cohort(cohort_dir)
+    root=Path(snapshot)
+    manifest=json.loads((root/"run_manifest.json").read_text(encoding="utf-8"))
+    asof=manifest["decision_date"]
+    if asof<"2026-10-11":
+        raise ValueError("frozen v0 may not be backdated")
+    if manifest.get("discovery_sources") is None:
+        raise ValueError("requires generalized opt-in snapshot")
+    if manifest["candidate_universe"]["market_data_feed"]!="iex":
+        raise ValueError("study must use the identical IEX market-data feed")
+    config=load_config(config_path)
+    if not config.discovery_source_files:
+        raise ValueError("must use the opt-in experiment config")
+    for kind,path in config.discovery_source_files.items():
+        if kind not in cohort["paths"] or hashlib.sha256(Path(path).read_bytes()).hexdigest()!=cohort["source_hashes"][kind]:
+            raise ValueError("research config source input is not frozen v0")
+    base=config_path
+    symbols=sorted(cohort["symbols"]|{"QQQ","SPY"}|set(PROXY.values()))
+    if len(symbols)>90:
+        raise ValueError("bars request exceeds pre-registered 90-symbol budget")
+    output=Path(out_dir)
+    if output.exists():
+        raise FileExistsError("will not overwrite market-data research evidence")
+    # Fetch up to ~120-130 sessions to cover 60 common-session observations.
+    begin=(date.fromisoformat(asof)-timedelta(days=185)).isoformat()
+    alpaca,_,monitor=load_runtime_settings(config)
+    if alpaca.feed.lower()!="iex":
+        raise ValueError("ALPACA_FEED must be iex")
+    bars=alpaca.get_daily_bars(
+        symbols,begin+"T00:00:00Z",min(config.chunk_size,90)
+    )
+    # Fail closed: an unavailable splits endpoint must not generate misleading
+    # unadjusted QQQ/SPY/sector-relative returns.
+    splits=alpaca.get_corporate_action_splits(
+        symbols,begin,asof
+    )
+    rows=[]
+    for symbol in symbols:
+        adjusted=apply_split_adjustment(bars.get(symbol,[]),splits.get(symbol))
+        for item in adjusted:
+            session=str(item.get("t",""))[:10]
+            if not session or session>asof or session<begin:
+                continue
+            try:
+                close=float(item["c"])
+                volume=float(item["v"])
+            except (ValueError,TypeError,KeyError):
+                continue
+            if not math.isfinite(close) or not math.isfinite(volume) or close<=0 or volume<0:
+                continue
+            rows.append((symbol,session,"iex",close,volume))
+    rows.sort()
+    if len(rows)!=len({(row[0],row[1]) for row in rows}):
+        raise ValueError("duplicate OHLCV symbol/session after split normalization")
+    output.mkdir(parents=True,exist_ok=False)
+    csv_path=output/"pit_iex_daily_bars.csv"
+    with csv_path.open("w",newline="",encoding="utf-8") as f:
+        writer=csv.writer(f)
+        writer.writerow(("symbol","session","feed","close","volume"))
+        writer.writerows(rows)
+    bar_sha=hashlib.sha256(csv_path.read_bytes()).hexdigest()
+    coverage={s:sum(row[0]==s for row in rows) for s in symbols}
+    info={
+        "session":asof,"first_session_requested":begin,
+        "exported_at_utc":datetime.now(timezone.utc).isoformat(),
+        "snapshot_code_sha":manifest["code_sha"],
+        "input_config_sha256":hashlib.sha256(Path(base).read_bytes()).hexdigest(),
+        "source_cohort_hashes":cohort["source_hashes"],
+        "feed":"iex",
+        "adjustment":"split_adjusted_close_and_volume_alpaca_corporate_actions",
+        "bar_dataset_sha256":bar_sha,
+        "symbols_requested":len(symbols),"symbols_exported_with_bars":sum(v>0 for v in coverage.values()),
+        "rows":len(rows),
+        "coverage_by_symbol":coverage,
+        "network_monitor":monitor.to_dict(),
+        "limitations":[
+            "Split adjustment preserves dollar turnover but not dividend-adjusted returns.",
+            "ETF proxies are research approximations, not verified sector group assignments.",
+            "Single-day daily bars are not identical to Alpaca snapshot hard gate.",
+            "No post-decision bars; no forward returns or v2 policy promotion.",
+        ],
+    }
+    (output/"pit_bars_manifest.json").write_text(
+        json.dumps(info,indent=2,sort_keys=True)+"\n",encoding="utf-8"
+    )
+    return info
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot",required=True)
+    parser.add_argument("--config",required=True)
+    parser.add_argument("--out-dir",required=True)
+    parser.add_argument("--cohort-dir",default="data/research/generalized_v0")
+    args=parser.parse_args()
+    summary=export_bars(args.snapshot,args.config,args.out_dir,
+                        cohort_dir=args.cohort_dir)
+    print(json.dumps({
+        "dataset_sha256":summary["bar_dataset_sha256"],
+        "symbols_requested":summary["symbols_requested"],
+        "symbols_with_bars":summary["symbols_exported_with_bars"],
+        "rows":summary["rows"],
+        "out_dir":args.out_dir,
+    },indent=2))
+
+
+if __name__=="__main__":
+    main()
