@@ -153,6 +153,7 @@ def load_discovery_sources(paths: dict[str, str]) -> tuple[
         source_files.append({
             "source_kind": kind,
             "source_file": _jsonable_path(path),
+            "archived_file": "discovery_source_inputs/" + kind + ".csv",
             "sha256": sha256,
             "raw_rows": len(rows),
             "memberships": file_accepted,
