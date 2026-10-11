@@ -292,6 +292,9 @@ class ScanConfig:
     alpaca_cache_ttl_snapshots_sec: int = 120
     alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
+    # Opt-in, frozen multi-source discovery CSVs. None preserves exact legacy mode.
+    # Example: {"us_core": "path.csv", "thematic": "path.csv", "manual": "path.csv"}
+    discovery_source_files: dict[str, str] | None = None
     # Multi-theme engine: theme scans (configs/config.theme.*.json) read a
     # per-theme watchlist and MUST NOT archive it into
     # data/watchlist_history — those snapshots are the PIT record of the AI
@@ -737,6 +740,16 @@ class ScanConfig:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 err(name, "must be a non-empty string")
+        if self.discovery_source_files is not None:
+            files = self.discovery_source_files
+            if not isinstance(files, dict) or not files:
+                err("discovery_source_files", "must be null or non-empty object")
+            else:
+                for kind, path in files.items():
+                    if kind not in {"us_core", "thematic", "manual"}:
+                        err("discovery_source_files", "unknown source kind: " + str(kind))
+                    if not isinstance(path, str) or not path.strip():
+                        err("discovery_source_files", "paths must be non-empty strings")
         if self.benchmark_trend_filter_symbol is not None and (
             not isinstance(self.benchmark_trend_filter_symbol, str)
             or not self.benchmark_trend_filter_symbol.strip()
