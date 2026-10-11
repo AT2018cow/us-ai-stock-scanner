@@ -166,8 +166,28 @@ class TestGeneralizedResearch(unittest.TestCase):
             self.assertEqual(len(rows),62)
             self.assertEqual(len(liquidity),62)
             self.assertEqual(result["20session_turnover_coverage"],0)
+            self.assertEqual(sum(x["symbols"] for x in result["liquidity_by_group"]),62)
+            self.assertEqual(sum(x["symbols"] for x in result["entry_reference_diagnostics"]),62)
+            self.assertTrue(all(
+                x["aligned_60session_qqq_spy"] == 0
+                for x in result["entry_reference_diagnostics"]
+            ))
             self.assertTrue(any(x["specialized_accounting_review"] for x in result["groups"]))
             self.assertTrue(all(x["trailing_excess_20"] is None for x in entry))
+            # Same-sized, same-count membership corruption must not pass merely
+            # because the source files and aggregate counts have valid SHA256.
+            membership_file=root/"discovery_memberships.jsonl"
+            original_membership=membership_file.read_bytes()
+            corrupted=json.loads(original_membership.splitlines()[0])
+            corrupted["source_id"]="fabricated_source_id"
+            changed=[corrupted] + [json.loads(line) for line in original_membership.splitlines()[1:]]
+            write("discovery_memberships.jsonl",changed)
+            with self.assertRaisesRegex(ValueError,"diverge from frozen input CSV"):
+                audit(root,ROOT/COHORT)
+            membership_file.write_bytes(original_membership)
+            result,_,_,_=audit(root,ROOT/COHORT)
+            self.assertEqual(result["source_memberships"],75)
+
             archive_file=archive/"us_core.csv"
             archive_file.write_text("tampered",encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"corrupted"):
