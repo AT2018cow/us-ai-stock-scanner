@@ -99,7 +99,11 @@ is a *new proxy* and is **not** the scanner's snapshot dollar-volume field.
 No recommendation to lower/raise `$2m` may follow from a discrepancy.
 QQQ/SPY/industry results are backward-looking **trailing** relative
 observations, not predictions, forward returns, point-in-time v2 Entry
-state replays or statistically independent experiments. Industry ETF
+state replays or statistically independent experiments. **QQQ and SPY
+relative returns for each stock share a triple-intersection of stock/QQQ/SPY
+market sessions**, so absent SPY/QQQ observations cannot shift the comparison
+window silently; illustrative sector proxies use a separate stock/proxy
+intersection and must not be interpreted as the same calendar window. Industry ETF
 assignments are illustrative and not verified sector classifications.
 Open-source bars are raw from Alpaca then split-adjusted, but they are
 **not dividend-total-return adjusted**; note that limitation explicitly.
@@ -149,6 +153,13 @@ python scripts/research_generalized_selection.py audit \
   --bars-csv outputs/generalized_bars_v0/pit_iex_daily_bars.csv \
   --out-dir outputs/generalized_research_v0
 ```
+
+When optional bars are supplied, the audit **requires the original
+`pit_bars_manifest.json` beside the bar CSV** and checks byte SHA256,
+feed, market session, code SHA, config fingerprint, source cohort hashes,
+declared symbol count and row count before generating comparisons.
+A standalone unprovenanced market-data CSV is a **NO-GO** for the
+benchmark/liquidity results.
 
 The audit independently reloads the experiment config, compares the **raw JSON**
 byte-equivalent policy object to the frozen `configs/config.risk_off.json`
