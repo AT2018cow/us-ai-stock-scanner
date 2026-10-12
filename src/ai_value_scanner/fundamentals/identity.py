@@ -1,0 +1,50 @@
+"""Ticker-to-filing-entity identity verification (research + production).
+
+A Quality grade is only meaningful if the financial facts came from the
+right issuer. The SEC ticker map can point a symbol at a financing
+subsidiary (observed: XOM -> 0002115436 "ExxonMobil Holdings Corp", 34
+filings, no operating facts, while the operating company 0000034088 has
+1001 filings). A silent binding then scores the wrong entity — or, when
+facts are thin, hides behind generic missingness with no identity warning.
+
+``verify_operating_entity`` answers one question with no magnitude
+thresholds and no ticker hardcoding: does this filing entity verifiably
+represent the symbol's operating issuer?
+  - entity ticker list missing entirely -> (None, "no_submissions_info"):
+    no claim either way; downstream treats it like any absent flag.
+  - non-empty ticker list NOT containing the symbol -> (False,
+    "ticker_not_listed"): positive evidence of a wrong binding.
+  - zero filings -> (None, "no_filings_to_judge"): nothing to judge.
+  - no core operating facts (revenue / net income / operating cash flow)
+    despite filings -> (False, "core_facts_absent"): holding-company or
+    extraction shell, not ratable operating economics.
+  - otherwise -> (True, "ticker_listed_with_core_facts").
+
+Callers must treat False as identity-unverified: cap confidence below the
+rated threshold and surface an explicit missing code. Never silently bind.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+
+def verify_operating_entity(
+    symbol: str,
+    entity_tickers: Iterable[str] | None,
+    n_filings: int | None,
+    has_core_facts: bool | None,
+) -> tuple[bool | None, str]:
+    sym = str(symbol or "").strip().upper()
+    if entity_tickers is None:
+        return None, "no_submissions_info"
+    tickers = [str(t).strip().upper() for t in entity_tickers if str(t).strip()]
+    if tickers and sym not in tickers:
+        return False, "ticker_not_listed"
+    if n_filings is None or n_filings <= 0:
+        return None, "no_filings_to_judge"
+    if has_core_facts is False:
+        return False, "core_facts_absent"
+    if has_core_facts is True:
+        return True, "ticker_listed_with_core_facts"
+    return None, "no_submissions_info"

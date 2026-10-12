@@ -612,6 +612,26 @@ def build_company_quality_v1(
                 ),
             )
         )
+    if metrics.get("fundamental_operating_entity_verified") is False:
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="operating_entity_unverified",
+                label="Operating filing entity unverified",
+                polarity="missing",
+                metric="fundamental_operating_entity_detail",
+                value=metrics.get("fundamental_operating_entity_detail"),
+                threshold="ticker must map to the operating issuer with core facts",
+                message=(
+                    "The ticker->CIK binding does not verifiably represent the "
+                    "operating issuer (ticker absent from the entity filing "
+                    "record, or an entity with filings but no revenue, net "
+                    "income or operating-cash-flow facts). No reliable grade "
+                    "can be claimed; verify the filing entity before use."
+                ),
+            )
+        )
     if decision_dt is not None and data_dt is not None:
         if data_dt > decision_dt:
             raise ValueError(
