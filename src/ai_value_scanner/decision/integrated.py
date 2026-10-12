@@ -232,6 +232,8 @@ def build_stock_decisions(
         for key in (
             "watchlist_bucket",
             "watchlist_etfs",
+            "cik",
+            "filing_entity_name",
             "fundamental_latest_periodic_filing_date",
             "fundamental_latest_periodic_form",
             "fundamental_latest_periodic_accession",

@@ -68,6 +68,7 @@ from ai_value_scanner.fundamentals.reconstruction import (
     ttm_points_with_annual_fallback,
 )
 from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
+from ai_value_scanner.fundamentals.identity import verify_operating_entity
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
 from ai_value_scanner.features.ai_link import (
@@ -2516,7 +2517,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 7
+PARSED_FUND_CACHE_VERSION = 8
 
 
 def _parsed_fund_cache_meta(
@@ -2906,8 +2907,30 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     )
     # --- Cache the parsed result so the next run (or the scheduled refresher)
     # can skip the 4 MB JSON parse + TTM computation entirely.
+    # Filing-entity identity (XOM->subsidiary class): the ticker->CIK
+    # binding must verifiably represent the operating issuer. Uses the
+    # submissions ticker list plus core-fact presence; see
+    # fundamentals.identity. Never silently binds a wrong entity.
+    _entity_tickers_live = submissions.get("tickers") if isinstance(submissions, dict) else None
+    _entity_recent = (
+        ((submissions.get("filings") or {}).get("recent", {}) or {})
+        if isinstance(submissions, dict) else {}
+    )
+    fundamental_operating_entity_verified, fundamental_operating_entity_detail = (
+        verify_operating_entity(
+            symbol,
+            list(_entity_tickers_live) if isinstance(_entity_tickers_live, list) else None,
+            len(_entity_recent.get("accessionNumber", []) or []),
+            (revenue is not None) or (net_income is not None) or (ocf is not None),
+        )
+    )
     result = {
         "symbol": symbol,
+        "cik": cik,
+        "filing_entity_name": (
+            str(submissions.get("name") or "").strip() or None
+            if isinstance(submissions, dict) else None
+        ),
         "sic": str(sic) if sic is not None else None,
         "sic_description": sic_desc,
         "revenue": revenue,
@@ -2924,6 +2947,8 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "fundamental_facts_cover_latest_periodic": fundamental_facts_cover_latest_periodic,
         "fundamental_reporting_currency": fundamental_reporting_currency,
         "fundamental_currency_supported": fundamental_currency_supported,
+        "fundamental_operating_entity_verified": fundamental_operating_entity_verified,
+        "fundamental_operating_entity_detail": fundamental_operating_entity_detail,
         "fundamental_source": fundamental_source,
         "fundamental_edgartools_fallback_used": fallback_used,
         "fundamental_edgartools_fallback_status": fallback_status,
