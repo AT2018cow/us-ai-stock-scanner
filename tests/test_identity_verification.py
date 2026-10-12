@@ -53,10 +53,24 @@ class IdentityHelperTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(detail, "ticker_listed_with_core_facts")
 
-    def test_empty_ticker_list_falls_back_to_facts(self) -> None:
-        # Real-Exxon class: submissions carry no ticker list; facts decide.
-        ok, _ = verify_operating_entity("XOM", [], 1001, True)
+    def test_empty_ticker_list_with_facts_is_unverified_by_default(self) -> None:
+        # Review verdict: facts alone do not prove the CIK belongs to the
+        # symbol (legacy filers carry empty ticker lists).
+        ok, detail = verify_operating_entity("XOM", [], 1001, True)
+        self.assertFalse(ok)
+        self.assertEqual(detail, "ticker_binding_unproven")
+
+    def test_auditable_binding_evidence_restores_verified(self) -> None:
+        ok, detail = verify_operating_entity(
+            "XOM", [], 1001, True,
+            binding_evidence="asset_cik_crosscheck:2026-10-11")
         self.assertTrue(ok)
+        self.assertEqual(detail, "facts_with_binding_evidence")
+
+    def test_blank_binding_evidence_does_not_count(self) -> None:
+        ok, _ = verify_operating_entity("XOM", [], 1001, True,
+                                        binding_evidence="   ")
+        self.assertFalse(ok)
 
     def test_no_submissions_info_makes_no_claim(self) -> None:
         ok, detail = verify_operating_entity("SYM", None, 100, True)
