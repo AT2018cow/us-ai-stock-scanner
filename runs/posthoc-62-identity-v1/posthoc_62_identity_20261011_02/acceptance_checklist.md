@@ -1,0 +1,26 @@
+# Integration acceptance checklist
+
+- [PASS] XOM UNRATED
+- [PASS] XOM identity code
+- [PASS] XOM CIK trace
+- [PASS] XOM banner
+- [PASS] GS UNRATED
+- [PASS] GS no identity code
+- [PASS] JPM grade C shown
+- [PASS] JPM applicability caveat
+- [PASS] JPM no balance-sheet verdict
+- [PASS] ABBV token A in both
+- [PASS] ABBV token ENTRY_READY in both
+- [PASS] ABBV token PRIORITY_REVIEW in both
+- [PASS] ABBV token 2026-10-09 in both
+- [PASS] ABBV token 2026-08-03 in both
+- [PASS] AAPL state change rendered
+- [PASS] BREAKOUT honest
+- [PASS] 62 decisions == 62 detailed
+- [PASS] list has 15
+- [PASS] list/detail field agreement
+- [PASS] renderer deterministic
+- [PASS] entry.py byte-identical to main
+- [PASS] quality.py gate scoped
+- [PASS] integrated.py only provenance keys
+- [PASS] decision/ additive-only (no removed lines) — 0 removed lines

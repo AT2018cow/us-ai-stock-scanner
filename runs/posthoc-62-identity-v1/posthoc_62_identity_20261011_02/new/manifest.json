@@ -1,0 +1,111 @@
+{
+  "mode": "retrospective_posthoc_cohort",
+  "decision_date": "2026-10-09",
+  "cohort": "generalized_v0 frozen 62",
+  "n_symbols": 62,
+  "n_decisions": 62,
+  "regime": "up",
+  "qqq_trailing_60d": 0.0642131656113214,
+  "code_sha": "351154d7e860df0a02dbe7e90f85cd286bfcef0f",
+  "attention_cap": 15,
+  "source_hashes": {
+    "us_core": "256e0816a5fb34b1daca21ab4c2667b37be9f3daca22efd7018813abbb03a816",
+    "thematic": "e4a01f1befc46ea6e1d8879210c0b2034dd82242ca0c6cb96327b969dc1ae2e9",
+    "manual": "448a56c5ac110e6adc9a5e1b96abb13269e790ecac2ccecb19e988224375c9db"
+  },
+  "split_query_end": "2027-04-05",
+  "bars_start": "2025-08-06",
+  "monitor": {
+    "had_rate_limit_or_network_issue": false,
+    "stale_market_data_fallback_used": false,
+    "data_provenance": {
+      "alpaca": {
+        "bars": {
+          "counts": {
+            "fresh_cache": 1,
+            "cross_key_cache_enrichment": 71
+          },
+          "max_cache_age_sec": 5475.398233175278,
+          "latest_data_asof_utc": "2026-10-12T04:00:00Z",
+          "feed": "iex",
+          "degraded_reasons": [],
+          "last_observed_at_utc": "2026-10-12T18:43:32.720573+00:00",
+          "stale_fallback_used": false
+        },
+        "assets": {
+          "counts": {
+            "fresh_cache": 1
+          },
+          "max_cache_age_sec": 7799.185059785843,
+          "latest_data_asof_utc": null,
+          "feed": "iex",
+          "degraded_reasons": [],
+          "last_observed_at_utc": "2026-10-12T18:43:34.755950+00:00",
+          "stale_fallback_used": false
+        },
+        "snapshots": {
+          "counts": {
+            "network": 1
+          },
+          "max_cache_age_sec": null,
+          "latest_data_asof_utc": "2026-10-12T18:43:35.466730218Z",
+          "feed": "iex",
+          "degraded_reasons": [],
+          "last_observed_at_utc": "2026-10-12T18:43:35.827539+00:00",
+          "stale_fallback_used": false
+        }
+      }
+    },
+    "services": {
+      "alpaca": {
+        "requests_started": 2,
+        "responses": 2,
+        "http_2xx": 2,
+        "http_3xx": 0,
+        "http_4xx": 0,
+        "http_429": 0,
+        "http_5xx": 0,
+        "retries": 0,
+        "retry_429": 0,
+        "retry_5xx": 0,
+        "retry_other": 0,
+        "exceptions_total": 0,
+        "exceptions_timeout": 0,
+        "exceptions_connection": 0,
+        "exceptions_http_error": 0,
+        "exceptions_other": 0,
+        "limiter_wait_calls": 0,
+        "limiter_wait_seconds": 0.0,
+        "cache_hits": 303,
+        "cache_misses": 1,
+        "cache_hit_rate": 0.9967,
+        "had_rate_limit_or_network_issue": false
+      },
+      "sec": {
+        "requests_started": 61,
+        "responses": 61,
+        "http_2xx": 61,
+        "http_3xx": 0,
+        "http_4xx": 0,
+        "http_429": 0,
+        "http_5xx": 0,
+        "retries": 0,
+        "retry_429": 0,
+        "retry_5xx": 0,
+        "retry_other": 0,
+        "exceptions_total": 0,
+        "exceptions_timeout": 0,
+        "exceptions_connection": 0,
+        "exceptions_http_error": 0,
+        "exceptions_other": 0,
+        "limiter_wait_calls": 19,
+        "limiter_wait_seconds": 7.3625,
+        "cache_hits": 64,
+        "cache_misses": 60,
+        "cache_hit_rate": 0.5161,
+        "had_rate_limit_or_network_issue": false
+      }
+    }
+  },
+  "membership_note": "2026-10-11 roster is provenance only, not PIT membership"
+}
