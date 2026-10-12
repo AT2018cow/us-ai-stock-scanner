@@ -149,6 +149,25 @@ class ReportClarityTests(unittest.TestCase):
         for bad in BANNED + ("high confidence", "可靠"):
             self.assertNotIn(bad, detailed)
 
+    def test_breakout_has_no_single_chart_story(self) -> None:
+        # WATCH_BREAKOUT is a fallback bucket (weak-side, mildly extended,
+        # defensive-gated): the renderer must not narrate one basing pattern.
+        detailed = render_detailed_report(_decision(state=EntryState.WATCH_BREAKOUT))
+        self.assertIn("mixed remainder", detailed)
+        self.assertNotIn("basing around trend", detailed)
+
+    def test_missing_asof_never_displays_fresh(self) -> None:
+        decision = _decision(fund_asof=None,
+                             missing=(_ev("fundamental_data_asof_missing", "missing"),))
+        listed = render_action_list([decision])
+        self.assertIn("as-of MISSING", listed)
+        self.assertNotIn("Data state: fresh", listed)
+        self.assertIn("MISSING", listed)
+
+    def test_fresh_asof_still_displays_fresh(self) -> None:
+        listed = render_action_list([_decision()])
+        self.assertIn("Data state: fresh", listed)
+
     def test_banned_trade_language_absent_everywhere(self) -> None:
         decisions = ([_decision(), _bank_c(), _unrated(), _stale_identity()]
                      + [_decision(state=s) for s in EntryState])

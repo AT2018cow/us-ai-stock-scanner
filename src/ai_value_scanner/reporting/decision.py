@@ -79,8 +79,9 @@ _ENTRY_STATE_ONE_LINERS = {
         "the band."
     ),
     "WATCH_BREAKOUT": (
-        "Price is basing around trend without confirmation — neither "
-        "damaged nor ready; it needs a structural trigger before entry."
+        "A mixed remainder, not a single chart story: not damaged and not "
+        "overextended, but missing at least one readiness condition — read "
+        "the unmet conditions below instead of assuming a basing pattern."
     ),
     "TREND_DAMAGED": (
         "Price is below its long-term trend with weak momentum — the "
@@ -159,6 +160,13 @@ def _attention_flags(decision: StockDecision) -> list[str]:
         )
     if decision.entry.state.value == "INSUFFICIENT_DATA":
         flags.append("Entry evidence insufficient: no timing call can be made.")
+    if "market_asof_missing" in _codes(decision.entry.risks) or (
+        "fundamental_data_asof_missing" in _codes(decision.quality.missing)
+    ):
+        flags.append(
+            "Data as-of MISSING: a required date is absent, so freshness "
+            "cannot be verified — do not read this review as current."
+        )
     return flags
 
 
@@ -198,8 +206,9 @@ def _applicability_lines(decision: StockDecision) -> list[str]:
 
 
 def _data_state_lines(decision: StockDecision) -> list[str]:
-    state = "fresh"
-    if _codes(decision.quality.risks) & _SEVERE_STALE_CODES or _codes(
+    if decision.quality.data_asof is None or decision.entry.market_asof is None:
+        state = "as-of MISSING"
+    elif _codes(decision.quality.risks) & _SEVERE_STALE_CODES or _codes(
         decision.entry.risks
     ) & _SEVERE_STALE_CODES:
         state = "SEVERELY STALE"
@@ -208,6 +217,8 @@ def _data_state_lines(decision: StockDecision) -> list[str]:
         for c in (_codes(decision.quality.risks) | _codes(decision.entry.risks))
     ):
         state = "ageing"
+    else:
+        state = "fresh"
     if decision.quality.missing:
         state += f"; {len(decision.quality.missing)} missing evidence items"
     return [
