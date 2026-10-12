@@ -115,7 +115,7 @@ mkdir -p "$EXP/analysis"
 
 三份原有评估程序生成 `*_cohorts.csv`、`*_concentration.csv`、Quality 的 `*_rank_ic.csv`、Entry 的 `*_transitions.csv`/`*_persistence.csv`、Action 的 `*_compactness.csv` 等。**这些是 v1 基线，不等于 H1–H4 已完成。** 下节还需要研究者增加配对诊断和人工案例复核。
 
-## 4. 无可用 pre-strategy 历史集时：优先使用 Modal infi
+## 4. 无可用 pre-strategy 历史集时：优先使用 Modal at2018cow
 
 ### 4.1 为什么不直接重跑完整历史回测
 
@@ -329,7 +329,7 @@ runs/historical-selection-v1/<RUN_ID>/
 1. 数据究竟来自**旧 AI research universe、通用 US Core、手工研究**中的哪类；`membership PIT` 是真是近似；
 2. **实际 code SHA、config SHA、每个原始 CSV SHA**（不要只写分支名）；
 3. 最近一次完整的 **signal date** 和实际 **label_end**，哪些 120d 未成熟；
-4. Modal 工作区为 `infi`、具体 `run_id`、成功/失败、1× 重型容器、使用资源与异常；
+4. Modal 工作区为 `at2018cow`、具体 `run_id`、成功/失败、1× 重型容器、使用资源与异常；
 5. 生产 Quality/Entry/Action/IEX/流动性 gate 是否保持原样；
 6. 人工编辑过哪些衍生文件、哪些只能部分复核，以及所有失败和负面结果。
 
@@ -366,7 +366,7 @@ sha256sum -c SHA256SUMS
 
 - `git status` 非空、配置或 watchlist 冻结哈希对不上：**停**，不要用变更后的数据混跑。
 - `data/watchlist_history` 缺失：先盘点原始 PIT 资产；只靠今天 watchlist 可以做 post-hoc 诊断，不可宣称真正历史候选池。
-- Modal 提示 profile 错、Volume 未授权、密钥缺失：确认 **infi** workspace、授权和本地 `.env` 是否配置；**不要把密钥发给 reviewer**。
+- Modal 提示 profile 错、Volume 未授权、密钥缺失：确认 **at2018cow** workspace、授权和本地 `.env` 是否配置；**不要把密钥发给 reviewer**。
 - 出现 `_SUCCESS` 却数据缺失或原始文件哈希不同：标记为错误，禁止据此评分。
 - `unittest` 或评估脚本报错：先保存失败摘要、定位根因，不通过手改 CSV 绕过验证。
 - 只拿到公司基本面无 QQQ/SPY 可靠历史 bars：可以做 Quality 正确性/适用性诊断，Entry 相对强弱与前瞻效果分别 INCONCLUSIVE。
