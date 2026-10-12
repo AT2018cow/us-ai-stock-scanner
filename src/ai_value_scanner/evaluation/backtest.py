@@ -83,6 +83,54 @@ def fallback_label_end_date(signal_date: str, horizon: int) -> pd.Timestamp | No
     return dt + pd.Timedelta(days=days)
 
 
+def split_query_end_iso(end_dt: object, horizons: object) -> str:
+    """Corporate-action query end that covers every forward label.
+
+    Forward labels extend up to max(horizons) TRADING days past each signal
+    date. A split whose ex-date falls inside a holding window but after the
+    signal-window end must still be known: otherwise the pre-split entry and
+    the post-split exit are compared in different price spaces and the label
+    prints the split as a near-total loss (observed: BKNG 25:1 split
+    2026-04-06 with a 2026-03-31 query cap produced fwd_ret_120 ≈ -0.97;
+    KLAC 10:1 2026-06-12 produced ≈ -0.88). Capping the split query at the
+    signal-window end therefore corrupts exactly the labels that cross a
+    later split. Extend by the same calendar envelope used for label-end
+    purging so every label end is covered by construction.
+    """
+    try:
+        base = pd.Timestamp(end_dt)
+    except (TypeError, ValueError):
+        base = pd.Timestamp(datetime.now(timezone.utc))
+    try:
+        hs = [max(1, int(x)) for x in (horizons or [])]
+    except (TypeError, ValueError):
+        hs = []
+    days = int(math.ceil((max(hs) if hs else 120) * 7.0 / 5.0)) + 10
+    return (base + pd.Timedelta(days=days)).date().isoformat()
+
+
+def fetch_split_events_or_raise(client: object, symbols: list[str],
+                                start_iso: str, end_iso: str) -> dict:
+    """Fail-closed corporate-action fetch for research label production.
+
+    An unavailable splits endpoint must abort the extract instead of
+    emitting unadjusted forward labels: a single missed split inside a
+    holding window prints as a near-total loss or windfall (BKNG/KLAC
+    class) and silently corrupts every downstream cohort. Callers must
+    not catch this exception to continue unadjusted.
+    """
+    try:
+        result = client.get_corporate_action_splits(  # type: ignore[union-attr]
+            symbols, start_iso, end_iso)
+    except Exception as exc:
+        raise RuntimeError(
+            "corporate-actions split fetch failed "
+            f"({exc.__class__.__name__}); refusing to emit unadjusted "
+            "forward labels"
+        ) from exc
+    return result or {}
+
+
 def forward_return(
     price_frame: pd.DataFrame,
     signal_date: str,
