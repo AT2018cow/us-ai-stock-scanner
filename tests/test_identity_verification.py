@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import unittest
 
+import pandas as pd
+
+from ai_value_scanner.decision.integrated import build_stock_decisions
 from ai_value_scanner.decision.quality import build_company_quality_v1
 from ai_value_scanner.fundamentals.identity import verify_operating_entity
 
@@ -97,6 +100,45 @@ class IdentityQualityGateTests(unittest.TestCase):
                      fundamental_operating_entity_detail="ticker_not_listed"),
             decision_date="2026-10-09")
         self.assertEqual(d.grade.value, "UNRATED")
+
+    def test_explicit_unknown_is_conservative_not_silent(self) -> None:
+        # Checked-but-unconfirmable bindings cap like False ...
+        d = build_company_quality_v1(
+            _metrics(fundamental_operating_entity_verified=None,
+                     fundamental_operating_entity_detail="no_submissions_info"),
+            decision_date="2026-10-09")
+        codes = [e.code for e in d.missing]
+        self.assertIn("operating_entity_unverified", codes)
+        self.assertLessEqual(d.confidence, 0.49)
+        self.assertEqual(d.grade.value, "UNRATED")
+
+    def test_absent_flag_keeps_legacy_behavior(self) -> None:
+        # ... while legacy rows without the key are untouched.
+        d = build_company_quality_v1(_metrics(), decision_date="2026-10-09")
+        codes = [e.code for e in d.missing]
+        self.assertNotIn("operating_entity_unverified", codes)
+
+
+class IdentityProvenanceTests(unittest.TestCase):
+    def test_cik_and_filing_entity_reach_decision_provenance(self) -> None:
+        frame = pd.DataFrame([{
+            "symbol": "XOM",
+            "company_name": "ExxonMobil Holdings Corp",
+            "cik": "0002115436",
+            "filing_entity_name": "ExxonMobil Holdings Corp",
+            "fundamental_operating_entity_verified": False,
+            "fundamental_operating_entity_detail": "core_facts_absent",
+        }])
+        decisions = build_stock_decisions(
+            frame, decision_date="2026-10-09",
+            generated_at_utc="2026-10-11T00:00:00+00:00")
+        self.assertEqual(len(decisions), 1)
+        prov = decisions[0].provenance
+        self.assertEqual(prov.get("cik"), "0002115436")
+        self.assertEqual(prov.get("filing_entity_name"), "ExxonMobil Holdings Corp")
+        self.assertEqual(decisions[0].quality.grade.value, "UNRATED")
+        self.assertIn("operating_entity_unverified",
+                      [e.code for e in decisions[0].quality.missing])
 
 
 if __name__ == "__main__":

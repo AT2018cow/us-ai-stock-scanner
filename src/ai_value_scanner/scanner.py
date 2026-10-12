@@ -2517,7 +2517,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 7
+PARSED_FUND_CACHE_VERSION = 8
 
 
 def _parsed_fund_cache_meta(
@@ -2926,6 +2926,11 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     )
     result = {
         "symbol": symbol,
+        "cik": cik,
+        "filing_entity_name": (
+            str(submissions.get("name") or "").strip() or None
+            if isinstance(submissions, dict) else None
+        ),
         "sic": str(sic) if sic is not None else None,
         "sic_description": sic_desc,
         "revenue": revenue,

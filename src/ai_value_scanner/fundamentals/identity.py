@@ -22,6 +22,10 @@ represent the symbol's operating issuer?
 
 Callers must treat False as identity-unverified: cap confidence below the
 rated threshold and surface an explicit missing code. Never silently bind.
+An explicit None (checked but unconfirmable, e.g. submissions unavailable)
+is treated conservatively the same way by the Quality gate; an ABSENT flag
+(legacy data predating this check) keeps the old behavior so historical
+frames are never retroactively penalized.
 """
 
 from __future__ import annotations

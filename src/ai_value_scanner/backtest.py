@@ -242,6 +242,9 @@ class FundamentalPointInTime:
     # recent-filings count. See fundamentals.identity.
     entity_tickers: tuple[str, ...] | None = None
     entity_n_filings: int = 0
+    # Filing-entity display name from submissions (traceability only;
+    # never used for scoring or matching).
+    entity_name: str | None = None
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -1288,6 +1291,10 @@ def load_symbol_fundamental_pti(
     _recent = ((submissions.get("filings") or {}).get("recent", {}) or {}) \
         if isinstance(submissions, dict) else {}
     _entity_n_filings = len(_recent.get("accessionNumber", []) or [])
+    _entity_name = (
+        str(submissions.get("name") or "").strip() or None
+        if isinstance(submissions, dict) else None
+    )
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -1317,6 +1324,7 @@ def load_symbol_fundamental_pti(
         nonrecurring_gain_facts=nonrecurring_gain_facts,
         entity_tickers=_entity_tickers,
         entity_n_filings=int(_entity_n_filings),
+        entity_name=_entity_name,
     )
     return symbol, f
 
@@ -2381,6 +2389,8 @@ def build_cross_section_asof(
                 "name": getattr(row, "name", None),
                 "exchange": getattr(row, "exchange", None),
                 "company_name": getattr(row, "company_name", None),
+                "cik": getattr(row, "cik", None),
+                "filing_entity_name": getattr(f, "entity_name", None),
                 "sic": f.sic,
                 "sic_description": f.sic_description,
                 "fundamental_operating_entity_verified": _operating_entity_verified,

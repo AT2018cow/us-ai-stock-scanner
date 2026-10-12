@@ -612,7 +612,15 @@ def build_company_quality_v1(
                 ),
             )
         )
-    if metrics.get("fundamental_operating_entity_verified") is False:
+    # Filing-entity identity: False means positively unverified; an
+    # explicitly-None flag means the binding was checked but cannot be
+    # confirmed (e.g. submissions unavailable) and is treated conservatively
+    # the same way. An ABSENT key is legacy data predating the check and
+    # keeps the old behavior, so historical frames are never retroactively
+    # penalized.
+    _entity_flag_present = "fundamental_operating_entity_verified" in metrics
+    _entity_flag = metrics.get("fundamental_operating_entity_verified")
+    if _entity_flag is False or (_entity_flag_present and _entity_flag is None):
         data_integrity_blocked = True
         confidence = min(confidence, 0.49)
         missing.append(
@@ -626,9 +634,10 @@ def build_company_quality_v1(
                 message=(
                     "The ticker->CIK binding does not verifiably represent the "
                     "operating issuer (ticker absent from the entity filing "
-                    "record, or an entity with filings but no revenue, net "
-                    "income or operating-cash-flow facts). No reliable grade "
-                    "can be claimed; verify the filing entity before use."
+                    "record, an entity with filings but no revenue, net "
+                    "income or operating-cash-flow facts, or an unchecked "
+                    "binding). No reliable grade can be claimed; verify the "
+                    "filing entity before use."
                 ),
             )
         )
