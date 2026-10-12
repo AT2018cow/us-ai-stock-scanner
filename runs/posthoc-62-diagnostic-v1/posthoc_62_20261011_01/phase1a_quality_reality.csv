@@ -1,0 +1,41 @@
+quality_grade,metric,n,median,p25,p75
+A,net margin,6888,0.1396,0.0863,0.2177
+A,FCF yield,6888,0.0451,0.0285,0.0706
+A,revenue YoY,6885,0.0988,0.0385,0.1679
+A,net debt / EBITDA,6888,-0.0809,-0.9076,1.1015
+A,interest coverage,5864,15.3584,8.1108,50.5205
+A,current ratio,6870,1.7288,1.2367,2.6858
+A,accrual ratio,6870,-0.0836,-0.1688,-0.0243
+A,OCF / net income,6888,1.3311,1.0948,1.7969
+A,quality score,6888,0.8067,0.7642,0.8542
+A,quality confidence,6888,1.0,0.9667,1.0
+B,net margin,9082,0.097,0.0314,0.1732
+B,FCF yield,8811,0.0345,0.0115,0.0675
+B,revenue YoY,9065,0.0718,-0.0087,0.1725
+B,net debt / EBITDA,8504,0.4427,-0.8217,2.5216
+B,interest coverage,6672,4.8573,2.4023,13.6517
+B,current ratio,8464,1.5208,1.0031,2.5677
+B,accrual ratio,8464,-0.1618,-0.3412,-0.0453
+B,OCF / net income,9152,1.5016,0.8224,2.345
+B,quality score,9152,0.63,0.5675,0.6875
+B,quality confidence,9152,0.9667,0.9,1.0
+C,net margin,6751,-0.0841,-0.3851,0.0211
+C,FCF yield,6844,-0.0053,-0.0564,0.0214
+C,revenue YoY,6549,0.0967,-0.0308,0.2743
+C,net debt / EBITDA,6644,1.4472,-0.026,5.2326
+C,interest coverage,4795,-4.3858,-28.9704,1.1709
+C,current ratio,6721,1.928,1.0956,3.8206
+C,accrual ratio,6721,-0.2462,-0.4431,-0.1074
+C,OCF / net income,7163,0.1621,-0.7892,0.9549
+C,quality score,7163,0.4233,0.3517,0.4758
+C,quality confidence,7163,0.9333,0.8667,0.9667
+UNRATED,net margin,4,-0.4675,-28.5526,-0.4675
+UNRATED,FCF yield,18,-0.008,-0.0234,-0.0066
+UNRATED,revenue YoY,0,,,
+UNRATED,net debt / EBITDA,123,0.1824,0.0029,1.1978
+UNRATED,interest coverage,4,-191.2366,-191.2366,-142.005
+UNRATED,current ratio,336,1.6054,0.7215,4.8934
+UNRATED,accrual ratio,119,0.4541,-0.0653,11.2055
+UNRATED,OCF / net income,120,-0.0414,-0.4373,0.2423
+UNRATED,quality score,1822,0.08,0.0,0.1
+UNRATED,quality confidence,1822,0.1,0.0667,0.1667
