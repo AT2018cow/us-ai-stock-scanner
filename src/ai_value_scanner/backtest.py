@@ -41,6 +41,7 @@ from ai_value_scanner.fundamentals.reconstruction import (
 from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
+from ai_value_scanner.fundamentals.identity import verify_operating_entity
 from ai_value_scanner.features.ai_link import (
     ai_etf_consensus_score,
     ai_market_link_score,
@@ -235,6 +236,15 @@ class FundamentalPointInTime:
     fact_records: dict[str, list[FactRecord]] = field(default_factory=dict)
     nonrecurring_expense_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
     nonrecurring_gain_facts: dict[str, list[FactRecord]] = field(default_factory=dict)
+    # Filing-entity identity evidence, stashed at load time so the
+    # cross-section can verify the ticker->CIK binding without a client:
+    # raw ticker list from submissions (None when unavailable) and the
+    # recent-filings count. See fundamentals.identity.
+    entity_tickers: tuple[str, ...] | None = None
+    entity_n_filings: int = 0
+    # Filing-entity display name from submissions (traceability only;
+    # never used for scoring or matching).
+    entity_name: str | None = None
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -1270,6 +1280,21 @@ def load_symbol_fundamental_pti(
             )
         )
 
+    # Filing-entity identity evidence for fundamentals.identity: raw ticker
+    # list (None when the submissions payload carries none) plus the
+    # recent-filings depth. A wrong-entity binding (subsidiary CIK) must be
+    # detectable downstream without another network call.
+    _sub_tickers = submissions.get("tickers") if isinstance(submissions, dict) else None
+    _entity_tickers = (
+        tuple(str(t) for t in _sub_tickers) if isinstance(_sub_tickers, list) else None
+    )
+    _recent = ((submissions.get("filings") or {}).get("recent", {}) or {}) \
+        if isinstance(submissions, dict) else {}
+    _entity_n_filings = len(_recent.get("accessionNumber", []) or [])
+    _entity_name = (
+        str(submissions.get("name") or "").strip() or None
+        if isinstance(submissions, dict) else None
+    )
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -1297,6 +1322,9 @@ def load_symbol_fundamental_pti(
         fact_records=fact_records,
         nonrecurring_expense_facts=nonrecurring_expense_facts,
         nonrecurring_gain_facts=nonrecurring_gain_facts,
+        entity_tickers=_entity_tickers,
+        entity_n_filings=int(_entity_n_filings),
+        entity_name=_entity_name,
     )
     return symbol, f
 
@@ -2336,6 +2364,24 @@ def build_cross_section_asof(
             ai_market_score=ai_market_score,
             ai_backlog_signal=ai_backlog_signal,
         )
+        # Filing-entity identity: the ticker->CIK binding must verifiably
+        # represent the operating issuer (XOM->subsidiary class). Usable
+        # reconstructed values — not raw record existence — decide: a
+        # holding entity can carry record shells without measurable
+        # operating economics.
+        _core_present = (
+            (revenue is not None)
+            or (net_income is not None)
+            or (operating_cash_flow is not None)
+        )
+        _operating_entity_verified, _operating_entity_detail = (
+            verify_operating_entity(
+                symbol,
+                getattr(f, "entity_tickers", None),
+                getattr(f, "entity_n_filings", 0),
+                _core_present,
+            )
+        )
 
         rows.append(
             {
@@ -2343,8 +2389,12 @@ def build_cross_section_asof(
                 "name": getattr(row, "name", None),
                 "exchange": getattr(row, "exchange", None),
                 "company_name": getattr(row, "company_name", None),
+                "cik": getattr(row, "cik", None),
+                "filing_entity_name": getattr(f, "entity_name", None),
                 "sic": f.sic,
                 "sic_description": f.sic_description,
+                "fundamental_operating_entity_verified": _operating_entity_verified,
+                "fundamental_operating_entity_detail": _operating_entity_detail,
                 "price": price_feat["price"],
                 "dollar_volume": price_feat["dollar_volume"],
                 "drawdown_from_52w_high": price_feat["drawdown_from_52w_high"],
