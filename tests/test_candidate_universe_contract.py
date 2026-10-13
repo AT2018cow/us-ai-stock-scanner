@@ -257,5 +257,30 @@ class TestCandidateUniverseSnapshotContract(unittest.TestCase):
             )
 
 
+class TestFilingCikCoalesce(unittest.TestCase):
+    def test_filing_side_wins_and_no_suffixed_columns_remain(self) -> None:
+        from ai_value_scanner.scanner import _coalesce_filing_cik
+
+        frame = pd.DataFrame(
+            {
+                "symbol": ["A", "B", "C"],
+                "cik": ["0000000001", "0000000002", "0000000003"],
+                "cik_filing": ["0000000099", None, ""],
+            }
+        )
+        out = _coalesce_filing_cik(frame)
+        self.assertEqual(out["cik"].tolist(), ["0000000099", "0000000002", "0000000003"])
+        self.assertNotIn("cik_filing", out.columns)
+        self.assertNotIn("cik_x", out.columns)
+        self.assertNotIn("cik_y", out.columns)
+
+    def test_absent_filing_column_is_noop(self) -> None:
+        from ai_value_scanner.scanner import _coalesce_filing_cik
+
+        frame = pd.DataFrame({"symbol": ["A"], "cik": ["0000000001"]})
+        out = _coalesce_filing_cik(frame)
+        self.assertEqual(out["cik"].tolist(), ["0000000001"])
+
+
 if __name__ == "__main__":
     unittest.main()
