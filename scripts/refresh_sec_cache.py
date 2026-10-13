@@ -1,77 +1,101 @@
-"""Scheduled SEC cache refresher: pre-warm submissions + companyfacts once daily.
+"""Client-side scheduled SEC prewarm: refresh, parse, verify cache for the next scan.
 
-EDGAR accepts filings 6:00-22:00 ET weekdays (nothing arrives 22:00-06:00 ET).
-A single daily refresh after the 22:00 ET cutoff — e.g. 22:30 ET / 02:30 UTC —
-covers every filing available at the daily run (01:33 ET), so the run reads
-the cache with zero downloads.
+Runs on the same machine and cache directory as the scanner; NOT a Modal job.
+Failures are reported, never hidden behind a fresh-looking parsed-cache mtime.
+Only validated parsed results are counted as ready; existing files are preserved
+until the canonical parser atomically replaces them.
 
-Design:
-- Covers the union of all watchlist universes (main + 5 themes + 5 ventures).
-- Skip-if-fresh: submissions cache files newer than --max-age-hours are left
-  alone, so extra invocations are no-ops.
-- Companyfacts uses the same incremental rule as live runs (refetch only when
-  the fresh submissions show a newer filing).
-- Cache writes are atomic (tmp + rename) so a concurrent daily_run can never
-  read a torn file.
-
-Typical crontab (system TZ = UTC+8; 10:30 local = 22:30 ET = 02:30 UTC):
-    30 10 * * *  cd <repo> && .venv/bin/python scripts/refresh_sec_cache.py \
+Example crontab when the machine timezone is Asia/Singapore:
+    30 11 * * * cd <repo> && .venv/bin/python scripts/refresh_sec_cache.py \
         >> .debug_logs/sec_refresh_cron.log 2>&1
+
+11:30 SGT is 23:30 EDT or 22:30 EST, after the 22:00 ET EDGAR intake
+cutoff. Allow enough time for this foreground task to FINISH before scanning.
+SEC propagation and publication can lag; the latest facts may remain pending.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
 from pathlib import Path
+from typing import Any, Callable
 
 import pandas as pd
+import requests
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_value_scanner.backtest import load_sec_client  # noqa: E402
 from ai_value_scanner.scanner import (  # noqa: E402
     NetworkMonitor,
     RequestRateLimiter,
     ScanConfig,
-    build_session,
+    SecClient,
     load_config,
     load_one_fundamental,
+    load_valid_parsed_fundamental_cache,
 )
 
-# Retry policy for the nightly burst: EDGAR throttles sustained sessions
-# with HTTP 403 even at modest rates. Production evidence (2026-10-13):
-# a long-lived session accumulates 403s that burn the full backoff schedule
-# and still fail, while the SAME CIKs succeed instantly from a parallel
-# fresh session. I.e. the throttle flag sticks to the session, so each
-# retry must rotate to a new session (new TCP connections) to recover.
-# Retry only transient network/server/throttle errors, never data bugs.
 RETRYABLE_STATUS = frozenset({403, 408, 429, 500, 502, 503, 504})
-MAX_ATTEMPTS = 5
-BACKOFF_SCHEDULE_SEC = (5.0, 15.0, 30.0, 60.0)
-CIRCUIT_CONSECUTIVE_FAILS = 10
-CIRCUIT_PAUSE_SEC = 180.0
+THROTTLE_STATUS = frozenset({403, 429})
+MAX_TRANSIENT_ATTEMPTS = 3
+MAX_THROTTLE_ATTEMPTS = 2
+TRANSIENT_BACKOFF_SEC = (5.0, 15.0)
+THROTTLE_COOLDOWN_SEC = 180.0
+MAX_THROTTLE_COOLDOWN_SEC = 1800.0
+MAX_CONSECUTIVE_FAILURES = 5
+
+
+class SecThrottleCircuitOpen(RuntimeError):
+    """Stop the whole job rather than cycling sessions around SEC throttling."""
+
+
+def _http_status(exc: BaseException) -> int | None:
+    if not isinstance(exc, requests.HTTPError):
+        return None
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    import requests
+    return isinstance(exc, (requests.ConnectionError, requests.Timeout)) or (
+        _http_status(exc) in RETRYABLE_STATUS
+    )
 
-    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
-        return True
-    status = getattr(getattr(exc, "response", None), "status_code", None)
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    response = getattr(exc, "response", None)
+    raw = response.headers.get("Retry-After") if response is not None else None
+    if not raw:
+        return None
     try:
-        return exc.__class__.__name__ == "HTTPError" and int(status or 0) in RETRYABLE_STATUS
+        delay = float(raw)
+        return max(0.0, delay) if delay < float("inf") else None
     except (TypeError, ValueError):
-        return False
+        # HTTP-date Retry-After is uncommon here; fail closed by stopping
+        # rather than retrying before an unknown server-requested deadline.
+        raise SecThrottleCircuitOpen("SEC Retry-After is not a numeric delay") from exc
 
 
-def _load_with_retry(load_fn, symbol, cik, cfg, *, sleep=time.sleep,
-                     on_retry=None):
-    """Call load_fn(symbol, cik, cfg) with bounded retries. Returns (ok, attempts).
+def _load_with_retry(
+    load_fn: Callable[..., Any],
+    symbol: str,
+    cik: str,
+    cfg: ScanConfig,
+    *,
+    sleep: Callable[[float], Any] = time.sleep,
+    on_retry: Callable[[BaseException], None] | None = None,
+) -> tuple[bool, int]:
+    """Retry transport/5xx modestly; one global-cooldown retry for 403/429.
 
-    on_retry, if given, is called with the caught retryable exception before
-    each backoff sleep (lets the caller rotate a throttled session first).
+    A repeated 403/429 opens the circuit. Never rotate sessions on an HTTP
+    throttle; the user agent and rate/policy need attention, not fresh sockets.
     """
     attempts = 0
     while True:
@@ -79,20 +103,38 @@ def _load_with_retry(load_fn, symbol, cik, cfg, *, sleep=time.sleep,
         try:
             load_fn(symbol, cik, cfg)
             return True, attempts
-        except Exception as exc:  # noqa: BLE001 - classified below
-            if not _is_retryable(exc) or attempts >= MAX_ATTEMPTS:
+        except Exception as exc:  # noqa: BLE001 - explicit classification
+            if not _is_retryable(exc):
                 raise
-            if on_retry is not None:
-                on_retry(exc)
-            index = min(attempts - 1, len(BACKOFF_SCHEDULE_SEC) - 1)
-            delay = BACKOFF_SCHEDULE_SEC[index] + random.uniform(0, 2.0)
-            sleep(delay)
-    return False, attempts  # unreachable
-
-
-def _circuit_pause_sec(pauses: int) -> float:
-    """Escalating pause for host-level throttle episodes (cap 30 min)."""
-    return min(CIRCUIT_PAUSE_SEC * (2.0 ** max(0, pauses)), 1800.0)
+            status = _http_status(exc)
+            if status in THROTTLE_STATUS:
+                if attempts >= MAX_THROTTLE_ATTEMPTS:
+                    raise SecThrottleCircuitOpen(
+                        f"SEC HTTP {status} persisted after a global cooldown "
+                        f"(CIK {cik}); aborting refresh"
+                    ) from exc
+                delay = max(
+                    THROTTLE_COOLDOWN_SEC,
+                    _retry_after_seconds(exc) or 0.0,
+                )
+                if delay > MAX_THROTTLE_COOLDOWN_SEC:
+                    raise SecThrottleCircuitOpen(
+                        f"SEC requested {delay:.0f}s Retry-After; aborting "
+                        "rather than holding or retrying too soon"
+                    ) from exc
+                sleep(delay)
+            else:
+                if attempts >= MAX_TRANSIENT_ATTEMPTS:
+                    raise
+                if (
+                    on_retry is not None
+                    and isinstance(exc, (requests.ConnectionError, requests.Timeout))
+                ):
+                    on_retry(exc)
+                delay = TRANSIENT_BACKOFF_SEC[
+                    min(attempts - 1, len(TRANSIENT_BACKOFF_SEC) - 1)
+                ] + random.uniform(0, 2.0)
+                sleep(delay)
 
 
 def log(msg: str) -> None:
@@ -100,162 +142,196 @@ def log(msg: str) -> None:
     print(f"[sec_refresh {stamp}] {msg}", flush=True)
 
 
-def collect_symbols(repo: Path) -> tuple[list[str], list[str]]:
-    """Union of all watchlist universes. Returns (symbols, source_files)."""
+def collect_symbols(repo: Path, cfg: ScanConfig) -> tuple[list[str], list[str]]:
+    """Existing local watchlists plus configured opt-in US Core/Manual sources."""
     import glob
 
+    raw_files = [str(repo / cfg.watchlist_csv_path)]
+    raw_files += sorted(glob.glob(str(repo / "data" / "theme_watchlist_*.csv")))
+    raw_files += sorted(glob.glob(str(repo / "data" / "venture_watchlist_*.csv")))
+    for value in (cfg.discovery_source_files or {}).values():
+        source_path = Path(value)
+        raw_files.append(str(source_path if source_path.is_absolute() else repo / source_path))
+    files = list(dict.fromkeys(raw_files))
     symbols: set[str] = set()
-    files: list[str] = [str(repo / "data" / "ai_watchlist.csv")]
-    files += sorted(glob.glob(str(repo / "data" / "theme_watchlist_*.csv")))
-    files += sorted(glob.glob(str(repo / "data" / "venture_watchlist_*.csv")))
-    for path in files:
-        f = Path(path)
-        if not f.exists():
+    for name in files:
+        file_path = Path(name)
+        if not file_path.exists():
+            log(f"WARNING: source missing: {file_path}")
             continue
         try:
-            df = pd.read_csv(f)
+            frame = pd.read_csv(file_path)
+            if "symbol" not in frame.columns:
+                log(f"WARNING: source lacks symbol column: {file_path}")
+                continue
+            symbols.update(
+                str(s).strip().upper() for s in frame["symbol"].dropna().tolist()
+                if str(s).strip()
+            )
         except Exception as exc:
-            log(f"WARNING: {f.name}: {exc}")
-            continue
-        if "symbol" not in df.columns:
-            continue
-        symbols.update(df["symbol"].dropna().astype(str).str.upper())
+            log(f"WARNING: cannot read {file_path}: {type(exc).__name__}: {exc}")
     return sorted(symbols), files
 
 
+def refresh_symbols(
+    symbols: list[str],
+    mapped: dict[str, str],
+    sec: SecClient,
+    cfg: ScanConfig,
+    *,
+    max_age_sec: float,
+    conflicting: set[str] | None = None,
+    sleep: Callable[[float], Any] = time.sleep,
+) -> dict[str, Any]:
+    """Prewarm on one client and cache; return an honest run summary.
+
+    Reuses the scanner's exact raw/identity/content-sha/TTL eligibility test.
+    Nothing is deleted before a network fetch: cache writes stay atomic in
+    load_one_fundamental; invalid or pending facts are never called refreshed.
+    """
+    summary: dict[str, Any] = {
+        "total": len(symbols), "refreshed": 0, "skipped_valid": 0,
+        "no_cik": [], "conflicted": [], "failed": 0, "incomplete": 0,
+        "retried_ok": 0, "aborted": False,
+    }
+    conflicts = conflicting or set()
+    consecutive_failures = 0
+    t0 = time.monotonic()
+
+    def rotate_transport_session(exc: BaseException) -> None:
+        # Only a transport error can justify changing broken TCP connections.
+        # Crucially, the SEC limiter and frozen ticker map remain on the SAME
+        # SecClient across the swap, and 403/429 never trigger this callback.
+        old_session = sec.session
+        sec.session = requests.Session()
+        old_session.close()
+        log(f"transport session renewed after {type(exc).__name__}")
+
+    for index, symbol in enumerate(symbols, 1):
+        cik = mapped.get(symbol)
+        if symbol in conflicts:
+            summary["conflicted"].append(symbol)
+            continue
+        if not cik:
+            summary["no_cik"].append(symbol)
+            continue
+        valid = load_valid_parsed_fundamental_cache(
+            sec, symbol, cik, cfg, max_age_sec=max_age_sec
+        )
+        if valid is not None:
+            summary["skipped_valid"] += 1
+            continue
+        try:
+            _, attempts = _load_with_retry(
+                lambda s, c, config: load_one_fundamental(
+                    sec, s, c, config, force_refresh_parsed=True
+                ),
+                symbol, cik, cfg, sleep=sleep, on_retry=rotate_transport_session,
+            )
+            # A successful function return does not guarantee persistence:
+            # companyfacts can lag a recent accession and intentionally
+            # suppress the parsed write. Count it as INCOMPLETE, not success.
+            valid = load_valid_parsed_fundamental_cache(
+                sec, symbol, cik, cfg, max_age_sec=max_age_sec
+            )
+            if valid is None:
+                summary["incomplete"] += 1
+                summary["failed"] += 1
+                consecutive_failures += 1
+                log(f"WARNING: {symbol} CIK {cik}: no eligible parsed cache "
+                    "(pending facts, missing cache, or provenance mismatch)")
+            else:
+                summary["refreshed"] += 1
+                consecutive_failures = 0
+                if attempts > 1:
+                    summary["retried_ok"] += 1
+        except SecThrottleCircuitOpen as exc:
+            summary["failed"] += 1
+            summary["aborted"] = True
+            log(f"CIRCUIT OPEN: {exc}")
+            break
+        except Exception as exc:
+            summary["failed"] += 1
+            consecutive_failures += 1
+            log(f"WARNING: {symbol} CIK {cik}: {type(exc).__name__}: {exc}")
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            log(f"CIRCUIT OPEN: {consecutive_failures} consecutive failures; "
+                "aborting rather than repeatedly contacting SEC")
+            summary["aborted"] = True
+            break
+        if index % 100 == 0 or index == len(symbols):
+            elapsed = time.monotonic() - t0
+            log(
+                f"progress {index}/{len(symbols)} "
+                f"refreshed={summary['refreshed']} valid_skips={summary['skipped_valid']} "
+                f"failed={summary['failed']} incomplete={summary['incomplete']} "
+                f"retried_ok={summary['retried_ok']} elapsed={elapsed / 60:.1f}m"
+            )
+    return summary
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pre-warm the SEC submissions/companyfacts cache.")
+    parser = argparse.ArgumentParser(description="Client-side SEC parsed-cache prewarm.")
     parser.add_argument("--config", default="configs/config.risk_off.json")
-    parser.add_argument("--max-age-hours", type=float, default=20.0,
-                        help="Skip a submission file if its cache is younger than this (hours).")
-    parser.add_argument("--limit", type=int, default=0, help="Optional cap for smoke tests.")
+    parser.add_argument("--max-age-hours", type=float, default=20.0)
+    parser.add_argument("--limit", type=int, default=0, help="Optional smoke-test cap")
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
-    started = time.monotonic()
+    load_dotenv(repo / ".env")
+    user_agent = os.getenv("SEC_USER_AGENT", "").strip()
+    if not user_agent:
+        parser.error("SEC_USER_AGENT is required (set it in repo/.env or the cron environment)")
+    if not 0 < args.max_age_hours <= 24:
+        parser.error("--max-age-hours must be >0 and <=24")
     cfg: ScanConfig = load_config(args.config)
+    if cfg.sec_cache_ttl_submissions_sec <= 0:
+        parser.error("sec_cache_ttl_submissions_sec must be positive for scan-side parsed-cache reuse")
+
+    started = time.monotonic()
     monitor = NetworkMonitor()
-    import os
-
-    max_age_sec = args.max_age_hours * 3600.0
-
-    from ai_value_scanner.scanner import SecClient
-
-    def make_sec() -> "SecClient":
-        return SecClient(
-            session=build_session(),
-            user_agent=os.getenv("SEC_USER_AGENT", "").strip(),
-            timeout_sec=cfg.request_timeout_sec,
-            cache_dir=Path(cfg.cache_dir),
-            request_limiter=RequestRateLimiter(cfg.sec_max_requests_per_sec, monitor=monitor, service_name="sec"),
-            monitor=monitor,
-            # Use the script's max-age as the submissions TTL: if the daily run
-            # already fetched submissions within max_age, reuse the cache (no
-            # network) and only do the CPU-heavy parsing + parsed-cache write.
-            submissions_ttl_sec=int(max_age_sec),
+    sec = SecClient(
+        session=requests.Session(),  # No hidden HTTPAdapter retries bypassing the limiter.
+        user_agent=user_agent,
+        timeout_sec=cfg.request_timeout_sec,
+        cache_dir=Path(cfg.cache_dir),
+        request_limiter=RequestRateLimiter(
+            cfg.sec_max_requests_per_sec, monitor=monitor, service_name="sec"
+        ),
+        monitor=monitor,
+        submissions_ttl_sec=int(args.max_age_hours * 3600),
+    )
+    try:
+        symbols, sources = collect_symbols(repo, cfg)
+        if args.limit and args.limit > 0:
+            symbols = symbols[:args.limit]
+        if not symbols:
+            log("ERROR: no symbols found; check configured client watchlists")
+            sys.exit(1)
+        log(f"client SEC prewarm: {len(sources)} files / {len(symbols)} symbols")
+        snapshot = sec.ticker_map_snapshot()  # frozen across session renewals
+        frame = snapshot["frame"]
+        mapped = frame.set_index("symbol")["cik"].to_dict() if not frame.empty else {}
+        summary = refresh_symbols(
+            symbols, mapped, sec, cfg, max_age_sec=args.max_age_hours * 3600,
+            conflicting=set(snapshot["conflicts"]),
         )
-
-    sec = make_sec()
-    # Mutable holder so the retry path can rotate a throttled session
-    # without rebinding the closure used by load_one_fundamental.
-    client = {"sec": sec}
-
-    def rotate_session(exc: BaseException | None = None) -> None:
-        try:
-            client["sec"].session.close()
-        except Exception:  # noqa: BLE001 - best effort; GC reclaims the rest
-            pass
-        client["sec"] = make_sec()
-        reason = f"after {type(exc).__name__}" if exc is not None else "(proactive)"
-        log(f"session rotated {reason}")
-
-    symbols, sources = collect_symbols(repo)
-    if args.limit and args.limit > 0:
-        symbols = symbols[: args.limit]
-    if not symbols:
-        log("no symbols found — check data/ watchlists")
-        sys.exit(1)
-    log(f"universes: {len(sources)} files -> {len(symbols)} symbols")
-
-    mapping = sec.ticker_mapping()
-    mapped = mapping.set_index("symbol")["cik"].to_dict() if not mapping.empty else {}
-
-    now = time.time()
-    refreshed, skipped, no_cik, failed = 0, 0, [], 0
-    retried_ok, circuit_pauses, consec_fails = 0, 0, 0
-    t0 = time.monotonic()
-
-    for i, symbol in enumerate(symbols, 1):
-        cik = mapped.get(symbol)
-        if not cik:
-            no_cik.append(symbol)
-            continue
-        # Proactive rotation: EDGAR flags sessions with 403s after only a
-        # handful of symbols (production 2026-10-13: a fresh session often
-        # 403s within ~3 symbols). Cycling connections every 10 symbols keeps
-        # sessions small; the reactive retry path covers the rest. Kept at 10
-        # rather than lower to avoid rapid session cycling looking abusive.
-        if i % 10 == 0:
-            rotate_session()
-        # Skip check is based on the PARSED cache age (the actual deliverable),
-        # not the submissions cache age. A fresh submissions cache without a
-        # parsed cache still needs processing (the daily run fetched the raw
-        # data but the parsed result was never computed).
-        parsed_path = Path(cfg.cache_dir) / f"parsed_fund_{cik}.json"
-        if parsed_path.exists() and now - parsed_path.stat().st_mtime < max_age_sec:
-            skipped += 1
-        else:
-            try:
-                # Delete any stale parsed cache so load_one_fundamental
-                # recomputes from the fresh submissions/companyfacts and
-                # writes a new parsed cache for the daily run to consume.
-                if parsed_path.exists():
-                    parsed_path.unlink()
-                # Fetches submissions + companyfacts (incremental via the
-                # script's own TTL=max_age), parses the 4 MB JSON, computes
-                # TTM/YoY/quality, and writes parsed_fund_{cik}.json.
-                # Transient EDGAR throttling (403/429/5xx around the
-                # publication cutoff) is retried with backoff + session
-                # rotation; data bugs fail fast.
-                ok, attempts = _load_with_retry(
-                    lambda s, c, g: load_one_fundamental(client["sec"], s, c, g),
-                    symbol, cik, cfg,
-                    on_retry=rotate_session,
-                )
-                if attempts > 1:
-                    retried_ok += 1
-                refreshed += 1
-                consec_fails = 0
-            except Exception as exc:
-                failed += 1
-                consec_fails += 1
-                log(f"WARNING: {symbol} (CIK {cik}): {type(exc).__name__}: {exc}")
-                # Circuit breaker: a streak of consecutive failures means a
-                # throttle episode, not bad symbols. Pausing once is cheaper
-                # than burning the full backoff schedule on every symbol.
-                # Skipped during --limit smoke runs to keep them fast.
-                if (consec_fails >= CIRCUIT_CONSECUTIVE_FAILS
-                        and not (args.limit and args.limit > 0)):
-                    pause = _circuit_pause_sec(circuit_pauses)
-                    log(f"CIRCUIT: {consec_fails} consecutive failures; "
-                        f"pausing {pause:.0f}s")
-                    time.sleep(pause)
-                    circuit_pauses += 1
-                    consec_fails = 0
-        if i % 100 == 0 or i == len(symbols):
-            elapsed = time.monotonic() - t0
-            log(f"progress {i}/{len(symbols)} | refreshed={refreshed} skipped={skipped} "
-                f"failed={failed} retried_ok={retried_ok} pauses={circuit_pauses} "
-                f"({elapsed / max(1, i) * len(symbols) / 60:.1f} min projected)")
-
-    elapsed = time.monotonic() - started
-    log(f"done in {elapsed / 60:.1f} min | refreshed={refreshed} skipped={skipped} "
-        f"no_cik={len(no_cik)} failed={failed} retried_ok={retried_ok} pauses={circuit_pauses}")
-    if no_cik:
-        log(f"WARNING: symbols without SEC mapping (excluded from refresh): "
-            f"{', '.join(no_cik[:20])}{'...' if len(no_cik) > 20 else ''}")
-    if failed and refreshed == 0:
-        sys.exit(1)
+        log(
+            f"done in {(time.monotonic() - started)/60:.1f}m "
+            f"refreshed={summary['refreshed']} valid_skips={summary['skipped_valid']} "
+            f"no_cik={len(summary['no_cik'])} conflicts={len(summary['conflicted'])} "
+            f"failed={summary['failed']} incomplete={summary['incomplete']} "
+            f"retried_ok={summary['retried_ok']} aborted={summary['aborted']}"
+        )
+        if summary["no_cik"]:
+            log(f"WARNING: unmapped symbols: {', '.join(summary['no_cik'][:20])}")
+        if summary["conflicted"]:
+            log(f"ERROR: mapping conflict symbols: {', '.join(summary['conflicted'][:20])}")
+        if summary["failed"] or summary["aborted"] or summary["conflicted"]:
+            sys.exit(1)
+    finally:
+        sec.session.close()
 
 
 if __name__ == "__main__":

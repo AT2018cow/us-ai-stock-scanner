@@ -1348,11 +1348,9 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        # Atomic write: a concurrent daily_run reading this file while the
-        # scheduled cache refresher overwrites it must never see a torn write.
-        tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, cache_path)
+        # Use a per-process/thread temporary path: two independent local
+        # processes (cron + scanner) must not collide on the same .tmp file.
+        _atomic_write_json(cache_path, payload)
         return payload
 
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
@@ -1413,13 +1411,10 @@ class SecClient:
                         if latest_accn not in cached_text:
                             need_fetch = True
                         else:
-                            meta_tmp = meta_path.with_suffix(".tmp")
-                            meta_tmp.write_text(
-                                json.dumps(
-                                    {"covered_accession": latest_accn, "pending_accession": None}
-                                )
+                            _atomic_write_json(
+                                meta_path,
+                                {"covered_accession": latest_accn, "pending_accession": None},
                             )
-                            os.replace(meta_tmp, meta_path)
                     if not need_fetch:
                         subs = json.loads(subs_path.read_text())
                         filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
@@ -1441,9 +1436,7 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, cache_path)
+        _atomic_write_json(cache_path, payload)
         # Record which accession the freshly downloaded facts actually cover
         # (or mark pending when the API lags behind submissions).
         if latest_accn:
@@ -1456,9 +1449,7 @@ class SecClient:
             else:
                 new_meta = {"covered_accession": None, "pending_accession": latest_accn}
             try:
-                meta_tmp = meta_path.with_suffix(".tmp")
-                meta_tmp.write_text(json.dumps(new_meta))
-                os.replace(meta_tmp, meta_path)
+                _atomic_write_json(meta_path, new_meta)
             except Exception:
                 pass  # metadata failure must not break the fetch
         return payload
@@ -2749,18 +2740,24 @@ def _facts_accession_state(cache_dir: str | Path, cik: str) -> tuple[str | None,
     )
 
 
-def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConfig) -> dict[str, Any]:
-    # --- Pre-parsed cache: the scheduled refresher (or a previous run) has
-    # already downloaded the raw submissions/companyfacts, parsed the 4 MB
-    # JSON, computed all TTM/YoY/quality metrics, and cached the RESULT.
-    # Reading this ~3 KB file skips the entire GIL-bound parse+compute chain
-    # (the dominant cost of the SEC step: ~40-45 min for 535 symbols).
-    # Invalidation: TTL (as before) AND binding to the config fingerprint
-    # plus the raw submissions version (D01): a cache computed with
-    # different TTM/cap settings, or before the latest filing, must not be
-    # served.
+def load_valid_parsed_fundamental_cache(
+    sec: SecClient,
+    symbol: str,
+    cik: str,
+    config: ScanConfig,
+    *,
+    max_age_sec: float | None = None,
+) -> dict[str, Any] | None:
+    """Use the exact same parsed-cache eligibility test for scans and cron.
+
+    max_age_sec can make cron require fresher results than a live scanner, but
+    cannot override the scanner's TTL, raw-content, identity or facts checks.
+    This helper does not mutate files or fetch SEC submissions/companyfacts.
+    """
     parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
     parsed_ttl = float(config.sec_cache_ttl_submissions_sec)
+    if max_age_sec is not None:
+        parsed_ttl = min(parsed_ttl, max(0.0, float(max_age_sec)))
     # Only trust the parsed cache when the raw submissions cache is also
     # present: the parsed result is derived from submissions + companyfacts,
     # so a parsed cache without its raw sources is meaningless (e.g. unit
@@ -2810,6 +2807,26 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                     return cached
             except Exception:
                 pass  # corrupt cache → fall through to the slow path
+    return None
+
+
+def load_one_fundamental(
+    sec: SecClient, symbol: str, cik: str, config: ScanConfig,
+    *, force_refresh_parsed: bool = False,
+) -> dict[str, Any]:
+    # --- Pre-parsed cache: the scheduled refresher (or a previous run) has
+    # already downloaded the raw submissions/companyfacts, parsed the 4 MB
+    # JSON, computed all TTM/YoY/quality metrics, and cached the RESULT.
+    # Reading this ~3 KB file skips the entire GIL-bound parse+compute chain
+    # (the dominant cost of the SEC step: ~40-45 min for 535 symbols).
+    # Invalidation: TTL (as before) AND binding to the config fingerprint
+    # plus the raw submissions version (D01): a cache computed with
+    # different TTM/cap settings, or before the latest filing, must not be
+    # served.
+    if not force_refresh_parsed:
+        cached = load_valid_parsed_fundamental_cache(sec, symbol, cik, config)
+        if cached is not None:
+            return cached
 
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
