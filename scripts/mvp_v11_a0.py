@@ -15,16 +15,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quality-dataset", required=True)
     parser.add_argument("--entry-dataset", required=True)
+    parser.add_argument("--quality-meta", default=None, help="Metadata file matching quality CSV")
+    parser.add_argument("--entry-meta", default=None, help="Metadata file matching entry CSV")
     parser.add_argument("--output", required=True, help="Local audit JSON path (not raw data)")
     args = parser.parse_args()
     out = Path(args.output)
     if out.exists():
         raise SystemExit(f"refusing to overwrite existing audit: {out}")
     quality = inspect_frozen_dataset(
-        args.quality_dataset, expected_kind="company_quality"
+        args.quality_dataset, expected_kind="company_quality", metadata=args.quality_meta
     )
     entry = inspect_frozen_dataset(
-        args.entry_dataset, expected_kind="entry_quality"
+        args.entry_dataset, expected_kind="entry_quality", metadata=args.entry_meta
     )
     result = {
         "stage": "A0 structural data gate, not baseline parity",
