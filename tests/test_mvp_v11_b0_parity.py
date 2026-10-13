@@ -63,7 +63,8 @@ class TestB0ArchivedReconciliation(unittest.TestCase):
             dataset, ranking, compact, reference_decisions=rows
         )
         self.assertEqual(verdict["verdict"], "B0_FULL_REFERENCE_PARITY_PASS")
-        self.assertTrue(verdict["ready_for_candidate_returns"])
+        self.assertTrue(verdict["baseline_parity_pass"])
+        self.assertFalse(verdict["ready_for_candidate_returns"])
         self.assertTrue(issues.empty)
         self.assertEqual(aggregates.iloc[0]["n_eligible"], 2)
 
@@ -85,6 +86,17 @@ class TestB0ArchivedReconciliation(unittest.TestCase):
         self.assertEqual(report["verdict"], "B0_MISMATCH_STOP")
         self.assertFalse(report["ready_for_candidate_returns"])
         self.assertIn("entry_score", set(issues["field"]))
+
+    def test_archived_empty_codes_parsed_as_nan_do_not_mismatch(self) -> None:
+        dataset = _rows()
+        ranking, compact, rows = _reference(dataset)
+        for field in ("quality_risk_codes", "entry_risk_codes"):
+            rows.loc[0, field] = pd.NA
+        report, _, issues = compare_b0(
+            dataset, ranking, compact, reference_decisions=rows
+        )
+        self.assertEqual(report["verdict"], "B0_FULL_REFERENCE_PARITY_PASS")
+        self.assertTrue(issues.empty)
 
     def test_reference_missing_date_blocks(self) -> None:
         dataset = _rows()
