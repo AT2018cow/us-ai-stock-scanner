@@ -1348,11 +1348,9 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        # Atomic write: a concurrent daily_run reading this file while the
-        # scheduled cache refresher overwrites it must never see a torn write.
-        tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, cache_path)
+        # Use a per-process/thread temporary path: two independent local
+        # processes (cron + scanner) must not collide on the same .tmp file.
+        _atomic_write_json(cache_path, payload)
         return payload
 
     def get_companyfacts(self, cik: str) -> dict[str, Any]:
@@ -1413,13 +1411,10 @@ class SecClient:
                         if latest_accn not in cached_text:
                             need_fetch = True
                         else:
-                            meta_tmp = meta_path.with_suffix(".tmp")
-                            meta_tmp.write_text(
-                                json.dumps(
-                                    {"covered_accession": latest_accn, "pending_accession": None}
-                                )
+                            _atomic_write_json(
+                                meta_path,
+                                {"covered_accession": latest_accn, "pending_accession": None},
                             )
-                            os.replace(meta_tmp, meta_path)
                     if not need_fetch:
                         subs = json.loads(subs_path.read_text())
                         filing_dates = (subs.get("filings", {}).get("recent", {}) or {}).get("filingDate", [])
@@ -1441,9 +1436,7 @@ class SecClient:
             return {}
         resp.raise_for_status()
         payload = resp.json()
-        tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, cache_path)
+        _atomic_write_json(cache_path, payload)
         # Record which accession the freshly downloaded facts actually cover
         # (or mark pending when the API lags behind submissions).
         if latest_accn:
@@ -1456,9 +1449,7 @@ class SecClient:
             else:
                 new_meta = {"covered_accession": None, "pending_accession": latest_accn}
             try:
-                meta_tmp = meta_path.with_suffix(".tmp")
-                meta_tmp.write_text(json.dumps(new_meta))
-                os.replace(meta_tmp, meta_path)
+                _atomic_write_json(meta_path, new_meta)
             except Exception:
                 pass  # metadata failure must not break the fetch
         return payload
