@@ -10,13 +10,15 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from ai_value_scanner.scanner import (
-    RequestRateLimiter, SecClient, _submissions_latest_relevant_filing,
+    RequestRateLimiter, SecClient, ScanConfig, load_one_fundamental,
+    _submissions_latest_relevant_filing,
 )
 from refresh_sec_cache import record_pending_streaks, _pending_accession
 
@@ -97,6 +99,68 @@ class PendingDateTests(unittest.TestCase):
             self.assertIsNone(_pending_accession(root, cik))
             factsmeta.write_text('{"pending_accession":"OTHER","covered_accession":null}')
             self.assertIsNone(_pending_accession(root, cik))
+
+
+
+class ColdWriteHitTests(unittest.TestCase):
+    def test_actual_parser_cold_write_then_same_policy_cache_hit(self):
+        """The first load writes; the second must not call SEC raw readers."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cik = "0000320193"
+            periodic = "PERIODIC-1"
+            subs = {"filings": {"recent": {
+                "form": ["4", "10-Q"],
+                "filingDate": ["2026-10-08", "2026-07-30"],
+                "accessionNumber": ["FORM4-2", periodic],
+            }}}
+            (root / f"submissions_{cik}.json").write_text(json.dumps(subs))
+            (root / f"facts_{cik}.json").write_text('{"facts":{}}')
+            (root / f"facts_meta_{cik}.json").write_text(
+                json.dumps({"covered_accession": periodic, "pending_accession": None})
+            )
+            parsed = root / f"parsed_fund_{cik}.json"
+            cfg = ScanConfig(cache_dir=td)
+
+            class FakeSec:
+                def __init__(self):
+                    self.calls = []
+
+                def ticker_map_snapshot(self):
+                    self.calls.append("map")
+                    return {"sha256": "stable-map"}
+
+                def get_submissions(self, cik):
+                    self.calls.append("submissions")
+                    return subs
+
+                def get_companyfacts(self, cik):
+                    self.calls.append("facts")
+                    return {"facts": {}}
+
+            sec = FakeSec()
+            self.assertFalse(parsed.exists())
+            # Synthetic facts do not contain a financial accession. Suppress
+            # the unrelated EdgarTools network fallback for this unit test.
+            with patch(
+                "ai_value_scanner.scanner.fetch_usd_10q_companyfacts_patch",
+                return_value=SimpleNamespace(status="not_needed", used=False),
+            ):
+                first = load_one_fundamental(sec, "AAPL", cik, cfg)
+            self.assertEqual(first["symbol"], "AAPL")
+            self.assertTrue(parsed.exists(), "cold parse should write a parsed cache")
+            meta = json.loads(parsed.read_text())["_cache_meta"]
+            self.assertEqual(meta["latest_accession"], periodic)
+            self.assertEqual(meta["facts_covered_accession"], periodic)
+            self.assertIn("submissions", sec.calls)
+            self.assertIn("facts", sec.calls)
+
+            sec.calls.clear()
+            second = load_one_fundamental(sec, "AAPL", cik, cfg)
+            self.assertEqual(second["symbol"], "AAPL")
+            self.assertEqual(second["fundamental_operating_entity_verified"],
+                             first["fundamental_operating_entity_verified"])
+            self.assertEqual(sec.calls, ["map"])
 
 
 if __name__ == "__main__":
