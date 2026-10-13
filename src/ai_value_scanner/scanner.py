@@ -15,7 +15,7 @@ from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -69,6 +69,10 @@ from ai_value_scanner.fundamentals.reconstruction import (
 )
 from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 from ai_value_scanner.fundamentals.identity import verify_operating_entity
+from ai_value_scanner.fundamentals.provenance import (
+    canonical_json_bytes,
+    sha256_hex,
+)
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
 from ai_value_scanner.features.ai_link import (
@@ -1161,6 +1165,9 @@ class SecClient:
         self.submissions_ttl_sec = max(0, int(submissions_ttl_sec))
         self.monitor = monitor
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Run-scoped ticker->CIK snapshot (memoized per client instance so one
+        # scan can never mix two different mappings; see ticker_map_snapshot).
+        self._ticker_map_memo: dict[str, Any] | None = None
 
     def _get(self, url: str) -> requests.Response:
         self.request_limiter.wait()
@@ -1227,35 +1234,95 @@ class SecClient:
         return pd.DataFrame(rows)
 
     def ticker_mapping(self) -> pd.DataFrame:
-        url = "https://www.sec.gov/files/company_tickers.json"
-        primary_exc: Exception | None = None
-        try:
-            resp = self._get(url)
-            resp.raise_for_status()
-            raw = resp.json()
-            rows = []
-            for row in raw.values():
-                rows.append(
-                    {
-                        "symbol": row["ticker"].upper(),
-                        "cik": str(row["cik_str"]).zfill(10),
-                        "company_name": row["title"],
-                    }
-                )
-            out = pd.DataFrame(rows)
-            if not out.empty:
-                return out
-        except Exception as exc:
-            primary_exc = exc
+        """Ticker->CIK frame for this client's run-scoped snapshot."""
+        return self.ticker_map_snapshot()["frame"].copy()
 
-        fallback = self._ticker_mapping_from_cached_submissions()
-        if not fallback.empty:
-            return fallback
-        if primary_exc is not None:
-            raise RuntimeError(
-                "Failed to load SEC ticker mapping from both network and local submissions cache."
-            ) from primary_exc
-        return fallback
+    def ticker_map_snapshot(self) -> dict[str, Any]:
+        """Frozen ticker->CIK snapshot: one fetch per client, shared by all callers.
+
+        A scan must never mix two different mappings (e.g. across a TTL
+        boundary mid-run), so the first call freezes frame bytes + metadata
+        on the instance and every later call reuses them. ``sha256`` covers
+        the canonical content bytes (raw network payload, or canonical JSON
+        for the submissions-cache fallback) — never fetch timestamps.
+        ``fetched_utc`` is the true network fetch time, or None when derived
+        locally; ``read_utc`` stamps each snapshot read instead.
+        """
+        if self._ticker_map_memo is None:
+            url = "https://www.sec.gov/files/company_tickers.json"
+            primary_exc: Exception | None = None
+            try:
+                resp = self._get(url)
+                resp.raise_for_status()
+                raw_bytes = bytes(resp.content or b"")
+                raw = resp.json()
+                rows = []
+                for row in raw.values():
+                    rows.append(
+                        {
+                            "symbol": row["ticker"].upper(),
+                            "cik": str(row["cik_str"]).zfill(10),
+                            "company_name": row["title"],
+                        }
+                    )
+                frame = pd.DataFrame(rows)
+                if frame.empty:
+                    raise ValueError("empty SEC ticker mapping payload")
+                self._ticker_map_memo = {
+                    "frame": frame,
+                    "raw_bytes": raw_bytes,
+                    "source": "network",
+                    "fetched_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:
+                primary_exc = exc
+                fallback = self._ticker_mapping_from_cached_submissions()
+                if fallback.empty:
+                    if primary_exc is not None:
+                        raise RuntimeError(
+                            "Failed to load SEC ticker mapping from both network and local submissions cache."
+                        ) from primary_exc
+                    raise RuntimeError("Failed to load SEC ticker mapping.")
+                self._ticker_map_memo = {
+                    "frame": fallback,
+                    "raw_bytes": None,
+                    "source": "fallback_submissions_cache",
+                    "fetched_utc": None,
+                }
+        memo = self._ticker_map_memo
+        frame = memo["frame"]
+        raw_bytes = memo["raw_bytes"]
+        if raw_bytes is None:
+            slim = frame.reindex(columns=["symbol", "cik", "company_name"])
+            records = [
+                {"symbol": str(r[0]), "cik": str(r[1]), "company_name": str(r[2])}
+                for r in sorted(
+                    slim.itertuples(index=False),
+                    key=lambda t: (str(t[0]), str(t[1])),
+                )
+            ]
+            content_bytes = canonical_json_bytes(records)
+        else:
+            content_bytes = raw_bytes
+        conflicts: dict[str, list[str]] = {}
+        if not frame.empty and {"symbol", "cik"} <= set(frame.columns):
+            grouped = frame.assign(
+                symbol=frame["symbol"].astype(str).str.strip().str.upper(),
+                cik=frame["cik"].astype(str).str.strip(),
+            )
+            for symbol, group in grouped.groupby("symbol"):
+                ciks = sorted({str(v) for v in group["cik"].tolist() if str(v)})
+                if len(ciks) > 1:
+                    conflicts[str(symbol)] = ciks
+        return {
+            "frame": frame,
+            "source": memo["source"],
+            "sha256": sha256_hex(content_bytes),
+            "fetched_utc": memo["fetched_utc"],
+            "read_utc": datetime.now(timezone.utc).isoformat(),
+            "n_rows": int(len(frame)),
+            "conflicts": conflicts,
+        }
 
     def get_submissions(self, cik: str) -> dict[str, Any]:
         cache_path = self.cache_dir / f"submissions_{cik}.json"
@@ -2285,6 +2352,12 @@ def collect_candidates_with_universe_audit(
     merged = merged[
         ["symbol", "name", "exchange", "cik", "company_name"]
     ].drop_duplicates(subset=["symbol"])
+    # Restrict to eligible symbols: without this, mapping-side rows that
+    # failed classification (e.g. multi-CIK conflicts) would flow into
+    # snapshots through the inner merge above. Eligible already filters the
+    # asset side; this line closes the mapping side. No-op otherwise.
+    if eligible_symbols is not None:
+        merged = merged[merged["symbol"].isin(eligible_symbols)].copy()
 
     symbols = merged["symbol"].tolist()
     snapshots = alpaca.get_snapshots(symbols, config.chunk_size)
@@ -2514,10 +2587,13 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
         "nonrecurring_addback_revenue_cap": config.nonrecurring_addback_revenue_cap,
         "ai_link_disclosure_keyword_cap": config.ai_link_disclosure_keyword_cap,
         "ai_link_backlog_ratio_cap": config.ai_link_backlog_ratio_cap,
+        # Identity/provenance inputs change scoring eligibility (fail-closed
+        # gates), so they version the cache like any financial computation.
+        "identity_provenance_version": 2,
     }
 
 
-PARSED_FUND_CACHE_VERSION = 8
+PARSED_FUND_CACHE_VERSION = 9
 
 
 def _parsed_fund_cache_meta(
@@ -2525,6 +2601,7 @@ def _parsed_fund_cache_meta(
     latest_filing: str | None,
     latest_accession: str | None = None,
     facts_covered_accession: str | None = None,
+    ticker_map_sha: str | None = None,
 ) -> dict[str, object]:
     return {
         "v": PARSED_FUND_CACHE_VERSION,
@@ -2532,7 +2609,33 @@ def _parsed_fund_cache_meta(
         "latest_filing": latest_filing,
         "latest_accession": latest_accession,
         "facts_covered_accession": facts_covered_accession,
+        "ticker_map_sha": ticker_map_sha,
     }
+
+
+def identity_payload_ready(
+    payload: Mapping[str, Any] | None,
+    *,
+    current_map_sha: str | None,
+    recorded_map_sha: str | None,
+) -> bool:
+    """One identity-validity predicate for every cache path.
+
+    Network-fresh, raw-cache-hit and parsed-cache-hit payloads all pass
+    through this single check, so no path can silently serve identity
+    evidence the others would reject: both identity keys must be present
+    and the recorded ticker-map SHA must equal the run's current map SHA.
+    Legacy payloads without the keys fail here (recompute); they are never
+    treated as validated by TTL alone.
+    """
+    if not isinstance(payload, Mapping):
+        return False
+    if ("fundamental_operating_entity_verified" not in payload
+            or "fundamental_operating_entity_detail" not in payload):
+        return False
+    if recorded_map_sha is None or current_map_sha is None:
+        return False
+    return str(recorded_map_sha) == str(current_map_sha)
 
 
 def _submissions_latest_filing(subs_cache: Path) -> str | None:
@@ -2587,6 +2690,14 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
     # tests with fake data write parsed caches under fake CIKs).
     subs_cache = Path(config.cache_dir) / f"submissions_{cik}.json"
     if parsed_ttl > 0 and parsed_path.exists() and subs_cache.exists():
+        # Current run-scoped ticker map (memoized: one network fetch per
+        # process at most). A hit is only valid under the SAME map the
+        # payload was computed with — never by TTL alone.
+        current_map_sha: str | None = None
+        try:
+            current_map_sha = sec.ticker_map_snapshot().get("sha256")
+        except Exception:
+            current_map_sha = None
         age = time.time() - parsed_path.stat().st_mtime
         if age <= parsed_ttl:
             try:
@@ -2606,6 +2717,11 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                     and meta.get("latest_accession") == latest_accession
                     and meta.get("facts_covered_accession") == facts_covered
                     and facts_ready
+                    and identity_payload_ready(
+                        cached,
+                        current_map_sha=current_map_sha,
+                        recorded_map_sha=meta.get("ticker_map_sha"),
+                    )
                 ):
                     cached.pop("_cache_meta", None)
                     cached["symbol"] = symbol  # defensive: match caller expectation
@@ -3030,11 +3146,16 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
             # ahead of SecClient's pending-accession retry loop.
             if facts_ready:
                 cache_payload = dict(result)
+                try:
+                    write_map_sha = sec.ticker_map_snapshot().get("sha256")
+                except Exception:
+                    write_map_sha = None
                 cache_payload["_cache_meta"] = _parsed_fund_cache_meta(
                     config,
                     latest_filing,
                     latest_accession,
                     facts_covered,
+                    ticker_map_sha=write_map_sha,
                 )
                 parsed_tmp = parsed_path.with_suffix(".tmp")
                 parsed_tmp.write_text(json.dumps(cache_payload, default=str))
@@ -4336,6 +4457,15 @@ def run_scan(
                     report.get("stale_market_data_fallback_used")
                 ),
                 "market_data_provenance": report.get("data_provenance", {}),
+                # Run-scoped ticker->CIK snapshot (memoized: identical bytes
+                # to the mapping used for universe eligibility above).
+                "ticker_map": {
+                    key: snapshot_map.get(key)
+                    for key in (
+                        "source", "sha256", "fetched_utc", "read_utc",
+                        "n_rows", "conflicts",
+                    )
+                } if (snapshot_map := sec.ticker_map_snapshot()) else {},
             },
         )
         decision_snapshot_root = decision_paths.root

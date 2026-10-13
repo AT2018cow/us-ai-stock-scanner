@@ -25,7 +25,25 @@ from ai_value_scanner.decision.universe import (
     SAMPLE_STAGE,
     SEC_MAPPING_MISSING,
     SEC_MAPPING_STAGE,
+    SEC_TICKER_CIK_CONFLICT,
 )
+
+# validator reason registry (module-level so tests can pin it): every
+# exclusion reason_code produced anywhere must map to its stage here,
+# or snapshots carrying it fail closed. Keep in sync with
+# decision/universe.py reason constants.
+EXCLUSION_REASON_TO_STAGE = {
+    ACTIVE_ASSET_MISSING: ASSET_STAGE,
+    NOT_TRADABLE: ASSET_STAGE,
+    EXCHANGE_NOT_ENABLED: ASSET_STAGE,
+    SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
+    SEC_TICKER_CIK_CONFLICT: SEC_MAPPING_STAGE,
+    SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
+    PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
+    PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+    DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
+    DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+}
 from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
@@ -189,17 +207,9 @@ def validate_snapshot(
             errors.append(
                 "candidate_universe contract_version does not match current contract"
             )
-        reason_to_stage = {
-            ACTIVE_ASSET_MISSING: ASSET_STAGE,
-            NOT_TRADABLE: ASSET_STAGE,
-            EXCHANGE_NOT_ENABLED: ASSET_STAGE,
-            SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
-            SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
-            PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
-            PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
-            DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
-            DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
-        }
+        # New exclusion reasons must be registered here AND in
+        # decision/universe.py, or snapshots carrying them fail closed.
+        reason_to_stage = EXCLUSION_REASON_TO_STAGE
 
         exclusion_symbols: list[str] = []
         for index, item in enumerate(universe_exclusions, start=1):
