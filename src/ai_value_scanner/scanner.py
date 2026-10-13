@@ -68,9 +68,13 @@ from ai_value_scanner.fundamentals.reconstruction import (
     ttm_points_with_annual_fallback,
 )
 from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
-from ai_value_scanner.fundamentals.identity import verify_operating_entity
+from ai_value_scanner.fundamentals.identity import (
+    downgrade_on_hard_findings,
+    verify_operating_entity,
+)
 from ai_value_scanner.fundamentals.provenance import (
     canonical_json_bytes,
+    check_entity_coherence,
     fingerprint_effective_values,
     sha256_hex,
 )
@@ -3118,6 +3122,35 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
             (revenue is not None) or (net_income is not None) or (ocf is not None),
         )
     )
+    # Hard coherence findings (response-CIK mismatch, ticker hard
+    # mismatch) override any passing verdict above: a wrong-entity payload
+    # with core facts must still fail closed through the existing Quality
+    # gate. Findings ride along in the detail string for the audit trail.
+    try:
+        _latest_relevant = (latest_periodic_filing(submissions)
+                            if isinstance(submissions, dict) else None)
+        _relevant_accessions = (
+            [str(_latest_relevant["accession"])]
+            if isinstance(_latest_relevant, dict) and _latest_relevant.get("accession")
+            else []
+        )
+        _coherence = check_entity_coherence(
+            symbol=symbol,
+            mapped_cik=cik,
+            submissions=submissions,
+            facts_queried_cik=cik,
+            facts_response_cik=(companyfacts.get("cik")
+                                if isinstance(companyfacts, dict) else None),
+            relevant_accessions=_relevant_accessions,
+        )
+        (fundamental_operating_entity_verified,
+         fundamental_operating_entity_detail) = downgrade_on_hard_findings(
+            fundamental_operating_entity_verified,
+            fundamental_operating_entity_detail,
+            _coherence.get("findings"),
+        )
+    except Exception:
+        pass  # coherence audit must never break fundamentals loading
     # L0 content fingerprints (canonical bytes of the payloads as received;
     # documented substitute for wire bytes, which the parsed-returning
     # client no longer holds) and L1 effective-values fingerprint. Cost is

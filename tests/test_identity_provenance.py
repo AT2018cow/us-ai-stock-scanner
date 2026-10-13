@@ -11,11 +11,15 @@ acceptance rows, manifest + validator registry. No network.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
+import sys
 import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import pandas as pd
 
@@ -86,15 +90,18 @@ def _sec_client(handler, cache_dir, monitor=None):
 
 
 def _10q_obs(value, end, filed, accn):
-    return {"val": value, "end": end, "start": end[:8] + "01",
+    starts = {"2025-09-30": "2025-07-01", "2025-12-31": "2025-10-01",
+              "2026-03-31": "2026-01-01", "2026-06-30": "2026-04-01"}
+    return {"val": value, "end": end, "start": starts.get(end, end[:8] + "01"),
             "filed": filed, "accn": accn, "form": "10-Q"}
 
 
 def _facts_doc(*, rev=100.0, ni=10.0, ocf=12.0, accn="0000001111-26-000001",
-               filed="2026-08-03", ends=("2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30")):
+               filed="2026-08-03", ends=("2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30"),
+               cik="0000111111", entity="AAA Inc"):
     def series(vals):
         return [_10q_obs(v, e, filed, accn) for v, e in zip(vals, ends)]
-    return {"cik": "0000111111", "entityName": "AAA Inc",
+    return {"cik": cik, "entityName": entity,
             "facts": {"us-gaap": {
                 "RevenueFromContractWithCustomerExcludingAssessedTax":
                     {"units": {"USD": series([rev] * 4)}},
@@ -477,6 +484,254 @@ class AcceptanceRowsTests(unittest.TestCase):
         self.assertEqual(detail, "ticker_listed_with_core_facts")
         # The HON cap itself comes from latest_periodic_filing_not_covered
         # (existing gate, unchanged); identity must not override it.
+
+
+class DowngradeHelperTests(unittest.TestCase):
+    def test_hard_finding_forces_false_with_dedup(self) -> None:
+        from ai_value_scanner.fundamentals.identity import downgrade_on_hard_findings
+        ok, detail = downgrade_on_hard_findings(True, "ticker_listed_with_core_facts",
+                                               ["RESPONSE_CIK_MISMATCH"])
+        self.assertFalse(ok)
+        self.assertIn("RESPONSE_CIK_MISMATCH", detail)
+        # TICKER_NOT_LISTED already reported by verify(): no doubling.
+        ok, detail = downgrade_on_hard_findings(False, "ticker_not_listed",
+                                               ["TICKER_NOT_LISTED"])
+        self.assertFalse(ok)
+        self.assertEqual(detail.upper().count("TICKER_NOT_LISTED"), 1)
+
+    def test_non_hard_findings_leave_verdict(self) -> None:
+        from ai_value_scanner.fundamentals.identity import downgrade_on_hard_findings
+        self.assertEqual(downgrade_on_hard_findings(True, "ok", ["ACCESSION_FILER_UNRESOLVED"]),
+                         (True, "ok"))
+        self.assertEqual(downgrade_on_hard_findings(None, "x", ["RESPONSE_CIK_MISMATCH"]),
+                         (False, "x+RESPONSE_CIK_MISMATCH"))
+
+
+class LoaderCoherenceTests(unittest.TestCase):
+    def _run_loader(self, tmp, facts_cik, tickers):
+        sub = _submissions_doc()
+        sub["tickers"] = list(tickers)
+        fac = _facts_doc(cik=facts_cik)
+        stub = _StubSec(sub, fac)
+        _plant_meta(tmp, "0000111111", "0000001111-26-000001")
+        _plant_raw(tmp, "0000111111", sub, fac)
+        cfg = _test_config(tmp)
+        from ai_value_scanner.scanner import load_one_fundamental
+        return load_one_fundamental(stub, "AAA", "0000111111", cfg)
+
+    def test_response_cik_mismatch_fails_closed_end_to_end(self) -> None:
+        # Required regression: mapped/requested A, submissions tickers OK,
+        # facts response CIK=B WITH core facts -> unverified, UNRATED+code.
+        from ai_value_scanner.decision.quality import build_company_quality_v1
+        with TemporaryDirectory() as tmp:
+            out = self._run_loader(tmp, "0000999999", ["AAA"])
+            self.assertFalse(out["fundamental_operating_entity_verified"])
+            self.assertIn("RESPONSE_CIK_MISMATCH",
+                          out["fundamental_operating_entity_detail"])
+            decision = build_company_quality_v1(out, decision_date="2026-10-09")
+            self.assertEqual(decision.grade.value, "UNRATED")
+            self.assertIn("operating_entity_unverified",
+                          [e.code for e in decision.missing])
+
+    def test_matching_response_cik_passes_through(self) -> None:
+        with TemporaryDirectory() as tmp:
+            out = self._run_loader(tmp, "0000111111", ["AAA"])
+            self.assertTrue(out["fundamental_operating_entity_verified"])
+
+
+class ReplayCoherenceTests(unittest.TestCase):
+    def _frame(self, n=250, start="2025-10-01", base=100.0):
+        idx = pd.date_range(start=start, periods=n, freq="D", tz="UTC")
+        return pd.DataFrame({"open": base, "high": base * 1.01, "low": base * 0.99,
+                             "close": base, "volume": 1_000_000.0}, index=idx)
+
+    def _run_cross_section(self, facts_cik):
+        from ai_value_scanner.backtest import (
+            build_cross_section_asof,
+            build_fundamental_pti_db,
+            build_theme_scores_rules_proxy,
+        )
+        with TemporaryDirectory() as tmp:
+            sub = _submissions_doc()
+            fac = _facts_doc(cik=facts_cik)
+            stub = _StubSec(sub, fac)
+            cfg = _test_config(tmp)
+            universe = pd.DataFrame([{"symbol": "AAA", "cik": "0000111111",
+                                      "name": "AAA Inc"}])
+            fundamentals = build_fundamental_pti_db(universe, stub, 1)
+            themes = build_theme_scores_rules_proxy(universe, fundamentals, cfg)
+            bar_db = {"AAA": self._frame(), "QQQ": self._frame(base=500.0)}
+            asof = pd.Timestamp("2026-10-09", tz="UTC")
+            df = build_cross_section_asof(
+                asof=asof, universe=universe, bar_db=bar_db,
+                fundamentals=fundamentals, theme_scores=themes,
+                watchlist_by_symbol={"AAA": ("bucket", 1, "-")},
+                benchmark_return_20d=0.01, benchmark_return_60d=0.04,
+                disclosure_lookback_days=720, scan_config=cfg,
+                qqq_return_60d=0.04, benchmark_trend_ok=True, split_events={})
+            self.assertEqual(len(df), 1)
+            return df.iloc[0].to_dict()
+
+    def test_replay_mismatch_row_flagged(self) -> None:
+        row = self._run_cross_section("0000999999")
+        self.assertFalse(row["fundamental_operating_entity_verified"])
+        self.assertIn("RESPONSE_CIK_MISMATCH",
+                      row["fundamental_operating_entity_detail"])
+
+    def test_replay_match_row_verified(self) -> None:
+        row = self._run_cross_section("0000111111")
+        self.assertTrue(row["fundamental_operating_entity_verified"])
+
+
+class ProductionPathAcceptanceTests(unittest.TestCase):
+    def test_fcx_threshold_edge_pinned(self) -> None:
+        # Real v0 FCX value through the real builder: the -10.07% OCF edge
+        # must keep emitting its weak code (not silently absorbed).
+        from ai_value_scanner.decision.quality import build_company_quality_v1
+        from tests.test_identity_verification import _metrics as _base_metrics
+        metrics = _base_metrics(operating_cash_flow_yoy=-0.100747)
+        decision = build_company_quality_v1(metrics, decision_date="2026-10-09")
+        codes = [e.code for e in (*decision.risks, *decision.positives)]
+        self.assertIn("operating_cash_flow_yoy_weak", codes)
+
+    def test_nee_normal_update_path_untouched(self) -> None:
+        # Verified entity + full metrics grades on economics (A/B), with no
+        # identity codes — the NEE-class normal path must not route through
+        # any new gate.
+        from ai_value_scanner.decision.quality import build_company_quality_v1
+        from tests.test_identity_verification import _metrics as _base_metrics
+        metrics = _base_metrics(fundamental_operating_entity_verified=True,
+                                fundamental_operating_entity_detail="ticker_listed_with_core_facts")
+        decision = build_company_quality_v1(metrics, decision_date="2026-10-09")
+        self.assertIn(decision.grade.value, ("A", "B"))
+        codes = [e.code for e in (*decision.missing, *decision.risks)]
+        self.assertNotIn("operating_entity_unverified", codes)
+
+    def test_pld_lag_keeps_not_covered_path(self) -> None:
+        # Filed-but-uncovered stays UNRATED via the pre-existing
+        # latest_periodic_filing_not_covered gate (PLD class).
+        from ai_value_scanner.decision.quality import build_company_quality_v1
+        from tests.test_identity_verification import _metrics as _base_metrics
+        metrics = _base_metrics(fundamental_facts_cover_latest_periodic=False)
+        decision = build_company_quality_v1(metrics, decision_date="2026-10-09")
+        self.assertEqual(decision.grade.value, "UNRATED")
+        self.assertIn("latest_periodic_filing_not_covered",
+                      [e.code for e in decision.missing])
+
+
+class ManifestRowsFileTests(unittest.TestCase):
+    def _decision(self):
+        from ai_value_scanner.decision.model import (
+            ActionState, EntryDecision, EntryState, EvidenceItem,
+            QualityDecision, QualityGrade, StockDecision)
+        quality = QualityDecision(grade=QualityGrade.A, score=0.8, confidence=1.0,
+                                  component_scores={}, positives=(), risks=(),
+                                  missing=(), data_asof="2026-08-03")
+        entry = EntryDecision(state=EntryState.ENTRY_READY, score=0.6, confidence=0.9,
+                              positives=(), risks=(), market_asof="2026-10-12")
+        return StockDecision(schema_version="v1", symbol="AAA", company_name="AAA Inc",
+                             decision_date="2026-10-12",
+                             generated_at_utc="2026-10-13T00:00:00+00:00",
+                             quality=quality, entry=entry,
+                             action_state=ActionState.PRIORITY_REVIEW, priority=1,
+                             rationale=(), review_trigger="Review now.",
+                             source_lists=(), provenance={})
+
+    def test_rows_file_written_and_referenced(self) -> None:
+        from ai_value_scanner.reporting.snapshot import write_decision_snapshot
+        with TemporaryDirectory() as tmp:
+            decision = self._decision()
+            paths = write_decision_snapshot(
+                output_root=tmp, strategy_style="risk_off", decisions=[decision],
+                daily_attention=[decision], weekly_attention=[decision],
+                generated_at_utc="2026-10-13T00:00:00+00:00", decision_date="2026-10-12",
+                config_fingerprint="cfg", code_sha="sha",
+                ticker_map_rows=[{"symbol": "AAA", "cik": "0000111111",
+                                   "company_name": "AAA Inc"}])
+            rows_file = Path(paths.root) / "ticker_map_rows.json"
+            self.assertTrue(rows_file.is_file())
+            manifest = json.loads((Path(paths.root) / "run_manifest.json").read_text())
+            ref = manifest["input_provenance"]["ticker_map_rows_file"]
+            self.assertEqual(ref, "ticker_map_rows.json")
+            self.assertEqual(
+                manifest["input_provenance"]["ticker_map_rows_sha256"],
+                hashlib.sha256(rows_file.read_bytes()).hexdigest())
+
+    def test_rows_checksum_mismatch_reported(self) -> None:
+        from scripts.validate_mvp_snapshot import check_ticker_map_rows
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = {"input_provenance": {
+                "ticker_map_rows_file": "ticker_map_rows.json",
+                "ticker_map_rows_sha256": "0" * 64}}
+            (root / "ticker_map_rows.json").write_text("[]")
+            errors = check_ticker_map_rows(root, manifest)
+            self.assertTrue(any("sha256" in e.lower() or "mismatch" in e.lower()
+                                for e in errors))
+            manifest["input_provenance"] = {}
+            self.assertEqual(check_ticker_map_rows(root, manifest), [])
+
+
+class RefreshHeuristicTests(unittest.TestCase):
+    def _sec(self, tmp, subs_payload):
+        from ai_value_scanner.scanner import SecClient, RequestRateLimiter, NetworkMonitor
+        cik = "0000111111"
+        (Path(tmp) / f"submissions_{cik}.json").write_text(json.dumps(subs_payload))
+
+        class Resp:
+            status_code = 200
+
+            def __init__(self, payload):
+                self._payload = payload
+                self.text = json.dumps(payload)
+
+            def json(self):
+                return self._payload
+
+            def raise_for_status(self):
+                return None
+
+        fetched = []
+
+        def fake_get(url):
+            fetched.append(url)
+            return Resp({"cik": cik, "entityName": "AAA",
+                         "facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": []}}}}})
+
+        session = _StubSession(fake_get)
+        monitor = NetworkMonitor()
+        limiter = RequestRateLimiter(1000.0, monitor=monitor, service_name="sec-test")
+        sec = SecClient(session=session, user_agent="t", timeout_sec=5,
+                        cache_dir=Path(tmp), request_limiter=limiter,
+                        submissions_ttl_sec=10 ** 9, monitor=monitor)
+        return sec, cik, fetched
+
+    def test_eighth_k_ignored_for_coverage(self) -> None:
+        # Newest filing is an 8-K: refresh heuristic must use the older 10-Q,
+        # so an already-covered 10-Q does not force refetch.
+        with TemporaryDirectory() as tmp:
+            subs = {"cik": "0000111111", "name": "AAA", "tickers": ["AAA"],
+                    "filings": {"recent": {
+                        "form": ["8-K", "10-Q"], "accessionNumber": ["k-accn", "q-accn"],
+                        "filingDate": ["2026-10-02", "2026-07-29"]}}}
+            sec, cik, fetched = self._sec(tmp, subs)
+            (Path(tmp) / f"facts_{cik}.json").write_text(json.dumps({"facts": {}}))
+            (Path(tmp) / f"facts_meta_{cik}.json").write_text(json.dumps(
+                {"covered_accession": "q-accn", "pending_accession": None}))
+            sec.get_companyfacts(cik)
+            self.assertEqual(fetched, [])
+
+    def test_unknown_form_stays_conservative(self) -> None:
+        with TemporaryDirectory() as tmp:
+            subs = {"cik": "0000111111", "name": "AAA", "tickers": ["AAA"],
+                    "filings": {"recent": {
+                        "accessionNumber": ["new-accn"], "filingDate": ["2026-10-02"]}}}
+            sec, cik, fetched = self._sec(tmp, subs)
+            (Path(tmp) / f"facts_{cik}.json").write_text(json.dumps({"facts": {}}))
+            (Path(tmp) / f"facts_meta_{cik}.json").write_text(json.dumps(
+                {"covered_accession": "old-accn", "pending_accession": None}))
+            sec.get_companyfacts(cik)
+            self.assertEqual(len(fetched), 1)
 
 
 if __name__ == "__main__":

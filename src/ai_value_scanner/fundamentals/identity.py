@@ -64,3 +64,29 @@ def verify_operating_entity(
     if has_core_facts is True:
         return True, "ticker_listed_with_core_facts"
     return None, "no_submissions_info"
+
+
+#: Coherence findings that force identity False no matter what the
+#: ticker-list/facts-presence check said.
+HARD_COHERENCE_FINDINGS = frozenset({"RESPONSE_CIK_MISMATCH", "TICKER_NOT_LISTED"})
+
+
+def downgrade_on_hard_findings(
+    verified: bool | None,
+    detail: str | None,
+    findings: list[str] | tuple[str, ...] | None,
+) -> tuple[bool | None, str | None]:
+    """Apply hard coherence findings to a verify() verdict (pure).
+
+    Any hard finding forces False and appends its code to the detail
+    string (deduplicated case-insensitively, so TICKER_NOT_LISTED is not
+    doubled when verify() already reported it). Non-hard findings leave
+    the verdict untouched — they are audit disclosures, not verdicts.
+    """
+    hard = sorted({str(f) for f in (findings or ())} & HARD_COHERENCE_FINDINGS)
+    if not hard:
+        return verified, detail
+    seen = {str(detail or "").lower()}
+    extra = [code for code in hard if code.lower() not in seen]
+    new_detail = "+".join([d for d in [detail, *extra] if d])
+    return False, new_detail or "+".join(hard)
