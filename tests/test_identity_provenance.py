@@ -810,8 +810,12 @@ class FinalMergeGateTests(unittest.TestCase):
             sub, facts = _submissions_doc(), _facts_doc()
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
             _plant_raw(tmp, "0000111111", sub, facts)
-            with patch("ai_value_scanner.scanner.check_entity_coherence",
-                       side_effect=RuntimeError("injected audit error")):
+            def _audit_failure(**kwargs):
+                raise RuntimeError("injected audit error")
+            # Patch the loader's globals directly: confirm the actual
+            # callable used by the integrated path is the one failing.
+            with patch.dict(load_one_fundamental.__globals__,
+                            {"check_entity_coherence": _audit_failure}):
                 row = load_one_fundamental(
                     _StubSec(sub, facts), "AAA", "0000111111", _test_config(tmp))
             self.assertFalse(row["fundamental_operating_entity_verified"])
