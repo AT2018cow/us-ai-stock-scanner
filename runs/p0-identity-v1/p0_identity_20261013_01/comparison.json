@@ -1,5 +1,6 @@
 {
  "reviewer_counterexample": "UNCOMPARABLE",
+ "reviewer_counterexample_same_cik": "UNCOMPARABLE",
  "identical_runs": "SAME",
  "thin_vs_scored": "PROVENANCE_MISSING"
 }

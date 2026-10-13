@@ -1,3 +1,2 @@
-Ran 36 tests in 1.689s
 
 OK
