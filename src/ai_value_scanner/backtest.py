@@ -1312,13 +1312,18 @@ def load_symbol_fundamental_pti(
         str(submissions.get("name") or "").strip() or None
         if isinstance(submissions, dict) else None
     )
-    # L0 content fingerprints (canonical bytes of the payloads as received).
-    # Coherence is evaluated here where both payloads are in hand; only the
-    # findings travel on the FTI object (relevant-accession audit runs at
-    # evidence time, where committed filings lists are available).
+    # Replay has no EdgarTools merge: raw Company Facts is its full
+    # effective document. Keep hashing failures separate from identity
+    # failures: a check exception must never clear hard findings.
     try:
         _entity_submissions_sha = sha256_hex(canonical_json_bytes(submissions))
+    except (TypeError, ValueError):
+        _entity_submissions_sha = None
+    try:
         _entity_facts_sha = sha256_hex(canonical_json_bytes(companyfacts))
+    except (TypeError, ValueError):
+        _entity_facts_sha = None
+    try:
         _coherence_findings = tuple(check_entity_coherence(
             symbol=symbol,
             mapped_cik=cik,
@@ -1329,9 +1334,7 @@ def load_symbol_fundamental_pti(
             relevant_accessions=[],
         ).get("findings", []))
     except Exception:
-        _entity_submissions_sha = None
-        _entity_facts_sha = None
-        _coherence_findings = ()
+        _coherence_findings = ("COHERENCE_CHECK_FAILED",)
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -2478,6 +2481,7 @@ def build_cross_section_asof(
                 "shares_stale": shares_stale,
                 "fundamental_data_asof": fundamental_data_asof,
                 "fundamental_submissions_sha256": getattr(f, "entity_submissions_sha", None),
+                "fundamental_companyfacts_raw_sha256": getattr(f, "entity_facts_sha", None),
                 "fundamental_companyfacts_sha256": getattr(f, "entity_facts_sha", None),
                 "fundamental_effective_sha256": _effective_sha,
                 "revenue": revenue,

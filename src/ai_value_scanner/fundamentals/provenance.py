@@ -152,14 +152,10 @@ def compare_identity_records(
     4. Effective-facts SHAs both present and different -> UNCOMPARABLE,
        even when scoring inputs hash equally (equal scores from different
        measured facts prove nothing about economic identity).
-    5. Scoring-inputs SHAs both present and equal (with effective equal
-       or absent on both sides) -> SAME when raw SHAs also match (or
-       either raw SHA is absent), else RECONCILED (same measured inputs
-       through different raw bytes: a feed re-serialization, not an
-       economic change). Different -> UNCOMPARABLE.
-    6. Effective-facts SHAs both present, scoring absent on both sides:
-       equal -> SAME, different -> UNCOMPARABLE.
-    7. Anything else -> PROVENANCE_MISSING.
+    5. Both effective-facts and scoring-inputs SHAs are required;
+       missing either -> PROVENANCE_MISSING.
+    6. Equal scoring SHA -> SAME or RECONCILED based on raw SHA;
+       differing scoring SHA -> UNCOMPARABLE.
     """
     if not old or not new:
         return PROVENANCE_MISSING
@@ -175,7 +171,7 @@ def compare_identity_records(
             return PROVENANCE_MISSING
         if str(old_val) != str(new_val):
             return PROVENANCE_MISSING
-    if old_cik is None or new_cik is None:
+    if _norm_cik(old_cik) is None or _norm_cik(new_cik) is None:
         return PROVENANCE_MISSING
     for key in ("code_version", "config_fingerprint"):
         old_val = old.get(key)
@@ -191,29 +187,20 @@ def compare_identity_records(
     if (old_facts is not None and new_facts is not None
             and str(old_facts) != str(new_facts)):
         return UNCOMPARABLE
+    # Require evidence in both measured layers for SAME/RECONCILED.
+    if old_facts is None or new_facts is None:
+        return PROVENANCE_MISSING
     old_score = old.get("scoring_inputs_sha")
     new_score = new.get("scoring_inputs_sha")
-    old_has_score = old_score is not None
-    new_has_score = new_score is not None
-    if old_has_score and new_has_score:
-        if str(old_score) != str(new_score):
-            return UNCOMPARABLE
-        old_raw = old.get("raw_bytes_sha")
-        new_raw = new.get("raw_bytes_sha")
-        if (old_raw is not None and new_raw is not None
-                and str(old_raw) != str(new_raw)):
-            return RECONCILED
-        return SAME
-    if old_has_score != new_has_score:
-        # Asymmetric evidence layers: one side measured scoring inputs the
-        # other never produced. Not a valid pair.
+    if old_score is None or new_score is None:
         return PROVENANCE_MISSING
-    old_facts = old.get("effective_facts_sha")
-    new_facts = new.get("effective_facts_sha")
-    if old_facts is not None and new_facts is not None:
-        return SAME if str(old_facts) == str(new_facts) else UNCOMPARABLE
-    return PROVENANCE_MISSING
-
+    if str(old_score) != str(new_score):
+        return UNCOMPARABLE
+    old_raw = old.get("raw_bytes_sha")
+    new_raw = new.get("raw_bytes_sha")
+    if old_raw is not None and new_raw is not None and str(old_raw) != str(new_raw):
+        return RECONCILED
+    return SAME
 
 def decision_provenance_to_identity_record(
     decision: Mapping[str, Any] | None,
@@ -226,13 +213,13 @@ def decision_provenance_to_identity_record(
     - symbol <- decision.symbol
     - financial_asof <- quality.data_asof (NOT the market decision date)
     - mapped_cik <- provenance.cik
-    - code_version <- quality_policy_version + "|" + entry_policy_version
+    - code_version <- code_sha + quality_policy_version + entry_policy_version
     - config_fingerprint <- provenance.config_fingerprint, else the
       explicit fallback (e.g. the run manifest's value)
     - effective_facts_sha <- provenance.fundamental_effective_sha256
     - scoring_inputs_sha <- provenance.identity_scoring_sha
-    - raw_bytes_sha <- always None: decisions never carry raw SHAs
-      (compare() therefore yields SAME, never RECONCILED, for decisions).
+    - raw_bytes_sha <- canonical composite of the SEC pre-patch facts SHA
+      and the submissions SHA, None if either is missing.
 
     Old decisions lacking the identity keys map to records with None
     fingerprints, which compare() honestly reports as PROVENANCE_MISSING
@@ -245,10 +232,19 @@ def decision_provenance_to_identity_record(
     quality = quality if isinstance(quality, Mapping) else {}
     quality_version = provenance.get("quality_policy_version")
     entry_version = provenance.get("entry_policy_version")
-    if quality_version and entry_version:
-        code_version: Any = f"{quality_version}|{entry_version}"
-    else:
-        code_version = quality_version or entry_version
+    code_sha = provenance.get("code_sha")
+    code_version: Any = (
+        f"{code_sha}|{quality_version}|{entry_version}"
+        if code_sha and quality_version and entry_version else None
+    )
+    raw_facts_sha = provenance.get("fundamental_companyfacts_raw_sha256")
+    raw_subs_sha = provenance.get("fundamental_submissions_sha256")
+    raw_bytes_sha = (
+        sha256_hex(canonical_json_bytes({
+            "companyfacts": raw_facts_sha, "submissions": raw_subs_sha,
+        }))
+        if raw_facts_sha and raw_subs_sha else None
+    )
     return {
         "symbol": decision.get("symbol"),
         "financial_asof": quality.get("data_asof"),
@@ -257,7 +253,7 @@ def decision_provenance_to_identity_record(
         "config_fingerprint": provenance.get("config_fingerprint", config_fingerprint),
         "effective_facts_sha": provenance.get("fundamental_effective_sha256"),
         "scoring_inputs_sha": provenance.get("identity_scoring_sha"),
-        "raw_bytes_sha": None,
+        "raw_bytes_sha": raw_bytes_sha,
     }
 
 
@@ -283,11 +279,18 @@ def check_entity_coherence(    *,
     subs = submissions if isinstance(submissions, Mapping) else {}
     tickers = subs.get("tickers")
     ticker_list = [str(t).strip().upper() for t in tickers] if isinstance(tickers, list) else None
-    if facts_queried_cik is not None and facts_response_cik is not None:
-        want = _norm_cik(facts_queried_cik)
-        got = _norm_cik(facts_response_cik)
-        if want is not None and got is not None and want != got:
-            findings.append("RESPONSE_CIK_MISMATCH")
+    want = _norm_cik(facts_queried_cik)
+    got = _norm_cik(facts_response_cik)
+    mapped = _norm_cik(mapped_cik)
+    subs_cik = _norm_cik(subs.get("cik"))
+    if mapped is not None and want is not None and mapped != want:
+        findings.append("MAPPED_QUERY_CIK_MISMATCH")
+    if mapped is not None and subs_cik is not None and mapped != subs_cik:
+        findings.append("SUBMISSIONS_CIK_MISMATCH")
+    if want is not None and got is None:
+        findings.append("RESPONSE_CIK_MISSING")
+    elif want is not None and got != want:
+        findings.append("RESPONSE_CIK_MISMATCH")
     ticker_listed: bool | None = None
     if ticker_list is not None and ticker_list:
         ticker_listed = sym in ticker_list

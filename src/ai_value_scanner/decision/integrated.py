@@ -236,6 +236,7 @@ def build_stock_decisions(
             "cik",
             "filing_entity_name",
             "fundamental_submissions_sha256",
+            "fundamental_companyfacts_raw_sha256",
             "fundamental_companyfacts_sha256",
             "fundamental_effective_sha256",
             "fundamental_operating_entity_detail",

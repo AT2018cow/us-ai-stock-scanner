@@ -68,7 +68,11 @@ def verify_operating_entity(
 
 #: Coherence findings that force identity False no matter what the
 #: ticker-list/facts-presence check said.
-HARD_COHERENCE_FINDINGS = frozenset({"RESPONSE_CIK_MISMATCH", "TICKER_NOT_LISTED"})
+HARD_COHERENCE_FINDINGS = frozenset({
+    "RESPONSE_CIK_MISMATCH", "RESPONSE_CIK_MISSING",
+    "MAPPED_QUERY_CIK_MISMATCH", "SUBMISSIONS_CIK_MISMATCH",
+    "TICKER_NOT_LISTED", "COHERENCE_CHECK_FAILED",
+})
 
 
 def downgrade_on_hard_findings(

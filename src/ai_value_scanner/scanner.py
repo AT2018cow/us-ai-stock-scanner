@@ -2813,6 +2813,12 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
 
     submissions = sec.get_submissions(cik)
     companyfacts = sec.get_companyfacts(cik)
+    # L0 SEC payload is captured BEFORE any EdgarTools patch; this is
+    # canonical parsed JSON rather than on-wire response bytes.
+    try:
+        _raw_facts_sha = sha256_hex(canonical_json_bytes(companyfacts))
+    except (TypeError, ValueError):
+        _raw_facts_sha = None
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
@@ -3149,11 +3155,15 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
             fundamental_operating_entity_detail,
             _coherence.get("findings"),
         )
-    except Exception:
-        pass  # coherence audit must never break fundamentals loading
-    # L0 content fingerprints (canonical bytes of the payloads as received;
-    # documented substitute for wire bytes, which the parsed-returning
-    # client no longer holds) and L1 effective-values fingerprint. Cost is
+    except Exception as exc:
+        # Audit exceptions are unknown identity, never implicit verification.
+        fundamental_operating_entity_verified = False
+        fundamental_operating_entity_detail = (
+            f"coherence_check_failed:{type(exc).__name__}"
+        )
+    # Raw SEC SHA is frozen above. This post-patch full-document SHA
+    # captures the effective combined Company Facts payload; L1 hashes
+    # 15 measured effective values separately. Cost is
     # one canonical serialization per payload; recorded for cross-run
     # attribution, never used for scoring.
     try:
@@ -3207,6 +3217,7 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "fundamental_operating_entity_verified": fundamental_operating_entity_verified,
         "fundamental_operating_entity_detail": fundamental_operating_entity_detail,
         "fundamental_submissions_sha256": _submissions_sha,
+        "fundamental_companyfacts_raw_sha256": _raw_facts_sha,
         "fundamental_companyfacts_sha256": _facts_sha,
         "fundamental_effective_sha256": _effective_sha,
         "fundamental_source": fundamental_source,
