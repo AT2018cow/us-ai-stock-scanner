@@ -1358,32 +1358,14 @@ class SecClient:
         meta_path = self.cache_dir / f"facts_meta_{cik}.json"
         subs_path = self.cache_dir / f"submissions_{cik}.json"
         need_fetch = not cache_path.exists()
-        latest_accn: str | None = None
-        if subs_path.exists():
-            try:
-                subs = json.loads(subs_path.read_text())
-                recent = subs.get("filings", {}).get("recent", {}) or {}
-                # Coverage-relevant accession only: the newest 10-K/10-Q.
-                # An 8-K or Form 4 as accessions[0] must not count as
-                # financial coverage, nor force refreshes on non-financial
-                # filings. Entries with missing/unparseable forms stay
-                # conservative (treated as relevant) rather than silently
-                # skipped.
-                forms = recent.get("accessionNumber", []) or []
-                form_kinds = recent.get("form", []) or []
-                if not form_kinds:
-                    if forms and forms[0]:
-                        latest_accn = str(forms[0])
-                else:
-                    for kind, accn in zip(form_kinds, forms):
-                        if not accn:
-                            continue
-                        norm = normalize_form(kind)
-                        if not norm or norm in QUARTERLY_FORMS:
-                            latest_accn = str(accn)
-                            break
-            except Exception:
-                pass  # fall back to metadata/mtime heuristics below
+        # Use the SAME periodic-selection contract as the parsed-cache gate.
+        # SEC recent filings may be out of order; Form 4/S-3 do not drive
+        # Company Facts coverage. Missing/invalid date or unrecognized forms
+        # follow the shared conservative raw-newest fallback.
+        latest_accn = (
+            _submissions_latest_relevant_filing(subs_path)[1]
+            if subs_path.exists() else None
+        )
         if cache_path.exists() and not need_fetch:
             # D02: accession-based change detection. The old filingDate
             # vs mtime comparison missed same-day filings (date-midnight
