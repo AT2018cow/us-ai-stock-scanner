@@ -3421,6 +3421,27 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
     return pd.DataFrame(rows)
 
 
+def _coalesce_filing_cik(frame: pd.DataFrame) -> pd.DataFrame:
+    """Restore a single ``cik`` column after the fundamentals merge.
+
+    Both the universe frame (mapping CIK) and the fundamentals frame
+    (filing CIK) carry ``cik``; a plain merge renames them to ``cik_x`` /
+    ``cik_y`` and the CIK silently drops out of StockDecision provenance.
+    The filing side wins because it identifies whose facts were actually
+    scored; the mapping side fills gaps. Pure function (tested).
+    """
+    if "cik_filing" not in frame.columns:
+        return frame
+    frame = frame.copy()
+    filing = frame["cik_filing"]
+    if "cik" in frame.columns:
+        base = frame["cik"]
+        frame["cik"] = filing.where(
+            filing.notna() & (filing.astype(str) != ""), base
+        )
+    else:
+        frame["cik"] = filing
+    return frame.drop(columns=["cik_filing"])
 
 
 def run_scan(
@@ -3670,7 +3691,8 @@ def run_scan(
 
     log_status(started_at, "INFO", "[3/6] Fetching SEC fundamentals (cached locally).")
     fundamentals = collect_fundamentals(df, sec, config)
-    df = df.merge(fundamentals, on="symbol", how="left")
+    df = df.merge(fundamentals, on="symbol", how="left", suffixes=("", "_filing"))
+    df = _coalesce_filing_cik(df)
     if "fundamental_edgartools_fallback_status" in fundamentals.columns:
         fallback_status_counts = (
             fundamentals["fundamental_edgartools_fallback_status"]
