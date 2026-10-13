@@ -214,3 +214,67 @@ Human approval to freeze the pre-registered B0/R1–R5/E1–E4 registry
 and any mask protocol remains required after these findings are reviewed.
 The standalone 2025 / 2026Q1 temporal diagnostics stay embargoed until
 the development winner is locked on 2023–2024.
+
+## Reviewer disposition: data risk + frozen candidates (2026-10-14)
+
+Read `docs/mvp_v11_data_risk_adjudication_20261014.md` before any
+new output. Reviewer accepts A0 structural and B0 historical parity;
+risk triage inventory is valid, **but economic input/PIT correctness remains
+unverified**. SEC 2024/2025 HEI 10-K reports two common share classes.
+55m vs 138–139m historical shifts may be class-scope mix, not a split.
+Never silently repair HEI with new SEC filings or multiply the sum of
+two share classes by the single HEI price.
+
+**Freeze the candidate parameter definitions** as already registered:
+B0, R1–R5, E1–E4, and conditionally X1. This is not permission to
+analyze their returns. For now: `ready_for_candidate_returns=false`.
+No default v1 production changes.
+
+### Next operator task: bounded PIT/identity investigation
+
+Use original research outputs, source manifests, already cached SEC headers
+and public EDGAR documents when necessary. Do not bulk-fetch SEC/Alpaca data.
+Identify as-of-public information and share-class denominator for HEI at
+2023-12-29, 2024-12-31, 2025-08-29, 2025-12-31; source provenance of HXL,
+PKG, SKY, TBLA, SW, LAES, UNIT as relevant to 2023–2024; and review
+possible price/issuer discontinuity at CORZ, LAES, QUBT, UMAC, WOLF.
+For each, record `signal_date, symbol, accession, accepted_utc,
+available_by_signal_close, CIK, security_class, share_units,
+shares_source_metric, currency, verification_status, source_url/hash`.
+Missing or ambiguous fields must stay `UNVERIFIED`. Include a deterministic
+comparison sample of 2023-01-31, 2024-01-31, and 2024-12-31 B0 Top-15
+issuers to avoid investigating only known suspicious tickers.
+Record that 2025/2026Q1 review is only historical data integrity; do not
+compute/review candidate performance there.
+
+### Event-interval preflight (no returns)
+
+Once exact-head CI for the **new audit-only code** is green, run:
+
+```bash
+python -m unittest discover -s tests
+python scripts/mvp_v11_event_exposure_preflight.py \
+  --entry-dataset outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv \
+  --entry-meta outputs/historical_selection_v1_20261011_03/evidence/entry_quality_dataset_risk_off.meta.json \
+  --expected-dataset-sha256 2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e \
+  --events outputs/historical_selection_v1_20261011_03/repaired/entry_quality_discontinuities.csv \
+  --expected-events-sha256 20dc8670c8de44781355c51d6381821b6cc64b00bab9162445af628cac3f9e31 \
+  --output-dir outputs/mvp_v11_risk/interval_run_01
+```
+
+This preflight reads only `signal_date`, `symbol`, and frozen
+`label_end_20/60/120` fields from v3, **not returns**. It outputs
+`event_interval_exposure_summary.json` (safe to submit after source
+redaction) and `event_interval_exposure_local_only.csv` (75k
+signal×symbol×horizon records; keep ignored in outputs). An event record
+only locates a monthly *detection interval*, not the exact SEC public or
+corporate action timestamp; the overlap flag is a conservative,
+retrospective diagnostic **not historical selection membership**.
+
+Deliver the small summary, the exact run SHA/CI, and a source-evidence
+audit note (verified vs unresolved; no keys or raw SEC caches).
+Do NOT commit original v3 dataset or local full flags CSV to the PR.
+Do not edit original `event_review_queue.csv` or claim its 52
+`UNREVIEWED` dispositions are settled. The owner/reviewer must examine
+the source-evidence audit and confirm the outcome-blind paired-mask
+rules before return comparisons start.
