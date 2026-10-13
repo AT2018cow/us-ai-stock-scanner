@@ -149,3 +149,68 @@ No paid Modal compute or re-extraction; stop and report any mismatch.
 Even full reference parity alone **does not authorize optimization**:
 separate PIT/entity/forward-label event audit and frozen candidate approval
 remain mandatory. B0 cannot assert historical Daily/Weekly production parity.
+
+## B0 review accepted; next gate: data-risk triage (2026-10-14)
+
+Review accepted `B0_FULL_REFERENCE_PARITY_PASS` at `5139412`: 39 dates,
+25,025 rows, archived monthly Top-5/15 and row-level Quality/Entry/Action
+parity, 0 mismatches, 346/346 missing-fundamental-asof rows UNRATED/AVOID.
+The 56.9 MB row reference `action_v1_decisions.csv` is locally preserved
+and internally corroborated by five archived SHA-matching sibling outputs,
+but was **not itself independently listed in archived SHA256SUMS**. This
+is high-confidence operational parity, not proof of source PIT correctness.
+The five canonical Action states have five counts; an earlier B0 report
+mistakenly called them "six action counts".
+
+The following preflight is **only** a read-only risk-triage pass. It
+does not authorize viewing R/E candidate returns or changing masks.
+Read every one of the 51 audit-only events and preserve real winners,
+especially cases with abnormal share-count/valuation denominators. Do not
+unilaterally drop problematic rows, fill values, or change policies.
+
+```bash
+git fetch origin
+# Confirm checkout is the latest PR-A head and its own CI is green.
+git rev-parse HEAD
+python -m unittest discover -s tests
+
+python scripts/mvp_v11_data_risk_audit.py \
+  --entry-dataset outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv \
+  --entry-meta outputs/historical_selection_v1_20261011_03/evidence/entry_quality_dataset_risk_off.meta.json \
+  --expected-dataset-sha256 2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e \
+  --events outputs/historical_selection_v1_20261011_03/repaired/entry_quality_discontinuities.csv \
+  --expected-events-sha256 20dc8670c8de44781355c51d6381821b6cc64b00bab9162445af628cac3f9e31 \
+  --archived-ranking outputs/mvp_v11_b0/refs/ranking_paired_by_date.csv \
+  --expected-ranking-sha256 4b0d25e0ad54c394a5eeed2ed47a2c4f0ba01fae29cc8d793f573980a2d88d51 \
+  --output-dir outputs/mvp_v11_risk/risk_run_01
+```
+
+**Exact expected files**: `data_risk_review_summary.json`,
+`event_review_queue.csv`. The tool leaves the 52 event dispositions
+`UNREVIEWED`; it does not access SEC/Alpaca or compute future return
+comparisons. Keep CSV as a working review checklist and **do not**
+treat its exposure flags as a return-selection algorithm.
+
+Before any parameter experiment, review/provide a small Markdown note covering:
+
+- Evidence for public filing **availability time**, not merely filing
+  period end or data-as-of. Mark ambiguous pre-open/after-close timings
+  `UNVERIFIED`; do not claim PIT pass from date fields alone.
+- SEC CIK/operating entity, share classes, currency and restatement
+  continuity on risk-relevant dates, especially the historical Top-15.
+- Each of 51 audit-only event records' economic identity, shares-source
+  anomalies and price/label implications. List known-supported cases and
+  unresolved cases separately; no retrospective removing real winners.
+- The proposed **outcome-blind** data-quality flags / exclusion or
+  uncertainty masks for sensitivity, without changing source v3 bytes.
+- Corroborating sources/identifiers, dates and limitations for reviewer
+  validation. No secrets, large licensed inputs or private credentials.
+
+Return compact summary and review queue with pinned SHA and CI result;
+do not upload bulk original datasets. If independent filing/event proof is
+unavailable, mark it unresolved and STOP before outcome comparisons.
+
+Human approval to freeze the pre-registered B0/R1–R5/E1–E4 registry
+and any mask protocol remains required after these findings are reviewed.
+The standalone 2025 / 2026Q1 temporal diagnostics stay embargoed until
+the development winner is locked on 2023–2024.
