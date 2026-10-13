@@ -308,13 +308,15 @@ artifacts still exist.
 
 ## 11. Modal / heavy compute
 
-Use Modal only when local execution is materially impractical.
+Long or compute-heavy tasks must prefer the Modal at2018cow workspace over local
+execution. Size containers from observed need and use parallelism to finish
+faster. Only quick/cheap tasks (seconds to a few minutes) should run locally.
 
 Hard rules:
 
 - **never use `--detach` or detached app execution**;
 - run foreground only;
-- explicitly use `MODAL_PROFILE=infi`;
+- explicitly use `MODAL_PROFILE=at2018cow`;
 - do not rely on whichever profile is currently active;
 - tuner candidate concurrency must not exceed 80 in-flight containers;
 - reuse persistent checkpoints/results where the run specification matches;
