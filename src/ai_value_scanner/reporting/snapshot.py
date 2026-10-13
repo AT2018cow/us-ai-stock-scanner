@@ -18,6 +18,10 @@ from ai_value_scanner.decision.model import (
     stock_decisions_from_jsonl,
     stock_decisions_to_jsonl,
 )
+from ai_value_scanner.fundamentals.provenance import (
+    canonical_json_bytes,
+    sha256_hex,
+)
 from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
@@ -180,12 +184,18 @@ def write_decision_snapshot(
     discovery_memberships: Iterable[Mapping[str, Any]] = (),
     discovery_source_rejections: Iterable[Mapping[str, Any]] = (),
     discovery_source_summary: Mapping[str, Any] | None = None,
+    ticker_map_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> DecisionSnapshotPaths:
     """Write an immutable prospective snapshot with derived Markdown views.
 
     The date/style directory is never overwritten. A second run for the same
     decision date/style must choose a different output root or leave the first
     prospective snapshot intact.
+
+    ``ticker_map_rows`` (optional symbol/cik/company_name records) freezes
+    the exact ticker->CIK rows behind the run: the file content is the
+    canonical serialization, so its SHA doubles as the content checksum
+    recorded in the manifest. Additive only; existing callers unaffected.
     """
     decisions_tuple = tuple(decisions)
     daily_tuple = tuple(daily_attention)
@@ -269,6 +279,23 @@ def write_decision_snapshot(
                 encoding="utf-8",
             )
 
+        ticker_map_rows_manifest: dict[str, Any] = {}
+        if ticker_map_rows is not None:
+            frozen_rows = [
+                {"symbol": str(row.get("symbol") or "").strip().upper(),
+                 "cik": str(row.get("cik") or "").strip(),
+                 "company_name": str(row.get("company_name") or "").strip()}
+                for row in ticker_map_rows
+            ]
+            frozen_rows.sort(key=lambda item: (item["symbol"], item["cik"]))
+            rows_bytes = canonical_json_bytes(frozen_rows)
+            (tmp_root / "ticker_map_rows.json").write_bytes(rows_bytes)
+            ticker_map_rows_manifest = {
+                "ticker_map_rows_file": "ticker_map_rows.json",
+                "ticker_map_rows_sha256": sha256_hex(rows_bytes),
+                "ticker_map_rows_count": len(frozen_rows),
+            }
+
         manifest = build_run_manifest(
             decisions=decisions_tuple,
             daily_attention=daily_tuple,
@@ -278,7 +305,10 @@ def write_decision_snapshot(
             strategy_style=strategy_style,
             config_fingerprint=config_fingerprint,
             code_sha=code_sha,
-            input_provenance=input_provenance,
+            input_provenance={
+                **dict(input_provenance or {}),
+                **ticker_map_rows_manifest,
+            },
             candidate_universe_summary=candidate_universe_summary,
             discovery_source_summary=discovery_source_summary,
         )

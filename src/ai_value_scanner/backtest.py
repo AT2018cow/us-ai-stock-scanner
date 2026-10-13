@@ -41,7 +41,16 @@ from ai_value_scanner.fundamentals.reconstruction import (
 from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 
 from ai_value_scanner.features.derived import compute_cross_section_derived_features
-from ai_value_scanner.fundamentals.identity import verify_operating_entity
+from ai_value_scanner.fundamentals.identity import (
+    downgrade_on_hard_findings,
+    verify_operating_entity,
+)
+from ai_value_scanner.fundamentals.provenance import (
+    canonical_json_bytes,
+    check_entity_coherence,
+    fingerprint_effective_values,
+    sha256_hex,
+)
 from ai_value_scanner.features.ai_link import (
     ai_etf_consensus_score,
     ai_market_link_score,
@@ -246,6 +255,13 @@ class FundamentalPointInTime:
     # Filing-entity display name from submissions (traceability only;
     # never used for scoring or matching).
     entity_name: str | None = None
+    # L0 content fingerprints (canonical bytes of the payloads as received;
+    # see fundamentals.provenance for the documented basis).
+    entity_submissions_sha: str | None = None
+    entity_facts_sha: str | None = None
+    # Hard coherence findings evaluated at load time (response-CIK and
+    # ticker-listing only; accession-prefix audit runs at evidence time).
+    coherence_findings: tuple[str, ...] = ()
 
 
 def parse_csv_list(raw: str | None) -> list[str]:
@@ -1296,6 +1312,29 @@ def load_symbol_fundamental_pti(
         str(submissions.get("name") or "").strip() or None
         if isinstance(submissions, dict) else None
     )
+    # Replay has no EdgarTools merge: raw Company Facts is its full
+    # effective document. Keep hashing failures separate from identity
+    # failures: a check exception must never clear hard findings.
+    try:
+        _entity_submissions_sha = sha256_hex(canonical_json_bytes(submissions))
+    except (TypeError, ValueError):
+        _entity_submissions_sha = None
+    try:
+        _entity_facts_sha = sha256_hex(canonical_json_bytes(companyfacts))
+    except (TypeError, ValueError):
+        _entity_facts_sha = None
+    try:
+        _coherence_findings = tuple(check_entity_coherence(
+            symbol=symbol,
+            mapped_cik=cik,
+            submissions=submissions,
+            facts_queried_cik=cik,
+            facts_response_cik=(companyfacts.get("cik")
+                                if isinstance(companyfacts, dict) else None),
+            relevant_accessions=[],
+        ).get("findings", []))
+    except Exception:
+        _coherence_findings = ("COHERENCE_CHECK_FAILED",)
     f = FundamentalPointInTime(
         sic=str(submissions.get("sic")) if submissions.get("sic") is not None else None,
         sic_description=submissions.get("sicDescription"),
@@ -1326,6 +1365,9 @@ def load_symbol_fundamental_pti(
         entity_tickers=_entity_tickers,
         entity_n_filings=int(_entity_n_filings),
         entity_name=_entity_name,
+        entity_submissions_sha=_entity_submissions_sha,
+        entity_facts_sha=_entity_facts_sha,
+        coherence_findings=_coherence_findings,
     )
     return symbol, f
 
@@ -2383,6 +2425,32 @@ def build_cross_section_asof(
                 _core_present,
             )
         )
+        # Hard coherence findings from load time override any passing
+        # verdict above (same fail-closed gate as the live path).
+        _operating_entity_verified, _operating_entity_detail = (
+            downgrade_on_hard_findings(
+                _operating_entity_verified,
+                _operating_entity_detail,
+                getattr(f, "coherence_findings", ()),
+            )
+        )
+        _effective_sha = fingerprint_effective_values({
+            "revenue": revenue,
+            "net_income": net_income,
+            "operating_cash_flow": operating_cash_flow,
+            "free_cash_flow": free_cash_flow,
+            "ebit": ebit,
+            "cash_and_equivalents": cash_and_equivalents,
+            "total_debt": total_debt,
+            "net_debt": net_debt,
+            "interest_expense": interest_expense_abs,
+            "depreciation_and_amortization": depreciation_and_amortization,
+            "current_assets": current_assets,
+            "current_liabilities": current_liabilities,
+            "receivables_current": receivables_current,
+            "inventory_current": inventory_current,
+            "shares_outstanding": shares,
+        })
 
         rows.append(
             {
@@ -2412,6 +2480,10 @@ def build_cross_section_asof(
                 "shares_asof_end": shares_asof_end,
                 "shares_stale": shares_stale,
                 "fundamental_data_asof": fundamental_data_asof,
+                "fundamental_submissions_sha256": getattr(f, "entity_submissions_sha", None),
+                "fundamental_companyfacts_raw_sha256": getattr(f, "entity_facts_sha", None),
+                "fundamental_companyfacts_sha256": getattr(f, "entity_facts_sha", None),
+                "fundamental_effective_sha256": _effective_sha,
                 "revenue": revenue,
                 "net_income": net_income,
                 "operating_cash_flow": operating_cash_flow,

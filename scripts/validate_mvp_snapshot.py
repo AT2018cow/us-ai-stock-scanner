@@ -25,12 +25,75 @@ from ai_value_scanner.decision.universe import (
     SAMPLE_STAGE,
     SEC_MAPPING_MISSING,
     SEC_MAPPING_STAGE,
+    SEC_TICKER_CIK_CONFLICT,
 )
+
+# validator reason registry (module-level so tests can pin it): every
+# exclusion reason_code produced anywhere must map to its stage here,
+# or snapshots carrying it fail closed. Keep in sync with
+# decision/universe.py reason constants.
+EXCLUSION_REASON_TO_STAGE = {
+    ACTIVE_ASSET_MISSING: ASSET_STAGE,
+    NOT_TRADABLE: ASSET_STAGE,
+    EXCHANGE_NOT_ENABLED: ASSET_STAGE,
+    SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
+    SEC_TICKER_CIK_CONFLICT: SEC_MAPPING_STAGE,
+    SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
+    PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
+    PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+    DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
+    DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
+}
 from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
 from ai_value_scanner.reporting.snapshot import load_snapshot_decisions
+
+
+def check_ticker_map_rows(root_path: str | Path, manifest: dict[str, Any]) -> list[str]:
+    """Verify the frozen ticker-map row set referenced by the manifest.
+
+    Returns error strings (empty when valid or when the manifest carries no
+    reference, keeping pre-rows snapshots valid). Checks file presence, SHA
+    match against the manifest value, non-empty row list, and per-row
+    symbol/cik presence.
+    """
+    errors: list[str] = []
+    provenance = manifest.get("input_provenance")
+    if not isinstance(provenance, dict):
+        return errors
+    filename = provenance.get("ticker_map_rows_file")
+    if not filename:
+        return errors
+    path = Path(root_path) / str(filename)
+    if not path.is_file():
+        errors.append(f"ticker_map_rows file missing: {filename}")
+        return errors
+    try:
+        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception as exc:
+        errors.append(f"ticker_map_rows unreadable: {type(exc).__name__}")
+        return errors
+    expected_sha = provenance.get("ticker_map_rows_sha256")
+    if expected_sha and actual_sha != str(expected_sha):
+        errors.append("ticker_map_rows sha256 mismatch vs manifest")
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"ticker_map_rows invalid JSON: {type(exc).__name__}")
+        return errors
+    if not isinstance(rows, list) or not rows:
+        errors.append("ticker_map_rows is empty")
+        return errors
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or not str(row.get("symbol") or "").strip():
+            errors.append(f"ticker_map_rows row {index} has empty symbol")
+            break
+        if not str(row.get("cik") or "").strip():
+            errors.append(f"ticker_map_rows row {index} has empty cik")
+            break
+    return errors
 
 
 def validate_snapshot(
@@ -95,6 +158,7 @@ def validate_snapshot(
         errors.append("decision priorities are not contiguous from 1..N")
 
     manifest_date = str(manifest.get("decision_date", ""))
+    errors.extend(check_ticker_map_rows(root_path, manifest))
     for decision in decisions:
         if decision.decision_date != manifest_date:
             errors.append(
@@ -189,17 +253,9 @@ def validate_snapshot(
             errors.append(
                 "candidate_universe contract_version does not match current contract"
             )
-        reason_to_stage = {
-            ACTIVE_ASSET_MISSING: ASSET_STAGE,
-            NOT_TRADABLE: ASSET_STAGE,
-            EXCHANGE_NOT_ENABLED: ASSET_STAGE,
-            SEC_MAPPING_MISSING: SEC_MAPPING_STAGE,
-            SAMPLE_MAX_SYMBOLS_LIMIT: SAMPLE_STAGE,
-            PRICE_MISSING: PRICE_LIQUIDITY_STAGE,
-            PRICE_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
-            DOLLAR_VOLUME_MISSING: PRICE_LIQUIDITY_STAGE,
-            DOLLAR_VOLUME_BELOW_MIN: PRICE_LIQUIDITY_STAGE,
-        }
+        # New exclusion reasons must be registered here AND in
+        # decision/universe.py, or snapshots carrying them fail closed.
+        reason_to_stage = EXCLUSION_REASON_TO_STAGE
 
         exclusion_symbols: list[str] = []
         for index, item in enumerate(universe_exclusions, start=1):

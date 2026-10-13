@@ -303,6 +303,12 @@ class TestD01ParsedCacheBinding(unittest.TestCase):
                 calls.append("facts")
                 return {"facts": {}}
 
+            def ticker_map_snapshot(self):
+                calls.append("snapshot")
+                return {"source": "test", "sha256": "testmap",
+                        "fetched_utc": None, "read_utc": "t", "n_rows": 0,
+                        "conflicts": {}}
+
         return FakeSec()
 
     def test_stale_config_cache_misses_and_recomputes(self):
@@ -345,13 +351,26 @@ class TestD01ParsedCacheBinding(unittest.TestCase):
             filing = "2026-10-01"
             subs = {"filings": {"recent": {"filingDate": [filing]}}}
             (Path(cache_dir) / f"submissions_{cik}.json").write_text(json.dumps(subs))
+            facts_doc = {"facts": {}}
+            (Path(cache_dir) / f"facts_{cik}.json").write_text(json.dumps(facts_doc))
             config = ScanConfig(cache_dir=cache_dir)
-            meta = _parsed_fund_cache_meta(config, filing)
-            cached = {"symbol": "OLD", "revenue": 120.0, "_cache_meta": meta}
+            import hashlib as _hashlib
+
+            def _sha(path):
+                return _hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+            meta = _parsed_fund_cache_meta(
+                config, filing, ticker_map_sha="testmap",
+                facts_content_sha=_sha(Path(cache_dir) / f"facts_{cik}.json"),
+                submissions_content_sha=_sha(Path(cache_dir) / f"submissions_{cik}.json"),
+            )
+            cached = {"symbol": "OLD", "revenue": 120.0, "_cache_meta": meta,
+                      "fundamental_operating_entity_verified": True,
+                      "fundamental_operating_entity_detail": "test"}
             (Path(cache_dir) / f"parsed_fund_{cik}.json").write_text(json.dumps(cached))
             calls: list[str] = []
             result = load_one_fundamental(self._fake_sec(calls), "NEW", cik, config)
-            self.assertEqual(calls, [])
+            self.assertEqual(calls, ["snapshot"])
             self.assertEqual(result["revenue"], 120.0)
             self.assertNotIn("_cache_meta", result)
 

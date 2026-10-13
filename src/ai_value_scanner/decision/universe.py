@@ -19,6 +19,7 @@ ACTIVE_ASSET_MISSING = "ALPACA_ACTIVE_ASSET_MISSING"
 NOT_TRADABLE = "NOT_TRADABLE"
 EXCHANGE_NOT_ENABLED = "EXCHANGE_NOT_ENABLED"
 SEC_MAPPING_MISSING = "SEC_MAPPING_MISSING"
+SEC_TICKER_CIK_CONFLICT = "SEC_TICKER_CIK_CONFLICT"
 SAMPLE_MAX_SYMBOLS_LIMIT = "SAMPLE_MAX_SYMBOLS_LIMIT"
 PRICE_MISSING = "PRICE_MISSING"
 PRICE_BELOW_MIN = "PRICE_BELOW_MIN"
@@ -36,6 +37,31 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def find_mapping_conflicts(sec_mapping: pd.DataFrame) -> dict[str, list[str]]:
+    """Return symbols mapped to more than one distinct CIK.
+
+    A silent first-wins pick would score an arbitrary entity, so callers
+    must exclude conflicted symbols explicitly (SEC_TICKER_CIK_CONFLICT)
+    instead of letting drop_duplicates choose. Pure; no network.
+    """
+    if sec_mapping is None or getattr(sec_mapping, "empty", True):
+        return {}
+    columns = getattr(sec_mapping, "columns", None)
+    column_set = set(columns.tolist()) if columns is not None else set()
+    if "symbol" not in column_set or "cik" not in column_set:
+        return {}
+    frame = sec_mapping[["symbol", "cik"]].copy()
+    frame["symbol"] = frame["symbol"].astype(str).str.strip().str.upper()
+    frame["cik"] = frame["cik"].astype(str).str.strip()
+    frame = frame[(frame["symbol"] != "") & (frame["cik"] != "")]
+    out: dict[str, list[str]] = {}
+    for symbol, group in frame.groupby("symbol"):
+        ciks = sorted({str(value) for value in group["cik"].tolist() if str(value)})
+        if len(ciks) > 1:
+            out[str(symbol)] = ciks
+    return out
 
 
 def _base_exclusion(
@@ -102,7 +128,17 @@ def classify_asset_mapping_universe(
 
     eligible: set[str] = set()
     exclusions: list[dict[str, Any]] = []
+    conflicts = find_mapping_conflicts(sec_mapping)
     for sym in sorted(discovery):
+        if sym in conflicts:
+            exclusions.append(
+                _base_exclusion(
+                    sym,
+                    stage=SEC_MAPPING_STAGE,
+                    reason_code=SEC_TICKER_CIK_CONFLICT,
+                )
+            )
+            continue
         asset = assets_by_symbol.get(sym)
         if asset is None:
             exclusions.append(
