@@ -40,8 +40,12 @@ python scripts/mvp_v11_a0.py \
   --output outputs/mvp_v11_a0/structural_gate.json
 ```
 
-The paths are placeholders, **not claimed to exist**. Same-stem .meta.json is
-required for each CSV. Do not edit metadata merely to bypass a gate.
+The paths are placeholders, **not claimed to exist**. These corrected v3 CSV
+files have names ending in `.v3.csv`, whereas the archived metadata uses
+`.meta.json` without `.v3`. Therefore, use the explicit `--quality-meta`
+and `--entry-meta` options pointing to verified matching originals. Do not
+rename/alter historical evidence to satisfy a path convention. If the matching
+metadata is in a different directory, supply that path.
 
 Send for review the small `structural_gate.json` and redacted test summary,
 the exact checked-out commit SHA, paths/filenames and dataset SHA256. Do not
