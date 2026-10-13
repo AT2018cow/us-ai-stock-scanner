@@ -351,8 +351,19 @@ class TestD01ParsedCacheBinding(unittest.TestCase):
             filing = "2026-10-01"
             subs = {"filings": {"recent": {"filingDate": [filing]}}}
             (Path(cache_dir) / f"submissions_{cik}.json").write_text(json.dumps(subs))
+            facts_doc = {"facts": {}}
+            (Path(cache_dir) / f"facts_{cik}.json").write_text(json.dumps(facts_doc))
             config = ScanConfig(cache_dir=cache_dir)
-            meta = _parsed_fund_cache_meta(config, filing, ticker_map_sha="testmap")
+            import hashlib as _hashlib
+
+            def _sha(path):
+                return _hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+            meta = _parsed_fund_cache_meta(
+                config, filing, ticker_map_sha="testmap",
+                facts_content_sha=_sha(Path(cache_dir) / f"facts_{cik}.json"),
+                submissions_content_sha=_sha(Path(cache_dir) / f"submissions_{cik}.json"),
+            )
             cached = {"symbol": "OLD", "revenue": 120.0, "_cache_meta": meta,
                       "fundamental_operating_entity_verified": True,
                       "fundamental_operating_entity_detail": "test"}

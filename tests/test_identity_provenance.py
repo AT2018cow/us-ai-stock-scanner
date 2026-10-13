@@ -153,6 +153,16 @@ def _plant_raw_submissions(cache_dir, cik, submissions):
         json.dumps(submissions))
 
 
+def _plant_raw_facts(cache_dir, cik, facts):
+    (Path(cache_dir) / f"facts_{cik}.json").write_text(
+        json.dumps(facts))
+
+
+def _plant_raw(cache_dir, cik, submissions, facts):
+    _plant_raw_submissions(cache_dir, cik, submissions)
+    _plant_raw_facts(cache_dir, cik, facts)
+
+
 class TickerMapSnapshotTests(unittest.TestCase):
     def test_memo_freezes_bytes_across_calls(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -230,20 +240,47 @@ class CanonicalHashTests(unittest.TestCase):
 
 
 class CompareStatesTests(unittest.TestCase):
+    def _rec(self, **over):
+        base = {"symbol": "X", "financial_asof": "2026-08-03",
+                "mapped_cik": "0001", "code_version": "v",
+                "config_fingerprint": "c", "effective_facts_sha": "f",
+                "scoring_inputs_sha": "s", "raw_bytes_sha": "r"}
+        base.update(over)
+        return base
+
     def test_precedence(self) -> None:
-        self.assertEqual(compare_identity_records(None, {"a": 1}), PROVENANCE_MISSING)
+        base = self._rec()
+        self.assertEqual(compare_identity_records(None, base), PROVENANCE_MISSING)
         self.assertEqual(compare_identity_records({}, {}), PROVENANCE_MISSING)
-        base = {"scoring_inputs_sha": "s", "effective_facts_sha": "f", "raw_bytes_sha": "r"}
-        same = dict(base)
-        self.assertEqual(compare_identity_records(base, same), SAME)
-        other_raw = dict(base, raw_bytes_sha="r2")
-        self.assertEqual(compare_identity_records(base, other_raw), RECONCILED)
-        other_facts = dict(base, effective_facts_sha="f2", scoring_inputs_sha="s2")
-        self.assertEqual(compare_identity_records(base, other_facts), UNCOMPARABLE)
-        facts_only = {"effective_facts_sha": "f"}
-        self.assertEqual(compare_identity_records(facts_only, dict(facts_only)), SAME)
-        self.assertEqual(compare_identity_records(facts_only, {"effective_facts_sha": "g"}),
+        self.assertEqual(compare_identity_records(base, dict(base)), SAME)
+        # Reviewer counterexample: same scoring sha, different CIK/facts/raw.
+        other_entity = self._rec(mapped_cik="0002", effective_facts_sha="facts-B",
+                                 scoring_inputs_sha="s", raw_bytes_sha="raw-B")
+        self.assertEqual(compare_identity_records(base, other_entity), UNCOMPARABLE)
+        # Symbol/asof mismatch is not a valid pair.
+        self.assertEqual(compare_identity_records(base, self._rec(symbol="Y")),
+                         PROVENANCE_MISSING)
+        self.assertEqual(compare_identity_records(base, self._rec(financial_asof="2026-09-30")),
+                         PROVENANCE_MISSING)
+        # Code/config drift without proof.
+        self.assertEqual(compare_identity_records(base, self._rec(code_version="v2")),
                          UNCOMPARABLE)
+        # Scoring differs with everything else equal.
+        self.assertEqual(compare_identity_records(base, self._rec(scoring_inputs_sha="s2")),
+                         UNCOMPARABLE)
+        # Same scoring, different raw bytes: feed re-serialization.
+        self.assertEqual(compare_identity_records(base, self._rec(raw_bytes_sha="r2")),
+                         RECONCILED)
+        # Facts-only layer (canonical 10-digit CIKs throughout).
+        facts_only = {"symbol": "X", "financial_asof": "d", "mapped_cik": "0001",
+                      "code_version": "v", "config_fingerprint": "c",
+                      "effective_facts_sha": "f"}
+        self.assertEqual(compare_identity_records(facts_only, dict(facts_only)), SAME)
+        self.assertEqual(compare_identity_records(
+            facts_only, dict(facts_only, effective_facts_sha="g")), UNCOMPARABLE)
+        # Missing scoring layer on one side only.
+        self.assertEqual(compare_identity_records(
+            facts_only, self._rec()), PROVENANCE_MISSING)
 
     def test_states_disjoint_from_quality_grades(self) -> None:
         grades = {g.value for g in QualityGrade}
@@ -291,7 +328,7 @@ class ParsedCacheBindingTests(unittest.TestCase):
             sub, fac = _submissions_doc(), _facts_doc()
             stub = _StubSec(sub, fac, map_sha="mapsha1")
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
-            _plant_raw_submissions(tmp, "0000111111", sub)
+            _plant_raw(tmp, "0000111111", sub, fac)
             out = self._run(tmp, stub)
             self.assertTrue(out["fundamental_operating_entity_verified"])
             meta = json.loads((Path(tmp) / "parsed_fund_0000111111.json").read_text())["_cache_meta"]
@@ -300,10 +337,10 @@ class ParsedCacheBindingTests(unittest.TestCase):
 
     def test_hit_serves_without_refetch(self) -> None:
         with TemporaryDirectory() as tmp:
-            sub = _submissions_doc()
-            stub = _StubSec(sub, _facts_doc())
+            sub, fac = _submissions_doc(), _facts_doc()
+            stub = _StubSec(sub, fac)
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
-            _plant_raw_submissions(tmp, "0000111111", sub)
+            _plant_raw(tmp, "0000111111", sub, fac)
             first = self._run(tmp, stub)
             calls_after_first = dict(stub.calls)
             second = self._run(tmp, stub)
@@ -313,10 +350,10 @@ class ParsedCacheBindingTests(unittest.TestCase):
 
     def test_old_version_and_corrupt_cache_miss(self) -> None:
         with TemporaryDirectory() as tmp:
-            sub = _submissions_doc()
-            stub = _StubSec(sub, _facts_doc())
+            sub, fac = _submissions_doc(), _facts_doc()
+            stub = _StubSec(sub, fac)
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
-            _plant_raw_submissions(tmp, "0000111111", sub)
+            _plant_raw(tmp, "0000111111", sub, fac)
             self._run(tmp, stub)
             path = Path(tmp) / "parsed_fund_0000111111.json"
             payload = json.loads(path.read_text())
@@ -332,10 +369,10 @@ class ParsedCacheBindingTests(unittest.TestCase):
 
     def test_map_change_invalidates_hit(self) -> None:
         with TemporaryDirectory() as tmp:
-            sub = _submissions_doc()
-            stub = _StubSec(sub, _facts_doc(), map_sha="mapsha1")
+            sub, fac = _submissions_doc(), _facts_doc()
+            stub = _StubSec(sub, fac, map_sha="mapsha1")
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
-            _plant_raw_submissions(tmp, "0000111111", sub)
+            _plant_raw(tmp, "0000111111", sub, fac)
             self._run(tmp, stub)
             stub._map_sha = "mapsha2-different-content"
             before = dict(stub.calls)
@@ -352,9 +389,9 @@ class ParsedCacheBindingTests(unittest.TestCase):
                     _time.sleep(0.05)
                     return super().get_companyfacts(cik)
 
-            stub = Slow(_submissions_doc(), _facts_doc())
+            stub = Slow(sub := _submissions_doc(), _facts_doc())
             _plant_meta(tmp, "0000111111", "0000001111-26-000001")
-            _plant_raw_submissions(tmp, "0000111111", _submissions_doc())
+            _plant_raw(tmp, "0000111111", sub, _facts_doc())
             errors: list = []
 
             def work():
@@ -406,16 +443,33 @@ class ManifestAndValidatorTests(unittest.TestCase):
 
 
 class AcceptanceRowsTests(unittest.TestCase):
+    def _rec(self, symbol, cik, asof, scoring, facts, raw):
+        return {"symbol": symbol, "financial_asof": asof, "mapped_cik": cik,
+                "code_version": "v9test", "config_fingerprint": "cfg",
+                "effective_facts_sha": facts, "scoring_inputs_sha": scoring,
+                "raw_bytes_sha": raw}
+
     def test_xom_thin_vs_opco_never_silently_mixed(self) -> None:
-        thin = {"scoring_inputs_sha": None, "effective_facts_sha": None,
-                "raw_bytes_sha": "shell84k"}
-        opco = {"scoring_inputs_sha": "opco-labels", "effective_facts_sha": "opco-facts",
-                "raw_bytes_sha": "opco6m"}
-        # Missing scoring fingerprints on the thin side: no silent pick.
+        # Thin holdings run: no scoring/effective fingerprints at all.
+        thin = {"symbol": "XOM", "financial_asof": "2026-08-03",
+                "mapped_cik": "0002115436", "code_version": "v9test",
+                "config_fingerprint": "cfg", "effective_facts_sha": None,
+                "scoring_inputs_sha": None, "raw_bytes_sha": "shell84k"}
+        opco = self._rec("XOM", "0002115436", "2026-08-03",
+                         "opco-labels", "opco-facts", "opco6m")
+        # No silent pick: without fingerprints there is nothing valid to
+        # compare, even against a fully fingerprinted run.
         self.assertEqual(compare_identity_records(thin, opco), PROVENANCE_MISSING)
-        opco_thin_scored = {"scoring_inputs_sha": "s-thin", "effective_facts_sha": "f-thin",
-                            "raw_bytes_sha": "shell84k"}
-        self.assertEqual(compare_identity_records(opco_thin_scored, opco), UNCOMPARABLE)
+        # And a scored thin run against opco content differs by issuer
+        # content, not just bytes.
+        thin_scored = self._rec("XOM", "0002115436", "2026-08-03",
+                                "s-thin", "f-thin", "shell84k")
+        self.assertEqual(compare_identity_records(thin_scored, opco), UNCOMPARABLE)
+        # Cross-entity with identical scoring inputs still UNCOMPARABLE.
+        other_entity = self._rec("XOM", "0000034088", "2026-08-03",
+                                 "s-thin", "f-thin", "shell84k")
+        self.assertEqual(compare_identity_records(thin_scored, other_entity),
+                         UNCOMPARABLE)
 
     def test_hon_skew_keeps_capped_path(self) -> None:
         ok, detail = verify_operating_entity("HON", ["HON"], 1006, True)

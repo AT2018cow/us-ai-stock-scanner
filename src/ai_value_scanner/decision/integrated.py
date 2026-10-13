@@ -9,6 +9,7 @@ import pandas as pd
 
 from .action import map_action_state
 from .entry import ENTRY_POLICY_VERSION, build_entry_quality_v1
+from ..fundamentals.provenance import fingerprint_scoring_inputs
 from .model import (
     DECISION_SCHEMA_VERSION,
     ActionState,
@@ -234,6 +235,10 @@ def build_stock_decisions(
             "watchlist_etfs",
             "cik",
             "filing_entity_name",
+            "fundamental_submissions_sha256",
+            "fundamental_companyfacts_sha256",
+            "fundamental_effective_sha256",
+            "fundamental_operating_entity_detail",
             "fundamental_latest_periodic_filing_date",
             "fundamental_latest_periodic_form",
             "fundamental_latest_periodic_accession",
@@ -249,6 +254,7 @@ def build_stock_decisions(
             "fundamental_facts_cover_latest_periodic",
             "fundamental_currency_supported",
             "fundamental_edgartools_fallback_used",
+            "fundamental_operating_entity_verified",
         ):
             value = row.get(key)
             if isinstance(value, bool):
@@ -256,6 +262,15 @@ def build_stock_decisions(
         etf_count = _number(row.get("watchlist_etf_count"))
         if etf_count is not None:
             provenance["watchlist_etf_count"] = int(etf_count)
+        # L2 scoring-inputs fingerprint: the full evidence row exactly as
+        # scored, so equal grades from different inputs can never compare
+        # SAME. Record-only; never influences the decision itself.
+        try:
+            scoring_sha = fingerprint_scoring_inputs(dict(row))
+        except Exception:
+            scoring_sha = None
+        if scoring_sha is not None:
+            provenance["identity_scoring_sha"] = scoring_sha
         fallback_fact_count = _number(
             row.get("fundamental_edgartools_fallback_fact_count")
         )

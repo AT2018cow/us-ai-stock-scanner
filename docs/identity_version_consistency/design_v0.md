@@ -1,6 +1,8 @@
 # P0: financial-data identity & version consistency — design v0
 
-> Status: DESIGN ONLY. No production code changed in this commit.
+> Status: IMPLEMENTED (see "As-built notes" at the end). Implementation
+> supersedes design sketches where they differ; the contract below is
+> normative.
 > Goal: same symbol + same financial as-of must never silently yield
 > incomparable facts and grades across runs (observed: XOM posthoc-1009
 > UNRATED vs frozen-1012 B at identical asof 2026-08-03).
@@ -69,3 +71,27 @@ authorized by this design commit.
 | FCX edge | OCF YoY -10.07% | B | unchanged | n/a |
 | NEE upgrade | Q2 facts newly recognized | B | unchanged | n/a |
 | PLD lag | Q2 filed, facts absent | B on Q1 | unchanged + lag note | asof stays, disclosed |
+
+## As-built notes (implementation = this design unless stated)
+
+- Map freeze: per-`SecClient`-instance memo (not a separate freeze call);
+  identical bytes guaranteed within one process. Snapshot carries source,
+  content SHA (raw network bytes, canonical JSON for the fallback),
+  fetched_utc (None when derived), read_utc, row count, conflicts.
+- Rows file: `ticker_map_rows.json` (canonical records) written into the
+  snapshot dir when rows are passed; manifest references filename + SHA.
+  Raw-payload SHA and rows-file SHA intentionally differ for the network
+  source (different canonicalizations, both documented).
+- L0 basis: canonical-JSON SHA of the payload dicts as received (the
+  parsed-returning client no longer holds wire bytes); L1: frozen
+  15-key effective-values list (both paths share key names); L2: full
+  evidence row as scored. Cross-path L1/L2 inequality is honest
+  UNCOMPARABLE material (different computation scopes), not a bug.
+- Parsed cache: v9 + identity key + map SHA + raw-file content SHAs;
+  legacy/unsigned entries always miss (recompute). Unique tmp names +
+  one global write lock; readers see only complete payloads.
+- Companyfacts refresh heuristic: newest relevant 10-K/10-Q accession;
+  unknown-form entries stay conservative (treated as relevant).
+- Audit states live in `fundamentals/provenance.py`, disjoint from
+  `QualityGrade` by construction + test. No scoring formula touched;
+  `decision/` diff vs main is additive-only (verified in CI).

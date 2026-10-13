@@ -71,6 +71,7 @@ from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
 from ai_value_scanner.fundamentals.identity import verify_operating_entity
 from ai_value_scanner.fundamentals.provenance import (
     canonical_json_bytes,
+    fingerprint_effective_values,
     sha256_hex,
 )
 
@@ -1360,9 +1361,25 @@ class SecClient:
             try:
                 subs = json.loads(subs_path.read_text())
                 recent = subs.get("filings", {}).get("recent", {}) or {}
-                accessions = recent.get("accessionNumber", []) or []
-                if accessions:
-                    latest_accn = str(accessions[0])
+                # Coverage-relevant accession only: the newest 10-K/10-Q.
+                # An 8-K or Form 4 as accessions[0] must not count as
+                # financial coverage, nor force refreshes on non-financial
+                # filings. Entries with missing/unparseable forms stay
+                # conservative (treated as relevant) rather than silently
+                # skipped.
+                forms = recent.get("accessionNumber", []) or []
+                form_kinds = recent.get("form", []) or []
+                if not form_kinds:
+                    if forms and forms[0]:
+                        latest_accn = str(forms[0])
+                else:
+                    for kind, accn in zip(form_kinds, forms):
+                        if not accn:
+                            continue
+                        norm = normalize_form(kind)
+                        if not norm or norm in QUARTERLY_FORMS:
+                            latest_accn = str(accn)
+                            break
             except Exception:
                 pass  # fall back to metadata/mtime heuristics below
         if cache_path.exists() and not need_fetch:
@@ -2602,6 +2619,8 @@ def _parsed_fund_cache_meta(
     latest_accession: str | None = None,
     facts_covered_accession: str | None = None,
     ticker_map_sha: str | None = None,
+    facts_content_sha: str | None = None,
+    submissions_content_sha: str | None = None,
 ) -> dict[str, object]:
     return {
         "v": PARSED_FUND_CACHE_VERSION,
@@ -2610,7 +2629,61 @@ def _parsed_fund_cache_meta(
         "latest_accession": latest_accession,
         "facts_covered_accession": facts_covered_accession,
         "ticker_map_sha": ticker_map_sha,
+        # Raw-cache file byte SHAs at write time. A provider-side content
+        # revision under an unchanged accession invalidates the hit even
+        # when filings, TTL and map all still match. Recorded None only
+        # when the raw files are absent (tests); such entries never hit.
+        "facts_content_sha": facts_content_sha,
+        "submissions_content_sha": submissions_content_sha,
     }
+
+
+# Serializes parsed-cache writers: concurrent refreshes must never leave a
+# torn payload whose metadata belongs to a different version.
+_PARSED_CACHE_WRITE_LOCK = threading.Lock()
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    tmp = path.with_name(
+        f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    with _PARSED_CACHE_WRITE_LOCK:
+        tmp.write_text(json.dumps(payload, default=str))
+        os.replace(tmp, path)
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except Exception:
+        return None
+
+
+def _content_shas_match(
+    meta: Mapping[str, Any] | None,
+    current_facts_sha: str | None,
+    current_submissions_sha: str | None,
+) -> bool:
+    """Parsed-hit content gate: provider revisions must be observable.
+
+    A facts/submissions content change under an unchanged accession (the
+    XOM-class hazard) invalidates the hit even when filings, TTL, map and
+    identity keys all still match. Recorded None (legacy/test entries
+    without raw files) never hits — recompute instead of trusting TTL.
+    """
+    if not isinstance(meta, Mapping):
+        return False
+    for key, current in (("facts_content_sha", current_facts_sha),
+                         ("submissions_content_sha", current_submissions_sha)):
+        recorded = meta.get(key)
+        if recorded is None or current is None:
+            return False
+        if str(recorded) != str(current):
+            return False
+    return True
 
 
 def identity_payload_ready(
@@ -2721,6 +2794,11 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                         cached,
                         current_map_sha=current_map_sha,
                         recorded_map_sha=meta.get("ticker_map_sha"),
+                    )
+                    and _content_shas_match(
+                        meta,
+                        _file_sha256(Path(config.cache_dir) / f"facts_{cik}.json"),
+                        _file_sha256(Path(config.cache_dir) / f"submissions_{cik}.json"),
                     )
                 ):
                     cached.pop("_cache_meta", None)
@@ -3040,6 +3118,36 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
             (revenue is not None) or (net_income is not None) or (ocf is not None),
         )
     )
+    # L0 content fingerprints (canonical bytes of the payloads as received;
+    # documented substitute for wire bytes, which the parsed-returning
+    # client no longer holds) and L1 effective-values fingerprint. Cost is
+    # one canonical serialization per payload; recorded for cross-run
+    # attribution, never used for scoring.
+    try:
+        _submissions_sha = sha256_hex(canonical_json_bytes(submissions))
+    except Exception:
+        _submissions_sha = None
+    try:
+        _facts_sha = sha256_hex(canonical_json_bytes(companyfacts))
+    except Exception:
+        _facts_sha = None
+    _effective_sha = fingerprint_effective_values({
+        "revenue": revenue,
+        "net_income": net_income,
+        "operating_cash_flow": ocf,
+        "free_cash_flow": free_cash_flow,
+        "ebit": ebit,
+        "cash_and_equivalents": cash_and_equivalents,
+        "total_debt": total_debt,
+        "net_debt": net_debt,
+        "interest_expense": interest_expense_abs,
+        "depreciation_and_amortization": da,
+        "current_assets": assets_current,
+        "current_liabilities": liabilities_current,
+        "receivables_current": receivables_current,
+        "inventory_current": inventory_current,
+        "shares_outstanding": shares,
+    })
     result = {
         "symbol": symbol,
         "cik": cik,
@@ -3065,6 +3173,9 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
         "fundamental_currency_supported": fundamental_currency_supported,
         "fundamental_operating_entity_verified": fundamental_operating_entity_verified,
         "fundamental_operating_entity_detail": fundamental_operating_entity_detail,
+        "fundamental_submissions_sha256": _submissions_sha,
+        "fundamental_companyfacts_sha256": _facts_sha,
+        "fundamental_effective_sha256": _effective_sha,
         "fundamental_source": fundamental_source,
         "fundamental_edgartools_fallback_used": fallback_used,
         "fundamental_edgartools_fallback_status": fallback_status,
@@ -3156,10 +3267,11 @@ def load_one_fundamental(sec: SecClient, symbol: str, cik: str, config: ScanConf
                     latest_accession,
                     facts_covered,
                     ticker_map_sha=write_map_sha,
+                    facts_content_sha=_file_sha256(
+                        Path(config.cache_dir) / f"facts_{cik}.json"),
+                    submissions_content_sha=_file_sha256(subs_cache),
                 )
-                parsed_tmp = parsed_path.with_suffix(".tmp")
-                parsed_tmp.write_text(json.dumps(cache_payload, default=str))
-                os.replace(parsed_tmp, parsed_path)
+                _atomic_write_json(parsed_path, cache_payload)
         except Exception:
             pass  # cache write failure must not break the scan
     return result
@@ -4467,6 +4579,11 @@ def run_scan(
                     )
                 } if (snapshot_map := sec.ticker_map_snapshot()) else {},
             },
+            ticker_map_rows=(
+                snapshot_map_frame.to_dict(orient="records")
+                if (snapshot_map_frame := sec.ticker_map_snapshot().get("frame"))
+                is not None else None
+            ),
         )
         decision_snapshot_root = decision_paths.root
         log_status(

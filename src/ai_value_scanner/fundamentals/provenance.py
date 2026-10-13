@@ -38,6 +38,29 @@ RECONCILED = "RECONCILED"
 
 AUDIT_COMPARISON_STATES = frozenset({SAME, UNCOMPARABLE, PROVENANCE_MISSING, RECONCILED})
 
+# Frozen value-field list for the L1 effective-facts fingerprint. These
+# keys exist with identical names in both the live fundamentals result
+# dict and the replay cross-section row, so L1 is comparable across runs
+# of the same pipeline version. Values may be None/NaN/float — the
+# canonical serializer distinguishes absent (null) from broken (NaN).
+EFFECTIVE_VALUE_KEYS = (
+    "revenue",
+    "net_income",
+    "operating_cash_flow",
+    "free_cash_flow",
+    "ebit",
+    "cash_and_equivalents",
+    "total_debt",
+    "net_debt",
+    "interest_expense",
+    "depreciation_and_amortization",
+    "current_assets",
+    "current_liabilities",
+    "receivables_current",
+    "inventory_current",
+    "shares_outstanding",
+)
+
 
 def canonical_json_bytes(obj: Any) -> bytes:
     return json.dumps(
@@ -67,6 +90,28 @@ def fingerprint_scoring_inputs(metrics: Mapping[str, Any] | None) -> str | None:
         return None
 
 
+def fingerprint_effective_values(values: Mapping[str, Any] | None) -> str | None:
+    """L1 fingerprint over the frozen effective-value key list.
+
+    Only EFFECTIVE_VALUE_KEYS participate, so tag-vocabulary or column
+    drift elsewhere cannot silently change the fingerprint. Missing keys
+    are skipped (not defaulted): absence of a value is itself evidence
+    state only insofar as present keys hash.
+    """
+    if values is None or not isinstance(values, Mapping):
+        return None
+    try:
+        picked = {key: values[key] for key in EFFECTIVE_VALUE_KEYS if key in values}
+    except (TypeError, ValueError):
+        return None
+    if not picked:
+        return None
+    try:
+        return sha256_hex(canonical_json_bytes(picked))
+    except (TypeError, ValueError):
+        return None
+
+
 def _dig(record: Mapping[str, Any] | None, *keys: str) -> Any:
     if not isinstance(record, Mapping):
         return None
@@ -84,34 +129,83 @@ def compare_identity_records(
 ) -> str:
     """Compare two per-symbol identity records from different runs.
 
+    Required record fields for a valid comparison: ``symbol``,
+    ``financial_asof``, ``mapped_cik``, ``code_version``,
+    ``config_fingerprint``, ``effective_facts_sha``, ``scoring_inputs_sha``.
+    Raw-bytes SHAs (``raw_bytes_sha``) are corroborating, never decisive
+    alone.
+
     Precedence (first match wins):
-    1. Either side missing/empty, or either side lacking scoring-inputs
-       AND effective-facts fingerprints -> PROVENANCE_MISSING.
-    2. Scoring-inputs fingerprints equal (both present) -> SAME when the
-       raw bytes SHAs also match, else RECONCILED.
-    3. Effective-facts fingerprints both present but different ->
+    0. Either side missing/empty -> PROVENANCE_MISSING.
+    1. Mapped CIKs both present and different -> UNCOMPARABLE
+       (cross-entity; no score or fact equality can rehabilitate a
+       different issuer — not even identical scoring inputs).
+    2. Symbol/asof mismatched, or any required field (symbol,
+       financial_asof, mapped_cik, code_version, config_fingerprint)
+       absent on either side -> PROVENANCE_MISSING (not a valid pair).
+    3. Code/config/scope versions differ -> UNCOMPARABLE (comparability
+       unprovable across computation scopes without a dedicated proof).
+    4. Scoring-inputs SHAs both present and equal -> SAME when raw SHAs
+       also match (or either raw SHA is absent), else RECONCILED (same
+       measured inputs through different raw bytes: a feed
+       re-serialization, not an economic change). Different ->
        UNCOMPARABLE.
-    4. Anything else (e.g. only one layer available on both sides and
-       equal) -> SAME if all mutually present fingerprints match, else
-       PROVENANCE_MISSING.
+    5. Effective-facts SHAs both present (scoring SHAs absent on both
+       sides): equal -> SAME, different -> UNCOMPARABLE.
+    6. Anything else -> PROVENANCE_MISSING.
     """
     if not old or not new:
         return PROVENANCE_MISSING
+    old_cik = old.get("mapped_cik")
+    new_cik = new.get("mapped_cik")
+    if (old_cik is not None and new_cik is not None
+            and str(old_cik).strip().lower() != str(new_cik).strip().lower()):
+        return UNCOMPARABLE
+    for key in ("symbol", "financial_asof"):
+        old_val = old.get(key)
+        new_val = new.get(key)
+        if old_val is None or new_val is None:
+            return PROVENANCE_MISSING
+        if str(old_val) != str(new_val):
+            return PROVENANCE_MISSING
+    if old_cik is None or new_cik is None:
+        return PROVENANCE_MISSING
+    for key in ("code_version", "config_fingerprint"):
+        old_val = old.get(key)
+        new_val = new.get(key)
+        if old_val is None or new_val is None:
+            return PROVENANCE_MISSING
+        if str(old_val) != str(new_val):
+            return UNCOMPARABLE
+    for key in ("code_version", "config_fingerprint"):
+        old_val = old.get(key)
+        new_val = new.get(key)
+        if old_val is None or new_val is None:
+            return PROVENANCE_MISSING
+        if str(old_val) != str(new_val):
+            return UNCOMPARABLE
     old_score = old.get("scoring_inputs_sha")
     new_score = new.get("scoring_inputs_sha")
-    if old_score is None or new_score is None:
-        old_facts = old.get("effective_facts_sha")
-        new_facts = new.get("effective_facts_sha")
-        if old_facts is None or new_facts is None:
-            return PROVENANCE_MISSING
-        return SAME if old_facts == new_facts else UNCOMPARABLE
-    if old_score != new_score:
-        return UNCOMPARABLE
-    old_raw = old.get("raw_bytes_sha")
-    new_raw = new.get("raw_bytes_sha")
-    if old_raw is not None and new_raw is not None and old_raw != new_raw:
-        return RECONCILED
-    return SAME
+    old_has_score = old_score is not None
+    new_has_score = new_score is not None
+    if old_has_score and new_has_score:
+        if str(old_score) != str(new_score):
+            return UNCOMPARABLE
+        old_raw = old.get("raw_bytes_sha")
+        new_raw = new.get("raw_bytes_sha")
+        if (old_raw is not None and new_raw is not None
+                and str(old_raw) != str(new_raw)):
+            return RECONCILED
+        return SAME
+    if old_has_score != new_has_score:
+        # Asymmetric evidence layers: one side measured scoring inputs the
+        # other never produced. Not a valid pair.
+        return PROVENANCE_MISSING
+    old_facts = old.get("effective_facts_sha")
+    new_facts = new.get("effective_facts_sha")
+    if old_facts is not None and new_facts is not None:
+        return SAME if str(old_facts) == str(new_facts) else UNCOMPARABLE
+    return PROVENANCE_MISSING
 
 
 def check_entity_coherence(
