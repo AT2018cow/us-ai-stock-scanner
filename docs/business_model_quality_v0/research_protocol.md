@@ -67,13 +67,21 @@ READY gates with no emitted evidence item when they bind:
 - `relative_strength_60d_qqq` in [-10%, -3%) — verified on EQIX/AAPL
   2026-10-09 (RS -4.75%/-5.45% reconstructed from row return_60d minus
   run-manifest QQQ trailing; no RS item on either side).
-- `return_60d` in [-8%, 0%) — verified on EQIX 2026-10-05 (-0.90%).
+- `return_60d` in [-8%, 0%) — verified on EQIX 2026-10-05 (-0.90%,
+  value pinned in committed `silent_gate_inputs.csv` with source/method).
 - `drawdown_from_52w_high` > 22% — no item on either side (unobserved
   in this sample; code-read confirmed).
 - `price_to_sma50` in (1.08, 1.10] — no item (overextended starts >1.10).
 - Volatility emits only the failing side; RS/drawdown emit nothing when
   passing either. Candidates for future evidence-completeness work —
   NOT policy changes in this study.
+
+Reconstruction contract (review-blocking): the diagnostics builder may
+only cite (a) coded items in the frozen decision, (b) RS-silent values
+recomputed from frozen row+manifest inputs, (c) ret60-silent values from
+the committed frozen-inputs file. Anything else — including SMA50-slice
+and missing-metric rows — is labelled UNOBSERVABLE with candidate gates
+enumerated, never "all gates met". "NONE" appears only for ENTRY_READY.
 
 ## 5. Deliverables and review points
 

@@ -1,7 +1,6 @@
 # Reviewer notes — business-model study, first submission
 
 ## Correction round (reviewer audit 2026-10-13; all verified on raw evidence)
-
 - Bank C attribution first version wrongly claimed leverage/coverage
   SCORED against JPM/BAC/MS/WFC. Truth from decisions.jsonl: those codes
   are MISSING (balance_sheet component None); the scored risks are OCF
@@ -22,6 +21,35 @@
   `research/build_entry_diagnostics.py` (+ synthetic rebuild test);
   silent-band rows carry reconstructed values, never NONE.
 - Matrix holds 15 indicator rows (PR body text corrected separately).
+
+## XOM anomaly: downgraded from root-cause to open P0 (reviewer verdict)
+
+- OBSERVED (both committed): posthoc-1009 UNRATED/14-missing vs
+  frozen-1012 B/5-missing with opco-scale values (FCF $19.263B), SAME
+  asof 2026-08-03, same mapped CIK 2115436.
+- WITHDRAWN: the "provider content flap 6.6MB<->84KB" root cause. The
+  84KB rewrite may be my own verification fetch (build_fundamental_pti_db
+  refresh), so self-overwrite cannot be excluded from available data.
+- STANDING: the two XOM labels are incomparable and neither is stable
+  evidence; data_asof alone does not prove content identity.
+- Silence audit on the mechanism: ticker map never archived at run time
+  (both runs); submissions/facts cache files carry no fetch timestamps
+  usable post-hoc; no per-run facts fingerprint exists.
+
+## P0 proposal: financial-data identity & version consistency contract
+
+Scope: XOM-class same-asof content divergence. Acceptance:
+1. Freeze ticker->CIK map per run (file + SHA + fetch time).
+2. Per symbol: submissions entity + tickers + recent-filings count,
+   companyfacts tag/obs counts + content SHA256 + fetch time, latest
+   periodic accession.
+3. Any recompute path records the same fingerprint; on mismatch across
+   runs with equal asof: mark labels UNCOMPARABLE (fail-closed), never
+   silently prefer one.
+4. Impact analysis: re-score effect of content change on grades
+   (XOM-class) before any verdict.
+No production scoring change in this proposal; it is a provenance
+contract. Implementation awaits GO (separate task after PR #62).
 
 ## What this PR contains (design + inventory + first diagnostics)
 
