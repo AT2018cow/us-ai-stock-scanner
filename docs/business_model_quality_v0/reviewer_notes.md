@@ -51,3 +51,15 @@
 6. Heavy compute: none spent. IF later phases need history beyond cache,
    a Modal extraction spec (fields/window/budget) will be filed for
    approval first.
+
+## Registered follow-ups (not in this PR)
+
+- P1 cache hardening (bulk-batch stale tails): `AlpacaClient.get_daily_bars`
+  serves a batch cache hit as fresh when its earliest timestamp predates
+  the requested start, without checking tail freshness — observed serving
+  2026-09-25 tails for 47 names while 2026-10-12 existed provider-side.
+  Proposed regression test: seed a cache entry whose head predates `start`
+  but whose tail predates the latest provider session, then assert the
+  client enriches (or marks stale) instead of serving it as fresh. No
+  evidence re-run needed (frozen v0 experiment fetched its own bars and
+  passed validation).
