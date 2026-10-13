@@ -30,13 +30,13 @@
 
 截至检查时：
 
-- `main`：**`f1090f1dc6694125460c1f77132ea0cebdad8526`**，即 PR #62 合并提交；[main CI 成功](https://github.com/AT2018cow/us-ai-stock-scanner/actions/runs/38336406864)。
+- `main`：**`cf0f0585c861ec933a9050c73dcc060f28ceb9fd`**，即 PR #63 合并提交；[main CI 成功](https://github.com/AT2018cow/us-ai-stock-scanner/actions/runs/38336508980)。上一基线 PR #62 合并提交为 `f1090f1dc6694125460c1f77132ea0cebdad8526`。
 - `evidence-observations`：**`69cc9930938ec3410f4426422a4251ce2771fa72`**，为冻结 Generalized-v0 实验证据提交。
 - PR [#58](https://github.com/AT2018cow/us-ai-stock-scanner/pull/58) 已合并：历史研究协议、Modal pre-strategy 数据集入口、收益标签纠错/公司行为测试。
 - PR [#59](https://github.com/AT2018cow/us-ai-stock-scanner/pull/59) 已合并：ticker/CIK/SEC 实体身份校验、旧缓存版本保护和溯源。
 - PR [#60](https://github.com/AT2018cow/us-ai-stock-scanner/pull/60) 已合并：Action List / Detailed Report 的证据、风险、时效性与人工复核说明。
 - PR [#62](https://github.com/AT2018cow/us-ai-stock-scanner/pull/62) **已于 2026-10-13 合并**：首轮业务模式 Quality 研究、归因、Entry 解释诊断。最终 PR head `1d96944f279495d804503f762da5d52b7319fd58`，合并提交为当前 main。
-- PR [#63](https://github.com/AT2018cow/us-ai-stock-scanner/pull/63) **仍为 Open，尚未合并**：只改 `AGENTS.md` §11，明确重计算优先 Modal `at2018cow` workspace，CI 已通过；已获合并许可但尚待实际合并与 main CI 复核。
+- PR [#63](https://github.com/AT2018cow/us-ai-stock-scanner/pull/63) **已合并**：只改 `AGENTS.md` §11，明确重计算优先 Modal `at2018cow` workspace；对应 main 合并提交 `cf0f0585c861ec933a9050c73dcc060f28ceb9fd`，CI 通过。
 - PR [#61](https://github.com/AT2018cow/us-ai-stock-scanner/pull/61) 已关闭、未合并（曾为 DO NOT MERGE 集成测试 PR）。
 - **新对话必须再次查询当前 GitHub 状态；以上 SHA 是交接基准，而不是永久固定的最新版本。**
 
@@ -179,7 +179,7 @@ https://github.com/AT2018cow/us-ai-stock-scanner/tree/69cc9930938ec3410f4426422a
 ### 其他遗留
 
 - 旧 replay 路径公司行为失败继续运行（fail-open）：未来该路径要生成正式收益报告之前加固。
-- PR #63 `AGENTS.md` Modal-first 文档变更仍 Open、CI 绿，等待用户合并并复核新 main；历史本地 stash 的处理需本人自行确认，不能自动丢弃。
+- PR #63 `AGENTS.md` Modal-first 文档变更已合并且 main CI 绿；历史本地 stash 的处理仍需本人自行确认，不能自动丢弃。
 
 ## 7. 何时做 Generalized Selection v2 政策 PR？
 
@@ -197,13 +197,13 @@ https://github.com/AT2018cow/us-ai-stock-scanner/tree/69cc9930938ec3410f4426422a
 - 用户独立运行研发，ChatGPT 担任 **关键阶段独立技术审核和设计指导**；除用户明确请求，不应主动编辑 GitHub、创建或合并 PR。
 - 审核必须实际查看 GitHub 的 **精确 HEAD SHA、CI、代码 diff、可浏览证据目录**，尽量独立复算关键小样本；结论分维度写出 GO/INCONCLUSIVE/NO-GO、具体阻塞项和重新审核条件。
 - 不需要用户分享 Alpaca/SEC 账号密钥、SEC 身份；不要提交 `.env`、raw private caches、未授权分发 IEX bar、不可公开的 manual research notes。
-- 长任务优先 Modal **`at2018cow` Workspace**，按实际 CPU/内存和缓存竞态设定合理并行；前台、显式 profile、不 `--detach`；已存在数据优先复用，小型分析本机运行即可。PR #63 正推动统一 AGENTS.md 的这条规范。
+- 长任务优先 Modal **`at2018cow` Workspace**，按实际 CPU/内存和缓存竞态设定合理并行；前台、显式 profile、不 `--detach`；已存在数据优先复用，小型分析本机运行即可。PR #63 已将该规范合并至 AGENTS.md。
 - `evidence-observations` 为 append-only，每个研究 run 单独目录+完整 commit SHA+`SHA256SUMS`；证据不重复用 ZIP 提交。
 
 ## 9. 新对话建议的执行顺序
 
 1. 读取原交接、本摘要、当前 main 的 `AGENTS.md`、Generalized-v0 协议、#62 研究成果。**先核对仓库最新状态**，不要假定上述 SHA 仍最新。
-2. 核实 PR #63 是否已合并；如尚未合并且 CI/冲突状态仍好，可建议用户完成合并（不要自动合并）。
+2. 确认 PR #63 的合并状态及该合并提交的 main CI；如 GitHub 后续又有变更，以最新状态为准。
 3. 明确从 **财务身份与版本一致性 P0** 启动下一份 correctness 工程 PR 的研究合同与验收矩阵；检查有无新 PR 或已有实现避免重复。
 4. 并行继续银行/券商/REIT 专业会计语义研究，遵守 11 家固定样本、SEC filing 实据与美元单位验证。
 5. P0 证据与专业解释达标后，提出 outcome-sized 的 v2 候选 Policy PR（Quality/Entry/Liquidity/Attention 中只改有证据组件）；优先验证解释、事实可靠性、Action List / Detailed Report 一致性，不急于调历史收益。
@@ -215,7 +215,7 @@ https://github.com/AT2018cow/us-ai-stock-scanner/tree/69cc9930938ec3410f4426422a
 >
 > 首先阅读原始交接 `docs/handoff-after-pr57-20261011` 分支中的 `docs/work_handoff_after_pr57_20261011.md`，以及同一交接分支中的 `docs/work_handoff_after_pr62_20261013.md`（本文件）；然后重新核对 GitHub 的 `main`、`evidence-observations`、PR #62/#63 与 CI，不要把旧 SHA 当成当前 HEAD。
 >
-> 最新已知状态：main `f1090f1dc6694125460c1f77132ea0cebdad8526`（PR #62 已合并、CI 通过）；证据分支 `69cc9930938ec3410f4426422a4251ce2771fa72`；2026-10-12 冻结 PR #57 代码 `2d891944...` 的 62 股/75 来源 Generalized-v0 非 formal 实验与五维工程/诊断审核完成；PR #58/#59/#60/#62 已合并，PR #61 关闭未合并，PR #63 仍 Open（如有变化以 Github 实时状态为准）。
+> 最新已知状态：main `cf0f0585c861ec933a9050c73dcc060f28ceb9fd`（PR #62、#63 均已合并、main CI 通过）；证据分支 `69cc9930938ec3410f4426422a4251ce2771fa72`；2026-10-12 冻结 PR #57 代码 `2d891944...` 的 62 股/75 来源 Generalized-v0 非 formal 实验与五维工程/诊断审核完成；PR #58/#59/#60/#62/#63 已合并，PR #61 关闭未合并（如有变化以 GitHub 实时状态为准）。
 >
 > 原交接已推进到“首轮 generalized-v0 evidence GO、准备 Generalized Selection v2 证据支持的候选政策”阶段。但 **P0 财务数据 ticker→CIK→SEC submissions/Company Facts 身份、内容版本和抓取指纹一致性**尚未闭环，XOM 同-asof 决策不一致；银行/券商/REIT 的专业会计语义及 11 家 SEC 来源实据仍需补齐。Entry READY 的静默条件解释、IEX bulk-cache 旧尾和 replay split fail-open 也是后续事项。
 >
