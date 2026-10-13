@@ -1,0 +1,7 @@
+case,old_behavior,new_behavior,grade_effect
+XOM thin holdings,UNRATED generic missingness,UNRATED + operating_entity_unverified,none (already UNRATED)
+XOM opco content,"B (v0, cross-entity)",UNCOMPARABLE vs thin run,verdict withdrawn pending entity selection
+HON skew,UNRATED + capped (existing gate),"unchanged, pinned by test",none
+FCX edge,B on threshold edge,"unchanged, pinned",none
+NEE upgrade,B on new Q2 facts,"unchanged, pinned",none
+PLD lag,B on Q1 asof,unchanged + lag note,none

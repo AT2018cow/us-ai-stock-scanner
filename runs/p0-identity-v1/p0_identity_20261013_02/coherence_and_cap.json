@@ -1,0 +1,38 @@
+{
+ "coherence": {
+  "symbol": "XOM",
+  "mapped_cik": "0002115436",
+  "ticker_listed": true,
+  "accession_filer_prefixes": [
+   "0000034088"
+  ],
+  "unresolved_prefixes": [
+   "0000034088"
+  ],
+  "findings": [
+   "ACCESSION_FILER_UNRESOLVED"
+  ]
+ },
+ "hon_skew_capped_grade": "UNRATED",
+ "hon_skew_capped_confidence": 0.0,
+ "hon_skew_codes": [
+  "net_margin_missing",
+  "free_cash_flow_missing",
+  "ocf_to_net_income_missing",
+  "accrual_ratio_missing",
+  "revenue_yoy_missing",
+  "net_income_yoy_missing",
+  "operating_cash_flow_yoy_missing",
+  "net_debt_to_ebitda_missing",
+  "interest_coverage_missing",
+  "current_ratio_missing",
+  "shares_yoy_missing",
+  "fcf_yield_missing",
+  "ps_hist_percentile_missing",
+  "pe_hist_percentile_missing",
+  "receivables_growth_gap_missing",
+  "inventory_growth_gap_missing",
+  "latest_periodic_filing_not_covered",
+  "fundamental_data_asof_missing"
+ ]
+}

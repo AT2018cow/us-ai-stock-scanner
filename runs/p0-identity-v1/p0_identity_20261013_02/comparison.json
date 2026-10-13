@@ -1,0 +1,8 @@
+{
+ "reviewer_counterexample": "UNCOMPARABLE",
+ "reviewer_counterexample_same_cik": "UNCOMPARABLE",
+ "identical_runs": "SAME",
+ "thin_vs_scored": "PROVENANCE_MISSING",
+ "missing_effective_layer": "PROVENANCE_MISSING",
+ "different_computation_code": "UNCOMPARABLE"
+}
