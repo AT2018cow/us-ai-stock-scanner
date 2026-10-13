@@ -289,6 +289,18 @@ class CompareStatesTests(unittest.TestCase):
         self.assertEqual(compare_identity_records(
             facts_only, self._rec()), PROVENANCE_MISSING)
 
+    def test_same_scoring_different_facts_never_reconciled(self) -> None:
+        # Reviewer counterexample, verbatim shape: identical scoring inputs
+        # but different effective facts must be UNCOMPARABLE, never
+        # RECONCILED — equal scores from different measurements prove
+        # nothing about economic identity.
+        a = dict(symbol="X", financial_asof="2026-08-03", mapped_cik="0001",
+                 code_version="v", config_fingerprint="c", effective_facts_sha="f1",
+                 scoring_inputs_sha="same", raw_bytes_sha="raw1")
+        b = dict(a, effective_facts_sha="f2", raw_bytes_sha="raw2")
+        self.assertEqual(compare_identity_records(a, b), UNCOMPARABLE)
+        self.assertEqual(compare_identity_records(b, a), UNCOMPARABLE)
+
     def test_states_disjoint_from_quality_grades(self) -> None:
         grades = {g.value for g in QualityGrade}
         self.assertTrue(AUDIT_COMPARISON_STATES.isdisjoint(grades))
