@@ -1,6 +1,6 @@
 {
  "run_id": "p0_identity_20261013_01",
  "mode": "synthetic-acceptance",
- "code_sha": "3e521135633b694e15fb396876be99fb51b82db4",
+ "code_sha": "651810e6bf5cf16233d75ab97def2b845a0bcdb1",
  "evidence_type": "offline fixtures, no network"
 }
