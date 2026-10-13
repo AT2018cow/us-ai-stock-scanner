@@ -1,0 +1,84 @@
+{
+  "schema_version": "mvp_v11_preregistered_candidate_semantics_v1",
+  "status": "SEMANTICS_FROZEN_RUN_SHA_TO_BE_CAPTURED_IN_MANIFEST",
+  "scope": "Offline retrospective monthly historical priority/cap proxy; v1 unchanged",
+  "notes": [
+    "Do not mutate a candidate ID after viewing results.",
+    "Capture data SHA, algo SHA, config SHA, seed and UTC time per run.",
+    "X1 only if one R and one E pass 2023-2024 development rules.",
+    "2025 and 2026Q1 are temporal diagnostics, not pristine OOS."
+  ],
+  "candidates": [
+    {
+      "id": "B0",
+      "family": "baseline",
+      "priority": "canonical_v1_quality_first",
+      "ready_rs60_min": -0.03,
+      "overextended_return20_gt": 0.15
+    },
+    {
+      "id": "R1",
+      "family": "rank",
+      "wQ": 0.8,
+      "c": 0,
+      "r": 0
+    },
+    {
+      "id": "R2",
+      "family": "rank",
+      "wQ": 0.7,
+      "c": 0,
+      "r": 0
+    },
+    {
+      "id": "R3",
+      "family": "rank",
+      "wQ": 0.6,
+      "c": 0,
+      "r": 0
+    },
+    {
+      "id": "R4",
+      "family": "rank",
+      "wQ": 0.7,
+      "c": 0.05,
+      "r": 0
+    },
+    {
+      "id": "R5",
+      "family": "rank",
+      "wQ": 0.7,
+      "c": 0,
+      "r": 0.05
+    },
+    {
+      "id": "E1",
+      "family": "entry",
+      "ready_rs60_min": 0,
+      "overextended_return20_gt": 0.15
+    },
+    {
+      "id": "E2",
+      "family": "entry",
+      "ready_rs60_min": 0.03,
+      "overextended_return20_gt": 0.15
+    },
+    {
+      "id": "E3",
+      "family": "entry",
+      "ready_rs60_min": -0.03,
+      "overextended_return20_gt": 0.12
+    },
+    {
+      "id": "E4",
+      "family": "entry",
+      "ready_rs60_min": -0.03,
+      "overextended_return20_gt": 0.18
+    },
+    {
+      "id": "X1",
+      "family": "conditional",
+      "requires": "one approved R + one approved E locked from 2023-2024 only"
+    }
+  ]
+}
