@@ -128,6 +128,18 @@ class TestHistoricalV11DatasetGate(unittest.TestCase):
         self.assertIn("UNVERIFIED", report["status"])
         self.assertEqual(len(report["dataset_sha256"]), 64)
 
+    def test_v3_csv_accepts_explicit_original_metadata_path(self) -> None:
+        self.frame.to_csv(self.path, index=False)
+        v3 = self.path.with_name("entry_quality_dataset_risk_off.v3.csv")
+        self.path.rename(v3)
+        result = inspect_frozen_dataset(
+            v3, expected_kind="entry_quality", metadata=self.meta
+        )
+        self.assertEqual(result["n_rows"], 1)
+        self.assertEqual(result["metadata_path"], str(self.meta.resolve()))
+        with self.assertRaisesRegex(ValueError, "missing dataset or sibling metadata"):
+            inspect_frozen_dataset(v3, expected_kind="entry_quality")
+
     def test_future_data_is_rejected(self) -> None:
         self.frame.loc[0, "market_asof"] = "2024-02-01"
         with self.assertRaisesRegex(ValueError, "future"):
