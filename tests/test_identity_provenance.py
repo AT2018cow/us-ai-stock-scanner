@@ -282,9 +282,11 @@ class CompareStatesTests(unittest.TestCase):
         facts_only = {"symbol": "X", "financial_asof": "d", "mapped_cik": "0001",
                       "code_version": "v", "config_fingerprint": "c",
                       "effective_facts_sha": "f"}
-        self.assertEqual(compare_identity_records(facts_only, dict(facts_only)), SAME)
+        self.assertEqual(compare_identity_records(facts_only, dict(facts_only)),
+                         PROVENANCE_MISSING)
         self.assertEqual(compare_identity_records(
-            facts_only, dict(facts_only, effective_facts_sha="g")), UNCOMPARABLE)
+            facts_only, dict(facts_only, effective_facts_sha="g")),
+                         UNCOMPARABLE)
         # Missing scoring layer on one side only.
         self.assertEqual(compare_identity_records(
             facts_only, self._rec()), PROVENANCE_MISSING)
@@ -744,6 +746,102 @@ class RefreshHeuristicTests(unittest.TestCase):
                 {"covered_accession": "old-accn", "pending_accession": None}))
             sec.get_companyfacts(cik)
             self.assertEqual(len(fetched), 1)
+
+class FinalMergeGateTests(unittest.TestCase):
+    """P0 remaining blocker regressions; all fixtures are offline."""
+
+    def test_both_fingerprint_layers_required(self):
+        base = dict(symbol="AAA", financial_asof="2026-08-03",
+                    mapped_cik="0000111111", code_version="sha|quality|entry",
+                    config_fingerprint="cfg", effective_facts_sha="eff",
+                    scoring_inputs_sha="score", raw_bytes_sha="raw")
+        self.assertEqual(compare_identity_records(base, dict(base)), SAME)
+        for key in ("scoring_inputs_sha", "effective_facts_sha"):
+            self.assertEqual(compare_identity_records(
+                base, dict(base, **{key: None})), PROVENANCE_MISSING)
+            both = dict(base, **{key: None})
+            self.assertEqual(compare_identity_records(both, both),
+                             PROVENANCE_MISSING)
+        self.assertEqual(compare_identity_records(
+            base, dict(base, effective_facts_sha="other")), UNCOMPARABLE)
+
+    def test_decision_adapter_requires_real_code_sha(self):
+        from ai_value_scanner.fundamentals.provenance import (
+            decision_provenance_to_identity_record,
+        )
+        provenance = {
+            "cik": "0000111111", "code_sha": "code-one",
+            "quality_policy_version": "q1", "entry_policy_version": "e1",
+            "config_fingerprint": "cfg", "fundamental_effective_sha256": "effective",
+            "identity_scoring_sha": "score",
+            "fundamental_companyfacts_raw_sha256": "raw-facts",
+            "fundamental_submissions_sha256": "raw-submissions",
+        }
+        dec = {"symbol": "AAA", "decision_date": "2026-10-13",
+               "quality": {"data_asof": "2026-08-03"},
+               "provenance": provenance}
+        a = decision_provenance_to_identity_record(dec)
+        self.assertEqual(a["financial_asof"], "2026-08-03")
+        self.assertIn("code-one", a["code_version"])
+        self.assertIsNotNone(a["raw_bytes_sha"])
+        self.assertEqual(compare_identity_records(a, dict(a)), SAME)
+        b = decision_provenance_to_identity_record(dict(
+            dec, provenance=dict(provenance, code_sha="code-two")))
+        self.assertEqual(compare_identity_records(a, b), UNCOMPARABLE)
+        old = decision_provenance_to_identity_record(dict(
+            dec, provenance=dict(provenance, code_sha=None)))
+        self.assertEqual(compare_identity_records(a, old), PROVENANCE_MISSING)
+
+    def test_missing_facts_response_cik_never_verifies_identity(self):
+        from ai_value_scanner.fundamentals.identity import downgrade_on_hard_findings
+        findings = check_entity_coherence(
+            symbol="AAA", mapped_cik="0000111111",
+            submissions=_submissions_doc(), facts_queried_cik="0000111111",
+            facts_response_cik=None)["findings"]
+        self.assertIn("RESPONSE_CIK_MISSING", findings)
+        verified, _ = downgrade_on_hard_findings(
+            True, "ticker_listed_with_core_facts", findings)
+        self.assertFalse(verified)
+
+    def test_live_audit_exception_fails_closed(self):
+        from unittest.mock import patch
+        from ai_value_scanner.decision.quality import build_company_quality_v1
+        with TemporaryDirectory() as tmp:
+            sub, facts = _submissions_doc(), _facts_doc()
+            _plant_meta(tmp, "0000111111", "0000001111-26-000001")
+            _plant_raw(tmp, "0000111111", sub, facts)
+            with patch("ai_value_scanner.scanner.check_entity_coherence",
+                       side_effect=RuntimeError("injected audit error")):
+                row = load_one_fundamental(
+                    _StubSec(sub, facts), "AAA", "0000111111", _test_config(tmp))
+            self.assertFalse(row["fundamental_operating_entity_verified"])
+            self.assertIn("coherence_check_failed", row["fundamental_operating_entity_detail"])
+            quality = build_company_quality_v1(row, decision_date="2026-10-09")
+            self.assertEqual(quality.grade.value, "UNRATED")
+            self.assertIn("operating_entity_unverified",
+                          [x.code for x in quality.missing])
+
+    def test_replay_audit_exception_fails_closed(self):
+        from unittest.mock import patch
+        with patch("ai_value_scanner.backtest.check_entity_coherence",
+                   side_effect=RuntimeError("injected replay error")):
+            row = ReplayCoherenceTests()._run_cross_section("0000111111")
+        self.assertFalse(row["fundamental_operating_entity_verified"])
+        self.assertIn("COHERENCE_CHECK_FAILED",
+                      row["fundamental_operating_entity_detail"])
+
+    def test_companyfacts_raw_layer_separate_from_effective_document(self):
+        with TemporaryDirectory() as tmp:
+            sub, facts = _submissions_doc(), _facts_doc()
+            _plant_meta(tmp, "0000111111", "0000001111-26-000001")
+            _plant_raw(tmp, "0000111111", sub, facts)
+            row = load_one_fundamental(
+                _StubSec(sub, facts), "AAA", "0000111111", _test_config(tmp))
+            self.assertEqual(row["fundamental_companyfacts_raw_sha256"],
+                             sha256_hex(canonical_json_bytes(facts)))
+            # No fallback patch in this case; the full document is unchanged.
+            self.assertEqual(row["fundamental_companyfacts_raw_sha256"],
+                             row["fundamental_companyfacts_sha256"])
 
 
 if __name__ == "__main__":
