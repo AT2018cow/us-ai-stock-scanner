@@ -256,7 +256,13 @@ def compare_b0(
     )
     report = {
         "verdict": verdict,
-        "ready_for_candidate_returns": verdict == "B0_FULL_REFERENCE_PARITY_PASS",
+        "baseline_parity_pass": verdict == "B0_FULL_REFERENCE_PARITY_PASS",
+        "ready_for_candidate_returns": False,
+        "remaining_manual_gate": (
+            "Audit PIT public filing/entity identity and 51 audit-only price events; "
+            "verify reference provenance and labels; human approval to freeze "
+            "B0/R/E candidates before outcome viewing."
+        ),
         "comparison": "monthly historical priority/cap proxy only; not prospective Daily/Weekly",
         "n_rows": num_decisions,
         "n_dates": len(days),
