@@ -17,7 +17,7 @@
 - PR #57 原始交接：https://github.com/AT2018cow/us-ai-stock-scanner/blob/docs/handoff-after-pr57-20261011/docs/work_handoff_after_pr57_20261011.md
 - 本轮完整交接（固定 commit）：https://github.com/AT2018cow/us-ai-stock-scanner/blob/202dd4428037b1b6bc6b12f9e61132bf2c941e4a/docs/work_handoff_after_pr62_20261013.md
 
-然后核查当前 `main`、`evidence-observations`、所有相关 PR 和 CI 的最新状态。上一轮最后核对的基准是 `main=f1090f1dc6694125460c1f77132ea0cebdad8526`，`evidence-observations=69cc9930938ec3410f4426422a4251ce2771fa72`；PR #58/#59/#60/#62 已合并，PR #61 已关闭未合并，PR #63 尚待合并。这些只是历史基准，不得取代实时检查。
+然后核查当前 `main`、`evidence-observations`、所有相关 PR 和 CI 的最新状态。完整交接原件记录的历史基准是 `main=f1090f1dc6694125460c1f77132ea0cebdad8526`，`evidence-observations=69cc9930938ec3410f4426422a4251ce2771fa72`。**本次文档提交期间，PR #63 已合并，main 更新为 `cf0f0585c861ec933a9050c73dcc060f28ceb9fd`**；PR #58/#59/#60/#62 也已合并，PR #61 已关闭未合并。这些依然只是交接基准，不得取代新对话中的 GitHub 实时检查。
 
 原始 handoff 中 PR #57 的 2026-10-12 冻结 Generalized-v0 实验已经完成：75 个来源成员关系、62 只股票、非 `--formal`，其 Universe、Liquidity、Quality、Entry、Action 工程与诊断阶段审核 GO；**并不代表 v2 生产/收益 GO**。历史 Quality/Entry/Action 研究、公司行为收益标签修复、基础证券身份保护、Action List / Detailed Report 改进和 11 家跨商业模式初步研究也已经完成。
 
