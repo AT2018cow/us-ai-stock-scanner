@@ -1,0 +1,43 @@
+{
+  "available_pit_provenance_columns": [
+    "current_debt_ratio_source",
+    "fundamental_data_asof",
+    "inventory_growth_gap_source",
+    "market_asof",
+    "pe_hist_percentile_source",
+    "ps_hist_percentile_source",
+    "shares_asof_end",
+    "watchlist_source"
+  ],
+  "dataset_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+  "events_sha256": "20dc8670c8de44781355c51d6381821b6cc64b00bab9162445af628cac3f9e31",
+  "metadata_sha256": "1574a85518f72d85cf4ff0585dd7ea896e579aa9a6f286f60e6a51f1a1239e6a",
+  "n_51_audit_only": 51,
+  "n_dates": 39,
+  "n_event_records": 52,
+  "n_input_rows": 25025,
+  "n_label_nulling_events": 1,
+  "n_missing_fundamental_asof": 346,
+  "n_severe_share_ratio_events": 21,
+  "n_sharp_price_events": 5,
+  "n_top15_event_date": 1,
+  "n_top15_previous_date": 3,
+  "n_top5_event_date": 1,
+  "notes": [
+    "Exposure on archived Top-k is a triage priority, not proof an event influenced ranking.",
+    "Never use later price movements as decision-date evidence.",
+    "No source SEC filings or corporate-action event facts independently retrieved.",
+    "No future outcomes/return statistics computed; no v3 inputs modified.",
+    "No action can pass the manual gate from this automated report alone."
+  ],
+  "ranking_sha256": "4b0d25e0ad54c394a5eeed2ed47a2c4f0ba01fae29cc8d793f573980a2d88d51",
+  "ready_for_candidate_returns": false,
+  "required_before_candidate_returns": [
+    "Check date AND actual public filing availability (not just period end).",
+    "Audit identity/CIK/operating entity/currency and subsequent restatement drift.",
+    "Review 51 audit-only events; retain real winners, flag uncertain labels or score inputs.",
+    "Freeze event handling and a single paired valid-mask protocol before outcomes.",
+    "Obtain explicit approval of unchanged pre-registered B0/R1-R5/E1-E4."
+  ],
+  "verdict": "DATA_RISK_REVIEW_REQUIRED"
+}
