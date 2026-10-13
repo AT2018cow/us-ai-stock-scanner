@@ -1,0 +1,2 @@
+symbol,signal_date,field,value,source,method
+EQIX,2026-10-05,return_60d,-0.008979,"local IEX bar cache via AlpacaClient.get_daily_bars(['EQIX'], start 2026-06-01, feed iex), read 2026-10-13","60-trading-day close ratio ending 2026-10-05; state WATCH_BREAKOUT with every other READY gate evidenced-met, so this silent-band value is the blocker. Cache is mutable: the value is frozen HERE (this committed file); re-verify from bars before citing the magnitude."
