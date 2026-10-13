@@ -2617,6 +2617,9 @@ def _parsed_fund_cache_meta(
     facts_content_sha: str | None = None,
     submissions_content_sha: str | None = None,
 ) -> dict[str, object]:
+    # latest_filing/latest_accession track the newest PERIODIC filing (see
+    # _submissions_latest_relevant_filing), with raw-newest fallback when
+    # submissions list no periodic form.
     return {
         "v": PARSED_FUND_CACHE_VERSION,
         "cfg": _parsed_fund_config_fingerprint(config),
@@ -2726,6 +2729,26 @@ def _submissions_latest_accession(subs_cache: Path) -> str | None:
         return None
 
 
+def _submissions_latest_relevant_filing(subs_cache: Path) -> tuple[str | None, str | None]:
+    """(filing_date, accession) a parsed cache is bound to.
+
+    Tracks the newest PERIODIC filing (10-Q/10-K/20-F/40-F): only those
+    update Company Facts, so ownership/registration filings (Form 4,
+    S-3ASR, ...) carry no fundamental facts and must not veto a cache
+    whose periodic basis is unchanged. Falls back to the raw newest
+    filing when submissions list no periodic form (or no forms at all).
+    """
+    try:
+        subs = json.loads(subs_cache.read_text())
+    except Exception:
+        return None, None
+    if isinstance(subs, dict):
+        periodic = latest_periodic_filing(subs)
+        if periodic and periodic.get("accession"):
+            return periodic.get("filed"), periodic.get("accession")
+    return _submissions_latest_filing(subs_cache), _submissions_latest_accession(subs_cache)
+
+
 def _facts_accession_state(cache_dir: str | Path, cik: str) -> tuple[str | None, str | None]:
     meta_path = Path(cache_dir) / f"facts_meta_{cik}.json"
     try:
@@ -2777,8 +2800,10 @@ def load_valid_parsed_fundamental_cache(
             try:
                 cached = json.loads(parsed_path.read_text())
                 meta = cached.get("_cache_meta") or {}
-                latest_filing = _submissions_latest_filing(subs_cache)
-                latest_accession = _submissions_latest_accession(subs_cache)
+                # Bound to the newest PERIODIC filing, not the raw newest:
+                # a Form 4 / S-3ASR filed after the last 10-Q must not veto
+                # a cache whose fundamental (periodic) basis is unchanged.
+                latest_filing, latest_accession = _submissions_latest_relevant_filing(subs_cache)
                 facts_covered, facts_pending = _facts_accession_state(config.cache_dir, cik)
                 facts_ready = (
                     not facts_pending
@@ -3306,8 +3331,10 @@ def load_one_fundamental(
     if subs_cache.exists():
         parsed_path = Path(config.cache_dir) / f"parsed_fund_{cik}.json"
         try:
-            latest_filing = _submissions_latest_filing(subs_cache)
-            latest_accession = _submissions_latest_accession(subs_cache)
+            # Same periodic binding as the read validator: a non-periodic
+            # newest filing must not block persisting a cache whose
+            # fundamental basis (last 10-Q/10-K/20-F/40-F) is fully covered.
+            latest_filing, latest_accession = _submissions_latest_relevant_filing(subs_cache)
             facts_covered, facts_pending = _facts_accession_state(config.cache_dir, cik)
             facts_ready = (
                 not facts_pending
