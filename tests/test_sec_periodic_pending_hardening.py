@@ -48,6 +48,31 @@ class PeriodicGateParityTests(unittest.TestCase):
             self.assertEqual(sec.get_companyfacts(cik), {"facts": {}})
             session.get.assert_not_called()
 
+    def test_undated_periodic_does_not_hide_behind_older_valid_filing(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "submissions.json"
+            path.write_text(json.dumps({"filings": {"recent": {
+                "form": ["10-Q", "10-K", "4"],
+                "filingDate": ["", "2026-07-30", "2026-10-08"],
+                "accessionNumber": ["UNDATED-NEW", "OLD-K", "INSIDER"],
+            }}}))
+            self.assertEqual(
+                _submissions_latest_relevant_filing(path), ("", "UNDATED-NEW")
+            )
+
+    def test_newer_unknown_form_conservatively_invalidates(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "submissions.json"
+            path.write_text(json.dumps({"filings": {"recent": {
+                "form": ["", "10-Q", "4"],
+                "filingDate": ["2026-10-10", "2026-07-30", "2026-10-08"],
+                "accessionNumber": ["UNKNOWN", "OLD-Q", "INSIDER"],
+            }}}))
+            self.assertEqual(
+                _submissions_latest_relevant_filing(path),
+                ("2026-10-10", "UNKNOWN"),
+            )
+
     def test_missing_date_fallback_and_amendment(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "submissions.json"
