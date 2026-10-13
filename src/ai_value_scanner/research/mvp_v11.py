@@ -112,6 +112,7 @@ def inspect_frozen_dataset(
     dataset: str | Path,
     *,
     expected_kind: str,
+    metadata: str | Path | None = None,
 ) -> dict[str, Any]:
     """Inspect frozen pre-strategy CSV + same-stem metadata; fail closed.
 
@@ -121,7 +122,8 @@ def inspect_frozen_dataset(
     if expected_kind not in {"company_quality", "entry_quality"}:
         raise ValueError("expected_kind must be company_quality or entry_quality")
     path = Path(dataset).expanduser().resolve()
-    meta_path = path.with_suffix(".meta.json")
+    meta_path = (Path(metadata).expanduser().resolve()
+                 if metadata is not None else path.with_suffix(".meta.json"))
     if not path.is_file() or not meta_path.is_file():
         raise ValueError(f"missing dataset or sibling metadata: {path}, {meta_path}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
