@@ -1,0 +1,591 @@
+{
+  "20session_turnover_coverage": 62,
+  "60session_qqq_spy_comparison_coverage": 62,
+  "bar_export_review": {
+    "feed": "iex",
+    "rows": 9728,
+    "session": "2026-10-12",
+    "sha256_verified": true,
+    "symbols_requested": 76
+  },
+  "cohort_metadata_sha256": "cc2cb260ec39200de5fc1ad4c09377726d4a3e3559ea69674d35447ce160958a",
+  "cohort_source_hashes": {
+    "manual": "448a56c5ac110e6adc9a5e1b96abb13269e790ecac2ccecb19e988224375c9db",
+    "thematic": "e4a01f1befc46ea6e1d8879210c0b2034dd82242ca0c6cb96327b969dc1ae2e9",
+    "us_core": "256e0816a5fb34b1daca21ab4c2667b37be9f3daca22efd7018813abbb03a816"
+  },
+  "daily_symbols": [
+    "ETN",
+    "KO",
+    "EOG",
+    "JNJ",
+    "MSFT",
+    "TMO",
+    "AMD",
+    "AMAT",
+    "META",
+    "CRM",
+    "TXN",
+    "CAT",
+    "LIN",
+    "PG",
+    "GOOGL"
+  ],
+  "decision_date": "2026-10-12",
+  "decisions": 62,
+  "discovered": 62,
+  "entry_reference_diagnostics": [
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "banks_brokers",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "communications_media",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "consumer_discretionary",
+      "opposite_sign_examples": [
+        "AMZN"
+      ],
+      "sign_disagreement": 1,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "consumer_staples",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "energy_oil_gas",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "healthcare_pharma_medtech",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "industrials_machinery",
+      "opposite_sign_examples": [
+        "DE",
+        "ETN"
+      ],
+      "sign_disagreement": 2,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 2,
+      "group": "manual_only_unknown",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 2
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "materials_chemicals_mining",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "regulated_utilities",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "reit_property",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "semiconductors_and_equipment",
+      "opposite_sign_examples": [
+        "INTC"
+      ],
+      "sign_disagreement": 1,
+      "symbols": 5
+    },
+    {
+      "aligned_60session_qqq_spy": 5,
+      "group": "software_platforms_devices",
+      "opposite_sign_examples": [],
+      "sign_disagreement": 0,
+      "symbols": 5
+    }
+  ],
+  "exclusions": 0,
+  "experiment_config_review": {
+    "base_config_sha256": "7a967e42ce6eadb499b87a3ba22b669f70288b38d60b1da9ff68032c43204424",
+    "config_fingerprint": "e778b6553cf52859581a8bfa5101af564a8be83fda011aace9b5639b8162a50e",
+    "raw_config_sha256": "74e066e850edf14eb720a7861daff1d2a716d5b2bed420c6dda2fa8ad09d134a"
+  },
+  "groups": [
+    {
+      "action_states": {
+        "AVOID": 5
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 0,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "TREND_DAMAGED": 4,
+        "WATCH_BREAKOUT": 1
+      },
+      "excluded": 0,
+      "group": "banks_brokers",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 40,
+      "quality_grades": {
+        "C": 4,
+        "UNRATED": 1
+      },
+      "specialized_accounting_review": true
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 3,
+        "WATCH_BREAKOUT": 1,
+        "WATCH_PULLBACK": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 2,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "TREND_DAMAGED": 3,
+        "WATCH_BREAKOUT": 1,
+        "WATCH_PULLBACK": 1
+      },
+      "excluded": 0,
+      "group": "communications_media",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 2,
+      "quality_grades": {
+        "A": 3,
+        "B": 2
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 5
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 0,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 4
+      },
+      "excluded": 0,
+      "group": "consumer_discretionary",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 3,
+      "quality_grades": {
+        "A": 1,
+        "B": 4
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 3,
+        "PRIORITY_REVIEW": 1,
+        "WATCH_BREAKOUT": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 2,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 3,
+        "WATCH_BREAKOUT": 1
+      },
+      "excluded": 0,
+      "group": "consumer_staples",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 2,
+      "quality_grades": {
+        "A": 4,
+        "B": 1
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 4,
+        "PRIORITY_REVIEW": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 1,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 4,
+        "WATCH_BREAKOUT": 1
+      },
+      "excluded": 0,
+      "group": "energy_oil_gas",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 9,
+      "quality_grades": {
+        "A": 1,
+        "B": 4
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 2,
+        "PRIORITY_REVIEW": 2,
+        "WATCH_BREAKOUT": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 2,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 3,
+        "WATCH_BREAKOUT": 2
+      },
+      "excluded": 0,
+      "group": "healthcare_pharma_medtech",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 2,
+      "quality_grades": {
+        "A": 3,
+        "B": 2
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "AVOID": 1,
+        "HOLD_MONITOR": 2,
+        "PRIORITY_REVIEW": 1,
+        "WATCH_BREAKOUT": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 2,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 2,
+        "WATCH_BREAKOUT": 2
+      },
+      "excluded": 0,
+      "group": "industrials_machinery",
+      "latest_filing_uncovered": 1,
+      "missing_quality_evidence": 5,
+      "quality_grades": {
+        "A": 3,
+        "B": 1,
+        "UNRATED": 1
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 2
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 0,
+      "decisions": 2,
+      "discovered": 2,
+      "entry_states": {
+        "TREND_DAMAGED": 2
+      },
+      "excluded": 0,
+      "group": "manual_only_unknown",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 4,
+      "quality_grades": {
+        "A": 1,
+        "B": 1
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 4,
+        "WATCH_BREAKOUT": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 1,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 1,
+        "WATCH_BREAKOUT": 3
+      },
+      "excluded": 0,
+      "group": "materials_chemicals_mining",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 4,
+      "quality_grades": {
+        "A": 2,
+        "B": 3
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 5
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 0,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "TREND_DAMAGED": 5
+      },
+      "excluded": 0,
+      "group": "regulated_utilities",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 2,
+      "quality_grades": {
+        "B": 5
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 5
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 0,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 3,
+        "WATCH_BREAKOUT": 1
+      },
+      "excluded": 0,
+      "group": "reit_property",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 13,
+      "quality_grades": {
+        "B": 5
+      },
+      "specialized_accounting_review": true
+    },
+    {
+      "action_states": {
+        "AVOID": 1,
+        "HOLD_MONITOR": 1,
+        "WATCH_BREAKOUT": 1,
+        "WATCH_PULLBACK": 2
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 3,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "WATCH_BREAKOUT": 2,
+        "WATCH_PULLBACK": 2
+      },
+      "excluded": 0,
+      "group": "semiconductors_and_equipment",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 1,
+      "quality_grades": {
+        "A": 3,
+        "B": 1,
+        "C": 1
+      },
+      "specialized_accounting_review": false
+    },
+    {
+      "action_states": {
+        "HOLD_MONITOR": 3,
+        "PRIORITY_REVIEW": 1,
+        "WATCH_BREAKOUT": 1
+      },
+      "currency_unsupported": 0,
+      "daily_attention": 2,
+      "decisions": 5,
+      "discovered": 5,
+      "entry_states": {
+        "ENTRY_READY": 1,
+        "TREND_DAMAGED": 2,
+        "WATCH_BREAKOUT": 2
+      },
+      "excluded": 0,
+      "group": "software_platforms_devices",
+      "latest_filing_uncovered": 0,
+      "missing_quality_evidence": 0,
+      "quality_grades": {
+        "A": 3,
+        "B": 2
+      },
+      "specialized_accounting_review": false
+    }
+  ],
+  "limitations": [
+    "Purposive 60+2 diagnostic sample; not statistically representative.",
+    "Researcher business-model labels are provisional, not verified industry mappings.",
+    "Bank/REIT Quality v1 labels require specialized accounting review.",
+    "IEX daily-bar turnover is not the scanner's exact snapshot prefilter value.",
+    "Sector ETFs are illustrative proxies, not proof of company membership.",
+    "Trailing QQQ/SPY/sector comparisons are not Entry v2 or forward returns.",
+    "Absent bars/facts remain missing; no silent imputation of zero.",
+    "No retrospective PIT source membership, policy changes, or alpha claim."
+  ],
+  "liquidity_by_group": [
+    {
+      "bar_gate_disagreements": 0,
+      "group": "banks_brokers",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "communications_media",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "consumer_discretionary",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "consumer_staples",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "energy_oil_gas",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "healthcare_pharma_medtech",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "industrials_machinery",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "manual_only_unknown",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 2,
+      "valid_20session": 2
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "materials_chemicals_mining",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "regulated_utilities",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "reit_property",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "semiconductors_and_equipment",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    },
+    {
+      "bar_gate_disagreements": 0,
+      "group": "software_platforms_devices",
+      "last_bar_fails": 0,
+      "mean_20session_fails": 0,
+      "symbols": 5,
+      "valid_20session": 5
+    }
+  ],
+  "mode": "read_only_diagnostic_not_strategy_validation",
+  "same_feed_bars_sha256": "4be88e1af82b517d17d999f924dd8b405fc080519d82d35dc6c4d23cedab3559",
+  "scanner_sha": "2d8919444828643f7b888f90907e0b0e6632bfc4",
+  "source_memberships": 75,
+  "source_rejections": 0,
+  "study": "generalized_research_v0",
+  "weekly_symbols": [
+    "ETN",
+    "KO",
+    "EOG",
+    "JNJ",
+    "MSFT",
+    "TMO",
+    "AMD",
+    "AMAT",
+    "META",
+    "CRM",
+    "TXN",
+    "CAT",
+    "LIN",
+    "PG",
+    "GOOGL"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "counts": {
+    "action": {
+      "AVOID": 7,
+      "HOLD_MONITOR": 39,
+      "PRIORITY_REVIEW": 6,
+      "WATCH_BREAKOUT": 7,
+      "WATCH_PULLBACK": 3
+    },
+    "candidate_universe": {
+      "contract_version": "candidate_universe_v1_2026-10-11",
+      "decision_universe_symbols": 62,
+      "discovery_unique_symbols": 62,
+      "excluded_symbols": 0,
+      "exclusion_reason_counts": {},
+      "exclusion_stage_counts": {},
+      "market_data_feed": "iex",
+      "min_dollar_volume": 2000000.0,
+      "min_price": 1.0,
+      "post_sample_symbols": 62,
+      "tradable_mapped_symbols": 62
+    },
+    "daily_attention": 15,
+    "decisions": 62,
+    "entry": {
+      "ENTRY_READY": 14,
+      "INSUFFICIENT_DATA": 0,
+      "TREND_DAMAGED": 29,
+      "WATCH_BREAKOUT": 16,
+      "WATCH_PULLBACK": 3
+    },
+    "fundamental_fallback": {
+      "edgartools_10q_used": 7,
+      "status": {
+        "filing_mismatch": 1,
+        "not_needed": 54,
+        "used": 7
+      }
+    },
+    "fundamental_integrity": {
+      "fundamental_currency_unsupported": 0,
+      "latest_periodic_filing_not_covered": 1
+    },
+    "quality": {
+      "A": 24,
+      "B": 31,
+      "C": 5,
+      "UNRATED": 2
+    },
+    "weekly_attention": 15
+  },
+  "decision_date": "2026-10-12",
+  "errors": [],
+  "ok": true,
+  "root": "outputs/decision_experiments/risk_off_20261013T011431Z/2026-10-12/risk_off",
+  "strategy_style": "risk_off",
+  "warnings": [
+    "latest periodic filing is not covered by recognized Company Facts for 1 decision(s)"
+  ]
+}

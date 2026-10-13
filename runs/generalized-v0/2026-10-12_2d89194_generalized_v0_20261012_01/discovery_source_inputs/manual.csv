@@ -1,0 +1,6 @@
+symbol,source_id,source_asof,security_type,enabled,theme_id,legacy_bucket,etfs,research_note
+COST,research_curated_manual_probe_v0,2026-10-11,common_stock,1,,,,Research-team diagnostic source; not a user investment instruction
+JNJ,research_curated_manual_probe_v0,2026-10-11,common_stock,1,,,,Research-team diagnostic source; not a user investment instruction
+XOM,research_curated_manual_probe_v0,2026-10-11,common_stock,1,,,,Research-team diagnostic source; not a user investment instruction
+AXP,research_curated_manual_probe_v0,2026-10-11,common_stock,1,,,,Research-team diagnostic source; not a user investment instruction
+ISRG,research_curated_manual_probe_v0,2026-10-11,common_stock,1,,,,Research-team diagnostic source; not a user investment instruction
