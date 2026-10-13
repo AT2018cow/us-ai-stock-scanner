@@ -94,6 +94,12 @@ def _decision_rows(decisions: tuple) -> list[dict[str, Any]]:
 
 
 def _equal(field: str, actual: Any, expected: Any) -> bool:
+    if field.endswith("_codes"):
+        return (
+            "" if pd.isna(actual) else str(actual)
+        ) == (
+            "" if pd.isna(expected) else str(expected)
+        )
     if pd.isna(actual) and pd.isna(expected):
         return True
     if pd.isna(actual) or pd.isna(expected):
@@ -284,6 +290,8 @@ def main() -> None:
     parser.add_argument("--archived-decisions", default=None,
                         help="Original _03 action_v1_decisions.csv, optional; full parity requires it")
     parser.add_argument("--expected-dataset-sha256", required=True)
+    parser.add_argument("--expected-decisions-sha256", default=None,
+                        help="Required to recognize locally preserved original row decisions")
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
     inp = Path(args.entry_dataset)
@@ -294,6 +302,10 @@ def main() -> None:
     arch_rank = Path(args.archived_ranking)
     arch_compact = Path(args.archived_compactness)
     archived_decisions = Path(args.archived_decisions) if args.archived_decisions else None
+    if bool(archived_decisions) != bool(args.expected_decisions_sha256):
+        raise ValueError("--archived-decisions requires --expected-decisions-sha256 and vice versa")
+    if archived_decisions is not None and _sha256(archived_decisions) != args.expected_decisions_sha256.lower():
+        raise ValueError("archived decisions SHA mismatch; stop")
     ranking = _reference_frame(arch_rank, (
         "signal_date", "n_eligible", "n_non_avoid", "n_pr_total",
         "v1_top5", "v1_top15"), name="archived ranking")
@@ -317,6 +329,13 @@ def main() -> None:
         "archived_compactness": _sha256(arch_compact),
         "archived_decisions": _sha256(archived_decisions) if archived_decisions else None,
     }
+    report["historical_reference_caveat"] = (
+        "Original row decisions are locally archived and their SHA is pinned by "
+        "the operator before this B0 run; archival provenance still needs audit."
+        if archived_decisions else
+        "Frozen evidence supplies aggregate rankings/counts only, not original "
+        "row-level decisions; full parity cannot be asserted."
+    )
     out = Path(args.output_dir)
     if out.exists():
         raise ValueError(f"output directory exists, will not overwrite: {out}")
