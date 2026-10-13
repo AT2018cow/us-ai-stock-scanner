@@ -1,0 +1,7 @@
+symbol,case,verdict,detail
+XOM,thin-holdings,False,core_facts_absent
+XOM,opco-content,True,ticker_listed_with_core_facts
+HON,filing-facts-skew,True,ticker_listed_with_core_facts
+FCX,threshold-edge,True,ticker_listed_with_core_facts
+NEE,genuine-upgrade,True,ticker_listed_with_core_facts
+PLD,filed-but-uncovered,True,ticker_listed_with_core_facts

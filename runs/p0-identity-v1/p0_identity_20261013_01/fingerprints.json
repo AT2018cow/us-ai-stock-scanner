@@ -1,0 +1,8 @@
+{
+ "canonical_algorithm": "json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=True, default=str) -> utf-8 -> sha256",
+ "facts_A": "ea1fd70100a23ded89149c0107fef474ab85bf18896f7f594f160a3e2b3cb2cf",
+ "facts_B_different": "6590febb61e96ae1e2b45ceb36dab86a6f6481a10f948232fc33002b001c31e6",
+ "facts_reordered_equal": "ea1fd70100a23ded89149c0107fef474ab85bf18896f7f594f160a3e2b3cb2cf",
+ "scoring_inputs": "7a0e22996933ba9f854ccf30da80cb9e25de587f6e04685693e5785e336f9eeb",
+ "effective_values": "9aa2581a03902410bb91e95f40f952a97a65598a2a6f6ffb38e3b6c64a66a92e"
+}
