@@ -1,0 +1,187 @@
+{
+  "candidate_universe": {
+    "contract_version": "candidate_universe_v1_2026-10-11",
+    "decision_universe_symbols": 62,
+    "discovery_unique_symbols": 62,
+    "excluded_symbols": 0,
+    "exclusion_reason_counts": {},
+    "exclusion_stage_counts": {},
+    "market_data_feed": "iex",
+    "min_dollar_volume": 2000000.0,
+    "min_price": 1.0,
+    "post_sample_symbols": 62,
+    "tradable_mapped_symbols": 62
+  },
+  "code_sha": "220a4716c411bd7e9e80f9f7f89502f6ab1ff0ac",
+  "config_fingerprint": "e778b6553cf52859581a8bfa5101af564a8be83fda011aace9b5639b8162a50e",
+  "counts": {
+    "action": {
+      "AVOID": 7,
+      "HOLD_MONITOR": 39,
+      "PRIORITY_REVIEW": 6,
+      "WATCH_BREAKOUT": 7,
+      "WATCH_PULLBACK": 3
+    },
+    "daily_attention": 15,
+    "decisions": 62,
+    "entry": {
+      "ENTRY_READY": 14,
+      "TREND_DAMAGED": 29,
+      "WATCH_BREAKOUT": 16,
+      "WATCH_PULLBACK": 3
+    },
+    "quality": {
+      "A": 24,
+      "B": 31,
+      "C": 5,
+      "UNRATED": 2
+    },
+    "weekly_attention": 15
+  },
+  "daily_symbols": [
+    "ETN",
+    "KO",
+    "EOG",
+    "JNJ",
+    "MSFT",
+    "TMO",
+    "AMD",
+    "AMAT",
+    "META",
+    "CRM",
+    "TXN",
+    "CAT",
+    "LIN",
+    "PG",
+    "GOOGL"
+  ],
+  "decision_date": "2026-10-12",
+  "discovery_sources": {
+    "membership_counts_by_kind": {
+      "manual": 5,
+      "thematic": 10,
+      "us_core": 60
+    },
+    "multi_source_symbols": 13,
+    "rejected_rows": 0,
+    "rejection_reason_counts": {},
+    "schema_version": "discovery_sources_v1",
+    "source_files": [
+      {
+        "archived_file": "discovery_source_inputs/us_core.csv",
+        "memberships": 60,
+        "raw_rows": 60,
+        "rejected_rows": 0,
+        "sha256": "256e0816a5fb34b1daca21ab4c2667b37be9f3daca22efd7018813abbb03a816",
+        "source_file": "data/research/generalized_v0/us_core.csv",
+        "source_kind": "us_core"
+      },
+      {
+        "archived_file": "discovery_source_inputs/thematic.csv",
+        "memberships": 10,
+        "raw_rows": 10,
+        "rejected_rows": 0,
+        "sha256": "e4a01f1befc46ea6e1d8879210c0b2034dd82242ca0c6cb96327b969dc1ae2e9",
+        "source_file": "data/research/generalized_v0/thematic.csv",
+        "source_kind": "thematic"
+      },
+      {
+        "archived_file": "discovery_source_inputs/manual.csv",
+        "memberships": 5,
+        "raw_rows": 5,
+        "rejected_rows": 0,
+        "sha256": "448a56c5ac110e6adc9a5e1b96abb13269e790ecac2ccecb19e988224375c9db",
+        "source_file": "data/research/generalized_v0/manual.csv",
+        "source_kind": "manual"
+      }
+    ],
+    "source_memberships": 75,
+    "unique_symbols": 62
+  },
+  "generated_at_utc": "2026-10-13T09:32:59.988550+00:00",
+  "input_provenance": {
+    "decision_date_source": "qqq_market_asof",
+    "discovery_mode": "multi_source_opt_in",
+    "discovery_source_files": {
+      "manual": "data/research/generalized_v0/manual.csv",
+      "thematic": "data/research/generalized_v0/thematic.csv",
+      "us_core": "data/research/generalized_v0/us_core.csv"
+    },
+    "industry_trend_csv": "outputs/ai_value_scan_20261013T093030Z_full_ranked_industry_trend.csv",
+    "legacy_ranked_csv": "outputs/ai_value_scan_20261013T093030Z_full_ranked.csv",
+    "market_data_provenance": {
+      "alpaca": {
+        "assets": {
+          "counts": {
+            "fresh_cache": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-13T09:30:30.786824+00:00",
+          "latest_data_asof_utc": null,
+          "max_cache_age_sec": 427.856773853302,
+          "stale_fallback_used": false
+        },
+        "bars": {
+          "counts": {
+            "cross_key_cache_enrichment": 71,
+            "fresh_cache": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-13T09:31:46.226756+00:00",
+          "latest_data_asof_utc": "2026-10-12T04:00:00Z",
+          "max_cache_age_sec": 58802.35833859444,
+          "stale_fallback_used": false
+        },
+        "snapshots": {
+          "counts": {
+            "network": 1
+          },
+          "degraded_reasons": [],
+          "feed": "iex",
+          "last_observed_at_utc": "2026-10-13T09:30:33.182057+00:00",
+          "latest_data_asof_utc": "2026-10-12T20:29:55.228145522Z",
+          "max_cache_age_sec": null,
+          "stale_fallback_used": false
+        }
+      }
+    },
+    "momentum_csv": "outputs/ai_value_scan_20261013T093030Z_full_ranked_momentum.csv",
+    "network_issue_flag": false,
+    "qqq_market_asof": "2026-10-12",
+    "research_pool_csv": "outputs/ai_value_scan_20261013T093030Z_full_ranked_research_pool.csv",
+    "stale_market_data_fallback_used": false,
+    "ticker_map": {
+      "conflicts": {},
+      "fetched_utc": "2026-10-13T09:30:30.993628+00:00",
+      "n_rows": 10445,
+      "read_utc": "2026-10-13T09:33:00.484919+00:00",
+      "sha256": "a9595d33a34615553ee706c95458fff0bb9fec9642a9d61710f3e5dbd45ca23e",
+      "source": "network"
+    },
+    "ticker_map_rows_count": 10445,
+    "ticker_map_rows_file": "ticker_map_rows.json",
+    "ticker_map_rows_sha256": "ee8efe3f3ff165e5c69132223974cfb1092b36583826c0f4c5278a183039506c",
+    "watchlist_csv_path": "data/ai_watchlist.csv"
+  },
+  "schema_version": "1",
+  "strategy_style": "risk_off",
+  "weekly_symbols": [
+    "ETN",
+    "KO",
+    "EOG",
+    "JNJ",
+    "MSFT",
+    "TMO",
+    "AMD",
+    "AMAT",
+    "META",
+    "CRM",
+    "TXN",
+    "CAT",
+    "LIN",
+    "PG",
+    "GOOGL"
+  ]
+}

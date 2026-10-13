@@ -1,0 +1,11 @@
+symbol,source_id,source_asof,security_type,enabled,theme_id,legacy_bucket,etfs,research_note
+MSFT,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+NVDA,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+AMD,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+AMAT,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+META,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+ORCL,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+GOOGL,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+AMZN,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+ETN,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
+GE,theme_ai_cross_section_v0,2026-10-11,common_stock,1,ai,,,
