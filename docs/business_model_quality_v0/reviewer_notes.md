@@ -1,5 +1,28 @@
 # Reviewer notes — business-model study, first submission
 
+## Correction round (reviewer audit 2026-10-13; all verified on raw evidence)
+
+- Bank C attribution first version wrongly claimed leverage/coverage
+  SCORED against JPM/BAC/MS/WFC. Truth from decisions.jsonl: those codes
+  are MISSING (balance_sheet component None); the scored risks are OCF
+  conversion/growth and revenue YoY. Cases rewritten with the
+  scored-vs-missing-vs-inapplicable split; see
+  `quality_driver_attribution.csv` (11 rows).
+- WFC removed from study rows (outside the registered 11); kept as a
+  labelled corroborating note only.
+- XOM row rewritten with split records: posthoc-1009 (UNRATED/14-missing)
+  vs frozen-1012 (B/5-missing, opco-scale values) at the SAME asof
+  08-03 — labels flap with feed content, not filings. Same-asof flips
+  also documented for HON (live integrity cap, legit), FCX
+  (threshold edge), NEE (genuine Q2 upgrade).
+- PLD asof gap explained as fact-coverage lag (Q2 10-Q filed 07-29 in
+  submissions; Q2 accession absent from observed companyfacts snapshots);
+  TTL-vs-endpoint mechanism undetermined, stated as open.
+- `entry_readiness_diagnostics.csv` rebuilt by committed
+  `research/build_entry_diagnostics.py` (+ synthetic rebuild test);
+  silent-band rows carry reconstructed values, never NONE.
+- Matrix holds 15 indicator rows (PR body text corrected separately).
+
 ## What this PR contains (design + inventory + first diagnostics)
 
 - `research_protocol.md` (frozen questions/method/grades), this notes file.
