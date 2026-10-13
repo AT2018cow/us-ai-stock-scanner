@@ -1358,32 +1358,14 @@ class SecClient:
         meta_path = self.cache_dir / f"facts_meta_{cik}.json"
         subs_path = self.cache_dir / f"submissions_{cik}.json"
         need_fetch = not cache_path.exists()
-        latest_accn: str | None = None
-        if subs_path.exists():
-            try:
-                subs = json.loads(subs_path.read_text())
-                recent = subs.get("filings", {}).get("recent", {}) or {}
-                # Coverage-relevant accession only: the newest 10-K/10-Q.
-                # An 8-K or Form 4 as accessions[0] must not count as
-                # financial coverage, nor force refreshes on non-financial
-                # filings. Entries with missing/unparseable forms stay
-                # conservative (treated as relevant) rather than silently
-                # skipped.
-                forms = recent.get("accessionNumber", []) or []
-                form_kinds = recent.get("form", []) or []
-                if not form_kinds:
-                    if forms and forms[0]:
-                        latest_accn = str(forms[0])
-                else:
-                    for kind, accn in zip(form_kinds, forms):
-                        if not accn:
-                            continue
-                        norm = normalize_form(kind)
-                        if not norm or norm in QUARTERLY_FORMS:
-                            latest_accn = str(accn)
-                            break
-            except Exception:
-                pass  # fall back to metadata/mtime heuristics below
+        # Use the SAME periodic-selection contract as the parsed-cache gate.
+        # SEC recent filings may be out of order; Form 4/S-3 do not drive
+        # Company Facts coverage. Missing/invalid date or unrecognized forms
+        # follow the shared conservative raw-newest fallback.
+        latest_accn = (
+            _submissions_latest_relevant_filing(subs_path)[1]
+            if subs_path.exists() else None
+        )
         if cache_path.exists() and not need_fetch:
             # D02: accession-based change detection. The old filingDate
             # vs mtime comparison missed same-day filings (date-midnight
@@ -2744,6 +2726,38 @@ def _submissions_latest_relevant_filing(subs_cache: Path) -> tuple[str | None, s
         return None, None
     if isinstance(subs, dict):
         periodic = latest_periodic_filing(subs)
+        recent = (subs.get("filings", {}).get("recent", {}) or {})
+        forms = recent.get("form", []) or []
+        dates = recent.get("filingDate", []) or []
+        accessions = recent.get("accessionNumber", []) or []
+        # Do not silently trust an older periodic when a later/undated
+        # *unclassified* form or a periodic with malformed filingDate exists.
+        # In that ambiguous case prefer its accession as a conservative
+        # invalidation key. Companyfacts and parsed gates now share it.
+        ambiguous: list[tuple[str, str]] = []
+        for index, raw_accn in enumerate(accessions):
+            accn = str(raw_accn or "").strip()
+            if not accn:
+                continue
+            form = normalize_form(forms[index]) if index < len(forms) else ""
+            if form and form not in QUARTERLY_FORMS:
+                continue  # Known non-periodic Form 4 / 8-K / S-3 etc.
+            filed = str(dates[index] or "").strip()[:10] if index < len(dates) else ""
+            try:
+                datetime.strptime(filed, "%Y-%m-%d")
+                valid_date = True
+            except ValueError:
+                valid_date = False
+            if form in QUARTERLY_FORMS and valid_date:
+                continue  # Already considered by latest_periodic_filing.
+            if (periodic is None or not valid_date
+                    or filed >= str(periodic["filed"])):
+                ambiguous.append((filed, accn))
+        if ambiguous:
+            # The input order is not authoritative; a missing-date record is
+            # preferred conservatively, otherwise choose the latest date.
+            ambiguous.sort(key=lambda item: (not bool(item[0]), item[0]), reverse=True)
+            return ambiguous[0]
         if periodic and periodic.get("accession"):
             return periodic.get("filed"), periodic.get("accession")
     return _submissions_latest_filing(subs_cache), _submissions_latest_accession(subs_cache)

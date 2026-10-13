@@ -16,11 +16,14 @@ SEC propagation and publication can lag; the latest facts may remain pending.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
+import tempfile
 import sys
 import time
 from pathlib import Path
+from datetime import date
 from typing import Any, Callable
 
 import pandas as pd
@@ -37,6 +40,7 @@ from ai_value_scanner.scanner import (  # noqa: E402
     load_config,
     load_one_fundamental,
     load_valid_parsed_fundamental_cache,
+    _submissions_latest_relevant_filing,
 )
 
 RETRYABLE_STATUS = frozenset({403, 408, 429, 500, 502, 503, 504})
@@ -47,6 +51,8 @@ TRANSIENT_BACKOFF_SEC = (5.0, 15.0)
 THROTTLE_COOLDOWN_SEC = 180.0
 MAX_THROTTLE_COOLDOWN_SEC = 1800.0
 MAX_CONSECUTIVE_FAILURES = 5
+PENDING_STREAK_ALERT_DAYS = 3
+PENDING_STREAK_FILENAME = "sec_pending_streaks.json"
 
 
 class SecThrottleCircuitOpen(RuntimeError):
@@ -173,6 +179,108 @@ def collect_symbols(repo: Path, cfg: ScanConfig) -> tuple[list[str], list[str]]:
     return sorted(symbols), files
 
 
+
+def _pending_accession(cache_dir: str | Path, cik: str) -> str | None:
+    """Identify an actual SEC Company Facts lag, not an arbitrary cache miss.
+
+    Both conditions must hold: facts_meta records pending with no covered
+    accession, and pending equals the latest financial accession chosen by
+    the same selection rule as the parsed-cache validator.
+    """
+    cache = Path(cache_dir)
+    try:
+        meta = json.loads((cache / f"facts_meta_{cik}.json").read_text())
+        if not isinstance(meta, dict):
+            return None
+        pending = str(meta.get("pending_accession") or "").strip()
+        if not pending or meta.get("covered_accession"):
+            return None
+        _, expected = _submissions_latest_relevant_filing(
+            cache / f"submissions_{cik}.json"
+        )
+        return pending if pending == expected else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def record_pending_streaks(
+    cache_dir: str | Path,
+    *,
+    on_date: date,
+    processed_ciks: list[str],
+    pending_ciks: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Persist CIK+accession streaks for distinct consecutive LOCAL dates.
+
+    This is diagnostics only: no SEC requests, no retry or exit policy change.
+    Unprocessed CIKs retain their previous record (a --limit smoke run must
+    never accidentally reset the full-universe state). The next observed day
+    after a gap starts again at 1.
+    """
+    path = Path(cache_dir) / PENDING_STREAK_FILENAME
+    try:
+        saved = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(saved, dict) or saved.get("version") != 1:
+            saved = {}
+        rows = saved.get("items", {})
+        if not isinstance(rows, dict):
+            rows = {}
+    except (OSError, ValueError, TypeError):
+        rows = {}
+    items = dict(rows)
+    warnings: list[dict[str, Any]] = []
+    for cik in sorted(set(processed_ciks)):
+        entry = pending_ciks.get(cik)
+        if entry is None:
+            items.pop(cik, None)
+            continue
+        accession = str(entry["accession"])
+        previous = items.get(cik, {})
+        if not isinstance(previous, dict):
+            previous = {}
+        prev_day = previous.get("last_date")
+        try:
+            prev_date = date.fromisoformat(str(prev_day)) if prev_day else None
+        except ValueError:
+            prev_date = None
+        if previous.get("accession") != accession:
+            count = 1
+        elif prev_date == on_date:
+            count = max(1, int(previous.get("streak", 1)))
+        elif prev_date is not None and (on_date - prev_date).days == 1:
+            count = max(1, int(previous.get("streak", 1))) + 1
+        else:
+            count = 1
+        row = {
+            "symbol": str(entry["symbol"]),
+            "accession": accession,
+            "streak": count,
+            "last_date": on_date.isoformat(),
+        }
+        items[cik] = row
+        if count >= PENDING_STREAK_ALERT_DAYS:
+            warnings.append({"cik": cik, **row})
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # The diagnostic record must never partially overwrite a previous run.
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=path.parent, prefix=f"{path.name}.", suffix=".tmp",
+            encoding="utf-8", delete=False,
+        ) as handle:
+            temporary = handle.name
+            json.dump(
+                {"version": 1, "updated_on": on_date.isoformat(), "items": items},
+                handle, sort_keys=True, indent=2,
+            )
+        os.replace(temporary, path)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+    return warnings
+
+
 def refresh_symbols(
     symbols: list[str],
     mapped: dict[str, str],
@@ -193,6 +301,7 @@ def refresh_symbols(
         "total": len(symbols), "refreshed": 0, "skipped_valid": 0,
         "no_cik": [], "conflicted": [], "failed": 0, "incomplete": 0,
         "retried_ok": 0, "aborted": False,
+        "processed_ciks": [], "pending_ciks": {},
     }
     conflicts = conflicting or set()
     consecutive_failures = 0
@@ -215,6 +324,7 @@ def refresh_symbols(
         if not cik:
             summary["no_cik"].append(symbol)
             continue
+        summary["processed_ciks"].append(str(cik))
         valid = load_valid_parsed_fundamental_cache(
             sec, symbol, cik, cfg, max_age_sec=max_age_sec
         )
@@ -237,6 +347,11 @@ def refresh_symbols(
             if valid is None:
                 summary["incomplete"] += 1
                 summary["failed"] += 1
+                pending = _pending_accession(cfg.cache_dir, str(cik))
+                if pending is not None:
+                    summary["pending_ciks"][str(cik)] = {
+                        "symbol": symbol, "accession": pending,
+                    }
                 consecutive_failures += 1
                 log(f"WARNING: {symbol} CIK {cik}: no eligible parsed cache "
                     "(pending facts, missing cache, or provenance mismatch)")
@@ -328,6 +443,25 @@ def main() -> None:
             log(f"WARNING: unmapped symbols: {', '.join(summary['no_cik'][:20])}")
         if summary["conflicted"]:
             log(f"ERROR: mapping conflict symbols: {', '.join(summary['conflicted'][:20])}")
+        # Only the full scheduled run updates persistent pending history.
+        # This runs once after all attempts and never changes failure status.
+        if not (args.limit and args.limit > 0):
+            try:
+                alerts = record_pending_streaks(
+                    cfg.cache_dir,
+                    on_date=date.today(),  # client-local cron date
+                    processed_ciks=summary["processed_ciks"],
+                    pending_ciks=summary["pending_ciks"],
+                )
+                for alert in alerts:
+                    log(
+                        "WARNING: SEC_FACTS_PENDING_STREAK "
+                        f"CIK {alert['cik']} {alert['symbol']} "
+                        f"accession={alert['accession']} "
+                        f"days={alert['streak']} — manual SEC/entity review required"
+                    )
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                log(f"WARNING: cannot persist SEC pending diagnostics: {exc}")
         if summary["failed"] or summary["aborted"] or summary["conflicted"]:
             sys.exit(1)
     finally:
