@@ -60,10 +60,11 @@
   },
   "paired_labels": "Only score each date×horizon×cap if all selected B0 and candidate ticker (stock and QQQ) forward labels finite and label_end present; otherwise omit same entire date from both arms; no zero-fill, replacement, or separate denominators.",
   "event_sensitivity": "Retrospectively flag detection-interval overlap with holding window for either Top-k; remove whole paired date in sensitivity only; NEVER use future events for selection.",
-  "score_sensitivity": "HEI all dates, historical missing fundamental_asof and severe-share event-date scores flagged; remove whole paired date in sensitivity only; NEVER rank-filter.",
+  "score_sensitivity": "HEI all dates; missing historical fundamental_asof; severe-share audit event-date score inputs; and two pre-return SEC control case-date uncertainties VSH 2023-01-31 (weighted-average shares) and GOOGL 2024-12-31 (multi-class shares and price basis). Do not alter historical ranks; remove an entire same-date pair if either selected Top-k includes a flag.",
   "risks": [
     "SEC accession/CIK source bindings incomplete",
     "HEI mixed share classes/weighted-average denominator confirmed",
+    "VSH 2023-01-31 weighted-average share definition and GOOGL 2024-12-31 multi-class valuation scope require conservative sidecar sensitivity",
     "51 events audit-only and unresolved",
     "retrospective historical universe not true PIT holdings",
     "overlapping horizon labels/non-independent dates"
