@@ -1,0 +1,14 @@
+{
+  "study": "mvp-v11-pr-a-20261014",
+  "final_decision": "NO_GO_KEEP_V1",
+  "archived_utc": "2026-10-14",
+  "source_pr": 70,
+  "source_branch": "feature/mvp-v11-historical-optimizer-pr-a-20261014",
+  "source_evidence_commit": "4d442da4be719b23839b82d6480a94ed368cb4ad",
+  "executed_code_sha": "9514166907e7f279fd6efd6f77f672badb9bd6f7",
+  "protocol_sha256": "0a911c0443a2c744a0e8fbe1da02ad4077c880fd08db76eaf96321d3d146f696",
+  "dataset_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+  "ci": {"branch_head_run": 38547860306, "status": "SUCCESS", "local_tests": "717 OK"},
+  "scope": "2023-2024 development only; X1/2025/2026Q1 never executed; production v1 unchanged",
+  "primary_outcome": "60d Top-15 best E1 +0.213pp; all candidates FAIL +0.5pp gate"
+}

@@ -1,0 +1,34 @@
+{
+  "status": "SEC_FILING_EVIDENCE_ONLY_NOT_FULL_PIT_CERTIFICATION",
+  "ready_for_candidate_returns": false,
+  "cases_sha256": "ed20b66a5e97df4d6537b6c05ff27a6d37aa20c1ea257d813c74cf2b9d7fc6be",
+  "review_sha256": "86970213cd2b795797fd2a61e81691f30e1246458d8bbd242bf8a97f857a5d5f",
+  "case_count": 9,
+  "case_type": "FIXED_TOP15_CONTROL",
+  "selected_cases": [
+    "2023-01-31|BRKR",
+    "2023-01-31|VRSN",
+    "2023-01-31|VSH",
+    "2024-01-31|BRKR",
+    "2024-01-31|CSGP",
+    "2024-01-31|TEL",
+    "2024-12-31|AMZN",
+    "2024-12-31|ANET",
+    "2024-12-31|GOOGL"
+  ],
+  "timing_summary": {
+    "FILING_PUBLIC_BEFORE_SIGNAL_DATE": 9
+  },
+  "n_cases_pit_fully_verified": 0,
+  "code_sha": "b05c61204005d50a1c58cf4b8ff103567eb5ac4b",
+  "edgartools_version": "5.61.1",
+  "edgar_identity_source": "EDGAR_IDENTITY",
+  "inspect_xbrl": true,
+  "network": true,
+  "limits": [
+    "Present-day ticker lookup does not establish historical CIK identity.",
+    "Filing header availability does not prove that v3 used that accession.",
+    "Same-day filings stay unverified without archived early-close calendar.",
+    "Share facts alone cannot validate a two-class issuer market-cap denominator."
+  ]
+}

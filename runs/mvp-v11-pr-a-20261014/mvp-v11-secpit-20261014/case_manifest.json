@@ -1,0 +1,14 @@
+{
+  "status": "OFFLINE_CASES_FROZEN_NOT_PIT_VERIFIED",
+  "ready_for_candidate_returns": false,
+  "cases_sha256": "ed20b66a5e97df4d6537b6c05ff27a6d37aa20c1ea257d813c74cf2b9d7fc6be",
+  "case_count": 13,
+  "v3_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+  "ranking_sha256": "4b0d25e0ad54c394a5eeed2ed47a2c4f0ba01fae29cc8d793f573980a2d88d51",
+  "code_sha": "1d688dad8283ed4870f1e9899bcb0f82a60675dd",
+  "notes": [
+    "Four HEI dates first, then fixed Top-1/8/15 from 3 old B0 dates",
+    "No candidate outcomes/SEC requests",
+    "Original historical CIK and accession are not present in v3"
+  ]
+}
