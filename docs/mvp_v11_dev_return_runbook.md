@@ -114,3 +114,51 @@ stock signals**. If all R/E fail, STOP, KEEP V1, do not open PR-B.
 Only after the development winner is recorded and its R/E credentials
 locked may a separate, reviewed **2025/2026Q1 temporal-diagnostic
 implementation and run** be proposed. Those periods are not fresh OOS.
+
+
+## Nine frozen controls reviewed — limited risk-gate disposition (2026-10-14)
+
+Evidence commit `7834c7b365246f0bd4db832533cea8c85f22975d`,
+`evidence/mvp-v11-secpit-20261014/`. Both HEI and the nine
+pre-registered SEC controls are now complete. All 9/9 control filing
+headers precede the corresponding signal dates; 7/9 source facts match
+cover DEI outstanding shares, while VSH uses a filing's period-weighted
+basic-share count and GOOGL uses a multi-class share aggregate with
+time-offset differences. **None of the 13 observations proves the
+original extraction's historical ticker→CIK/accession binding**;
+`UNVERIFIED` is retained. There was no second HEI-like ~2.5x alternation
+in these nine frozen controls, but sample size is far too small to
+certify the 25k-row universe.
+
+Before any returns, the conservative `score_source_flags` sidecar now
+includes two **date-specific, outcome-blind** control warnings:
+`(2023-01-31,VSH)` for weighted-average rather than point-in-time
+shares, and `(2024-12-31,GOOGL)` for multi-class price/quantity basis.
+They are added to HEI-all-dates, the original missing as-of and the
+unresolved severe share-event detection-date markers. They NEVER alter
+v3, B0, candidate lists, forward labels, or the original 52-event
+audit queue. Only the sensitivity date-pair validity may change.
+The previously filed 240-row membership and 24-date Top-k snapshots
+remain pinned and valid, as no historical selection input changed.
+
+This **revised protocol is still awaiting project-owner approval**.
+The owner must read this updated runbook and check the exact latest
+GitHub CI before supplying:
+- the exact new 40-character PR-A HEAD SHA;
+- the SHA256 of the current on-disk
+  `configs/mvp_v11_dev_return_protocol.json` (the previous
+  `ce5234ec...` fingerprint is obsolete after the sidecar update);
+- explicit approval of exactly one offline 2023–2024 development run.
+
+Reviewer's limited conclusion: data-quality *inventory and pre-return
+uncertainty rule* are acceptable for a **descriptive development
+experiment**, not for declaring actual historical issuer/PIT correctness
+or production promotion. Any candidate whose apparent improvement
+depends materially on unverified source facts/interval events must be
+`INCONCLUSIVE/KEEP_V1`. Separate temporal 2025/2026 diagnostic results
+remain sealed until the development recommendation has been locked.
+
+**Do not reuse the old `b05c6120` approval SHA or the original protocol
+SHA.** Do not run real candidate returns merely because the code and
+nine SEC checks have passed. The project owner must explicitly authorize
+the new exact SHA pair.
