@@ -278,3 +278,78 @@ Do not edit original `event_review_queue.csv` or claim its 52
 `UNREVIEWED` dispositions are settled. The owner/reviewer must examine
 the source-evidence audit and confirm the outcome-blind paired-mask
 rules before return comparisons start.
+
+
+## PR-A next implementation: R/E membership-only preflight (not returns)
+
+Code now has:
+- `decision/entry.py` canonical shared threshold routine: the public
+  `build_entry_quality_v1` retains -3% RS and >15% overextension and
+  unchanged v1 evidence texts. A **separate offline-only**
+  `build_entry_quality_v11_offline` accepts only frozen E1–E4 thresholds.
+  Entry score and confidence, defensive gate, trend/damage and READY 20d
+  12% cap stay unchanged.
+- `research/mvp_v11_candidates.py`: creates B0 from the existing
+  canonical builder, R1–R5 only rearrange within Action/Grade, E1–E4
+  re-run Entry on identical historical rows, recompute Action, rationale,
+  trigger and priorities; outcomes stripped before scoring.
+- `research/mvp_v11_score_masks.py`: SIDE-CAR ONLY risk flags for HEI
+  all dates, missing fundamental-asof and severe flagged *event dates*.
+  This does not modify selection. A retrospective HEI score-quality
+  sensitivity is NOT proof that all HEI history is wrong.
+- `research/mvp_v11_comparison.py`: pure paired Top-5/15 20/60/120d
+  date-level comparator with both arms complete, no fill, same-universe
+  checks and separate score/label-event sensitivity flags. No production
+  or report CLI calls it yet. **Only synthetic unit tests** may view return
+  deltas until a separate experiment authorization and protocol lock.
+- `scripts/mvp_v11_candidate_preflight.py`: SAFE to run after latest
+  exact-head CI GREEN; computes NO candidate returns, no SEC/Alpaca/Modal.
+
+On your local OpenCode checkout of the PR-A HEAD, keep the originally
+SHA-validated corrected v3 and the original risk_run_01 event queue.
+Do not reset or delete uncommitted work. Run:
+
+~~~bash
+git rev-parse HEAD
+python -m unittest discover -s tests
+python scripts/mvp_v11_candidate_preflight.py \
+  --entry-dataset outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv \
+  --entry-meta outputs/historical_selection_v1_20261011_03/evidence/entry_quality_dataset_risk_off.meta.json \
+  --event-review outputs/mvp_v11_risk/risk_run_01/event_review_queue.csv \
+  --output-dir outputs/mvp_v11_preflight/membership_run_01
+~~~
+
+The frozen input SHA is
+`2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e`;
+the original risk event queue SHA is
+`3bf0844fce0e2df40e81eea69eb2445c24a6abeaff7922473ca315b88143204e`.
+Use local original data and verified metadata path, never modify or
+rename original evidence to satisfy commands. The CLI validates both
+hashes and the unchanged eleven-slot registry. New runs refuse an
+existing output directory.
+
+**Expected outputs**:
+- `membership_by_date.csv` — 39 dates × 10 executed candidates
+  (B0 + R1–R5 + E1–E4), 390 rows: Top-5/15 before/after,
+  swaps, migration counts and suppressed PR counts. X1 is *not*
+  executed at this stage.
+- `entry_migrations_by_date.csv` — E state migrations with counts.
+- `score_source_flags_local_only.csv` — 25,025 risk flag records;
+  keep ignored locally; do not commit the 25k-row sidecar.
+- `preflight_manifest.json` — code SHA, data SHA, registry SHA, source
+  event queue SHA, output SHA, and `ready_for_candidate_returns=false`.
+
+Return for review **only** preflight_manifest.json plus a small Markdown
+summary: exact HEAD, CI/unittest, 390 membership rows, Top-15 member
+swaps, R changes limited to same Action/Grade, E1–E4 state migrations,
+HEI/major share-event flags and missing-asof handling. Optional compact
+membership_by_date.csv may be submitted if size/license permits.
+Never upload raw licensed bars, corrected 25k-row v3 or full score flags.
+Do not call the pure comparator on real forward returns yet.
+
+**Merge condition:** this code submission is an intermediate **draft**
+inside PR-A, not a complete PR-A historical GO/NO-GO. Full comparator
+integration, vetted PIT/CIK control results, frozen mask coverage and a
+single pre-approved 2023–2024 development run are still required.
+Do not merge PR #70 solely because the membership preflight and CI
+pass. No PR-B until a reviewed candidate is formally selected.
