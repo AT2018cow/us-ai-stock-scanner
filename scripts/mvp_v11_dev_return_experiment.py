@@ -14,7 +14,13 @@ import sys
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Direct CLI invocation (python scripts/mvp_v11_dev_return_experiment.py)
+# sets sys.path[0] to scripts/, not to the repository root. Add both
+# locations so the existing namespace-package imports under scripts.*
+# work without requiring users to set PYTHONPATH or modify their checkout.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from ai_value_scanner.fundamentals.edgartools_diagnostic import resolve_git_sha
 from ai_value_scanner.research.mvp_v11 import _hash, inspect_frozen_dataset
