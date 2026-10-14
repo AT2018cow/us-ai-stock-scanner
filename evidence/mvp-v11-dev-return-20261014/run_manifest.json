@@ -1,0 +1,313 @@
+{
+  "candidate_ids": [
+    "B0",
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "E1",
+    "E2",
+    "E3",
+    "E4"
+  ],
+  "candidate_registry_sha256": "385070b343188237dc518b7f8690ed154f8906b38e641588159deaee3d0d393d",
+  "code_sha": "9514166907e7f279fd6efd6f77f672badb9bd6f7",
+  "dataset_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+  "diagnostics": {
+    "bottom_three_primary_dates": {
+      "B0": {
+        "bottom_three": [
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-01-31"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-02-28"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-03-31"
+          }
+        ],
+        "n_positive_delta_dates": 0,
+        "n_zero_effect_dates": 24,
+        "primary_valid_dates": 24
+      },
+      "E1": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.04708896394949565,
+            "n_top15_swaps": 4,
+            "signal_date": "2023-07-31"
+          },
+          {
+            "delta_net_excess": -0.011252413474342058,
+            "n_top15_swaps": 3,
+            "signal_date": "2023-12-29"
+          },
+          {
+            "delta_net_excess": -0.010853126604945612,
+            "n_top15_swaps": 3,
+            "signal_date": "2023-03-31"
+          }
+        ],
+        "n_positive_delta_dates": 8,
+        "n_zero_effect_dates": 7,
+        "primary_valid_dates": 24
+      },
+      "E2": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.07528558286113496,
+            "n_top15_swaps": 7,
+            "signal_date": "2023-07-31"
+          },
+          {
+            "delta_net_excess": -0.04087341957377721,
+            "n_top15_swaps": 8,
+            "signal_date": "2024-06-28"
+          },
+          {
+            "delta_net_excess": -0.039567706872264255,
+            "n_top15_swaps": 7,
+            "signal_date": "2024-08-30"
+          }
+        ],
+        "n_positive_delta_dates": 8,
+        "n_zero_effect_dates": 5,
+        "primary_valid_dates": 24
+      },
+      "E3": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.018528258501051227,
+            "n_top15_swaps": 3,
+            "signal_date": "2023-05-31"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-01-31"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-02-28"
+          }
+        ],
+        "n_positive_delta_dates": 1,
+        "n_zero_effect_dates": 22,
+        "primary_valid_dates": 24
+      },
+      "E4": {
+        "bottom_three": [
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-01-31"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-02-28"
+          },
+          {
+            "delta_net_excess": 0.0,
+            "n_top15_swaps": 0,
+            "signal_date": "2023-03-31"
+          }
+        ],
+        "n_positive_delta_dates": 2,
+        "n_zero_effect_dates": 22,
+        "primary_valid_dates": 24
+      },
+      "R1": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.018825499753508855,
+            "n_top15_swaps": 2,
+            "signal_date": "2023-08-31"
+          },
+          {
+            "delta_net_excess": -0.018772676260852647,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-07-31"
+          },
+          {
+            "delta_net_excess": -0.00834405676471237,
+            "n_top15_swaps": 1,
+            "signal_date": "2024-07-31"
+          }
+        ],
+        "n_positive_delta_dates": 5,
+        "n_zero_effect_dates": 12,
+        "primary_valid_dates": 24
+      },
+      "R2": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.0340740597381985,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-07-31"
+          },
+          {
+            "delta_net_excess": -0.018772676260852647,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-07-31"
+          },
+          {
+            "delta_net_excess": -0.017238571168431388,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-01-31"
+          }
+        ],
+        "n_positive_delta_dates": 7,
+        "n_zero_effect_dates": 8,
+        "primary_valid_dates": 24
+      },
+      "R3": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.0340740597381985,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-07-31"
+          },
+          {
+            "delta_net_excess": -0.0246013703089057,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-08-30"
+          },
+          {
+            "delta_net_excess": -0.022733094048731847,
+            "n_top15_swaps": 4,
+            "signal_date": "2024-09-30"
+          }
+        ],
+        "n_positive_delta_dates": 10,
+        "n_zero_effect_dates": 3,
+        "primary_valid_dates": 24
+      },
+      "R4": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.0340740597381985,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-07-31"
+          },
+          {
+            "delta_net_excess": -0.018772676260852647,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-07-31"
+          },
+          {
+            "delta_net_excess": -0.017238571168431388,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-01-31"
+          }
+        ],
+        "n_positive_delta_dates": 7,
+        "n_zero_effect_dates": 8,
+        "primary_valid_dates": 24
+      },
+      "R5": {
+        "bottom_three": [
+          {
+            "delta_net_excess": -0.0340740597381985,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-07-31"
+          },
+          {
+            "delta_net_excess": -0.030616387264257777,
+            "n_top15_swaps": 3,
+            "signal_date": "2024-08-30"
+          },
+          {
+            "delta_net_excess": -0.018772676260852647,
+            "n_top15_swaps": 1,
+            "signal_date": "2023-07-31"
+          }
+        ],
+        "n_positive_delta_dates": 7,
+        "n_zero_effect_dates": 8,
+        "primary_valid_dates": 24
+      }
+    },
+    "candidate_count": 10,
+    "event_interval_summary": {
+      "horizons": {
+        "120": {
+          "n_event_exposed": 160,
+          "n_missing_label_end": 0,
+          "n_unique_dates_exposed": 24,
+          "n_unique_symbols_exposed": 21
+        },
+        "20": {
+          "n_event_exposed": 49,
+          "n_missing_label_end": 0,
+          "n_unique_dates_exposed": 20,
+          "n_unique_symbols_exposed": 17
+        },
+        "60": {
+          "n_event_exposed": 96,
+          "n_missing_label_end": 0,
+          "n_unique_dates_exposed": 24,
+          "n_unique_symbols_exposed": 19
+        }
+      },
+      "n_dates": 24,
+      "n_events_in_input": 52,
+      "n_flag_rows": 45342,
+      "n_signal_rows": 15114,
+      "ready_for_candidate_returns": false,
+      "rules": [
+        "Event dates denote detection intervals, not exact corporate-action timestamps.",
+        "Flag intersection of (signal_date, label_end_h] with (prev_date, event_date].",
+        "Only the paired evaluation sensitivity can use future event intervals.",
+        "No ranking, candidate selection, returns or exclusions performed here.",
+        "Primary valid-label comparisons still require unmodified v3 and locked comparator.",
+        "Unverified score-input contamination requires independent as-of audit."
+      ],
+      "status": "PRE_REGISTERED_RETROSPECTIVE_EXPOSURE_ONLY"
+    },
+    "expected_date_count": 24,
+    "n_dev_dates_by_regime": {
+      "down": 4,
+      "up": 20
+    },
+    "score_flag_counts_dev": {
+      "hei_scope_uncertain": 24,
+      "hei_source_confirmed_date": 2,
+      "missing_fundamental_asof": 245,
+      "score_source_uncertain": 284,
+      "sec_control_source_uncertain": 2,
+      "severe_share_event_on_date": 13
+    }
+  },
+  "frozen_membership_sha256": "bc9130edcb62c362d893166d69b7c363087f254ed91bca4127322faac93f6f60",
+  "generated_at_utc": "2026-10-14T10:58:25.311483+00:00",
+  "label_cost_convention": "both stock and QQQ 30bps roundtrip included",
+  "metadata_sha256": "1574a85518f72d85cf4ff0585dd7ea896e579aa9a6f286f60e6a51f1a1239e6a",
+  "output_sha256": {
+    "dataset_inventory.csv": "bfeb02efd8cff5d93cb144e1f2f7e0d1527539e795750eba03130e48e2507236",
+    "decision_recommendation.md": "bdfab699bd5eddc71697d36be1eb8bf5650fb13d80b0ddb3db7449661f91c69b",
+    "entry_state_migrations.csv": "ebdf3beff9d590a7a696c2daf5d029cfcb19e903cc9ecf341d8c0698935c643d",
+    "metrics_by_period.csv": "61587b721604ad2277431dc45088d585f3d34d06919b842e09c609e278c71cef",
+    "paired_by_date.csv": "5ad9c27a031e6940f0670214bf572941e91d03724f4cad256fdde2998bb16ebd",
+    "risk_and_missingness.md": "aaa680cf69055afc8e7d9e8694d3e9e84b052729305e4275e54699bcd9c7881b",
+    "top15_diff_cases.csv": "36072c724188fff346ba94af71b38976546b071aa5453aac733d23e8eaa74981"
+  },
+  "protocol_sha256": "0a911c0443a2c744a0e8fbe1da02ad4077c880fd08db76eaf96321d3d146f696",
+  "ready_for_candidate_promotion": false,
+  "risk_audit_sha256": "20dc8670c8de44781355c51d6381821b6cc64b00bab9162445af628cac3f9e31",
+  "risk_review_sha256": "3bf0844fce0e2df40e81eea69eb2445c24a6abeaff7922473ca315b88143204e",
+  "scope": "24 dates 2023–2024; no 2025/2026 outcomes; monthly proxy",
+  "seed": 0,
+  "status": "DEV_RETURNS_ONLY_AWAITING_REVIEW",
+  "temporal_2025_2026_embargoed": true,
+  "x1_executed": false
+}
