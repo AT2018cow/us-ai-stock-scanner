@@ -80,7 +80,7 @@ class TestMvpV11ReturnStudyContract(unittest.TestCase):
         self.assertEqual(bottom["E1"]["n_positive_delta_dates"], 2)
 
     def test_frozen_protocol_has_dev_only_lock(self):
-        path = Path(__file__).resolve().parents[1] / "configs/mvp_v11_dev_return_protocol.json"
+        path = Path(__file__).resolve().parents[1] / "configs/archive/mvp_v11_dev_return_protocol.json"
         config, sha = _read_protocol(path)
         self.assertEqual(config["periods"]["development"]["expected_dates"], 24)
         self.assertEqual(config["periods"]["temporal_2025"], "EMBARGOED")

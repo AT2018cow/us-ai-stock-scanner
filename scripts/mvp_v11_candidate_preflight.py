@@ -146,7 +146,7 @@ def main() -> None:
     p.add_argument("--entry-dataset", required=True)
     p.add_argument("--entry-meta", required=True)
     p.add_argument("--event-review", required=True)
-    p.add_argument("--registry", default="configs/mvp_v11_candidate_registry.json")
+    p.add_argument("--registry", default="configs/archive/mvp_v11_candidate_registry.json")
     p.add_argument("--output-dir", required=True)
     args = p.parse_args()
     out = Path(args.output_dir)

@@ -278,8 +278,8 @@ def main() -> None:
     p.add_argument("--event-audit", required=True)
     p.add_argument("--event-review", required=True)
     p.add_argument("--frozen-membership", required=True)
-    p.add_argument("--registry", default="configs/mvp_v11_candidate_registry.json")
-    p.add_argument("--protocol", default="configs/mvp_v11_dev_return_protocol.json")
+    p.add_argument("--registry", default="configs/archive/mvp_v11_candidate_registry.json")
+    p.add_argument("--protocol", default="configs/archive/mvp_v11_dev_return_protocol.json")
     p.add_argument("--output-dir", required=True)
     args = p.parse_args()
     if args.authorize_2023_2024_dev_returns != APPROVAL_PHRASE:
