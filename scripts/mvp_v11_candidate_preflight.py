@@ -193,7 +193,7 @@ def main() -> None:
             for key in (
                 "hei_scope_uncertain", "hei_source_confirmed_date",
                 "missing_fundamental_asof", "severe_share_event_on_date",
-                "score_source_uncertain",
+                "sec_control_source_uncertain", "score_source_uncertain",
             )
         },
         "candidate_registry_sha256": registry_sha,
