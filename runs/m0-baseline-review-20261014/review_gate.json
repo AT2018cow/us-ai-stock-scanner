@@ -1,0 +1,77 @@
+{
+  "audit_date": "2026-10-14",
+  "evidence_observations_sha": "68143bff19f60f014e237d1f95eda28adf074b9b",
+  "evidence_tiers_used": [
+    "RETROSPECTIVE_EXPLORATORY",
+    "POINT_IN_TIME_RECONSTRUCTED"
+  ],
+  "forward_returns_inspected": false,
+  "git_main_sha": "1a2612e4736c82cb9407bf3ca536e82b6f389578",
+  "human_live_timing_measured": false,
+  "inputs": {
+    "historical_v3_dataset_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+    "snap510_decisions_jsonl_sha256": "1e04333aad598e5cb94501a1cf73075039221b0a064297736043041fff8bbf60",
+    "snap62_decisions_jsonl_sha256": "533ff08f80b187bc57f16c0d969ab7b87c82457fbd36d017b0ae53984c065ac6"
+  },
+  "m1_entry_criteria_met": true,
+  "milestone": "M0_BASELINE_AND_USAGE_AUDIT",
+  "network_requests_made": 0,
+  "production_v1_policy_modified": false,
+  "silent_entry_gate_prevalence": {
+    "snap510_trend_damaged_missing_damage_item_count": 14,
+    "snap510_watch_breakout_zero_risk_count": 74,
+    "snap62_trend_damaged_missing_damage_item_count": 3,
+    "snap62_trend_damaged_missing_damage_item_symbols": [
+      "ISRG",
+      "COST",
+      "WMT"
+    ],
+    "snap62_watch_breakout_zero_risk_count": 9,
+    "snap62_watch_breakout_zero_risk_symbols": [
+      "CRM",
+      "TXN",
+      "PG",
+      "GOOGL",
+      "ABBV",
+      "AAPL",
+      "NEM",
+      "EQIX",
+      "INTC"
+    ]
+  },
+  "top_failure_families": [
+    {
+      "axis": "DATA_OR_ACCOUNTING_SCOPE_ERROR",
+      "id": "M0-FAM-1",
+      "target_milestone": "M1",
+      "title": "Share-count basis alternation (HEI/VSH/GOOGL), cross-entity facts (XOM), and specialist accounting (JPM/GS/PLD)"
+    },
+    {
+      "axis": "EVIDENCE_PRESENTATION_GAP",
+      "id": "M0-FAM-2",
+      "target_milestone": "M1_OR_M2",
+      "title": "Silent Entry READY blockers on WATCH_BREAKOUT (CRM/TXN/PG/GOOGL) and silent days_below_sma200 trigger on TREND_DAMAGED (ISRG)"
+    },
+    {
+      "axis": "SELECTION_OR_RANKING_MECHANISM_GAP",
+      "id": "M0-FAM-3",
+      "target_milestone": "M2_TO_M3",
+      "title": "Top-15 cap truncation of eligible PRIORITY_REVIEW (EXPD/ZM/JCI/SAIC) and B+ENTRY_READY suppression into HOLD_MONITOR (NVDA)"
+    }
+  ],
+  "verdict": "GO_FOR_M1_CORRECTNESS_ENGINEERING",
+  "worksheet_summary": {
+    "by_primary_attribution_axis": {
+      "DATA_OR_ACCOUNTING_SCOPE_ERROR": 4,
+      "EVIDENCE_PRESENTATION_GAP": 5,
+      "NONE_ACTIONABLE_BASELINE": 6,
+      "SELECTION_OR_RANKING_MECHANISM_GAP": 3
+    },
+    "by_worth_human_review": {
+      "N": 4,
+      "Y": 9,
+      "unknown": 5
+    },
+    "total_cases": 18
+  }
+}
