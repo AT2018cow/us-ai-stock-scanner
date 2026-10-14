@@ -8,6 +8,10 @@ This directory separates **active product/architecture contracts and current pha
 - `mvp_design_low_frequency_manual_selection.md` — Canonical MVP v1 architecture, `StockDecision` contract, and validation invariants.
 - `general_purpose_discovery_and_quality_v2_design.md` — Market-agnostic three-source discovery (`us_core`, `thematic`, `manual`) and business-model-aware Quality v2 design contract.
 - `next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` — **Current roadmap (M0–M5)**: v1 failure attribution, financial-data integrity, and evidence-gated v2 research plan.
+- `agent_specs/` — **Parallel-track engineering specs & execution-agent contracts**:
+  - `00_parallel_tracks_and_view_ir_contract.md` — Intermediate Presentation IR (`view_model.py`) contract and zero-conflict file boundaries.
+  - `track_a_report_readability_v2_spec.md` — Spec for Track A (Report Readability v2 & `view_model.py`).
+  - `track_b_m1_data_scope_and_silent_gates_spec.md` — Spec for Track B (M1 Share-Scope Separation & Entry Silent-Gate Completeness).
 
 ## 2. Active Policy & Operational Specs
 
