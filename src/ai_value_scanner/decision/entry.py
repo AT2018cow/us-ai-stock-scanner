@@ -546,7 +546,7 @@ def _build_entry_with_thresholds(
                     message="The stock is materially lagging QQQ.",
                 )
             )
-        elif ready_rs60_min > -0.03:
+        if ready_rs60_min > -0.03 and relative_strength < ready_rs60_min:
             risks.append(
                 _item(
                     code="relative_strength_60d_qqq_below_candidate_ready",
