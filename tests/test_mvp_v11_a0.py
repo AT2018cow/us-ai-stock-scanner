@@ -90,7 +90,7 @@ class TestHistoricalV11Ranking(unittest.TestCase):
         self.assertEqual(len(R_CANDIDATES), 5)
         registry = json.loads((
             Path(__file__).resolve().parents[1]
-            / "configs/mvp_v11_candidate_registry.json"
+            / "configs/archive/mvp_v11_candidate_registry.json"
         ).read_text(encoding="utf-8"))
         self.assertEqual(
             [x["id"] for x in registry["candidates"]],

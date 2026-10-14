@@ -36,7 +36,7 @@ def synthetic():
 class TestCandidatePreflight(unittest.TestCase):
     def test_frozen_registry_matches_all_offline_candidates(self):
         repo_root = Path(__file__).resolve().parents[1]
-        sha = verify_registry(repo_root / "configs/mvp_v11_candidate_registry.json")
+        sha = verify_registry(repo_root / "configs/archive/mvp_v11_candidate_registry.json")
         self.assertEqual(len(sha), 64)
         self.assertEqual(len(IDS), 10)
 

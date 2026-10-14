@@ -11,7 +11,7 @@ Before starting substantive work, read:
 1. `docs/product_direction_low_frequency_manual_selection.md` — product north star.
 2. `docs/mvp_design_low_frequency_manual_selection.md` — canonical MVP architecture,
    decision contract, validation model, Build-vs-Borrow policy, and implementation sequence.
-3. `docs/work_handoff_after_pr31_20261010.md` — current handoff / next work.
+3. `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` — current roadmap and handoff (earlier handoffs archived under `docs/archive/handoffs/`).
 4. `README.md` — runtime commands, configuration, feature/filter semantics, and script reference.
 
 If older research documents conflict with the three current direction documents above,
