@@ -329,23 +329,29 @@ hashes and the unchanged eleven-slot registry. New runs refuse an
 existing output directory.
 
 **Expected outputs**:
-- `membership_by_date.csv` — 39 dates × 10 executed candidates
-  (B0 + R1–R5 + E1–E4), 390 rows: Top-5/15 before/after,
+- `membership_by_date.csv` — 24 development dates × 10 executed candidates
+  (B0 + R1–R5 + E1–E4), 240 rows: Top-5/15 before/after,
   swaps, migration counts and suppressed PR counts. X1 is *not*
   executed at this stage.
 - `entry_migrations_by_date.csv` — E state migrations with counts.
-- `score_source_flags_local_only.csv` — 25,025 risk flag records;
+- `score_source_flags_local_only.csv` — 25,025 risk flag records across the input;
   keep ignored locally; do not commit the 25k-row sidecar.
 - `preflight_manifest.json` — code SHA, data SHA, registry SHA, source
   event queue SHA, output SHA, and `ready_for_candidate_returns=false`.
 
 Return for review **only** preflight_manifest.json plus a small Markdown
-summary: exact HEAD, CI/unittest, 390 membership rows, Top-15 member
+summary: exact HEAD, CI/unittest, 240 development membership rows, Top-15 member
 swaps, R changes limited to same Action/Grade, E1–E4 state migrations,
 HEI/major share-event flags and missing-asof handling. Optional compact
 membership_by_date.csv may be submitted if size/license permits.
 Never upload raw licensed bars, corrected 25k-row v3 or full score flags.
 Do not call the pure comparator on real forward returns yet.
+
+**Temporal embargo:** candidate membership comparisons currently run on
+only the 24 dates in 2023–2024. The 2025 and 2026 Q1 candidate
+migrations/Top-k comparisons remain sealed until the development winner
+is locked; only outcome-blind score-source data-quality flags may still
+cover the complete original 25,025-row dataset.
 
 **Merge condition:** this code submission is an intermediate **draft**
 inside PR-A, not a complete PR-A historical GO/NO-GO. Full comparator
