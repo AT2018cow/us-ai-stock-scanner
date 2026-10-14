@@ -176,3 +176,14 @@ pin evidence commits, and avoid extra evidence-only PRs.
 
 No changes to `main`, current production v1, historical v3 CSV bytes,
 old formal snapshots, or the original 52-record audit file.
+
+
+## 6. HEI follow-up ruling after EdgarTools audit
+
+Evidence: PR-A commit 9890d668a66c19f2673cd53e1c77732cede43afc, evidence/mvp-v11-secpit-20261014. Four SEC 10-K/Q filing acceptance timestamps precede the corresponding signals, but the original scorer's accession/CIK binding remains UNVERIFIED. XBRL facts confirm incompatible share basis: frozen HEI 137,185,000 (2023-12-29), 138,455,000 (2024-12-31), and 139,048,000 (2025-12-31) are *annual weighted-average basic EPS denominators* for both classes; 55,054,000 (2025-08-29) is *Common-only period-end outstanding shares*. These are neither the same share-class scope nor the same instant/period basis.
+
+The frozen market_cap multiplication uses a single HEI Common price with those inconsistent denominators; therefore historical valuation and shares_yoy source semantics are not trustworthy. The original report's 2.51–2.52x comparison is **relative to HEI Common-only capitalization, not issuer-wide true market capitalization**. The 9.80B/13.08B/17.84B comparators cannot be called true total issuer cap; the HEI.A class has a separate share price and economic value. The exact impact on issuer-wide cap has NOT been established.
+
+Review classification: SHARE_SCOPE_INCONSISTENCY_CONFIRMED, as **sidecar research audit metadata**, not a historical CSV repair or v1 scoring change. Freeze an outcome-blind retrospective score-quality sensitivity marking all HEI date-by-symbol observations as source-scope uncertain, but distinguish the four directly corroborated dates from remaining unverified dates. Such retrospective flags must never change original candidate membership. In paired sensitivity, omit only the entire date pair when either selected Top-k contains a flagged HEI record, with explicit coverage loss. Do not generalize from HEI to all dual-class tickers without evidence.
+
+Defer numerical correction until original frozen historical CIK/accession identity, both class-specific as-of share counts, both HEI and HEI.A contemporaneous price legs and a documented valuation definition are supported; keep original B0 unchanged and compare proposed corrections separately. The nine already frozen Top-15 controls are approved for one bounded SEC verification, using original SHA ed20b66a5e97df4d6537b6c05ff27a6d37aa20c1ea257d813c74cf2b9d7fc6be and the exact case-type filter in the SEC/PIT runbook. Original 52-event queue remains unchanged. No return comparison is authorized without mask/comparator review and owner approval.
