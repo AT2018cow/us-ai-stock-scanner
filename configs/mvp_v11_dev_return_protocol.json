@@ -1,0 +1,73 @@
+{
+  "schema_version": "mvp_v11_dev_return_protocol_v1",
+  "status": "FROZEN_PROTOCOL_OWNER_APPROVAL_REQUIRED",
+  "exact_universe": "repaired risk_off v3 union_superset_approx 25025 rows 670 symbols 39 monthly dates",
+  "dataset_sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+  "archived_ranking_sha256": "4b0d25e0ad54c394a5eeed2ed47a2c4f0ba01fae29cc8d793f573980a2d88d51",
+  "risk_event_audit_sha256": "20dc8670c8de44781355c51d6381821b6cc64b00bab9162445af628cac3f9e31",
+  "risk_review_sha256": "3bf0844fce0e2df40e81eea69eb2445c24a6abeaff7922473ca315b88143204e",
+  "preflight_manifest_sha256": "6b3fdc526e9519c3fc3b6c03068953f15dc831a47ff538e459f95113b18633fb",
+  "candidate_registry_sha256": "385070b343188237dc518b7f8690ed154f8906b38e641588159deaee3d0d393d",
+  "candidates": [
+    "B0",
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "E1",
+    "E2",
+    "E3",
+    "E4"
+  ],
+  "x1": "conditional and not run until dev R and E selections locked",
+  "periods": {
+    "development": {
+      "first": "2023-01-01",
+      "last": "2024-12-31",
+      "expected_dates": 24
+    },
+    "temporal_2025": "EMBARGOED",
+    "temporal_2026_q1": "EMBARGOED"
+  },
+  "primary": {
+    "horizon_trading_days": 60,
+    "topk": 15,
+    "metric": "candidate minus B0 date-equal mean net QQQ-excess",
+    "economic_reference_pp": 0.5,
+    "selection": "human review only"
+  },
+  "secondary": {
+    "horizons_trading_days": [
+      20,
+      60,
+      120
+    ],
+    "topk": [
+      5,
+      15
+    ],
+    "bottom_dates": 3,
+    "dated_membership_swaps": true
+  },
+  "execution": {
+    "entry": "next_open after signal",
+    "exit": "horizon trading day close",
+    "roundtrip_cost_each_stock_and_qqq_bps": 30,
+    "labels_already_net": true,
+    "additional_transaction_cost_bps": 0,
+    "ohlc_mae_mfe": "UNAVAILABLE"
+  },
+  "paired_labels": "Only score each date×horizon×cap if all selected B0 and candidate ticker (stock and QQQ) forward labels finite and label_end present; otherwise omit same entire date from both arms; no zero-fill, replacement, or separate denominators.",
+  "event_sensitivity": "Retrospectively flag detection-interval overlap with holding window for either Top-k; remove whole paired date in sensitivity only; NEVER use future events for selection.",
+  "score_sensitivity": "HEI all dates, historical missing fundamental_asof and severe-share event-date scores flagged; remove whole paired date in sensitivity only; NEVER rank-filter.",
+  "risks": [
+    "SEC accession/CIK source bindings incomplete",
+    "HEI mixed share classes/weighted-average denominator confirmed",
+    "51 events audit-only and unresolved",
+    "retrospective historical universe not true PIT holdings",
+    "overlapping horizon labels/non-independent dates"
+  ],
+  "decision_policy": "No automatic GO; assess +0.5pp development threshold, selected-name changes, worst dates, risk/score sensitivity, concentration, and 2025 after locking; unresolved material source/PIT or weak robustness => INCONCLUSIVE/KEEP V1.",
+  "review_required_before_run": true
+}
