@@ -59,6 +59,18 @@ class TestCandidatePreflight(unittest.TestCase):
         pd.testing.assert_frame_equal(transitions, migrated)
         pd.testing.assert_frame_equal(masks, flags)
 
+    def test_2025_temporal_candidate_comparison_is_embargoed(self):
+        dev, events = synthetic()
+        future = dev.copy()
+        future["signal_date"] = "2025-01-31"
+        future["market_asof"] = "2025-01-31"
+        future["fundamental_data_asof"] = "2025-01-20"
+        combined = pd.concat([dev, future], ignore_index=True)
+        memberships, _, sidecar = run_preflight(combined, events=events)
+        self.assertEqual(len(memberships), 10)
+        self.assertEqual(set(memberships.signal_date), {"2024-01-31"})
+        self.assertEqual(len(sidecar), 32)
+
 
 if __name__ == "__main__":
     unittest.main()
