@@ -78,7 +78,7 @@ def paired_topk_day(
     lkp = _indexed(labels, "labels", ["signal_date", "symbol"])
     events = _indexed(event_flags, "events", ["signal_date", "symbol", "horizon"])
     scores = _indexed(score_flags, "score risk", ["signal_date", "symbol"])
-    if "event_interval_exposed" not in events or "score_source_uncertain" not in scores:
+    if not {"event_interval_exposed", "label_end_missing"}.issubset(events) or "score_source_uncertain" not in scores:
         raise ValueError("frozen event/score masks missing required flag")
     missing_label = []
     event_hit = []
@@ -90,11 +90,12 @@ def paired_topk_day(
         if (*pair, horizon) not in events.index or pair not in scores.index:
             raise ValueError(f"missing uncertainty mask for {pair}/{horizon}")
         flag_event = events.at[(*pair, horizon), "event_interval_exposed"]
+        flag_end_missing = events.at[(*pair, horizon), "label_end_missing"]
         flag_score = scores.at[pair, "score_source_uncertain"]
-        if pd.isna(flag_event) or pd.isna(flag_score):
+        if pd.isna(flag_event) or pd.isna(flag_end_missing) or pd.isna(flag_score):
             raise ValueError("null event/score uncertainty flags")
         # Allow only native/CSV boolean representations.
-        for flag in (flag_event, flag_score):
+        for flag in (flag_event, flag_end_missing, flag_score):
             if str(flag).lower() not in {"true", "false"}:
                 raise ValueError("non-boolean uncertainty flag")
         if str(flag_event).lower() == "true":
@@ -107,7 +108,7 @@ def paired_topk_day(
             is_valid = math.isfinite(float(stock)) and math.isfinite(float(qqq))
         except (TypeError, ValueError):
             is_valid = False
-        if not is_valid:
+        if not is_valid or str(flag_end_missing).lower() == "true":
             missing_label.append(sym)
     complete = not missing_label
     def excess(symbols: tuple[str, ...]) -> float:
