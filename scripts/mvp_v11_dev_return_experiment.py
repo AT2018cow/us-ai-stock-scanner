@@ -292,6 +292,13 @@ def main() -> None:
     )
     if inventory["dataset_sha256"] != EXPECTED_DATA_SHA:
         raise ValueError("v3 dataset SHA mismatch")
+    source_protocol = inventory["provenance"]
+    if (
+        source_protocol.get("entry_price_mode") != "next_open"
+        or source_protocol.get("exit_price_mode") != "close"
+        or float(source_protocol.get("trading_cost_bps", -1)) != 15.0
+    ):
+        raise ValueError("frozen label next_open/close/15bps-per-side protocol drift")
     for path, digest, name in (
         (Path(args.event_audit), EXPECTED_AUDIT_SHA, "52-event original audit"),
         (Path(args.event_review), EXPECTED_EVENT_REVIEW_SHA, "52-event review"),
