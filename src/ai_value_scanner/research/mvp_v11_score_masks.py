@@ -36,6 +36,22 @@ def score_source_flags(
             "2023-12-29", "2024-12-31", "2025-08-29", "2025-12-31"
         })
     )
+    # Frozen SEC control evidence (2026-10-14) shows two additional
+    # source-definition uncertainties at PREDECLARED dates. These tags are
+    # sensitivity-only and do not assert the rows are economically wrong.
+    # VSH: period weighted-average basic vs the point-in-time outstanding
+    # count (2023-01-31 signal); GOOGL: multi-class aggregate-share scope
+    # multiplied by one traded class's price (2024-12-31 signal).
+    control_observations = {
+        ("2023-01-31", "VSH"),
+        ("2024-12-31", "GOOGL"),
+    }
+    data["sec_control_source_uncertain"] = [
+        (day, sym) in control_observations
+        for day, sym in data[["signal_date", "symbol"]].itertuples(
+            index=False, name=None
+        )
+    ]
     data["missing_fundamental_asof"] = (
         data.fundamental_data_asof.isna()
         | data.fundamental_data_asof.astype(str).str.strip().isin(["", "nan", "NaT"])
@@ -61,6 +77,7 @@ def score_source_flags(
     data["score_source_uncertain"] = (
         data.hei_scope_uncertain | data.missing_fundamental_asof
         | data.severe_share_event_on_date
+        | data.sec_control_source_uncertain
     )
     flags = data.drop(columns=["fundamental_data_asof"])
     return flags.sort_values(["signal_date", "symbol"], kind="mergesort").reset_index(drop=True)
