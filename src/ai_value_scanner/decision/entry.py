@@ -483,7 +483,11 @@ def _build_entry_with_thresholds(
                     metric="return_20d",
                     value=round(return_20d, 6),
                     threshold=f"<={overextended_return20_gt:.0%}",
-                    message="Recent price appreciation exceeds the configured overextension gate.",
+                    message=(
+                        "Recent price appreciation is too extended for ENTRY_READY."
+                        if overextended_return20_gt == 0.15
+                        else "Recent price appreciation exceeds the configured overextension gate."
+                    ),
                 )
             )
 
@@ -523,7 +527,11 @@ def _build_entry_with_thresholds(
                     metric="relative_strength_60d_qqq",
                     value=round(relative_strength, 6),
                     threshold=f">={ready_rs60_min:.0%}",
-                    message="60d QQQ relative strength meets the configured readiness threshold.",
+                    message=(
+                        "The stock is keeping pace with QQQ over 60 trading days."
+                        if ready_rs60_min == -0.03
+                        else "60d QQQ relative strength meets the configured readiness threshold."
+                    ),
                 )
             )
         elif relative_strength <= -0.10:
