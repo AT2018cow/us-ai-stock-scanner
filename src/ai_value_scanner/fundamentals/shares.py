@@ -20,6 +20,25 @@ class ShareCountIntegrity:
     stale: bool
     scale_factor: float
     latest_metric_end: date | None
+    basis: str = "missing"
+    source_tag: str | None = None
+
+
+# M1 share-scope separation: point-in-time outstanding counts must never be
+# pooled with period-weighted average counts for the same issuer. A later 10-K
+# reporting WeightedAverageNumberOfSharesOutstandingBasic (e.g. HEI two-class
+# ~138M) otherwise overwrites an earlier 10-Q point-in-time single-class
+# count (e.g. HEI Common-only ~55M), corrupting market_cap/fcf_yield/ps/pe
+# and shares_yoy by ~2.5x.
+POINT_IN_TIME_SHARES_TAGS: tuple[str, ...] = (
+    "EntityCommonStockSharesOutstanding",
+    "CommonStockSharesOutstanding",
+)
+WEIGHTED_AVERAGE_SHARES_TAGS: tuple[str, ...] = (
+    "WeightedAverageNumberOfSharesOutstandingBasic",
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
+)
+_WEIGHTED_AVERAGE_SHARES_TAG_SET = frozenset(WEIGHTED_AVERAGE_SHARES_TAGS)
 
 
 def latest_visible_fact_by_period_end(
@@ -56,6 +75,65 @@ def _latest_metric_period_end(
     return None
 
 
+def select_consistent_share_records(
+    share_records: Iterable[FactRecord],
+    cutoff: VisibilityCutoff | None = None,
+    stale_after_days: int = 400,
+    metric_record_groups: Sequence[Iterable[FactRecord]] = (),
+) -> tuple[list[FactRecord], str]:
+    """Select a single consistent share-count basis for one issuer.
+
+    Partitions records into point-in-time outstanding counts (plus any
+    unrecognized share tags, which group with point-in-time for backward
+    compatibility since they are not period-weighted averages) versus
+    period-weighted average counts. Returns ``(selected_records, basis)``
+    where basis is ``"point_in_time_outstanding"``,
+    ``"weighted_average_fallback"``, or ``"missing"``.
+
+    Crucial invariant: the two bases are never mixed across periods for the
+    same issuer. Callers must use the returned subset for both the current
+    share count and the historical/YoY share series so HEI-class issuers
+    never compute market_cap or shares_yoy across a 55M <-> 138M basis
+    switch.
+    """
+    records = list(share_records)
+    if not records:
+        return ([], "missing")
+    pit_records = [
+        record for record in records if record.tag not in _WEIGHTED_AVERAGE_SHARES_TAG_SET
+    ]
+    wa_records = [
+        record for record in records if record.tag in _WEIGHTED_AVERAGE_SHARES_TAG_SET
+    ]
+    pit_latest = (
+        latest_visible_fact_by_period_end(pit_records, cutoff) if pit_records else None
+    )
+    latest_metric_end = _latest_metric_period_end(metric_record_groups, cutoff)
+
+    pit_usable = False
+    if pit_latest is not None:
+        try:
+            positive = float(pit_latest.value) > 0
+        except (TypeError, ValueError):
+            positive = False
+        if positive:
+            pit_usable = True
+            if (
+                latest_metric_end is not None
+                and pit_latest.period_end is not None
+                and (latest_metric_end - pit_latest.period_end).days
+                > int(stale_after_days)
+            ):
+                pit_usable = False
+    if pit_usable:
+        return (list(pit_records), "point_in_time_outstanding")
+    if wa_records:
+        return (list(wa_records), "weighted_average_fallback")
+    if pit_records:
+        return (list(pit_records), "point_in_time_outstanding")
+    return ([], "missing")
+
+
 def assess_share_count_integrity(
     *,
     share_records: Iterable[FactRecord],
@@ -78,8 +156,19 @@ def assess_share_count_integrity(
 
     This intentionally reconciles the current share count only. Existing
     year-ago share-count semantics are preserved by callers for compatibility.
+
+    Share-scope integrity (M1): point-in-time outstanding tags and
+    period-weighted average tags are never mixed. The current count and the
+    caller's YoY series must both derive from the subset returned by
+    select_consistent_share_records; basis/source_tag record which was used.
     """
-    shares = latest_visible_fact_by_period_end(share_records, cutoff)
+    selected_records, basis = select_consistent_share_records(
+        list(share_records),
+        cutoff=cutoff,
+        stale_after_days=stale_after_days,
+        metric_record_groups=metric_record_groups,
+    )
+    shares = latest_visible_fact_by_period_end(selected_records, cutoff)
     if shares is None:
         return ShareCountIntegrity(
             value=None,
@@ -87,6 +176,8 @@ def assess_share_count_integrity(
             stale=False,
             scale_factor=1.0,
             latest_metric_end=_latest_metric_period_end(metric_record_groups, cutoff),
+            basis="missing",
+            source_tag=None,
         )
 
     value = float(shares.value)
@@ -102,6 +193,8 @@ def assess_share_count_integrity(
             stale=False,
             scale_factor=1.0,
             latest_metric_end=_latest_metric_period_end(metric_record_groups, cutoff),
+            basis=basis,
+            source_tag=shares.tag,
         )
 
     if value > 0:
@@ -135,4 +228,6 @@ def assess_share_count_integrity(
         stale=stale,
         scale_factor=scale_factor,
         latest_metric_end=latest_metric_end,
+        basis=basis,
+        source_tag=shares.tag,
     )
