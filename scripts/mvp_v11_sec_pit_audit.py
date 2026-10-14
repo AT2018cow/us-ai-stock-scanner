@@ -321,6 +321,55 @@ def make_case_lookup(company_factory: Callable[[str], Any]) -> Callable[[str, st
     return lookup
 
 
+def select_verify_cases(
+    frozen_cases: pd.DataFrame,
+    *,
+    case_type: str,
+    max_cases: int,
+) -> pd.DataFrame:
+    """Select pre-registered cases only; caller must SHA-verify the full file.
+
+    HEI/controls selection cannot mutate, re-sort, regenerate or add tickers.
+    Complete-case counts stop partial cherry-picking for focused audits.
+    """
+    if case_type not in {"all", "HEI_CLASS_SCOPE", "FIXED_TOP15_CONTROL"}:
+        raise ValueError("invalid frozen audit case_type")
+    if not 1 <= max_cases <= MAX_CASES:
+        raise ValueError("max_cases outside fixed audit cap")
+    required = {"signal_date", "symbol", "case_type",
+                "historical_cik", "historical_accession"}
+    if required - set(frozen_cases.columns):
+        raise ValueError("incorrect frozen SEC audit case schema")
+    if frozen_cases.duplicated(["signal_date", "symbol"]).any():
+        raise ValueError("duplicate frozen SEC audit cases")
+    if frozen_cases[["historical_cik", "historical_accession"]].ne("").any().any():
+        raise ValueError("historical binding must use independent archival evidence")
+    types = frozen_cases["case_type"].value_counts()
+    if len(frozen_cases) != 13 or types.get("HEI_CLASS_SCOPE", 0) != 4 or types.get("FIXED_TOP15_CONTROL", 0) != 9:
+        raise ValueError("frozen 4 HEI + 9 control case roster mismatch")
+    expected_hei = [
+        ("2023-12-29", "HEI"), ("2024-12-31", "HEI"),
+        ("2025-08-29", "HEI"), ("2025-12-31", "HEI"),
+    ]
+    actual_hei = list(
+        frozen_cases.loc[
+            frozen_cases.case_type == "HEI_CLASS_SCOPE", ["signal_date", "symbol"]
+        ].itertuples(index=False, name=None)
+    )
+    if actual_hei != expected_hei:
+        raise ValueError("frozen HEI ordering/dates changed")
+    if case_type == "all":
+        # Retains backward compatibility for the original 4-HEI prefix run.
+        return frozen_cases.head(max_cases).copy()
+    selected = frozen_cases.loc[frozen_cases.case_type == case_type]
+    if max_cases != len(selected):
+        raise ValueError(
+            f"{case_type} requires exactly {len(selected)} cases "
+            f"(received max_cases={max_cases})"
+        )
+    return selected.copy()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -335,6 +384,9 @@ def main() -> None:
     verify.add_argument("--allow-network", action="store_true")
     verify.add_argument("--inspect-xbrl", action="store_true")
     verify.add_argument("--max-cases", type=int, default=4)
+    verify.add_argument("--case-type", default="all",
+                        choices=["all", "HEI_CLASS_SCOPE", "FIXED_TOP15_CONTROL"],
+                        help="Use only registered case rows from the SHA-pinned 13-case roster")
     verify.add_argument("--output-dir", required=True)
     args = parser.parse_args()
     out = Path(args.output_dir)
@@ -386,22 +438,12 @@ def main() -> None:
 
     if not args.allow_network:
         raise SystemExit("verify requires --allow-network; zero SEC requests made")
-    if not 1 <= args.max_cases <= MAX_CASES:
-        raise ValueError(f"--max-cases must be 1..{MAX_CASES}")
     cases_path = Path(args.cases)
     require_sha(cases_path, args.expected_cases_sha256)
     cases = pd.read_csv(cases_path, dtype=str, keep_default_na=False)
-    required = {
-        "signal_date", "symbol", "case_type",
-        "historical_cik", "historical_accession",
-    }
-    if required - set(cases.columns) or not 1 <= len(cases) <= MAX_CASES:
-        raise ValueError("incorrect frozen SEC audit case schema/count")
-    if cases.duplicated(["signal_date", "symbol"]).any():
-        raise ValueError("duplicate SEC audit case date×symbol")
-    if cases[["historical_cik", "historical_accession"]].ne("").any().any():
-        raise ValueError("historical issuer binding requires independent archive evidence")
-    cases = cases.head(args.max_cases)
+    cases = select_verify_cases(
+        cases, case_type=args.case_type, max_cases=args.max_cases
+    )
     _, runtime = configure_edgartools()
     from edgar import Company
 
@@ -423,6 +465,8 @@ def main() -> None:
         "cases_sha256": sha256_file(cases_path),
         "review_sha256": sha256_file(row_path),
         "case_count": len(rows),
+        "case_type": args.case_type,
+        "selected_cases": [f"{row['signal_date']}|{row['symbol']}" for row in cases.to_dict(orient="records")],
         "timing_summary": {
             status: sum(row["filing_timing"] == status for row in rows)
             for status in sorted({row["filing_timing"] for row in rows})
