@@ -34,6 +34,12 @@ def verify_registry(path: Path) -> str:
     entries = registry["candidates"]
     if tuple(x["id"] for x in entries) != (*IDS, "X1"):
         raise ValueError("candidate registry deviates from frozen eleven slots")
+    baseline = entries[0]
+    if (float(baseline["ready_rs60_min"]),
+        float(baseline["overextended_return20_gt"])) != (-0.03, 0.15):
+        raise ValueError("changed canonical B0 thresholds")
+    if entries[-1].get("family") != "conditional":
+        raise ValueError("X1 cannot be an unconditional experiment")
     for item in entries:
         candidate_id = item["id"]
         if candidate_id in R_CANDIDATES:
@@ -64,6 +70,10 @@ def run_preflight(
     migrations = []
     for day, group in data.groupby("signal_date", sort=True):
         signal_day = str(day)
+        # Only pre-registered 2023–2024 development comparisons are
+        # visible before the candidate is frozen; 2025/Q1 2026 remain sealed.
+        if not ("2023-01-01" <= signal_day <= "2024-12-31"):
+            continue
         base = replay_candidate_day(group, signal_date=signal_day, candidate_id="B0")
         b_by_symbol = {d.symbol: d for d in base}
         for candidate_id in IDS:
@@ -154,8 +164,8 @@ def main() -> None:
     frame = pd.read_csv(args.entry_dataset, low_memory=False)
     events = pd.read_csv(events_path, low_memory=False)
     memberships, migrations, score_mask = run_preflight(frame, events=events)
-    if len(memberships) != 39 * len(IDS):
-        raise ValueError("expected 39 frozen dates × 10 candidates")
+    if len(memberships) != 24 * len(IDS):
+        raise ValueError("expected 24 development dates × 10 candidates")
     out.mkdir(parents=True)
     outputs = {
         "membership_by_date.csv": memberships,
@@ -170,7 +180,8 @@ def main() -> None:
     manifest = {
         "status": "MEMBERSHIP_ONLY_NO_CANDIDATE_RETURNS",
         "ready_for_candidate_returns": False,
-        "signal_dates": 39,
+        "signal_dates": 24,
+        "scope": "2023-2024 development membership only; returns embargoed",
         "n_rows": inv["n_rows"],
         "candidate_ids": list(IDS),
         "x1_executed": False,
