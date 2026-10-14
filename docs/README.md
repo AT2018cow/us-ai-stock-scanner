@@ -23,6 +23,7 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 3. Current Baseline Reviews & Decisions
 
+- `m0_baseline_review_20261014/` — **Phase M0 deliverable set**: `baseline_inventory.md`, `human_review_worksheet.csv` (18 stratified cases), `attention_failure_cases.md` (3 failure families + M1 correctness contract), and `review_gate.json`.
 - `mvp_v1_strategy_audit_20261011.md` — Descriptive audit of the 2026-10-09 510-symbol v1 snapshot (`313c5ff`).
 - `work_handoff_after_pr62_20261013.md` — Baseline summary after Generalized-v0 and PR #62 business-model audit.
 - `mvp_v11_pr_a_final_decision_20261014.md` — Formal `NO-GO / KEEP V1` decision for the PR #70 v1.1 historical parameter study.

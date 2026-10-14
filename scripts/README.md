@@ -7,6 +7,7 @@
 - `run_mvp_full_scan.py` — Run end-to-end MVP scan emitting `decisions.jsonl`, `action_list.md`, `weekly_review.md`, `detailed/*.md`, and `run_manifest.json`.
 - `validate_mvp_snapshot.py` — Validate decision snapshot integrity, renderer consistency, and provenance completeness.
 - `audit_mvp_strategy_snapshot.py` — Read-only cross-sectional audit of an MVP decision snapshot.
+- `m0_build_baseline_review.py` — Deterministic read-only builder for Phase M0 baseline inventory, 18-case human review worksheet, attention failure families, and M1 gate.
 - `preview_discovery_sources.py` — Preview and verify multi-source candidate discovery unions (`us_core`, `thematic`, `manual`).
 - `validate_small_scale.py` — Small-scale smoke test runner.
 
