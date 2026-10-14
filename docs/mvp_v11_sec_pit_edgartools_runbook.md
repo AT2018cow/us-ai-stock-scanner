@@ -106,3 +106,76 @@ Keep raw 25k-row CSV, full SEC caches, credentials and network material
 inside ignored outputs. Do not commit sensitive or licensed raw payloads.
 
 This evidence-only run cannot unlock candidate returns by itself.
+
+
+## Reviewer follow-up: nine frozen controls approved (2026-10-14)
+
+HEI first-phase results are archived under evidence/mvp-v11-secpit-20261014
+at commit 9890d668a66c19f2673cd53e1c77732cede43afc. Four dated SEC filing
+headers were before the corresponding monthly signal dates; original
+historical scoring accessions/CIK provenance remain UNVERIFIED. The
+observed frozen HEI shares mix annual weighted-average basic (two-class)
+shares with quarterly point-in-time Common-only shares. The 2.51–2.52x
+comparison in the initial report is to **HEI Common-only equity value**,
+NOT to verified full issuer market capitalization: both listed classes
+(HEI and HEI.A) have separately priced shares. Do not call the Common-only
+figure "true issuer mcap" or assert a numeric total-cap inflation factor.
+This is a **confirmed inconsistent input scope**, not an approved numerical
+repair.
+
+Review decision: retain exact historical v3/B0 and original event audit
+bytes. Mark HEI score-source scope as uncertain in the future **retrospective
+score-quality sensitivity**; no automatic date-based removal from the
+ranked historical universe and no correction derived from returns.
+HEI class-consistent repricing is deferred until historical HEI.A price,
+per-class as-of shares, cash-flow/valuation basis and old source binding
+can all be independently proven. Other multi-class issuers must not be
+automatically reclassified by ticker heuristics alone.
+
+**Approved next network step:** run ONLY the nine previously frozen
+FIXED_TOP15_CONTROL cases. A new --case-type selector keeps the original
+13-case CSV, unchanged case SHA and no recomputation. This option was
+added after the HEI review; verify its new HEAD CI is green first.
+
+~~~bash
+python -m unittest discover -s tests
+python scripts/mvp_v11_sec_pit_audit.py verify \
+  --cases outputs/mvp_v11_sec_pit/cases_01/sec_pit_cases.csv \
+  --expected-cases-sha256 ed20b66a5e97df4d6537b6c05ff27a6d37aa20c1ea257d813c74cf2b9d7fc6be \
+  --allow-network \
+  --inspect-xbrl \
+  --case-type FIXED_TOP15_CONTROL \
+  --max-cases 9 \
+  --output-dir outputs/mvp_v11_sec_pit/controls_01
+~~~
+
+This is not a new selection of nine companies and does not re-query HEI.
+Frozen exact control symbol × date pairs:
+- 2023-01-31: VSH Top-1, VRSN Top-8, BRKR Top-15
+- 2024-01-31: BRKR Top-1, CSGP Top-8, TEL Top-15
+- 2024-12-31: ANET Top-1, GOOGL Top-8, AMZN Top-15
+
+Network requirements are identical to HEI run: private EDGAR_IDENTITY
+environment setting, courteous SEC access, fail closed on absent
+filing headers / class dimensions / historical accession binding.
+Outputs go into the distinct ignored controls_01 directory;
+do not overwrite hei_01, cases_01 or any original evidence.
+If a case has no matching historical filing, report it as UNVERIFIED,
+do not substitute a future document.
+
+Provide only compact sec_pit_audit_summary.json,
+sec_pit_filing_review.jsonl and brief control assessment with exact
+HEAD/CI/SHA; do not send raw SEC caches, secrets, or licensed datasets.
+
+The historical filing-to-scoring accession and ticker-to-CIK bindings
+are still required **for any material case relied upon to promote a
+winner or to approve a numerical repair**. Existing source caches may
+establish this. For unresolved cases, record provenance as UNVERIFIED
+and use the frozen outcome-blind score-quality sensitivity and an
+INCONCLUSIVE/no-promotion ruling when sensitivity materially changes
+selection or performance. There is no requirement to reconstruct SEC
+bindings for all 25,025 rows solely for this bounded research.
+
+Do not run R1–R5/E1–E4/X1 returns now: ready_for_candidate_returns=false.
+The paired return comparator and conservative mask implementation need
+separate review and owner approval before opening that gate.
