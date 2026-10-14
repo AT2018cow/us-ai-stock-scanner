@@ -188,6 +188,14 @@ def main() -> None:
         "dataset_sha256": inv["dataset_sha256"],
         "metadata_sha256": inv["metadata_sha256"],
         "event_review_sha256": EXPECTED_EVENT_REVIEW_SHA,
+        "score_source_flag_counts": {
+            key: int(score_mask[key].sum())
+            for key in (
+                "hei_scope_uncertain", "hei_source_confirmed_date",
+                "missing_fundamental_asof", "severe_share_event_on_date",
+                "score_source_uncertain",
+            )
+        },
         "candidate_registry_sha256": registry_sha,
         "output_sha256": output_sha,
         "code_sha": resolve_git_sha(),
