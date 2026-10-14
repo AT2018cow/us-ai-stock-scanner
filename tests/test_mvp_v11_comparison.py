@@ -163,6 +163,31 @@ class TestScoreSourceSidecar(unittest.TestCase):
         df.fwd_ret_60 = [5, 6, 7]
         pd.testing.assert_frame_equal(flagged, score_source_flags(df))
 
+    def test_approved_sec_controls_are_frozen_date_specific_sensitivities(self):
+        df = pd.DataFrame([
+            {"signal_date": "2023-01-31", "symbol": "VSH",
+             "fundamental_data_asof": "2022-11-02"},
+            {"signal_date": "2023-02-28", "symbol": "VSH",
+             "fundamental_data_asof": "2022-11-02"},
+            {"signal_date": "2024-12-31", "symbol": "GOOGL",
+             "fundamental_data_asof": "2024-10-30"},
+            {"signal_date": "2024-11-29", "symbol": "GOOGL",
+             "fundamental_data_asof": "2024-10-30"},
+            {"signal_date": "2024-12-31", "symbol": "AMZN",
+             "fundamental_data_asof": "2024-11-01"},
+        ])
+        flags = score_source_flags(df)
+        selected = flags[flags.sec_control_source_uncertain]
+        self.assertEqual(
+            set(zip(selected.signal_date, selected.symbol)),
+            {("2023-01-31", "VSH"), ("2024-12-31", "GOOGL")},
+        )
+        self.assertTrue(selected.score_source_uncertain.all())
+        self.assertEqual(int(flags.sec_control_source_uncertain.sum()), 2)
+        self.assertEqual(int(flags.score_source_uncertain.sum()), 2)
+        self.assertEqual(len(flags), len(df))
+        self.assertFalse(flags[flags.symbol == "AMZN"].score_source_uncertain.any())
+
     def test_severe_share_event_only_flagged_on_detection_date(self):
         df = pd.DataFrame([
             {"signal_date": "2024-01-31", "symbol": "HXL", "fundamental_data_asof": "2024-01-10"},
