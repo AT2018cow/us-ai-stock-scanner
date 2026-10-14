@@ -10,6 +10,7 @@ import pandas as pd
 from scripts.mvp_v11_sec_pit_audit import (
     build_cases, header_accepted_utc, assess_filing_timing,
     inspect_case, _share_facts, make_case_lookup, MAX_CASES,
+    select_verify_cases,
 )
 
 
@@ -63,6 +64,43 @@ class TestMvpV11SecPitAudit(unittest.TestCase):
         data.fwd_ret_60 = -9999
         pd.testing.assert_frame_equal(cases, build_cases(data, ranking))
         self.assertLessEqual(len(cases), MAX_CASES)
+
+    def test_select_nine_frozen_controls_without_repeating_hei(self):
+        data, ranking = self._case_inputs()
+        frozen = build_cases(data, ranking)
+        all_hei = select_verify_cases(frozen, case_type="all", max_cases=4)
+        self.assertEqual(all_hei.symbol.tolist(), ["HEI"] * 4)
+        controls = select_verify_cases(
+            frozen, case_type="FIXED_TOP15_CONTROL", max_cases=9
+        )
+        self.assertEqual(len(controls), 9)
+        self.assertTrue(controls.case_type.eq("FIXED_TOP15_CONTROL").all())
+        self.assertFalse(controls.symbol.eq("HEI").any())
+        self.assertEqual(
+            controls[["signal_date", "symbol"]].values.tolist(),
+            frozen.iloc[4:][["signal_date", "symbol"]].values.tolist(),
+        )
+
+    def test_frozen_control_gate_rejects_subsets_and_missing_cases(self):
+        data, ranking = self._case_inputs()
+        frozen = build_cases(data, ranking)
+        with self.assertRaisesRegex(ValueError, "requires exactly 9"):
+            select_verify_cases(
+                frozen, case_type="FIXED_TOP15_CONTROL", max_cases=8
+            )
+        with self.assertRaisesRegex(ValueError, "roster mismatch"):
+            select_verify_cases(
+                frozen.head(12), case_type="FIXED_TOP15_CONTROL", max_cases=9
+            )
+        with self.assertRaisesRegex(ValueError, "ordering/dates"):
+            reordered = pd.concat([frozen.iloc[[1, 0]], frozen.iloc[2:]])
+            select_verify_cases(reordered, case_type="FIXED_TOP15_CONTROL", max_cases=9)
+        with self.assertRaisesRegex(ValueError, "independent archival"):
+            modified = frozen.copy()
+            modified.loc[4, "historical_cik"] = "99999"
+            select_verify_cases(
+                modified, case_type="FIXED_TOP15_CONTROL", max_cases=9
+            )
 
     def test_naive_sgml_header_is_eastern_not_utc(self):
         accepted = header_accepted_utc("2025-12-19 16:30:00")
