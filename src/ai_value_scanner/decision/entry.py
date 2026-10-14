@@ -246,7 +246,44 @@ def build_entry_quality_v1(
     decision_date: str | date | None = None,
     market_asof: str | date | None = None,
 ) -> EntryDecision:
-    """Build deterministic Entry Quality v1 from per-stock market features."""
+    """Canonical v1 stays fixed; thresholds are NOT changed by research."""
+    return _build_entry_with_thresholds(
+        metrics, decision_date=decision_date, market_asof=market_asof,
+        ready_rs60_min=-0.03, overextended_return20_gt=0.15,
+    )
+
+
+def build_entry_quality_v11_offline(
+    metrics: Mapping[str, Any],
+    *,
+    decision_date: str | date | None,
+    market_asof: str | date | None,
+    ready_rs60_min: float,
+    overextended_return20_gt: float,
+) -> EntryDecision:
+    """Research-only Entry state recomputation via the SAME canonical logic."""
+    if ready_rs60_min not in (-0.03, 0.0, 0.03):
+        raise ValueError("unregistered ready_rs60_min")
+    if overextended_return20_gt not in (0.12, 0.15, 0.18):
+        raise ValueError("unregistered overextended_return20_gt")
+    if ready_rs60_min != -0.03 and overextended_return20_gt != 0.15:
+        raise ValueError("non-registered E grid combination")
+    return _build_entry_with_thresholds(
+        metrics, decision_date=decision_date, market_asof=market_asof,
+        ready_rs60_min=ready_rs60_min,
+        overextended_return20_gt=overextended_return20_gt,
+    )
+
+
+def _build_entry_with_thresholds(
+    metrics: Mapping[str, Any],
+    *,
+    decision_date: str | date | None,
+    market_asof: str | date | None,
+    ready_rs60_min: float,
+    overextended_return20_gt: float,
+) -> EntryDecision:
+    """Shared canonical Entry algorithm: score fixed, state thresholds versioned."""
     positives: list[EvidenceItem] = []
     risks: list[EvidenceItem] = []
 
@@ -437,7 +474,7 @@ def build_entry_quality_v1(
                     message="Recent momentum is positive/controlled rather than chased.",
                 )
             )
-        elif return_20d > 0.15:
+        elif return_20d > overextended_return20_gt:
             risks.append(
                 _item(
                     code="return_20d_overextended",
@@ -445,8 +482,12 @@ def build_entry_quality_v1(
                     polarity="negative",
                     metric="return_20d",
                     value=round(return_20d, 6),
-                    threshold="<=15%",
-                    message="Recent price appreciation is too extended for ENTRY_READY.",
+                    threshold=f"<={overextended_return20_gt:.0%}",
+                    message=(
+                        "Recent price appreciation is too extended for ENTRY_READY."
+                        if overextended_return20_gt == 0.15
+                        else "Recent price appreciation exceeds the configured overextension gate."
+                    ),
                 )
             )
 
@@ -477,7 +518,7 @@ def build_entry_quality_v1(
             )
 
     if relative_strength is not None:
-        if relative_strength >= -0.03:
+        if relative_strength >= ready_rs60_min:
             positives.append(
                 _item(
                     code="relative_strength_60d_qqq_ready",
@@ -485,8 +526,12 @@ def build_entry_quality_v1(
                     polarity="positive",
                     metric="relative_strength_60d_qqq",
                     value=round(relative_strength, 6),
-                    threshold=">=-3%",
-                    message="The stock is keeping pace with QQQ over 60 trading days.",
+                    threshold=f">={ready_rs60_min:.0%}",
+                    message=(
+                        "The stock is keeping pace with QQQ over 60 trading days."
+                        if ready_rs60_min == -0.03
+                        else "60d QQQ relative strength meets the configured readiness threshold."
+                    ),
                 )
             )
         elif relative_strength <= -0.10:
@@ -499,6 +544,18 @@ def build_entry_quality_v1(
                     value=round(relative_strength, 6),
                     threshold=">-10% preferred",
                     message="The stock is materially lagging QQQ.",
+                )
+            )
+        if ready_rs60_min > -0.03 and relative_strength < ready_rs60_min:
+            risks.append(
+                _item(
+                    code="relative_strength_60d_qqq_below_candidate_ready",
+                    label="60d relative strength below candidate gate",
+                    polarity="negative",
+                    metric="relative_strength_60d_qqq",
+                    value=round(relative_strength, 6),
+                    threshold=f">={ready_rs60_min:.0%}",
+                    message="60d QQQ relative strength is below the versioned ENTRY_READY gate.",
                 )
             )
 
@@ -567,7 +624,7 @@ def build_entry_quality_v1(
 
         overextended = bool(
             (sma50 is not None and sma50 > 1.10)
-            or (return_20d is not None and return_20d > 0.15)
+            or (return_20d is not None and return_20d > overextended_return20_gt)
             or (
                 range_position is not None
                 and return_20d is not None
@@ -587,7 +644,7 @@ def build_entry_quality_v1(
             and return_60d is not None
             and return_60d >= 0.0
             and relative_strength is not None
-            and relative_strength >= -0.03
+            and relative_strength >= ready_rs60_min
             and drawdown is not None
             and drawdown <= 0.22
             and volatility_ready
