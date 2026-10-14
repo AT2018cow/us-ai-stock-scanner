@@ -60,6 +60,10 @@ def paired_topk_day(
     """
     if horizon not in HORIZONS or cap not in CAPS:
         raise ValueError("only registered horizon and Top-5/15 allowed")
+    baseline = tuple(baseline)
+    candidate = tuple(candidate)
+    if {d.symbol for d in baseline} != {d.symbol for d in candidate}:
+        raise ValueError("different candidate vs B0 frozen universes")
     b0, alt = (_top(baseline, day=signal_date, cap=cap),
                _top(candidate, day=signal_date, cap=cap))
     b0_symbols = tuple(d.symbol for d in b0)
@@ -97,10 +101,13 @@ def paired_topk_day(
             event_hit.append(sym)
         if str(flag_score).lower() == "true":
             score_hit.append(sym)
-        stock, qqq = pd.to_numeric(lkp.at[pair, stock_col], errors="coerce"), pd.to_numeric(
-            lkp.at[pair, bench_col], errors="coerce"
-        )
-        if not (math.isfinite(float(stock)) and math.isfinite(float(qqq))):
+        stock = pd.to_numeric(lkp.at[pair, stock_col], errors="coerce")
+        qqq = pd.to_numeric(lkp.at[pair, bench_col], errors="coerce")
+        try:
+            is_valid = math.isfinite(float(stock)) and math.isfinite(float(qqq))
+        except (TypeError, ValueError):
+            is_valid = False
+        if not is_valid:
             missing_label.append(sym)
     complete = not missing_label
     def excess(symbols: tuple[str, ...]) -> float:
@@ -113,6 +120,7 @@ def paired_topk_day(
     alt_return = excess(alt_symbols) if complete else None
     delta = alt_return - b0_return if complete else None
 
+    original_by_symbol = {d.symbol: d for d in baseline}
     return {
         "signal_date": signal_date,
         "candidate_id": candidate_id,
@@ -125,12 +133,12 @@ def paired_topk_day(
         "removed_symbols": ";".join(sorted(set(b0_symbols) - set(alt_symbols))),
         "added_symbols": ";".join(sorted(set(alt_symbols) - set(b0_symbols))),
         "n_entry_state_changed": sum(
-            d.entry.state != {b.symbol: b for b in baseline}[d.symbol].entry.state
-            for d in candidate if d.symbol in {b.symbol for b in baseline}
+            d.entry.state != original_by_symbol[d.symbol].entry.state
+            for d in candidate
         ),
         "n_action_changed": sum(
-            d.action_state != {b.symbol: b for b in baseline}[d.symbol].action_state
-            for d in candidate if d.symbol in {b.symbol for b in baseline}
+            d.action_state != original_by_symbol[d.symbol].action_state
+            for d in candidate
         ),
         "primary_paired_valid": complete,
         "missing_label_symbols": ";".join(missing_label),
