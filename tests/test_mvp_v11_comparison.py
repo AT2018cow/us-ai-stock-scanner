@@ -56,7 +56,8 @@ def inputs():
     events = pd.DataFrame([
         {
             "signal_date": DAY, "symbol": d.symbol,
-            "horizon": 60, "event_interval_exposed": False
+            "horizon": 60, "event_interval_exposed": False,
+            "label_end_missing": False,
         } for d in base
     ])
     scores = pd.DataFrame([
@@ -118,6 +119,14 @@ class TestHistoricalPairing(unittest.TestCase):
         scores.loc[scores.symbol == "A01", "score_source_uncertain"] = True
         flagged = compare(score_flags=scores)
         self.assertFalse(flagged["score_sensitivity_valid"])
+
+    def test_missing_label_end_is_a_whole_pair_invalidity(self):
+        _, _, _, events, _ = inputs()
+        events.loc[events.symbol == "A16", "label_end_missing"] = True
+        outcome = compare(event_flags=events)
+        self.assertFalse(outcome["primary_paired_valid"])
+        self.assertIsNone(outcome["paired_delta_net_qqq_excess"])
+        self.assertEqual(outcome["missing_label_symbols"], "A16")
 
     def test_missing_uncertainty_mask_fails_closed(self):
         base, alt, labels, events, scores = inputs()
