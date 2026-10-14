@@ -129,6 +129,13 @@ def evaluate_development(
     for day in days:
         group = data[data.signal_date == day]
         group_labels = labels[labels.signal_date == day]
+        regimes = (
+            sorted(group["regime"].dropna().astype(str).unique())
+            if "regime" in group else []
+        )
+        regime = regimes[0] if len(regimes) == 1 else (
+            "MIXED" if regimes else "UNAVAILABLE"
+        )
         group_events = event_flags[event_flags.signal_date == day]
         group_scores = score_flags[score_flags.signal_date == day]
         labels_index = group_labels.set_index(
@@ -182,6 +189,7 @@ def evaluate_development(
                         labels=group_labels, event_flags=group_events,
                         score_flags=group_scores,
                     )
+                    compared["regime"] = regime
                     comparison_rows.append(compared)
                     if h == 60 and cap == 15:
                         for direction, symbols, sign in (
@@ -214,7 +222,15 @@ def evaluate_development(
     paired = pd.DataFrame(comparison_rows)
     if len(paired) != 24 * len(IDS) * len(HORIZONS) * len(CAPS):
         raise ValueError("expected 1440 paired candidate/date/horizon/cap rows")
-    metrics = paired_metrics(paired)
+    full_period = paired_metrics(paired)
+    full_period.insert(0, "period", "2023_2024_development")
+    by_year = []
+    for year in ("2023", "2024"):
+        frame = paired[paired.signal_date.astype(str).str.startswith(year)]
+        yearly = paired_metrics(frame)
+        yearly.insert(0, "period", year)
+        by_year.append(yearly)
+    metrics = pd.concat([full_period, *by_year], ignore_index=True)
     bottom = date_quality_report(paired)
     diff = pd.DataFrame(change_rows, columns=[
         "signal_date", "candidate_id", "direction", "symbol",
@@ -236,6 +252,11 @@ def evaluate_development(
             )
         },
         "bottom_three_primary_dates": bottom,
+        "n_dev_dates_by_regime": {
+            str(k): int(v) for k, v in paired[
+                (paired.candidate_id == "B0") & (paired.horizon == 60) & (paired.cap == 15)
+            ].regime.value_counts().items()
+        },
         "expected_date_count": 24,
         "candidate_count": len(IDS),
     }
@@ -245,6 +266,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--authorize-2023-2024-dev-returns", required=True)
     p.add_argument("--expected-code-sha", required=True)
+    p.add_argument("--expected-protocol-sha256", required=True)
     p.add_argument("--entry-dataset", required=True)
     p.add_argument("--entry-meta", required=True)
     p.add_argument("--event-audit", required=True)
@@ -263,6 +285,8 @@ def main() -> None:
     if out.exists():
         raise ValueError("will not overwrite existing experiment: " + str(out))
     protocol, protocol_sha = _read_protocol(Path(args.protocol))
+    if protocol_sha != args.expected_protocol_sha256.lower():
+        raise ValueError("protocol SHA mismatch; require fresh owner approval")
     inventory = inspect_frozen_dataset(
         args.entry_dataset, expected_kind="entry_quality", metadata=args.entry_meta
     )
@@ -301,6 +325,7 @@ def main() -> None:
         frame.to_csv(destination, index=False)
         hashes[filename] = _hash(destination)
     main_metrics = metrics[
+        (metrics.period == "2023_2024_development") &
         (metrics.horizon == 60) & (metrics.cap == 15)
     ]
     warning = [
@@ -328,6 +353,17 @@ def main() -> None:
             f"{row.n_dates_event_sensitivity} | "
             f"{row.n_dates_score_sensitivity} |"
         )
+    # The full dev, 2023 and 2024 rows all share the original 24-date
+    # protocol; per-year diagnostics cannot decide a new parameter grid.
+    warning.extend([
+        "", "2023 and 2024 individual-year metrics are present in",
+        "metrics_by_period.csv; do not treat these overlapping views",
+        "as independent candidate trials or choose on a single year.",
+        "", "Market regime distribution (B0 dates only):",
+        *[f"- {k}: {v} dates" for k, v in sorted(
+            diagnostics["n_dev_dates_by_regime"].items()
+        )],
+    ])
     (out / "risk_and_missingness.md").write_text(
         "\n".join(warning) + "\n", encoding="utf-8",
     )
