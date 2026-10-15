@@ -4660,19 +4660,23 @@ def run_scan(
             config_payload.encode("utf-8")
         ).hexdigest()
         code_sha = resolve_git_commit_sha()
+        policy_version = getattr(config, "decision_policy_version", "v1") or "v1"
+        layout_version = getattr(config, "report_layout_version", "v1") or "v1"
+        run_prov_payload = {
+            "code_sha": code_sha,
+            "config_fingerprint": config_fingerprint,
+            "strategy_style": config.strategy_style,
+            "scan_config_path": scan_config_path,
+            "watchlist_csv_path": config.watchlist_csv_path,
+        }
         decisions = build_stock_decisions(
             df,
             decision_date=decision_date,
             generated_at_utc=finished_at.isoformat(),
             previous_by_symbol=previous_by_symbol,
             source_lists_by_symbol=source_lists,
-            run_provenance={
-                "code_sha": code_sha,
-                "config_fingerprint": config_fingerprint,
-                "strategy_style": config.strategy_style,
-                "scan_config_path": scan_config_path,
-                "watchlist_csv_path": config.watchlist_csv_path,
-            },
+            run_provenance=run_prov_payload,
+            policy_version=policy_version,
         )
         candidate_universe_summary = build_candidate_universe_summary(
             discovery_symbols=watchlist_allowlist,
@@ -4694,6 +4698,46 @@ def run_scan(
             decisions,
             cap=decision_attention_cap,
         )
+        input_prov_payload = {
+            "watchlist_csv_path": config.watchlist_csv_path,
+            **(
+                {
+                    "discovery_mode": "multi_source_opt_in",
+                    "discovery_source_files": dict(config.discovery_source_files),
+                }
+                if config.discovery_source_files is not None
+                else {}
+            ),
+            "decision_date_source": (
+                "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
+            ),
+            "qqq_market_asof": qqq_market_asof,
+            "legacy_ranked_csv": str(out_path),
+            "industry_trend_csv": str(trend_out_path),
+            "momentum_csv": str(momentum_out_path),
+            "research_pool_csv": str(research_pool_out_path),
+            "network_issue_flag": bool(
+                report.get("had_rate_limit_or_network_issue")
+            ),
+            "stale_market_data_fallback_used": bool(
+                report.get("stale_market_data_fallback_used")
+            ),
+            "market_data_provenance": report.get("data_provenance", {}),
+            # Run-scoped ticker->CIK snapshot (memoized: identical bytes
+            # to the mapping used for universe eligibility above).
+            "ticker_map": {
+                key: snapshot_map.get(key)
+                for key in (
+                    "source", "sha256", "fetched_utc", "read_utc",
+                    "n_rows", "conflicts",
+                )
+            } if (snapshot_map := sec.ticker_map_snapshot()) else {},
+        }
+        ticker_map_rows_arg = (
+            snapshot_map_frame.to_dict(orient="records")
+            if (snapshot_map_frame := sec.ticker_map_snapshot().get("frame"))
+            is not None else None
+        )
         decision_paths = write_decision_snapshot(
             output_root=snapshot_root,
             strategy_style=config.strategy_style,
@@ -4709,46 +4753,10 @@ def run_scan(
             discovery_memberships=discovery_memberships,
             discovery_source_rejections=discovery_rejections,
             discovery_source_summary=discovery_source_summary,
-            input_provenance={
-                "watchlist_csv_path": config.watchlist_csv_path,
-                **(
-                    {
-                        "discovery_mode": "multi_source_opt_in",
-                        "discovery_source_files": dict(config.discovery_source_files),
-                    }
-                    if config.discovery_source_files is not None
-                    else {}
-                ),
-                "decision_date_source": (
-                    "qqq_market_asof" if qqq_market_asof else "latest_symbol_market_asof"
-                ),
-                "qqq_market_asof": qqq_market_asof,
-                "legacy_ranked_csv": str(out_path),
-                "industry_trend_csv": str(trend_out_path),
-                "momentum_csv": str(momentum_out_path),
-                "research_pool_csv": str(research_pool_out_path),
-                "network_issue_flag": bool(
-                    report.get("had_rate_limit_or_network_issue")
-                ),
-                "stale_market_data_fallback_used": bool(
-                    report.get("stale_market_data_fallback_used")
-                ),
-                "market_data_provenance": report.get("data_provenance", {}),
-                # Run-scoped ticker->CIK snapshot (memoized: identical bytes
-                # to the mapping used for universe eligibility above).
-                "ticker_map": {
-                    key: snapshot_map.get(key)
-                    for key in (
-                        "source", "sha256", "fetched_utc", "read_utc",
-                        "n_rows", "conflicts",
-                    )
-                } if (snapshot_map := sec.ticker_map_snapshot()) else {},
-            },
-            ticker_map_rows=(
-                snapshot_map_frame.to_dict(orient="records")
-                if (snapshot_map_frame := sec.ticker_map_snapshot().get("frame"))
-                is not None else None
-            ),
+            input_provenance=input_prov_payload,
+            ticker_map_rows=ticker_map_rows_arg,
+            policy_version=policy_version,
+            layout_version=layout_version,
         )
         decision_snapshot_root = decision_paths.root
         log_status(
@@ -4758,6 +4766,58 @@ def run_scan(
             f"{decision_paths.root} | decisions={len(decisions)} "
             f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
         )
+        if getattr(config, "enable_v2_shadow", False) and policy_version == "v1":
+            shadow_style = f"{config.strategy_style or 'default'}_shadow_v2"
+            shadow_prev = load_previous_snapshot(
+                snapshot_root,
+                decision_date,
+                strategy_style=shadow_style,
+            )
+            shadow_prev_by_symbol = {d.symbol: d for d in shadow_prev}
+            shadow_decisions = build_stock_decisions(
+                df,
+                decision_date=decision_date,
+                generated_at_utc=finished_at.isoformat(),
+                previous_by_symbol=shadow_prev_by_symbol,
+                source_lists_by_symbol=source_lists,
+                run_provenance=run_prov_payload,
+                policy_version="v2",
+            )
+            shadow_daily = select_daily_attention(
+                shadow_decisions,
+                cap=decision_attention_cap,
+            )
+            shadow_weekly = select_weekly_attention(
+                shadow_decisions,
+                cap=decision_attention_cap,
+            )
+            shadow_paths = write_decision_snapshot(
+                output_root=snapshot_root,
+                strategy_style=shadow_style,
+                decisions=shadow_decisions,
+                daily_attention=shadow_daily,
+                weekly_attention=shadow_weekly,
+                generated_at_utc=finished_at.isoformat(),
+                decision_date=decision_date,
+                config_fingerprint=config_fingerprint,
+                code_sha=code_sha,
+                universe_exclusions=universe_exclusions,
+                candidate_universe_summary=candidate_universe_summary,
+                discovery_memberships=discovery_memberships,
+                discovery_source_rejections=discovery_rejections,
+                discovery_source_summary=discovery_source_summary,
+                input_provenance=input_prov_payload,
+                ticker_map_rows=ticker_map_rows_arg,
+                policy_version="v2",
+                layout_version="v2",
+            )
+            log_status(
+                started_at,
+                "INFO",
+                "MVP v2 shadow snapshot: "
+                f"{shadow_paths.root} | decisions={len(shadow_decisions)} "
+                f"| daily={len(shadow_daily)} | weekly={len(shadow_weekly)}",
+            )
     except Exception as exc:
         if discovery_source_summary is not None:
             # Opt-in provenance and as-of violations must never be soft warnings.
@@ -4974,6 +5034,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_ATTENTION_CAP,
         help="Maximum names in Daily/Weekly Action List outputs (default: 15).",
     )
+    parser.add_argument(
+        "--decision-policy-version",
+        choices=("v1", "v2"),
+        default=None,
+        help="Opt-in StockDecision policy version ('v1' default, or 'v2').",
+    )
+    parser.add_argument(
+        "--report-layout-version",
+        choices=("v1", "v2"),
+        default=None,
+        help="Opt-in Markdown report layout version ('v1' default, or 'v2').",
+    )
+    parser.add_argument(
+        "--enable-v2-shadow",
+        action="store_true",
+        default=False,
+        help="Write a side-by-side <style>_shadow_v2 snapshot (policy=v2, layout=v2) alongside the primary v1 snapshot.",
+    )
     return parser
 
 
@@ -4984,6 +5062,12 @@ def main() -> None:
 
     if args.max_symbols is not None:
         config.max_symbols = args.max_symbols
+    if args.decision_policy_version is not None:
+        config.decision_policy_version = args.decision_policy_version
+    if args.report_layout_version is not None:
+        config.report_layout_version = args.report_layout_version
+    if args.enable_v2_shadow:
+        config.enable_v2_shadow = True
 
     started_at = datetime.now(timezone.utc)
     try:
