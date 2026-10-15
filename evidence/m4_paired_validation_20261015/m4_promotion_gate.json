@@ -1,0 +1,79 @@
+{
+  "economic_verdict": {
+    "ALL_39_DATES": {
+      "h1_quality_only": "NEGATIVE_OR_FLAT",
+      "h2_entry_only": "POSITIVE_ROBUST",
+      "h3_action_only": "POSITIVE_ROBUST",
+      "v1_baseline": "REFERENCE_SELF_COMPARISON",
+      "v2_combined": "NEGATIVE_OR_FLAT"
+    },
+    "POST2024_HELD_OUT": {
+      "h1_quality_only": "NEGATIVE_OR_FLAT",
+      "h2_entry_only": "POSITIVE_POINT_ESTIMATE_CI_WIDE",
+      "h3_action_only": "NEGATIVE_OR_FLAT",
+      "v1_baseline": "REFERENCE_SELF_COMPARISON",
+      "v2_combined": "POSITIVE_POINT_ESTIMATE_CI_WIDE"
+    }
+  },
+  "evidence_tiers": {
+    "ALL_39_DATES": "RETROSPECTIVE_FULL_REPLAY_APPROX_UNIVERSE",
+    "DEV_2023_2024": "RETROSPECTIVE_DEVELOPMENT",
+    "POST2024_HELD_OUT": "RETROSPECTIVE_POST2024_HELD_OUT_APPROX_UNIVERSE"
+  },
+  "frozen": true,
+  "human_utility_verdict": {
+    "h1_quality_only": {
+      "contradictions_eliminated": true,
+      "ready_share_preserved_or_improved": true,
+      "silent_gates_eliminated": true,
+      "verdict": "PASS"
+    },
+    "h2_entry_only": {
+      "contradictions_eliminated": false,
+      "ready_share_preserved_or_improved": false,
+      "silent_gates_eliminated": true,
+      "verdict": "FAIL"
+    },
+    "h3_action_only": {
+      "contradictions_eliminated": false,
+      "ready_share_preserved_or_improved": true,
+      "silent_gates_eliminated": true,
+      "verdict": "FAIL"
+    },
+    "v1_baseline": {
+      "contradictions_eliminated": false,
+      "ready_share_preserved_or_improved": true,
+      "silent_gates_eliminated": true,
+      "verdict": "FAIL"
+    },
+    "v2_combined": {
+      "contradictions_eliminated": true,
+      "ready_share_preserved_or_improved": true,
+      "silent_gates_eliminated": true,
+      "verdict": "PASS"
+    }
+  },
+  "inputs": {
+    "company_quality_dataset_risk_off_v3_csv": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+    "decisions_snap510_jsonl": "1e04333aad598e5cb94501a1cf73075039221b0a064297736043041fff8bbf60",
+    "decisions_snap62_jsonl": "533ff08f80b187bc57f16c0d969ab7b87c82457fbd36d017b0ae53984c065ac6"
+  },
+  "overall_m4_recommendation": {
+    "recommendation": "Retain v1: no candidate clears both the human-utility gate and robust paired economics. policy_version=\"v1\" remains the production default; revisit mechanisms, do not relax the gate.",
+    "shadow_candidates": []
+  },
+  "policy_versions": {
+    "v1": {
+      "entry": "entry_quality_v1_2026-10-10",
+      "quality": "company_quality_v1_2026-10-10"
+    },
+    "v2": {
+      "entry": "entry_quality_v2_2026-10-15",
+      "quality": "company_quality_v2_2026-10-15"
+    }
+  },
+  "primary_economic_cohort": "TOP15",
+  "primary_economic_horizon": "60d net QQQ excess, date-equal, paired by date",
+  "production_default": "policy_version=\"v1\" remains untouched unless explicitly promoted in M5",
+  "study": "m4_dual_track_paired_validation"
+}
