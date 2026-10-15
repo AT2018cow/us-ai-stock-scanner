@@ -1,0 +1,53 @@
+{
+  "frozen": true,
+  "inputs": {
+    "company_quality_dataset_risk_off_v3_csv": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+    "decisions_snap510_jsonl": "1e04333aad598e5cb94501a1cf73075039221b0a064297736043041fff8bbf60",
+    "decisions_snap62_jsonl": "533ff08f80b187bc57f16c0d969ab7b87c82457fbd36d017b0ae53984c065ac6",
+    "m2_case_registry_frozen_json": "b6f0cb64f816f755ba7887db79e52f7200a9cfd03aade569b6e6e9c827f3203c"
+  },
+  "return_embargo": "Forward-return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31; 2025/2026Q1 labels remain unpeeked for M4.",
+  "study": "m3_candidate_preflight",
+  "variants": {
+    "h1_quality_only": {
+      "action_version": "v1",
+      "entry_policy": "entry_quality_v1_2026-10-10",
+      "entry_version": "v1",
+      "falsifier": "Falsified if <1% of B/C grades change on dev dates or reviewers reject new pillar explanations.",
+      "quality_policy": "company_quality_v2_2026-10-15",
+      "quality_version": "v2"
+    },
+    "h2_entry_only": {
+      "action_version": "v1",
+      "entry_policy": "entry_quality_v2_2026-10-15",
+      "entry_version": "v2",
+      "falsifier": "Falsified if seam rows show no date-equal excess gap vs NEAR on dev dates or sub-reasons are unactionable.",
+      "quality_policy": "company_quality_v1_2026-10-10",
+      "quality_version": "v1"
+    },
+    "h3_action_only": {
+      "action_version": "v2",
+      "entry_policy": "entry_quality_v1_2026-10-10",
+      "entry_version": "v1",
+      "falsifier": "Falsified if re-ranking swaps <2 Top-15 members on dev dates or joint rank rates less trustworthy.",
+      "quality_policy": "company_quality_v1_2026-10-10",
+      "quality_version": "v1"
+    },
+    "v1_baseline": {
+      "action_version": "v1",
+      "entry_policy": "entry_quality_v1_2026-10-10",
+      "entry_version": "v1",
+      "falsifier": "v1 reference; no change expected.",
+      "quality_policy": "company_quality_v1_2026-10-10",
+      "quality_version": "v1"
+    },
+    "v2_combined": {
+      "action_version": "v2",
+      "entry_policy": "entry_quality_v2_2026-10-15",
+      "entry_version": "v2",
+      "falsifier": "Falsified if combined defects do not fall vs v1_baseline or any positive control breaks.",
+      "quality_policy": "company_quality_v2_2026-10-15",
+      "quality_version": "v2"
+    }
+  }
+}

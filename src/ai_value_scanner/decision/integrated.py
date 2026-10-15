@@ -7,8 +7,17 @@ from typing import Any
 
 import pandas as pd
 
-from .action import map_action_state
-from .entry import ENTRY_POLICY_VERSION, build_entry_quality_v1
+from .action import (
+    assign_action_priorities_v2,
+    map_action_state,
+    map_action_state_v2,
+)
+from .entry import (
+    ENTRY_POLICY_VERSION,
+    ENTRY_V2_POLICY_VERSION,
+    build_entry_quality_v1,
+    build_entry_quality_v2,
+)
 from ..fundamentals.provenance import fingerprint_scoring_inputs
 from .model import (
     DECISION_SCHEMA_VERSION,
@@ -17,7 +26,12 @@ from .model import (
     QualityGrade,
     StockDecision,
 )
-from .quality import QUALITY_POLICY_VERSION, build_company_quality_v1
+from .quality import (
+    QUALITY_POLICY_VERSION,
+    QUALITY_V2_POLICY_VERSION,
+    build_company_quality_v1,
+    build_company_quality_v2,
+)
 
 
 DEFAULT_ATTENTION_CAP = 15
@@ -187,6 +201,38 @@ def _priority_sort_key(decision: StockDecision) -> tuple[Any, ...]:
     )
 
 
+def _resolve_stage_versions(
+    policy_version: str,
+    quality_version: str | None,
+    entry_version: str | None,
+    action_version: str | None,
+) -> tuple[str, str, str]:
+    """Resolve per-stage policy versions with a "v1" default (M3 wiring).
+
+    policy_version "v1" (default) keeps every stage on v1; "v2" promotes
+    unspecified stages to v2. Explicit stage versions always win. Anything
+    outside {"v1", "v2"} raises ValueError.
+    """
+    if policy_version == "v2":
+        quality = quality_version or "v2"
+        entry = entry_version or "v2"
+        action = action_version or "v2"
+    elif policy_version == "v1":
+        quality = quality_version or "v1"
+        entry = entry_version or "v1"
+        action = action_version or "v1"
+    else:
+        raise ValueError(f"unknown policy_version={policy_version!r}")
+    for stage, value in (
+        ("quality_version", quality),
+        ("entry_version", entry),
+        ("action_version", action),
+    ):
+        if value not in ("v1", "v2"):
+            raise ValueError(f"unknown {stage}={value!r}")
+    return quality, entry, action
+
+
 def build_stock_decisions(
     frame: pd.DataFrame,
     *,
@@ -195,6 +241,10 @@ def build_stock_decisions(
     previous_by_symbol: Mapping[str, StockDecision] | None = None,
     source_lists_by_symbol: Mapping[str, tuple[str, ...]] | None = None,
     run_provenance: Mapping[str, str | int | float | bool | None] | None = None,
+    policy_version: str = "v1",
+    quality_version: str | None = None,
+    entry_version: str | None = None,
+    action_version: str | None = None,
 ) -> tuple[StockDecision, ...]:
     """Build one canonical StockDecision per enriched scanner row."""
     previous_map = previous_by_symbol or {}
@@ -202,6 +252,15 @@ def build_stock_decisions(
     base_provenance = dict(run_provenance or {})
     decision_day = (
         decision_date.isoformat() if isinstance(decision_date, date) else str(decision_date)
+    )
+    resolved_quality, resolved_entry, resolved_action = _resolve_stage_versions(
+        policy_version, quality_version, entry_version, action_version
+    )
+    quality_policy = (
+        QUALITY_V2_POLICY_VERSION if resolved_quality == "v2" else QUALITY_POLICY_VERSION
+    )
+    entry_policy = (
+        ENTRY_V2_POLICY_VERSION if resolved_entry == "v2" else ENTRY_POLICY_VERSION
     )
 
     provisional: list[StockDecision] = []
@@ -215,21 +274,52 @@ def build_stock_decisions(
             decision_date=decision_day,
             data_asof=_text(row.get("fundamental_data_asof")),
         )
+        if resolved_quality == "v2":
+            quality = build_company_quality_v2(
+                row,
+                decision_date=decision_day,
+                data_asof=_text(row.get("fundamental_data_asof")),
+            )
         entry = build_entry_quality_v1(
             row,
             decision_date=decision_day,
             market_asof=_text(row.get("market_asof")),
         )
+        if resolved_entry == "v2":
+            entry = build_entry_quality_v2(
+                row,
+                decision_date=decision_day,
+                market_asof=_text(row.get("market_asof")),
+            )
         action = map_action_state(quality.grade, entry.state)
+        action_rationale: tuple[EvidenceItem, ...] = ()
+        if resolved_action == "v2":
+            action, rationale_notes = map_action_state_v2(quality, entry)
+            if rationale_notes:
+                action_rationale = (
+                    EvidenceItem(
+                        code="h3_b_ready_promotion",
+                        label="High-conviction B+READY promotion",
+                        polarity="positive",
+                        metric="action_state",
+                        value=action.value,
+                        threshold="B score>=0.68, conf>=0.80, READY score>=0.80",
+                        message="; ".join(rationale_notes),
+                    ),
+                )
         previous = previous_map.get(symbol)
 
         provenance = dict(base_provenance)
         provenance.update(
             {
-                "quality_policy_version": QUALITY_POLICY_VERSION,
-                "entry_policy_version": ENTRY_POLICY_VERSION,
+                "quality_policy_version": quality_policy,
+                "entry_policy_version": entry_policy,
             }
         )
+        if (resolved_quality, resolved_entry, resolved_action) != ("v1", "v1", "v1"):
+            provenance["decision_policy_version"] = (
+                f"q={resolved_quality},e={resolved_entry},a={resolved_action}"
+            )
         for key in (
             "watchlist_bucket",
             "watchlist_etfs",
@@ -296,12 +386,17 @@ def build_stock_decisions(
                 entry=entry,
                 action_state=action,
                 priority=0,
-                rationale=_rationale(
-                    quality_positives=quality.positives,
-                    quality_risks=quality.risks,
-                    quality_missing=quality.missing,
-                    entry_positives=entry.positives,
-                    entry_risks=entry.risks,
+                rationale=_dedupe_evidence(
+                    (
+                        *_rationale(
+                            quality_positives=quality.positives,
+                            quality_risks=quality.risks,
+                            quality_missing=quality.missing,
+                            entry_positives=entry.positives,
+                            entry_risks=entry.risks,
+                        ),
+                        *action_rationale,
+                    )
                 ),
                 review_trigger=_review_trigger(action),
                 source_lists=tuple(source_map.get(symbol, ())),
@@ -318,6 +413,8 @@ def build_stock_decisions(
             )
         )
 
+    if resolved_action == "v2":
+        return tuple(assign_action_priorities_v2(provisional))
     ordered = sorted(provisional, key=_priority_sort_key)
     return tuple(
         replace(decision, priority=index)
