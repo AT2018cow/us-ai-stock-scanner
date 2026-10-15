@@ -1,0 +1,367 @@
+{
+  "cases": [
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "accrual_cash_cow_b",
+      "primary_axis": "Axis1",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-A1-SNAP01",
+      "symbol": "AEP"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "accrual_cash_cow_b",
+      "primary_axis": "Axis1",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A1-HIST01",
+      "symbol": "ADSK"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "accrual_cash_cow_b",
+      "primary_axis": "Axis1",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A1-HIST02",
+      "symbol": "AEP"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "accrual_cash_cow_b",
+      "primary_axis": "Axis1",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A1-HIST03",
+      "symbol": "BOX"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "high_growth_gap_b",
+      "primary_axis": "Axis2",
+      "signal_date": "2026-10-09",
+      "snapshot_or_dataset_id": "snap510_2026-10-09_313c5ff",
+      "status": "MATCHED",
+      "study_case_id": "M2-A2-SNAP01",
+      "symbol": "MU"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "high_growth_gap_b",
+      "primary_axis": "Axis2",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A2-HIST01",
+      "symbol": "ACLS"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "high_growth_gap_b",
+      "primary_axis": "Axis2",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A2-HIST02",
+      "symbol": "AGYS"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "high_growth_gap_b",
+      "primary_axis": "Axis2",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A2-HIST03",
+      "symbol": "CARG"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "thin_fcf_margin",
+      "primary_axis": "Axis3",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A3-THIN01",
+      "symbol": "ALRM"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "thin_fcf_margin",
+      "primary_axis": "Axis3",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A3-THIN02",
+      "symbol": "AMKR"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "a_ready_valuation_drag",
+      "primary_axis": "Axis3",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-A3-VALSNAP01",
+      "symbol": "ETN"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "a_ready_valuation_drag",
+      "primary_axis": "Axis3",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A3-VALHIST01",
+      "symbol": "CAT"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "margin_computable",
+      "primary_axis": "Axis4",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A4-COV01",
+      "symbol": "AAL"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "crm_silent_breakout",
+      "primary_axis": "Axis5",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-A5-CRM01",
+      "symbol": "CRM"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "dead_zone",
+      "primary_axis": "Axis5",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A5-HIST01",
+      "symbol": "ARW"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "dead_zone",
+      "primary_axis": "Axis5",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A5-SNAP510-01",
+      "symbol": "ASX"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "bucket_mild",
+      "primary_axis": "Axis6",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A6-MILD01",
+      "symbol": "CDNS"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "bucket_near",
+      "primary_axis": "Axis6",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A6-NEAR01",
+      "symbol": "ADBE"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "bucket_near",
+      "primary_axis": "Axis6",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A6-NEAR02",
+      "symbol": "AES"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "bucket_weak",
+      "primary_axis": "Axis6",
+      "signal_date": "2023-03-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A6-WEAK01",
+      "symbol": "CAT"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "bucket_weak",
+      "primary_axis": "Axis6",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-A6-WEAK62-01",
+      "symbol": "UNH"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "a_ready_truncated",
+      "primary_axis": "Axis7",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A7-TRUNC01",
+      "symbol": "DBX"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "a_ready_truncated",
+      "primary_axis": "Axis7",
+      "signal_date": "2026-10-09",
+      "snapshot_or_dataset_id": "snap510_2026-10-09_313c5ff",
+      "status": "MATCHED",
+      "study_case_id": "M2-A7-TRUNC02",
+      "symbol": "EXPD"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "b_ready_high",
+      "primary_axis": "Axis7",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-A7-BREADY01",
+      "symbol": "NVDA"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "b_ready_high",
+      "primary_axis": "Axis7",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A7-BREADY02",
+      "symbol": "ATO"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "a_weak_breakout",
+      "primary_axis": "Axis7",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A7-WEAKOUT01",
+      "symbol": "AMCR"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "inverted_ready",
+      "primary_axis": "Axis8",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A8-INVREADY01",
+      "symbol": "BKH"
+    },
+    {
+      "evidence_tier": "STRATIFIED_PRE",
+      "predicate": "inverted_breakout",
+      "primary_axis": "Axis8",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-A8-INVBREAK01",
+      "symbol": "AEE"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "clean_ready_control",
+      "primary_axis": "Control",
+      "signal_date": "2026-10-09",
+      "snapshot_or_dataset_id": "snap510_2026-10-09_313c5ff",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-READY01",
+      "symbol": "TEL"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "clean_ready_control",
+      "primary_axis": "Control",
+      "signal_date": "2026-10-09",
+      "snapshot_or_dataset_id": "snap510_2026-10-09_313c5ff",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-READY02",
+      "symbol": "ADI"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "good_reject_control",
+      "primary_axis": "Control",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-REJECT01",
+      "symbol": "AAOI"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "specialist_unrated",
+      "primary_axis": "Control",
+      "signal_date": "2026-10-12",
+      "snapshot_or_dataset_id": "snap62_2026-10-12_220a471",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-UNRATED01",
+      "symbol": "GS"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "pullback_control",
+      "primary_axis": "Control",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-PULLBACK01",
+      "symbol": "ACIW"
+    },
+    {
+      "evidence_tier": "POSITIVE_CONTROL",
+      "predicate": "damaged_control",
+      "primary_axis": "Control",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-C-DAMAGED01",
+      "symbol": "AAPL"
+    }
+  ],
+  "frozen": true,
+  "inputs": {
+    "company_quality_dataset_risk_off_v3_csv": {
+      "n_rows": 25025,
+      "sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e"
+    },
+    "decisions_snap510_jsonl": {
+      "n_decisions": 510,
+      "sha256": "1e04333aad598e5cb94501a1cf73075039221b0a064297736043041fff8bbf60"
+    },
+    "decisions_snap62_jsonl": {
+      "n_decisions": 62,
+      "sha256": "533ff08f80b187bc57f16c0d969ab7b87c82457fbd36d017b0ae53984c065ac6"
+    },
+    "entry_quality_dataset_risk_off_v3_csv": {
+      "n_rows": 25025,
+      "sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e"
+    }
+  },
+  "n_cases": 34,
+  "n_matched": 34,
+  "return_embargo": "Forward-return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31; 2025/2026Q1 labels unpeeked for M4.",
+  "study": "m2_v1_failure_attribution"
+}

@@ -12,6 +12,8 @@ This directory separates **active product/architecture contracts and current pha
   - `00_parallel_tracks_and_view_ir_contract.md` — Intermediate Presentation IR (`view_model.py`) contract and zero-conflict file boundaries.
   - `track_a_report_readability_v2_spec.md` — Spec for Track A (Report Readability v2 & `view_model.py`).
   - `track_b_m1_data_scope_and_silent_gates_spec.md` — Spec for Track B (M1 Share-Scope Separation & Entry Silent-Gate Completeness).
+  - `track_b_m2_failure_attribution_and_metric_audit_spec.md` — Spec for Phase M2 (Systematic v1 Selection Failure Attribution & Metric Validity Audit).
+  - `track_b_m3_selection_v2_candidates_spec.md` — Spec for Phase M3 (Pre-Registered Quality/Entry/Action v2 Candidates & Non-Return Preflight).
 
 ## 2. Active Policy & Operational Specs
 
@@ -28,6 +30,7 @@ This directory separates **active product/architecture contracts and current pha
 ## 3. Current Baseline Reviews & Decisions
 
 - `m0_baseline_review_20261014/` — **Phase M0 deliverable set**: `baseline_inventory.md`, `human_review_worksheet.csv` (18 stratified cases), `attention_failure_cases.md` (3 failure families + M1 correctness contract), and `review_gate.json`.
+- `m2_v1_failure_attribution_20261015/` — **Phase M2 deliverable set**: 8-axis quantitative failure attribution across `snap62`, `snap510`, and 25,025 historical rows (`attention_failure_attribution.md`, `metric_and_routing_diagnostics.csv`, `v1_failure_casebook.csv`, `case_registry_frozen.json`, `hypothesis_backlog.md`, `SHA256SUMS`).
 - `mvp_v1_strategy_audit_20261011.md` — Descriptive audit of the 2026-10-09 510-symbol v1 snapshot (`313c5ff`).
 - `work_handoff_after_pr62_20261013.md` — Baseline summary after Generalized-v0 and PR #62 business-model audit.
 - `mvp_v11_pr_a_final_decision_20261014.md` — Formal `NO-GO / KEEP V1` decision for the PR #70 v1.1 historical parameter study.
