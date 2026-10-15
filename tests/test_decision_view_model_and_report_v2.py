@@ -314,7 +314,7 @@ class LayoutVersionParityTests(unittest.TestCase):
         listed = render_action_list([decision], layout_version="v2",
                                     all_decisions=[decision])
         self.assertIn("(v2)", listed)
-        self.assertIn("Executive Shortlist", listed)
+        self.assertIn("Priority Review", listed)
         self.assertIn("Secondary Radar", listed)
         self.assertNotIn("15154000000.0", listed)
 
@@ -350,7 +350,7 @@ class MobileFirstCompactTests(unittest.TestCase):
             card.top_risks_or_blockers_inline, "P/S 100th pctl; P/E 100th pctl"
         )
 
-    def test_action_list_v2_tables_have_at_most_4_columns(self) -> None:
+    def test_action_list_v2_has_zero_wide_tables_and_uses_accordion_groups(self) -> None:
         primaries = tuple(
             _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 4)
         )
@@ -364,10 +364,8 @@ class MobileFirstCompactTests(unittest.TestCase):
             layout_version="v2", all_decisions=primaries + b_ready,
         )
         rows = _table_lines(rendered)
-        self.assertGreater(len(rows), 0)
-        for line in rows:
-            with self.subTest(line=line[:60]):
-                self.assertLessEqual(line.count("|"), 5)
+        self.assertEqual(rows, [])
+        self.assertIn("## Priority Review — Ready for Evaluation (3)", rendered)
 
     def test_detailed_report_v2_tables_have_at_most_3_columns(self) -> None:
         for decision in (_decision(symbol="CRM"), _crm_like_breakout()):
@@ -408,6 +406,26 @@ class MobileFirstCompactTests(unittest.TestCase):
         self.assertEqual(rendered.count("<details open"), 0)
         self.assertIn('<a id="top"></a>', rendered)
         self.assertIn("[↑ Top](#top)", rendered)
+        self.assertIn("[← Back to Action List](../action_list.md)", rendered)
+
+    def test_v2_never_leaks_absolute_filesystem_paths(self) -> None:
+        from dataclasses import replace
+
+        decision = replace(
+            _decision(symbol="CRM"),
+            provenance={
+                "cik": "0001108524",
+                "scan_config_path": "/home/user/repo/configs/config.risk_off.json",
+                "watchlist_csv_path": "/tmp/work/data/ai_watchlist.csv",
+            },
+        )
+        detailed = render_detailed_report(decision, layout_version="v2")
+        listed = render_action_list([decision], layout_version="v2")
+        for text in (detailed, listed):
+            self.assertNotIn("/home/", text)
+            self.assertNotIn("/tmp/", text)
+        self.assertIn("configs/config.risk_off.json", detailed)
+        self.assertIn("data/ai_watchlist.csv", detailed)
 
 
 class PreviewCliSmokeTests(unittest.TestCase):
@@ -450,6 +468,9 @@ class PreviewCliSmokeTests(unittest.TestCase):
             self.assertTrue((out / "detailed_v2" / "AAA.md").exists())
             body = (out / "action_list_v2.md").read_text(encoding="utf-8")
             self.assertIn("AAA", body)
+            self.assertIn("./detailed_v2/AAA.md", body)
+            detail_body = (out / "detailed_v2" / "AAA.md").read_text(encoding="utf-8")
+            self.assertIn("../action_list_v2.md", detail_body)
             # Snapshot input directory is untouched (no v2 files written there).
             self.assertFalse((snap / "action_list_v2.md").exists())
 

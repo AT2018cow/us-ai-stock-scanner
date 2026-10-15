@@ -7,6 +7,7 @@ from ai_value_scanner.decision.view_model import (
     StockCardViewModel,
     build_snapshot_view_model,
     build_stock_card_view_model,
+    sanitize_relative_display,
 )
 
 
@@ -241,11 +242,16 @@ def render_action_list(
     cadence: str | None = None,
     layout_version: str = "v1",
     all_decisions: Iterable[StockDecision] | None = None,
+    detailed_subdir: str = "detailed",
 ) -> str:
     """Render the compact attention surface from canonical StockDecision objects."""
     if layout_version == "v2":
         return render_action_list_v2(
-            decisions, title=title, cadence=cadence, all_decisions=all_decisions
+            decisions,
+            title=title,
+            cadence=cadence,
+            all_decisions=all_decisions,
+            detailed_subdir=detailed_subdir,
         )
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
@@ -306,7 +312,10 @@ def render_action_list(
 
 
 def render_detailed_report(
-    decision: StockDecision, *, layout_version: str = "v1"
+    decision: StockDecision,
+    *,
+    layout_version: str = "v1",
+    back_link: str = "../action_list.md",
 ) -> str:
     """Render the evidence view for the same canonical StockDecision.
 
@@ -316,7 +325,7 @@ def render_detailed_report(
     the decision object; nothing is inferred, modelled, or invented.
     """
     if layout_version == "v2":
-        return render_detailed_report_v2(decision)
+        return render_detailed_report_v2(decision, back_link=back_link)
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
     company = f" — {decision.company_name}" if decision.company_name else ""
@@ -490,18 +499,9 @@ def _v2_counts_line(decisions: tuple[StockDecision, ...]) -> str:
     return " · ".join(parts) if parts else "no decisions"
 
 
-def _v2_index_row(card: StockCardViewModel) -> str:
+def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list[str]:
     anchor = card.symbol.lower()
-    return (
-        f"| {card.rank} | **[{card.symbol}](#card-{anchor})** "
-        f"| **{_short_action(card.action_state)}** · "
-        f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
-        f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) |"
-    )
-
-
-def _v2_stock_card_block(card: StockCardViewModel) -> list[str]:
-    anchor = card.symbol.lower()
+    rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
     wait_label = (
         "Entry Gate Check"
         if card.entry_state == "ENTRY_READY"
@@ -510,11 +510,12 @@ def _v2_stock_card_block(card: StockCardViewModel) -> list[str]:
     lines = [
         f'<a id="card-{anchor}"></a>',
         "<details>",
-        f"<summary><b>#{card.rank} {card.symbol}</b> ({_plain(card.company_name)}) — "
-        f"<b>{_short_action(card.action_state)}</b> · "
-        f"Q:<b>{card.quality_grade}</b> ({card.quality_score_display}) · "
-        f"E:<b>{_short_entry(card.entry_state)}</b> ({card.entry_score_display})</summary>",
+        f"<summary><b>#{card.rank} {card.symbol}</b> · "
+        f"Q:<b>{card.quality_grade}</b> {card.quality_score_display} · "
+        f"E:<b>{_short_entry(card.entry_state)}</b> {card.entry_score_display} "
+        f"— {_plain(card.accordion_Tagline)}</summary>",
         "",
+        f"- **Company**: {_plain(card.company_name)} · **Action**: `{card.action_state}`",
         f"- **Why Own (Quality {card.quality_grade}, {card.quality_score_display})**: "
         f"{_plain(card.quality_highlights_inline)}",
         f"- **Entry Structure ({_short_entry(card.entry_state)}, {card.entry_score_display})**: "
@@ -529,7 +530,7 @@ def _v2_stock_card_block(card: StockCardViewModel) -> list[str]:
         [
             f"- **Data & Report**: {card.data_trust.human_status} · "
             f"{_plain(card.data_trust.freshness_display)} · "
-            f"[Full Report →](detailed/{card.symbol}.md) · [↑ Top](#top)",
+            f"[Full Report →]({rel_report}) · [↑ Top](#top)",
             "",
             "</details>",
             "",
@@ -538,52 +539,57 @@ def _v2_stock_card_block(card: StockCardViewModel) -> list[str]:
     return lines
 
 
+_ACTION_GROUP_ANCHORS = {
+    "PRIORITY_REVIEW": "priority-review",
+    "WATCH_PULLBACK": "watch-pullback",
+    "WATCH_BREAKOUT": "watch-breakout",
+    "HOLD_MONITOR": "hold-monitor",
+    "AVOID": "avoid",
+}
+
+
 def render_action_list_v2(
     decisions: Iterable[StockDecision],
     *,
     title: str = "Action List",
     cadence: str | None = None,
     all_decisions: Iterable[StockDecision] | None = None,
+    detailed_subdir: str = "detailed",
 ) -> str:
     """Clean, mobile-first Analyst Brief (v2) for the Daily/Weekly Action List.
 
-    Features a 3-column single-line Quick Index table (zero horizontal scroll
-    on mobile), followed by action-grouped default-collapsed ``<details>``
-    cards and a collapsible Secondary Radar.
+    Zero wide tables and zero duplicated shortlist dumps: opens directly with
+    a compact group jump bar and action-grouped default-collapsed accordion
+    cards so the entire 15-stock shortlist fits on a single mobile screen.
     """
     primary = tuple(decisions)
     snapshot = build_snapshot_view_model(
         primary, all_decisions, title=title, cadence=cadence
     )
     cadence_display = cadence or "n/a"
+    stock_jump_links = " · ".join(
+        f"[{card.rank}.{card.symbol}](#card-{card.symbol.lower()})"
+        for card in snapshot.primary_cards
+    )
     lines = [
         '<a id="top"></a>',
         f"# {snapshot.title} (v2)",
         "",
         f"- **Date**: {snapshot.decision_date} (`{cadence_display}`) "
         f"· **Shortlist**: {len(primary)} ({_v2_counts_line(primary)})",
-        "- **Jump**: [Quick Index](#executive-shortlist) "
-        "· [Stock Cards](#stock-cards) · [Secondary Radar](#secondary-radar)",
-        "- *Research priorities only — not automated trade instructions.*",
-        "",
-        '<a id="executive-shortlist"></a>',
-        "## Executive Shortlist (Tap Symbol to Jump)",
-        "",
+        "- **Sections**: [Priority Review](#priority-review) "
+        "· [Watch Pullback](#watch-pullback) "
+        "· [Watch Breakout](#watch-breakout) "
+        "· [Secondary Radar](#secondary-radar)",
     ]
-    if not snapshot.primary_cards:
-        lines.extend(["- no decisions", ""])
-    else:
-        lines.extend(
-            [
-                "| # | Stock | Action & Scores |",
-                "| --- | --- | --- |",
-            ]
-        )
-        for card in snapshot.primary_cards:
-            lines.append(_v2_index_row(card))
-        lines.append("")
-
-    lines.extend(['<a id="stock-cards"></a>', "## Stock Cards (Tap to Expand)", ""])
+    if stock_jump_links:
+        lines.append(f"- **Quick Jump**: {stock_jump_links}")
+    lines.extend(
+        [
+            "- *Tap any stock row below to expand key metrics, or open its Full Report.*",
+            "",
+        ]
+    )
     if not snapshot.primary_cards:
         lines.extend(["- no decisions", ""])
     else:
@@ -594,9 +600,16 @@ def render_action_list_v2(
             if not group_cards:
                 continue
             group_title = _ACTION_GROUP_TITLES.get(action_key, action_key)
-            lines.extend([f"### {group_title} ({len(group_cards)})", ""])
+            group_anchor = _ACTION_GROUP_ANCHORS.get(action_key, action_key.lower())
+            lines.extend(
+                [
+                    f'<a id="{group_anchor}"></a>',
+                    f"## {group_title} ({len(group_cards)})",
+                    "",
+                ]
+            )
             for card in group_cards:
-                lines.extend(_v2_stock_card_block(card))
+                lines.extend(_v2_stock_card_block(card, detailed_subdir))
 
     lines.extend(['<a id="secondary-radar"></a>', "## Secondary Radar (Off-List Watch)", ""])
     if (
@@ -615,12 +628,13 @@ def render_action_list_v2(
                 ]
             )
             for card in snapshot.cap_omitted_priority_cards:
+                rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
                 lines.extend(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
                         f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) · "
-                        f"[Full Report →](detailed/{card.symbol}.md)",
+                        f"[Full Report →]({rel_report})",
                         f"  - **Highlights**: {_plain(card.quality_highlights_inline)}",
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
@@ -636,12 +650,13 @@ def render_action_list_v2(
                 ]
             )
             for card in snapshot.secondary_b_ready_cards:
+                rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
                 lines.extend(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
                         f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) · "
-                        f"[Full Report →](detailed/{card.symbol}.md)",
+                        f"[Full Report →]({rel_report})",
                         f"  - **Highlights**: {_plain(card.quality_highlights_inline)}",
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
@@ -650,18 +665,24 @@ def render_action_list_v2(
     return "\n".join(lines)
 
 
-def render_detailed_report_v2(decision: StockDecision) -> str:
+def render_detailed_report_v2(
+    decision: StockDecision,
+    *,
+    back_link: str = "../action_list.md",
+) -> str:
     """Clean, mobile-first Analyst Tear Sheet (v2) for one canonical decision."""
     card = build_stock_card_view_model(decision)
     company = f" — {decision.company_name}" if decision.company_name else ""
+    rel_back = sanitize_relative_display(back_link)
     lines = [
         '<a id="top"></a>',
         f"# {decision.symbol}{company} — Detailed Report (v2)",
         "",
-        "- **Jump**: [Overview](#executive-decision) "
+        f"- **Navigation**: [← Back to Action List]({rel_back}) "
+        "· [Overview](#executive-decision) "
         "· [Quality 6-Pillar](#company-quality--6-pillar-scorecard) "
         "· [Entry 7-Gate](#entry-quality--readiness-gate-checklist) "
-        "· [Audit & Provenance](#quality-applicability-decision-history--provenance)",
+        "· [Audit](#quality-applicability-decision-history--provenance)",
         "",
         '<a id="executive-decision"></a>',
         "## Overview & Action Trigger",
@@ -770,8 +791,8 @@ def render_detailed_report_v2(decision: StockDecision) -> str:
             "",
             *_applicability_lines(decision),
             f"- Previous action: "
-            f"{_display(decision.previous_action_state.value if decision.previous_action_state else None)}",
-            f"- State change: {_display(decision.state_change_reason)}",
+            f"{sanitize_relative_display(decision.previous_action_state.value if decision.previous_action_state else None)}",
+            f"- State change: {sanitize_relative_display(decision.state_change_reason)}",
             f"- Schema version: {decision.schema_version}",
             f"- Generated at UTC: {decision.generated_at_utc}",
             f"- Source lists: "
@@ -780,8 +801,15 @@ def render_detailed_report_v2(decision: StockDecision) -> str:
     )
     if decision.provenance:
         for key in sorted(decision.provenance):
-            lines.append(f"- {key}: {_display(decision.provenance[key])}")
+            lines.append(f"- {key}: {sanitize_relative_display(decision.provenance[key])}")
     else:
         lines.append("- provenance: n/a")
-    lines.extend(["", "[↑ Top](#top)", "</details>", ""])
+    lines.extend(
+        [
+            "",
+            f"[← Back to Action List]({rel_back}) · [↑ Top](#top)",
+            "</details>",
+            "",
+        ]
+    )
     return "\n".join(lines)

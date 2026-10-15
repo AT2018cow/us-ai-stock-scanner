@@ -2,8 +2,8 @@
 
 Transforms canonical ``StockDecision`` objects into clean, analyst-grade,
 mobile-first view models with human-readable numbers (`$15.15B`, `+23.6%`,
-`1.03x`, `100th pctl`) and natural English explanations—never leaking internal
-variable names or machine enums into human-facing text.
+`1.03x`, `100th pctl`), cross-pillar highlight selection, and relative-only
+paths—never leaking absolute filesystem paths or internal machine enums.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 import math
+from pathlib import PurePath
 from typing import Any
 
 from ai_value_scanner.decision.model import (
@@ -114,6 +115,41 @@ _COMPACT_METRIC_LABELS: dict[str, str] = {
     "regime": "Regime",
 }
 
+# Priority order for selecting cross-pillar fundamental highlights so cards
+# show growth + cash/margin + valuation/balance-sheet rather than only the
+# first 4 profitability metrics.
+_HIGHLIGHT_METRIC_PRIORITY: tuple[str, ...] = (
+    "revenue_yoy",
+    "adjusted_net_income_yoy",
+    "net_margin",
+    "free_cash_flow",
+    "fcf_yield",
+    "ocf_to_net_income",
+    "net_debt_to_ebitda",
+    "shares_yoy",
+    "pe_hist_percentile",
+    "ps_hist_percentile",
+    "operating_cash_flow_yoy",
+    "interest_coverage",
+    "current_ratio",
+    "accrual_ratio",
+)
+
+
+def sanitize_relative_display(value: Any) -> str:
+    """Ensure no absolute filesystem path (/home/..., /tmp/..., C:\\...) leaks into reports."""
+    if value is None or value == "":
+        return "n/a"
+    text = str(value).replace("\n", " ").strip()
+    if not text:
+        return "n/a"
+    if text.startswith(("/home/", "/tmp/", "/Users/", "/var/", "/opt/", "/root/")):
+        parts = PurePath(text).parts
+        if len(parts) >= 2:
+            return "/".join(parts[-2:])
+        return PurePath(text).name
+    return text
+
 
 def _as_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
@@ -137,12 +173,12 @@ def format_metric_value(metric: str | None, value: Any) -> str:
             return "n/a"
         numeric = _as_float(token)
         if numeric is None:
-            return token.replace("\n", " ")
+            return sanitize_relative_display(token)
         return format_metric_value(metric, numeric)
     number = _as_float(value)
     if number is None:
         text = str(value).strip()
-        return text.replace("\n", " ") if text else "n/a"
+        return sanitize_relative_display(text) if text else "n/a"
 
     if metric in _MONEY_METRICS:
         magnitude = abs(number)
@@ -209,16 +245,17 @@ class EntryGateCheckRow:
     gate_label: str
     status: str  # "PASS" | "FAIL_BLOCKER" | "SILENT_OR_UNOBSERVED"
     human_status: str  # "PASS" | "WAIT" | "EXTENDED" | "DAMAGED"
+    short_tag: str  # Ultra-short tag for summary header, e.g. "20d mom", "RS60"
     observed_display: str
     target_display: str
-    human_summary: str  # Clean English explanation for cards & tables
+    human_summary: str
     note: str
 
 
 @dataclass(frozen=True)
 class DataTrustBadge:
-    overall_status: str  # "VERIFIED" | "CAUTION_LAG_OR_FALLBACK" | "UNVERIFIED_OR_SCOPE_RISK"
-    human_status: str  # "Verified" | "Verified (SEC 10-Q fallback)" | "Unverified / Scope Warning"
+    overall_status: str
+    human_status: str
     entity_display: str
     share_basis_display: str
     freshness_display: str
@@ -238,6 +275,7 @@ class StockCardViewModel:
     entry_state: str
     entry_score_display: str
     entry_confidence_display: str
+    accordion_Tagline: str  # Ultra-concise 1-line hook for <summary> and Quick Index
     quality_highlights_inline: str
     entry_Snapshot_inline: str
     entry_blockers_inline: str
@@ -269,12 +307,12 @@ class SnapshotViewModel:
 _PILLAR_ORDER: tuple[tuple[str, str, frozenset[str]], ...] = (
     (
         "profitability_cash",
-        "Profitability & Cash",
+        "Profit & Cash",
         frozenset({"net_margin", "free_cash_flow", "ocf_to_net_income", "accrual_ratio"}),
     ),
     (
         "growth_stability",
-        "Growth & Stability",
+        "Growth",
         frozenset(
             {
                 "revenue_yoy",
@@ -291,7 +329,7 @@ _PILLAR_ORDER: tuple[tuple[str, str, frozenset[str]], ...] = (
     ),
     (
         "dilution",
-        "Dilution & Shares",
+        "Dilution",
         frozenset({"shares_yoy", "shares_stale"}),
     ),
     (
@@ -301,7 +339,7 @@ _PILLAR_ORDER: tuple[tuple[str, str, frozenset[str]], ...] = (
     ),
     (
         "operating_red_flags",
-        "Operating Red Flags",
+        "Red Flags",
         frozenset(
             {
                 "receivables_growth_gap",
@@ -397,14 +435,14 @@ def _build_quality_pillars(decision: StockDecision) -> tuple[QualityPillarRow, .
 
 
 # ---------------------------------------------------------------------------
-# Entry readiness gate checklist (clean analyst phrasing)
+# Entry readiness gate checklist
 # ---------------------------------------------------------------------------
 
 _GATE_DEFS: tuple[dict[str, Any], ...] = (
     {
         "gate_key": "freshness",
-        "gate_label": "Market Data Freshness",
-        "short_name": "market data freshness",
+        "gate_label": "Data Age",
+        "short_tag": "data age",
         "metrics": frozenset({"market_data_age_days", "market_asof"}),
         "positive_codes": frozenset({"market_data_fresh"}),
         "negative_codes": frozenset(
@@ -414,13 +452,13 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
                 "market_data_stale",
             }
         ),
-        "target_display": "<= 3d age",
-        "silent_summary": "Market data older than 3d freshness window",
+        "target_display": "<= 3d",
+        "silent_summary": "Market data > 3d old",
     },
     {
         "gate_key": "sma200_trend",
-        "gate_label": "200d SMA Trend",
-        "short_name": "200d SMA trend",
+        "gate_label": "SMA200 Trend",
+        "short_tag": "SMA200",
         "metrics": frozenset({"price_to_sma200", "days_below_sma200"}),
         "positive_codes": frozenset({"price_above_sma200"}),
         "negative_codes": frozenset(
@@ -430,13 +468,13 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
                 "days_below_sma200_elevated",
             }
         ),
-        "target_display": ">= 1.00x SMA200",
-        "silent_summary": "Price slightly below 200d SMA (0.95x–1.00x; need >= 1.00x)",
+        "target_display": ">= 1.00x",
+        "silent_summary": "Slightly below SMA200 (0.95x–1.00x; need >= 1.00x)",
     },
     {
         "gate_key": "sma50_band",
-        "gate_label": "50d SMA Band",
-        "short_name": "50d SMA band",
+        "gate_label": "SMA50 Band",
+        "short_tag": "SMA50 band",
         "metrics": frozenset({"price_to_sma50"}),
         "positive_codes": frozenset({"price_near_sma50_ready_band"}),
         "negative_codes": frozenset(
@@ -446,25 +484,25 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
                 "price_to_sma50_outside_ready_band",
             }
         ),
-        "target_display": "0.98x–1.08x SMA50",
-        "silent_summary": "Price outside 50d SMA readiness band (need 0.98x–1.08x)",
+        "target_display": "0.98x–1.08x",
+        "silent_summary": "Outside SMA50 band (need 0.98x–1.08x)",
     },
     {
         "gate_key": "ret20_band",
         "gate_label": "20d Momentum",
-        "short_name": "20d momentum",
+        "short_tag": "20d mom",
         "metrics": frozenset({"return_20d"}),
         "positive_codes": frozenset({"return_20d_ready_band"}),
         "negative_codes": frozenset(
             {"return_20d_overextended", "return_20d_outside_ready_band"}
         ),
         "target_display": "-3% to +12%",
-        "silent_summary": "20d return outside readiness band (need -3% to +12%)",
+        "silent_summary": "20d return outside -3%..+12% band",
     },
     {
         "gate_key": "ret60_trend",
         "gate_label": "60d Momentum",
-        "short_name": "60d trend",
+        "short_tag": "60d trend",
         "metrics": frozenset(
             {"return_60d", "drawdown_from_52w_high", "range_position_52w"}
         ),
@@ -476,13 +514,13 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
                 "drawdown_from_52w_high_deep",
             }
         ),
-        "target_display": ">= 0% (52w DD <= 22%)",
-        "silent_summary": "60d return slightly negative (-8% to 0%; need >= 0%)",
+        "target_display": ">= 0%",
+        "silent_summary": "60d return slightly negative (-8%..0%; need >= 0%)",
     },
     {
         "gate_key": "rs60_qqq",
         "gate_label": "60d RS vs QQQ",
-        "short_name": "60d RS vs QQQ",
+        "short_tag": "RS60 vs QQQ",
         "metrics": frozenset({"relative_strength_60d_qqq"}),
         "positive_codes": frozenset({"relative_strength_60d_qqq_ready"}),
         "negative_codes": frozenset(
@@ -492,18 +530,18 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
                 "relative_strength_60d_qqq_below_ready",
             }
         ),
-        "target_display": ">= -3.0% vs QQQ",
-        "silent_summary": "60d RS vs QQQ slightly below -3% gate (-10% to -3%)",
+        "target_display": ">= -3.0%",
+        "silent_summary": "60d RS vs QQQ slightly below -3% gate",
     },
     {
         "gate_key": "regime",
         "gate_label": "Market Regime",
-        "short_name": "market regime",
+        "short_tag": "regime",
         "metrics": frozenset({"regime"}),
         "positive_codes": frozenset({"supportive_market_regime"}),
         "negative_codes": frozenset({"defensive_market_regime"}),
         "target_display": "Supportive",
-        "silent_summary": "Market regime not confirmed supportive",
+        "silent_summary": "Market regime not supportive",
     },
 )
 
@@ -521,32 +559,50 @@ def _gate_matches(
     return matched
 
 
-def _human_gate_blocker_phrase(gate_key: str, item: EvidenceItem, formatted: str) -> tuple[str, str]:
-    """Return (human_status, natural_english_phrase) for a failed entry gate."""
+def _human_gate_blocker_phrase(
+    gate_key: str, item: EvidenceItem, formatted: str
+) -> tuple[str, str, str]:
+    """Return (human_status, short_tag_with_val, natural_english_phrase)."""
     code = item.code
     if code in {"price_extended_above_sma50", "return_20d_overextended"}:
         if gate_key == "sma50_band":
-            return ("EXTENDED", f"Extended above 50d SMA ({formatted}; wait for 0.98x–1.08x)")
-        return ("EXTENDED", f"20d return overextended ({formatted}; wait for <= +12%)")
+            return (
+                "EXTENDED",
+                f"SMA50 {formatted}",
+                f"Extended above SMA50 ({formatted}; wait for 0.98x–1.08x)",
+            )
+        return (
+            "EXTENDED",
+            f"20d {formatted}",
+            f"20d return overextended ({formatted}; wait for <= +12%)",
+        )
     if code in {"price_materially_below_sma200", "days_below_sma200_elevated"}:
         if code == "days_below_sma200_elevated":
-            return ("DAMAGED", f"Spent {formatted} below 200d SMA (need < 15d)")
-        return ("DAMAGED", f"Below 200d SMA ({formatted}; damaged < 0.95x)")
+            return (
+                "DAMAGED",
+                f"{formatted} < SMA200",
+                f"Spent {formatted} below SMA200 (need < 15d)",
+            )
+        return (
+            "DAMAGED",
+            f"SMA200 {formatted}",
+            f"Below SMA200 ({formatted}; damaged < 0.95x)",
+        )
     if gate_key == "sma200_trend":
-        return ("WAIT", f"Below 200d SMA ({formatted}; need >= 1.00x)")
+        return ("WAIT", f"SMA200 {formatted}", f"Below SMA200 ({formatted}; need >= 1.00x)")
     if gate_key == "sma50_band":
-        return ("WAIT", f"50d SMA at {formatted} (need 0.98x–1.08x band)")
+        return ("WAIT", f"SMA50 {formatted}", f"SMA50 at {formatted} (need 0.98x–1.08x)")
     if gate_key == "ret20_band":
-        return ("WAIT", f"20d return at {formatted} (need -3% to +12%)")
+        return ("WAIT", f"20d {formatted}", f"20d return at {formatted} (need -3%..+12%)")
     if gate_key == "ret60_trend":
         if item.metric == "drawdown_from_52w_high":
-            return ("WAIT", f"52w drawdown {formatted} exceeds 22% cap")
-        return ("WAIT", f"60d return weak at {formatted} (need >= 0%)")
+            return ("WAIT", f"52w DD {formatted}", f"52w drawdown {formatted} (> 22% cap)")
+        return ("WAIT", f"60d {formatted}", f"60d return weak at {formatted} (need >= 0%)")
     if gate_key == "rs60_qqq":
-        return ("WAIT", f"60d RS vs QQQ lagging at {formatted} (need >= -3%)")
+        return ("WAIT", f"RS60 {formatted}", f"60d RS vs QQQ at {formatted} (need >= -3%)")
     if gate_key == "regime":
-        return ("WAIT", "Defensive market regime requires RS >= +5%")
-    return ("WAIT", f"{_compact_label(item)} at {formatted}")
+        return ("WAIT", "Defensive regime", "Defensive regime (need RS >= +5%)")
+    return ("WAIT", f"{_compact_label(item)} {formatted}", f"{_compact_label(item)} at {formatted}")
 
 
 def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, ...]:
@@ -566,7 +622,7 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
         if neg:
             item = neg[0]
             formatted = format_metric_value(item.metric, item.value)
-            h_status, h_phrase = _human_gate_blocker_phrase(
+            h_status, s_tag, h_phrase = _human_gate_blocker_phrase(
                 gate["gate_key"], item, formatted
             )
             rows.append(
@@ -575,6 +631,7 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
                     gate_label=gate["gate_label"],
                     status="FAIL_BLOCKER",
                     human_status=h_status,
+                    short_tag=s_tag,
                     observed_display=formatted,
                     target_display=gate["target_display"],
                     human_summary=h_phrase,
@@ -590,6 +647,7 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
                     gate_label=gate["gate_label"],
                     status="PASS",
                     human_status="PASS",
+                    short_tag=gate["short_tag"],
                     observed_display=formatted,
                     target_display=gate["target_display"],
                     human_summary=f"{gate['gate_label']}: {formatted}",
@@ -603,6 +661,7 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
                     gate_label=gate["gate_label"],
                     status="SILENT_OR_UNOBSERVED",
                     human_status="WAIT",
+                    short_tag=gate["short_tag"],
                     observed_display="Outside READY band (silent in v1)",
                     target_display=gate["target_display"],
                     human_summary=gate["silent_summary"],
@@ -613,7 +672,7 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
 
 
 # ---------------------------------------------------------------------------
-# Clean analyst inline summaries
+# Cross-pillar analyst inline summaries
 # ---------------------------------------------------------------------------
 
 _FRESHNESS_POSITIVE_CODES = frozenset(
@@ -629,13 +688,46 @@ def _inline_fragment(item: EvidenceItem) -> str:
     return f"{short} {formatted}"
 
 
+def _select_cross_pillar_positives(
+    decision: StockDecision, max_items: int = 4
+) -> list[EvidenceItem]:
+    """Select diverse fundamental highlights (growth + margin/FCF + valuation/debt)."""
+    by_metric: dict[str, EvidenceItem] = {}
+    fallback: list[EvidenceItem] = []
+    for item in decision.quality.positives:
+        if item.code in _FRESHNESS_POSITIVE_CODES:
+            continue
+        if item.metric and item.metric not in by_metric:
+            by_metric[item.metric] = item
+        else:
+            fallback.append(item)
+
+    selected: list[EvidenceItem] = []
+    # 1. Pick top growth metric if available
+    for m in ("revenue_yoy", "adjusted_net_income_yoy", "operating_cash_flow_yoy"):
+        if m in by_metric:
+            selected.append(by_metric.pop(m))
+            break
+    # 2. Pick top profitability/cash metric
+    for m in ("net_margin", "free_cash_flow", "ocf_to_net_income"):
+        if m in by_metric and len(selected) < max_items:
+            selected.append(by_metric.pop(m))
+    # 3. Fill remaining slots by priority order
+    for m in _HIGHLIGHT_METRIC_PRIORITY:
+        if len(selected) >= max_items:
+            break
+        if m in by_metric:
+            selected.append(by_metric.pop(m))
+    for item in fallback:
+        if len(selected) >= max_items:
+            break
+        selected.append(item)
+    return selected
+
+
 def _build_quality_highlights_inline(decision: StockDecision, max_items: int = 4) -> str:
-    items = [
-        item
-        for item in decision.quality.positives
-        if item.code not in _FRESHNESS_POSITIVE_CODES
-    ]
-    fragments = [_inline_fragment(item) for item in items[:max_items] if _inline_fragment(item)]
+    selected = _select_cross_pillar_positives(decision, max_items=max_items)
+    fragments = [_inline_fragment(item) for item in selected if _inline_fragment(item)]
     return " · ".join(fragments) if fragments else "None"
 
 
@@ -646,7 +738,7 @@ def _build_entry_snapshot_inline(decision: StockDecision) -> str:
         if item.code not in {"market_data_fresh", "supportive_market_regime"}
     ]
     fragments = [_inline_fragment(item) for item in items[:4] if _inline_fragment(item)]
-    return " · ".join(fragments) if fragments else "See gate checklist in full report"
+    return " · ".join(fragments) if fragments else "See 7-gate table in full report"
 
 
 def _build_entry_blockers_inline(
@@ -654,7 +746,7 @@ def _build_entry_blockers_inline(
     checklist: tuple[EntryGateCheckRow, ...],
 ) -> str:
     if decision.entry.state is EntryState.ENTRY_READY:
-        return "All 7 readiness gates met"
+        return "All 7 readiness gates passed"
     blockers = [row.human_summary for row in checklist if row.status != "PASS"]
     return "; ".join(blockers) if blockers else "See full report"
 
@@ -663,9 +755,28 @@ def _build_fundamental_watchouts_inline(decision: StockDecision) -> str:
     fragments = [_inline_fragment(item) for item in decision.quality.risks[:3]]
     if decision.quality.missing:
         miss_labels = [_compact_label(item) for item in decision.quality.missing[:2]]
-        suffix = f" (+{len(decision.quality.missing) - 2} more)" if len(decision.quality.missing) > 2 else ""
+        suffix = (
+            f" (+{len(decision.quality.missing) - 2})"
+            if len(decision.quality.missing) > 2
+            else ""
+        )
         fragments.append(f"Missing: {', '.join(miss_labels)}{suffix}")
     return " · ".join(fragments) if fragments else "None flagged"
+
+
+def _build_accordion_tagline(
+    decision: StockDecision,
+    checklist: tuple[EntryGateCheckRow, ...],
+) -> str:
+    """Build a crisp <= 38-char one-line hook for mobile <summary> headers."""
+    if decision.entry.state is EntryState.ENTRY_READY:
+        top_q = _select_cross_pillar_positives(decision, max_items=2)
+        q_part = ", ".join(_inline_fragment(item) for item in top_q) or "Quality " + decision.quality.grade.value
+        return q_part
+    open_gates = [row.short_tag for row in checklist if row.status != "PASS"]
+    if open_gates:
+        return f"Wait: {', '.join(open_gates[:2])}"
+    return "See gate check"
 
 
 def _build_top_positives_inline(decision: StockDecision) -> str:
@@ -882,6 +993,7 @@ def build_stock_card_view_model(
         entry_state=decision.entry.state.value,
         entry_score_display=_score_display(decision.entry.score),
         entry_confidence_display=_confidence_display(decision.entry.confidence),
+        accordion_Tagline=_build_accordion_tagline(decision, checklist),
         quality_highlights_inline=_build_quality_highlights_inline(decision),
         entry_Snapshot_inline=_build_entry_snapshot_inline(decision),
         entry_blockers_inline=_build_entry_blockers_inline(decision, checklist),

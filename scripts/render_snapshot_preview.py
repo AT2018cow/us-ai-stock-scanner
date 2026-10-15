@@ -65,6 +65,7 @@ def main() -> None:
             cadence="daily",
             layout_version="v2",
             all_decisions=decisions,
+            detailed_subdir="detailed_v2",
         ),
         encoding="utf-8",
     )
@@ -75,6 +76,7 @@ def main() -> None:
             cadence="weekly",
             layout_version="v2",
             all_decisions=decisions,
+            detailed_subdir="detailed_v2",
         ),
         encoding="utf-8",
     )
@@ -97,7 +99,11 @@ def main() -> None:
     detailed_dir.mkdir(parents=True, exist_ok=True)
     for symbol in sorted(symbols):
         (detailed_dir / f"{symbol}.md").write_text(
-            render_detailed_report(by_symbol[symbol], layout_version="v2"),
+            render_detailed_report(
+                by_symbol[symbol],
+                layout_version="v2",
+                back_link="../action_list_v2.md",
+            ),
             encoding="utf-8",
         )
     print(
