@@ -1,47 +1,47 @@
-# M2 v1 Failure Attribution Report (frozen 2026-10-15)
+# M2 v1 Failure Attribution Report (frozen 2026-10-15, M2.1 complete)
 
 Offline read-only audit of frozen v1 decisions across snap62 (62 symbols,
 2026-10-12), snap510 (510 symbols, 2026-10-09), and 25,025 historical v3 rows
-(39 dates, 2023-01-31..2026-03-31). Return diagnostics use ONLY the 24
-development dates 2023-01-31..2024-12-31 (RETROSPECTIVE_EXPLORATORY);
-2025/2026Q1 forward labels remain unpeeked for M4.
-Case registry: 34/34 strata matched.
+(39 dates, 2023-01-31..2026-03-31). Cross-sectional counts cover all 39 dates;
+return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31
+(RETROSPECTIVE_EXPLORATORY); 2025/2026Q1 forward labels remain unpeeked for M4.
+Case registry: 38/38 strata matched (28 STRATIFIED_PRE + 6 controls + 4 paired exploratory).
 
 ## 1. Executive Summary and Causal Breakdown
 
-- Axis 1 accrual sign bug: 3997 dev-row cash-cow false positives at accrual<-0.10 (2253 at <-0.20); accrual-only fix upgrades 642 B->A and 259 C->B on dev dates.
+- Axis 1 accrual sign bug: 3997 dev-row / 6930 all-39 cash-cow false positives at accrual<-0.10; accrual-only fix upgrades 642 B->A and 259 C->B on dev dates.
 - Axis 2 working-capital penalty: 363 of 1194 high-growth healthy dev rows penalized; 129 penalized B rows reach grade A under the combined fix.
-- Axis 3 binary FCF: 958 of 10266 FCF-positive dev rows run sub-3% margins yet score 1.0; 364 of 601 PRIORITY_REVIEW rows carry ps/pe percentile weak flags.
-- Axis 5 dead zone: 411 dev dead-zone pullbacks hide in WATCH_BREAKOUT (snap62 CRM archetype).
+- Axis 5 dead zone: 626 all-39 dead-zone pullbacks hide in WATCH_BREAKOUT (snap62 CRM archetype).
+- Axis 7 attention: 18 of 24 dev dates truncate A+READY (279 obs, 399 across all 39); 272 high-score B+READY obs suppressed to HOLD_MONITOR.
 - Axis 6 breakout split (dev): MILD=411, NEAR=1808, WEAK=2256, UNOBS=0.
-- Axis 7 attention: 18 of 24 dev dates truncate A+READY (279 obs); 272 high-score B+READY obs suppressed to HOLD_MONITOR.
-- Axis 8 MA alignment: on dev dates, 140/1781 (7.9%) ENTRY_READY rows and 723/4475 (16.2%) WATCH_BREAKOUT rows have inverted moving averages (SMA50 < SMA200).
+- Parity: snapshot Top-15/manifest match snap510=True, snap62=True; post-M1 zero-silent verdict=PASS.
 
-## 2. Fundamental Metric Audit
+## 2. Fundamental Metric Audit (6-pillar decomposition)
 
-### 2.1 accrual_ratio sign inversion (Axis 1)
-v1 scores abs(accrual): OCF>NI cash generation reads as weak when accrual<-0.10.
-Dev false-positive rate: 28.6% at -0.10, 16.1% at -0.20.
-### 2.2 High-growth working-capital penalty (Axis 2)
-Penalized share of high-growth healthy rows: 30.4%.
-### 2.3 Binary FCF and valuation drag (Axis 3)
-FCF margin median among FCF-positive rows: 0.132438; thin-margin count: 958; strong-margin count: 4522.
-### 2.4 Missing margin pillars (Axis 4)
-operating_margin computable on 85.9% of dev rows and 86.2% of all rows from existing facts with zero new fetches. Snapshot decisions.jsonl serializes only emitted evidence (no revenue/ebit values), so coverage is proven on historical rows, whose facts are the same SEC source.
+Pillar means/coverages/weak-rates per grade live in component_and_routing_diagnostics.csv (section=pillar_decomposition, scopes snap62/snap510/hist_dev_24_dates/hist_all_39_dates). Growth-split dev excess (A/B-C x high/low revenue growth) is reported under growth_split_returns; high-growth leaders concentrate penalties on valuation_context and red_flags while low-growth mature names dominate Grade A on cheap self-history multiples.
+Weight note: production code weights profitability 0.30 / red_flags 0.10 vs the spec-canonical 0.25 / 0.15; means and coverages are weight-free facts and both schedules are carried per pillar row for adjudication.
 
 ## 3. Entry and Price-Volume Metric Audit
 
-Dead-zone (1.08,1.10]/(12%,15%] rows are WATCH_BREAKOUT, not WATCH_PULLBACK;
-the 3-way split separates MILD pullbacks from NEAR consolidations and WEAK laggards.
-MILD rows occur across all 24 dev dates (411 obs, 9.2% of BREAKOUT),
-so the seam is structural, not a single-date artifact.
-Snapshot caveat: pre-M1 snapshots serialize only emitted evidence, so 10/16 snap62
-and 90/141 snap510 BREAKOUT rows are UNOBSERVABLE for bucketing (silent-band gates);
-CAT/LIN fall in this unobservable set, not the confirmed-weak set.
-sma50_to_sma200 is exactly price_to_sma200/price_to_sma50 on every row (Axis 8).
+Dead-zone (1.08,1.10]/(12%,15%] rows are WATCH_BREAKOUT, not WATCH_PULLBACK; per-gate failure counts across dev and all-39 dates live under section=entry_subgates. Snapshot caveat: pre-M1 snapshots serialize only emitted evidence, so 10/16 snap62 and 90/141 snap510 BREAKOUT rows are UNOBSERVABLE for bucketing (silent-band gates). sma50_to_sma200 is exactly price_to_sma200/price_to_sma50 on every row (Axis 8).
 
-## 4. Action Routing and Top-15 Compression Audit
+## 4. Action Routing, Replacement Cost and Top-15 Compression Audit
 
-18 dev dates truncate eligible A+READY names while 272 high-score B+READY rows sit in HOLD_MONITOR behind A+WATCH_BREAKOUT names. Date-equal 60d net-QQQ comparisons are exploratory only.
+Same-date replacement comparison (section=replacement_comparison): marginal #11-15 members vs excluded A+READY-16+ / high-score B+READY on identical dates; 34 all-39 dates pair a marginal selected row with a live excluded opportunity. Dev date-equal excess diagnostics compare the two pools.
 
-_End of M2 attribution. All counts reproducible from metric_and_routing_diagnostics.csv._
+## 5. Cross-Industry Business-Model Bias Audit
+
+Six archetypes + explicit UNCLASSIFIED_RESIDUAL (section=industry_bias, scopes snap62/snap510/hist_all_39_dates): grade shares, mean confidence, top missing metrics and top weak flags per archetype. Snapshot archetypes reuse the hist-derived symbol map (most-common SIC); symbols absent from history stay UNCLASSIFIED.
+
+## 6. Growth-Split Return Diagnostics (dev only, exploratory)
+
+- A_HIGH_GROWTH: date-equal mean excess -0.0187 (n_dates=24, n_obs=519)
+- A_LOW_GROWTH: date-equal mean excess -0.0226 (n_dates=24, n_obs=3330)
+- BC_HIGH_GROWTH: date-equal mean excess +0.0879 (n_dates=24, n_obs=2173)
+- BC_LOW_GROWTH: date-equal mean excess -0.0162 (n_dates=24, n_obs=7554)
+- OTHER: date-equal mean excess +0.0221 (n_dates=24, n_obs=1538)
+- replacement EXCLUDED_OPPORTUNITY: date-equal mean excess -0.0212 (n_dates=24, n_obs=561)
+- replacement MARGINAL_11_15: date-equal mean excess -0.0138 (n_dates=20, n_obs=98)
+- replacement OTHER: date-equal mean excess -0.0019 (n_dates=24, n_obs=14455)
+
+_End of M2 attribution. Counts reproducible from the diagnostics CSVs; parity verdicts in report_evidence_parity_checks.json._

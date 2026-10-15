@@ -1,139 +1,81 @@
-# Phase M2 Execution Spec — Systematic v1 Selection Failure Attribution & Metric Validity Audit
+# Phase M2.1 Completion Spec — Full Roadmap Compliance for v1 Failure Attribution
 
 > **Target Agent**: Muse Spark 1.3 (Execution Agent)
 > **Reviewer**: Chief Technical Lead / Independent Research Auditor
-> **Roadmap Reference**: `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` (§4 M2)
-> **Base `main` Reference**: Post-PR #75 & PR #76 (`ff26ed5`)
+> **Roadmap Reference**: `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` (§4 M2, lines 205–243)
 
 ---
 
-## 1. Objective
+## 1. Why M2.1 Is Required Before Starting M3
 
-Conduct a strictly offline, read-only **Phase M2 Systematic Failure Attribution & Metric Validity Audit** across the existing frozen datasets:
-1. **510-symbol AI Watchlist Snapshot (`2026-10-09`)**: `evidence/archive/mvp_edgartools_fallback_fix/2026-10-09_313c5ff/`
-2. **62-symbol 3-Source Generalized Snapshot (`2026-10-12`)**: `outputs/decision_experiments/risk_off_20261013T093029Z/2026-10-12/risk_off/`
-3. **39-date Repaired Historical Dataset (`2023-01` to `2026-03`, 25,025 rows)**:
-   - Quality dataset: `outputs/historical_selection_v1_20261011_03/repaired/company_quality_dataset_risk_off.v3.csv`
-   - Entry dataset: `outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv`
-   *(Note: If the local 25k CSVs are absent in a synthetic unit-test environment, the M2 module must support running on synthetic DataFrames while CLI execution uses the real local paths above.)*
+Chief Architect audit of PR #77 (`docs/m2_v1_failure_attribution_20261015/`) against the authoritative M2 checklist in `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` identified **5 specific gaps** that must be completed before Phase M2 can be certified `100% COMPLETE`:
 
-The M2 study must quantify **why v1 misallocates human attention or misgrades strong companies**, specifically testing the **4 Fundamental Metric Defects** and **4 Entry / Ranking Mechanism Defects** identified in architectural review, and output the 5 required M2 deliverables under `docs/m2_v1_failure_attribution_20261015/`.
+1. **Gap 1 — Full 39-Date Cross-Sectional Coverage + Same-Date Top-15 Opportunity-Cost Pairing (Problem 1)**:
+   - While forward-return statistics (`fwd_ret_*`) must remain strictly restricted to the **24 development dates (`2023-01-31..2024-12-31`)**, **cross-sectional feature, grade, state, and Top-15 truncation counts** (which do not touch future returns) must be reported across **all 39 historical signal dates (`2023-01-31..2026-03-31`, 25,025 rows)** as well as the 24 development dates and 2 snapshots.
+   - Must also include a **Same-Date Opportunity-Cost / Replacement Comparison** (`same_date_replacement_comparison` in the report and diagnostics): when high-conviction `Quality A + ENTRY_READY` (rank 16+) or `Quality B + ENTRY_READY` (like `NVDA`, `MU`, `AMZN`) are excluded from Top-15, explicitly show the marginal #11–#15 names that took their Top-15 slots on the same date (e.g., slower-growth or valuation-flagged `A + ENTRY_READY` or `A + WATCH_BREAKOUT` names in `snap62` / `snap510` / dev dates) and compare their characteristics and dev-period date-equal 60d excess.
+
+2. **Gap 2 — Full 6-Pillar Company Quality v1 Decomposition Across Grades A / B / C (Problem 2)**:
+   - Must decompose **Company Quality v1's 6 canonical pillars**:
+     1. `profitability_and_cash_conversion` (weight `0.25`)
+     2. `growth_and_stability` (weight `0.20`)
+     3. `balance_sheet_resilience` (weight `0.20`)
+     4. `dilution_and_capital_discipline` (weight `0.10`)
+     5. `valuation_context` (weight `0.10`)
+     6. `red_flags` (weight `0.15`)
+   - Compute and report the mean pillar score, coverage/missing rate, and weak-flag rate for each of the 6 pillars stratified by `Quality Grade (A, B, C, UNRATED)` across `snap62`, `snap510`, `hist_dev_24_dates`, and `hist_all_39_dates`, plus dev-period 60d excess stratified by high-growth vs low-growth `Quality A` vs `Quality B/C`. This directly answers **why historical Grade A underperformed Grade C rebounds** (low-growth mature companies with cheap self-history valuation percentiles dominating Grade A while high-growth leaders get penalized on `valuation_context` and `red_flags`).
+
+3. **Gap 3 — Cross-Industry / Business-Model Systematic Bias Audit (Problem 4)**:
+   - Classify the universe into **6 transparent business-model / sector archetypes** (using existing ticker/sector metadata or deterministic accounting/industry mapping):
+     1. `SOFTWARE_AND_ASSET_LIGHT_TECH` (SaaS, internet, cloud, cybersecurity)
+     2. `SEMICONDUCTOR_AND_AI_HARDWARE` (semis, semi-cap equipment, networking/compute hardware)
+     3. `INDUSTRIAL_AND_MANUFACTURING` (electrical, aerospace, machinery, automation)
+     4. `HEAVY_ASSET_AND_UTILITIES` (regulated utilities, telecom, pipelines, transport)
+     5. `CYCLICAL_RESOURCES_AND_ENERGY` (oil & gas, mining, materials, chemicals)
+     6. `FINANCIALS_AND_SPECIALIST_REITS` (banks, insurers, capital markets, REITs)
+   - For each business-model bucket across `snap62`, `snap510`, and `hist_all_39_dates`, report:
+     - Total observations, `Quality A / B / C / UNRATED` share, mean confidence, top missing metrics, and top weak-risk flags (`accrual_ratio_weak`, `receivables_growth_gap_weak`, `net_debt_to_ebitda_weak`, `ps_hist_percentile_weak`, `specialist_accounting_unrated`).
+
+4. **Gap 4 — Canonical 36-Column `v1_failure_casebook.csv` Schema + `RETROSPECTIVE_EXPLORATORY` Paired Cases**:
+   - The roadmap (`docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md`, lines 221–232) specifies these exact **36 columns** for `v1_failure_casebook.csv`:
+     ```text
+     study_case_id,case_selection_method,evidence_tier,signal_date,symbol,
+     source_snapshot_sha,scanner_code_sha,config_sha,candidate_universe_asof,
+     security_id_or_unverified,issuer_cik_or_unverified,filing_accession_or_unverified,
+     facts_fingerprint_or_unverified,quality_grade,quality_score,confidence,
+     quality_evidence_codes,missing_codes,entry_state,entry_evidence_codes,
+     action_state,priority,selected_top5,selected_top15,excluded_reason,
+     review_question,observed_failure_hypothesis,alternate_explanations,
+     data_verdict,human_review_verdict,review_time_or_unknown,
+     future_label_valid,forward_label_definition,realized_outcome_if_exploratory,
+     reviewer_notes,source_links
+     ```
+   - `observed_failure_hypothesis` must use the roadmap's canonical taxonomy tags (`DATA/IDENTITY ERROR`, `ACCOUNTING SEMANTIC GAP`, `EVIDENCE PRESENTATION GAP`, `RANK/CAP STRUCTURAL GAP`, `ENTRY TIMING GAP`, `UNIVERSE/PIT BIAS`, `CORPORATE_ACTION/LABEL UNCERTAINTY`, `IRREDUCIBLE UNCERTAINTY`, or `POSITIVE_CONTROL`).
+   - In addition to the 28 `STRATIFIED_PRE` cases and 6 `POSITIVE_CONTROL` cases, include **4 paired `RETROSPECTIVE_EXPLORATORY` cases** on development dates (`2023–2024`) showing both **"selected Top-15 winner/laggard"** and **"rejected/suppressed opportunity on the same date"** (with `realized_outcome_if_exploratory` populated ONLY for `RETROSPECTIVE_EXPLORATORY` dev-date cases, and `"UNPEEKED_PRE_STRATIFIED"` for `STRATIFIED_PRE` / snapshot cases!).
+
+5. **Gap 5 — Missing Standard Files (`component_and_routing_diagnostics.csv` & `report_evidence_parity_checks.json`)**:
+   - Generate **`component_and_routing_diagnostics.csv`** (containing the 6-pillar Quality decomposition, Entry sub-gate breakdown across all 39 dates, Cross-Industry Business-Model bias table, and Same-Date Top-15 replacement comparison; you may either keep `metric_and_routing_diagnostics.csv` or unify/emit both so no existing reference breaks).
+   - Generate **`report_evidence_parity_checks.json`** (required by roadmap line 242): programmatic verification across `snap62`, `snap510`, and the M1-rebuilt decisions proving whether Action List, Detailed Report, and `StockDecision` are 100% consistent and quantifying pre-M1 vs post-M1 silent-gate parity (`0` silent `WATCH_BREAKOUT` / `TREND_DAMAGED` rows after M1).
 
 ---
 
-## 2. Strict Scope & Shared-Worktree Rules
+## 2. Shared-Worktree Rules
 
-### Shared-Worktree Safety (CRITICAL):
-- You share `/home/ss/opencode_ws/us-ai-stock-scanner` with the Chief Architect.
 - **DO NOT** run `git checkout`, `git switch`, `git branch`, `git add`, `git commit`, `git push`, `git stash`, `git reset`, or `git clean`.
-- **DO NOT** make any network requests (no SEC / Alpaca / Modal calls).
-- **DO NOT** modify any production scoring logic (`decision/quality.py`, `decision/entry.py`, `decision/action.py`, `scanner.py`) or `configs/*`. M2 is a **diagnostic and attribution phase** that locks the evidence for M3.
-
-### Allowed to Create:
-1. `src/ai_value_scanner/research/m2_failure_attribution.py` **(NEW)**
-2. `scripts/m2_build_failure_attribution.py` **(NEW)**
-3. `tests/test_m2_failure_attribution.py` **(NEW)**
-4. `docs/m2_v1_failure_attribution_20261015/` **(NEW directory with 5 compact deliverables + `SHA256SUMS`)**
-
----
-
-## 3. Specific Mechanisms & Metric Defects to Quantify in `m2_failure_attribution.py`
-
-Implement pure, deterministic diagnostic functions in `src/ai_value_scanner/research/m2_failure_attribution.py` that compute exact counts, rates, and concrete symbol examples for the following **8 diagnostic axes**:
-
-### Axis 1 — `accrual_ratio` Sign-Inversion Bug (`abs(accrual_ratio)` Penalizing Cash-Cow Companies)
-- **Mechanism**: In `fundamentals/accounting.py`, `accrual_ratio = (adjusted_net_income - operating_cash_flow) / current_assets`. When `operating_cash_flow > adjusted_net_income` (`accrual_ratio < 0`), cash generation exceeds accounting earnings (healthy!). Yet `decision/quality.py:_score_accrual` takes `abs(value)`, penalizing `accrual_ratio < -0.10` and flagging `accrual_ratio < -0.20` as `accrual_ratio_weak` (score `<= 0.20`).
-- **Quantify across `snap510`, `snap62`, and `historical_v3`**:
-  - Total rated rows with `accrual_ratio < -0.10` and `accrual_ratio < -0.20` where `ocf_to_net_income >= 1.0` and `free_cash_flow > 0` ("false-positive cash-cow penalty rate").
-  - How many companies would upgrade from `Quality B -> A` or `Quality C -> B` if negative accruals (`accrual_ratio <= 0` when `ocf_to_net_income >= 1.0`) scored `1.0` instead of being penalized by `abs()`.
-  - Concrete examples (e.g. `META`, `EOG`, `CRM`, `MSFT`, `AMT`, `EQIX`).
-
-### Axis 2 — High-Growth Working-Capital Expansion Penalty (`receivables_growth_gap` / `inventory_growth_gap`)
-- **Mechanism**: Point-in-time quarter-end receivables/inventory YoY minus trailing 12-month (TTM) revenue YoY mechanically creates positive gaps for companies experiencing rapid revenue acceleration (`revenue_yoy >= 0.25`) even when cash conversion is healthy (`ocf_to_net_income >= 0.80`).
-- **Quantify**:
-  - Count and percentage of high-growth companies (`revenue_yoy >= 0.25` and `ocf_to_net_income >= 0.80`) penalized by `receivables_growth_gap > 0.15` or `inventory_growth_gap > 0.20`.
-  - How many `Quality B` high-growth leaders (such as `NVDA`, `MU`, `TER`, `AMAT`) would reach `Quality A` (`score >= 0.72` and `confidence >= 0.80`) if working-capital gap penalties were exempted/halved when `revenue_yoy >= 0.25` and `ocf_to_net_income >= 0.80` (combined with the Axis 1 accrual fix).
-
-### Axis 3 — Binary `free_cash_flow > 0` & Self-History Valuation Percentile Drag (`ps_hist_percentile` / `pe_hist_percentile`)
-- **Mechanism**:
-  1. `_score_fcf` awards `1.0` to any `free_cash_flow > 0` regardless of `fcf_margin` (`free_cash_flow / revenue`).
-  2. `ps_hist_percentile > 0.80` and `pe_hist_percentile > 0.80` penalize stocks in sustained multi-year uptrends (scoring `0.10` each).
-- **Quantify**:
-  - Distribution of `fcf_margin = free_cash_flow / revenue` among rows that currently get `_score_fcf == 1.0` (e.g., how many have thin `< 3%` FCF margin vs strong `>= 15%` FCF margin).
-  - Share of `Quality A` and `PRIORITY_REVIEW` stocks flagged with `ps_hist_percentile_weak` or `pe_hist_percentile_weak`.
-
-### Axis 4 — Missing Core Quality Pillars (`operating_margin` & `roic_proxy` / Capital Efficiency)
-- **Quantify**:
-  - Availability/coverage rate of `operating_margin = adjusted_ebit / revenue` (or `ebit / revenue`) and `fcf_margin = free_cash_flow / revenue` in the historical dataset and current snapshots, demonstrating they can be computed from existing SEC facts with zero new network fetches.
-
-### Axis 5 — Entry Dead-Zone Between `ENTRY_READY` and `WATCH_PULLBACK` (`SMA50 in (1.08, 1.10]` or `return_20d in (12%, 15%]`)
-- **Mechanism**: Healthy-trend stocks (`price_to_sma200 >= 1.0`, `return_60d >= 0`, `RS60 >= -3%`, `drawdown <= 22%`) whose only readiness failure is `price_to_sma50 in (1.08, 1.10]` or `return_20d in (0.12, 0.15]` are slightly extended above the buy band, yet fall into `WATCH_BREAKOUT` instead of `WATCH_PULLBACK`.
-- **Quantify**:
-  - Exact count and symbol list in `snap510`, `snap62` (e.g. `CRM`), and across the 39 historical dates of `WATCH_BREAKOUT` rows that are actually **mildly overextended pullback candidates** rather than pre-breakout bases.
-
-### Axis 6 — `WATCH_BREAKOUT` Heterogeneity Partition (True Near-Breakout vs Weak/Lagging)
-- **Quantify**:
-  - Partition all `WATCH_BREAKOUT` observations into:
-    1. `MILD_EXTENDED_PULLBACK`: passes trend/60d/RS gates, only fails `sma50 > 1.08` or `ret20 > 0.12`;
-    2. `NEAR_BREAKOUT_CONSOLIDATION`: `price_to_sma200 >= 1.0` and `return_60d >= -0.03` and `RS60 >= -0.06` (within 3pp of readiness gates);
-    3. `WEAK_OR_LAGGING_STRUCTURE`: `price_to_sma200 < 1.0` or `return_60d < -0.03` or `RS60 < -0.06` (e.g. `CAT`, `LIN`).
-  - Report counts, shares, and (on the 2023–2024 development dates only, marked `RETROSPECTIVE_EXPLORATORY`) date-equal mean/median 60d net QQQ excess for each sub-bucket conditional on `Quality A/B`.
-
-### Axis 7 — Top-15 Attention Truncation & `Quality B + ENTRY_READY` Suppression
-- **Quantify across `snap510`, `snap62`, and the 39 historical dates**:
-  - How many dates have `> 15` `PRIORITY_REVIEW` (`A + ENTRY_READY`) candidates, and how many `A + ENTRY_READY` observations are truncated by the 15-name cap;
-  - Count of `Quality B + ENTRY_READY` observations (mapped to `HOLD_MONITOR` and ranked behind all `A + WATCH_BREAKOUT` and `A + TREND_DAMAGED`), especially high-score `B` (`quality.score >= 0.65` and `entry.score >= 0.85`, e.g., `NVDA`, `MU`, `TER`, `AMZN`).
-  - Compare date-equal 60d net QQQ excess on 2023–2024 development dates (`RETROSPECTIVE_EXPLORATORY`, respecting the 2025/2026Q1 embargo!) between:
-    - `Quality A + ENTRY_READY` (Top-15 vs ranks 16+)
-    - `Quality B (score >= 0.65) + ENTRY_READY`
-    - `Quality A + WATCH_BREAKOUT (WEAK_OR_LAGGING_STRUCTURE)`
-
-### Axis 8 — Missing Technical Structure Features (`sma50_to_sma200` Golden-Cross Alignment & Volume Confirmation)
-- **Quantify**:
-  - Since `price_to_sma200 = price / sma200` and `price_to_sma50 = price / sma50`, note the exact algebraic identity:
-    $$\frac{\text{SMA50}}{\text{SMA200}} = \frac{\text{price\_to\_sma200}}{\text{price\_to\_sma50}}$$
-    This means **`sma50_to_sma200` can be computed 100% exactly from existing columns (`price_to_sma200 / price_to_sma50`) on all 25,025 historical rows and all snapshots without fetching a single new bar!**
-  - Quantify how many `ENTRY_READY` and `WATCH_BREAKOUT` rows have inverted moving averages (`sma50_to_sma200 < 1.0`, i.e., 50d SMA below 200d SMA) vs aligned uptrends (`sma50_to_sma200 >= 1.0`).
+- **DO NOT** make network calls or modify production scoring files (`quality.py`, `entry.py`, `action.py`, `scanner.py`).
+- **DO NOT** start M3 yet: finish M2.1 first so M2 is 100% compliant.
+- Modify ONLY:
+  1. `src/ai_value_scanner/research/m2_failure_attribution.py`
+  2. `scripts/m2_build_failure_attribution.py`
+  3. `tests/test_m2_failure_attribution.py`
+  4. `docs/m2_v1_failure_attribution_20261015/` (including `case_registry_frozen.json`, `v1_failure_casebook.csv` [36 columns], `component_and_routing_diagnostics.csv`, `metric_and_routing_diagnostics.csv`, `report_evidence_parity_checks.json`, `attention_failure_attribution.md`, `hypothesis_backlog.md`, and `SHA256SUMS`; keep total directory size `< 160 KB`).
 
 ---
 
-## 4. Required Deliverables under `docs/m2_v1_failure_attribution_20261015/`
+## 3. Verification Commands
 
-Your CLI `scripts/m2_build_failure_attribution.py` must deterministically generate these **5 compact files** (total directory size `< 120 KB`, no raw paths `/home/...` or `/tmp/...` anywhere) plus `SHA256SUMS`:
-
-1. **`case_registry_frozen.json`**:
-   - Pre-registered stratified case selection contract covering **30–36 fixed cases** across `snap62`, `snap510`, and representative 2023–2024 development dates (covering all 8 axes above, plus positive controls where v1 worked well).
-2. **`v1_failure_casebook.csv`**:
-   - Must include the canonical M2 schema columns from the roadmap (`study_case_id`, `case_selection_method`, `evidence_tier`, `signal_date`, `symbol`, `snapshot_or_dataset_id`, `quality_grade`, `quality_score`, `confidence`, `entry_state`, `entry_score`, `action_state`, `priority`, `selected_top15`, `primary_failure_axis`, `metric_defect_tags`, `observed_v1_behavior`, `counterfactual_m3_behavior`, `data_verdict`, `reviewer_notes`).
-3. **`metric_and_routing_diagnostics.csv`**:
-   - Structured quantitative summary table of all **8 Diagnostic Axes** (counts, percentages, affected symbols in `snap62` and `snap510`, and 2023–2024 development-period cohort diagnostics).
-4. **`attention_failure_attribution.md`**:
-   - Comprehensive, human-readable attribution report presenting the exact empirical findings across the 8 axes:
-     - Section 1: Executive Summary & Causal Breakdown
-     - Section 2: Fundamental Metric Audit (`accrual_ratio` sign bug, high-growth working-capital penalty, FCF margin vs binary FCF, valuation percentile drag, `operating_margin` coverage)
-     - Section 3: Entry & Price-Volume Metric Audit (`(1.08, 1.10]` / `(12%, 15%]` pullback dead-zone, `WATCH_BREAKOUT` 3-way split, `sma50_to_sma200` alignment identity)
-     - Section 4: Action Routing & Top-15 Compression Audit (`A+READY` truncation vs `B+READY` suppression vs `A+WATCH_BREAKOUT` weak rows)
-5. **`hypothesis_backlog.md`**:
-   - Formulate **exactly 3 falsifiable, orthogonal M3 Candidate Hypotheses** backed by the M2 evidence (ready for M3 pre-registration):
-     - **H1-Quality (`quality_v2_accounting_core`)**: Fix `accrual_ratio` sign (do not penalize `OCF > NI`), replace binary `FCF > 0` with `fcf_margin` + `operating_margin`, and exempt high-growth cash-generative companies (`revenue_yoy >= 25%` & `OCF/NI >= 0.8`) from point-in-time working-capital gap penalties.
-     - **H2-Entry (`entry_v2_structure_and_pullback_seam`)**: Close the `(1.08, 1.10]` SMA50 and `(12%, 15%]` 20d-return dead-zone into `WATCH_PULLBACK`, require `sma50_to_sma200 >= 0.98` for `ENTRY_READY`, and partition `WATCH_BREAKOUT` into `NEAR_BREAKOUT` vs `LAGGING` sub-reasons.
-     - **H3-Action (`action_v2_ready_priority_and_joint_rank`)**: Promote high-conviction `Quality B (score >= 0.68, conf >= 0.80) + ENTRY_READY` above unconfirmed `WATCH_BREAKOUT` in attention priority (or surface a dedicated `SECONDARY_READY_REVIEW` slot) and rank within `PRIORITY_REVIEW` by a balanced `0.60 * quality_score + 0.40 * entry_score` composite instead of lexicographic Quality-only tiebreaking.
-
----
-
-## 5. Strict Statistical & Epistemic Guardrails
-
-- **Respect the 2025 / 2026Q1 Return Embargo**: When reporting any historical forward-return diagnostic from `entry_quality_dataset_risk_off.v3.csv`, compute return statistics **ONLY on the 24 development dates (`2023-01-31` through `2024-12-31`)**! Cross-sectional feature/state counts (without reading `fwd_ret_*`) may be reported across all 39 dates, but **never read or aggregate 2025/2026Q1 forward returns** so the post-2024 period remains unpeeked for M4 validation!
-- **No Absolute Paths**: Never output `/home/...` or `/tmp/...` in any generated Markdown, CSV, or JSON file.
-
----
-
-## 6. Verification Commands
-
-Run locally:
 ```bash
 .venv/bin/python scripts/m2_build_failure_attribution.py
 .venv/bin/python -m unittest discover -s tests -p "test_m2_failure_attribution.py"
 .venv/bin/python -m unittest discover -s tests
 ```
-When all tests pass and the 5 deliverables + `SHA256SUMS` are generated in `docs/m2_v1_failure_attribution_20261015/`, stop and report for Chief Architect review.
+When all tests pass and all M2 deliverables are updated in `docs/m2_v1_failure_attribution_20261015/`, stop and report for Chief Architect review.
