@@ -9,10 +9,11 @@ belong in their evidence / handoff documents, not here.
 Before starting substantive work, read:
 
 1. `docs/product_direction_low_frequency_manual_selection.md` — product north star.
-2. `docs/mvp_design_low_frequency_manual_selection.md` — canonical MVP architecture,
+2. `docs/mvp_design_low_frequency_manual_selection.md` — canonical MVP v1/v2 architecture,
    decision contract, validation model, Build-vs-Borrow policy, and implementation sequence.
-3. `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` — current roadmap and handoff (earlier handoffs archived under `docs/archive/handoffs/`).
-4. `README.md` — runtime commands, configuration, feature/filter semantics, and script reference.
+3. `docs/mvp_v2_completion_and_handoff_20261015.md` — current M0–M5 MVP v2 completion handoff,
+   PR/evidence ledger, and v2 policy/reporting architecture (roadmap in `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md`; earlier handoffs archived under `docs/archive/handoffs/`).
+4. `README.md` — runtime commands, MVP v1/v2 strategy & CLI guide, configuration, and script reference.
 
 If older research documents conflict with the three current direction documents above,
 treat the older document as historical evidence rather than current roadmap guidance.

@@ -1,6 +1,6 @@
 # US AI Stock Scanner — 下一阶段总计划：v1 失败归因、数据正确性与循证 v2 研究
 
-> **版本**：2026-10-14 / next-phase design contract / docs-only
+> **版本**：2026-10-14 / next-phase design contract（**更新状态 [2026-10-15]：本计划 M0–M5 已全部执行完毕**，完整实施台账、PR #73–#81 记录、v2 选股/报告公式与双轨验证结论见 [docs/mvp_v2_completion_and_handoff_20261015.md](mvp_v2_completion_and_handoff_20261015.md)）
 >
 > **用途**：为下一段对话、新接手的工程师、研究人员、审核者和项目负责人提供完整上下文、工作边界、执行顺序、证据位置及停止条件。本文不是生产变更、不是新参数注册表，也**不授权**任何新一轮收益实验、全量数据重提取、Modal 付费作业或自动合并。
 >
