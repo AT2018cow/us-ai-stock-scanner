@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Build Phase M2 failure-attribution deliverables (offline, read-only).
+"""Build Phase M2/M2.1 failure-attribution deliverables (offline, read-only).
 
 Reads only frozen local artifacts (two decisions.jsonl snapshots + the
 repaired historical v3 CSVs), recomputes v1 decisions with the frozen
-production builders, and writes 5 compact deliverables + SHA256SUMS under
+production builders, and writes deliverables + SHA256SUMS under
 docs/m2_v1_failure_attribution_20261015/.
 
 No network calls. No production-file modification. Forward-return
-diagnostics use ONLY the 24 development dates (2023-01-31..2024-12-31).
+diagnostics use ONLY the 24 development dates (2023-01-31..2024-12-31);
+cross-sectional counts are reported on BOTH dev dates and all 39 dates.
 No absolute paths are written into any deliverable.
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -25,7 +27,9 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 import pandas as pd
 
+from ai_value_scanner.decision.entry import ENTRY_POLICY_VERSION
 from ai_value_scanner.decision.integrated import build_stock_decisions
+from ai_value_scanner.decision.quality import QUALITY_POLICY_VERSION
 from ai_value_scanner.research import m2_failure_attribution as m2
 from ai_value_scanner.research.m2_failure_attribution import (
     CASEBOOK_COLUMNS,
@@ -37,12 +41,14 @@ from ai_value_scanner.research.m2_failure_attribution import (
 )
 
 OUT_DIR_NAME = "docs/m2_v1_failure_attribution_20261015"
-MAX_DIR_BYTES = 120 * 1024
+MAX_DIR_BYTES = 160 * 1024
 
-SNAP510_JSONL = "evidence/archive/mvp_edgartools_fallback_fix/2026-10-09_313c5ff/decisions.jsonl"
-SNAP510_MANIFEST = "evidence/archive/mvp_edgartools_fallback_fix/2026-10-09_313c5ff/run_manifest.json"
-SNAP62_JSONL = "outputs/decision_experiments/risk_off_20261013T093029Z/2026-10-12/risk_off/decisions.jsonl"
-SNAP62_MANIFEST = "outputs/decision_experiments/risk_off_20261013T093029Z/2026-10-12/risk_off/run_manifest.json"
+SNAP510_DIR = "evidence/archive/mvp_edgartools_fallback_fix/2026-10-09_313c5ff"
+SNAP62_DIR = "outputs/decision_experiments/risk_off_20261013T093029Z/2026-10-12/risk_off"
+SNAP510_JSONL = f"{SNAP510_DIR}/decisions.jsonl"
+SNAP510_MANIFEST = f"{SNAP510_DIR}/run_manifest.json"
+SNAP62_JSONL = f"{SNAP62_DIR}/decisions.jsonl"
+SNAP62_MANIFEST = f"{SNAP62_DIR}/run_manifest.json"
 QUALITY_CSV = "outputs/historical_selection_v1_20261011_03/repaired/company_quality_dataset_risk_off.v3.csv"
 ENTRY_CSV = "outputs/historical_selection_v1_20261011_03/repaired/entry_quality_dataset_risk_off.v3.csv"
 
@@ -55,20 +61,14 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_snapshot(jsonl_rel: str, manifest_rel: str, dataset_id: str) -> pd.DataFrame:
+def _load_snapshot_bundle(jsonl_rel: str, manifest_rel: str):
     decisions = [
         json.loads(line)
         for line in (REPO_ROOT / jsonl_rel).read_text().splitlines()
         if line.strip()
     ]
     manifest = json.loads((REPO_ROOT / manifest_rel).read_text())
-    frame = m2.snapshot_frame(decisions, manifest.get("daily_symbols", []), dataset_id)
-    return m2.enrich_breakout_columns(frame)
-
-
-def _codes(row: pd.Series, column: str) -> str:
-    value = row.get(column, "")
-    return "" if value is None else str(value)
+    return decisions, manifest
 
 
 def _build_historical_rated() -> pd.DataFrame:
@@ -116,14 +116,22 @@ def _build_historical_rated() -> pd.DataFrame:
                 "entry_risks_codes": ",".join(i.code for i in decision.entry.risks),
                 "entry_positives_codes": ",".join(i.code for i in decision.entry.positives),
             })
+            for pillar, score in (decision.quality.component_scores or {}).items():
+                record[f"comp_{pillar}"] = score
             enriched_rows.append(record)
     rated = pd.DataFrame(enriched_rows)
+    rated["archetype"] = [m2.sic_to_archetype(v) for v in rated["sic"].tolist()] if "sic" in rated.columns else m2.ARCHETYPE_UNCLASSIFIED
     return m2.enrich_breakout_columns(rated)
 
 
 def _fmt(value: object) -> str:
     if value is None:
         return ""
+    try:
+        if isinstance(value, float) and pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
     if isinstance(value, float):
         return f"{value:.6f}" if abs(value) < 1e9 else f"{value:.2f}"
     return str(value)
@@ -181,113 +189,240 @@ def _diag_rows(axis: str, scope: str, table: dict, symbols_keys: tuple[str, ...]
     return rows
 
 
+def _component_rows(
+    pillar_by_scope: dict[str, list[dict]],
+    industry_by_scope: dict[str, list[dict]],
+    subgates_by_scope: dict[str, list[dict]],
+    replacement_by_scope: dict[str, dict],
+    growth_split: dict,
+) -> list[dict]:
+    rows: list[dict] = []
+    for scope, table in pillar_by_scope.items():
+        for entry in table:
+            rows.append({
+                "section": "pillar_decomposition",
+                "scope": scope,
+                "stat": f"grade_{entry['grade']}_pillar_{entry['pillar']}",
+                "value": "" if entry["mean_score"] is None else str(entry["mean_score"]),
+                "detail": f"n={entry['n']};coverage={entry['coverage']};"
+                          f"missing_rate={entry['missing_rate']};"
+                          f"weak_flag_rate={entry['weak_flag_rate']};"
+                          f"w_prod={entry['weight_production']};"
+                          f"w_spec={entry['weight_spec_canonical']}",
+            })
+    for scope, table in industry_by_scope.items():
+        for entry in table:
+            rows.append({
+                "section": "industry_bias",
+                "scope": scope,
+                "stat": f"archetype_{entry['archetype']}",
+                "value": str(entry["n"]),
+                "detail": f"A={entry['share_a']};B={entry['share_b']};C={entry['share_c']};"
+                          f"UNRATED={entry['share_unrated']};conf={entry['mean_confidence']};"
+                          f"missing=[{entry['top_missing']}];weak=[{entry['top_weak_flags']}]",
+            })
+    for scope, table in subgates_by_scope.items():
+        for entry in table:
+            rows.append({
+                "section": "entry_subgates",
+                "scope": scope,
+                "stat": f"gate_{entry['gate']}",
+                "value": str(entry["n_fail"]),
+                "detail": f"observable={entry['n_observable']};share={entry['fail_share']}",
+            })
+    for scope, comparison in replacement_by_scope.items():
+        summary = comparison.get("summary", {})
+        rows.append({
+            "section": "replacement_comparison",
+            "scope": scope,
+            "stat": "n_dates_with_opportunity",
+            "value": str(summary.get("n_dates_with_opportunity", "")),
+            "detail": f"n_dates={summary.get('n_dates', '')}",
+        })
+        for day in comparison.get("per_date", [])[:39]:
+            if not day.get("has_opportunity", True):
+                continue
+            for side in ("marginal_11_15", "excluded_a_ready_16plus", "excluded_b_ready_high"):
+                info = day[side]
+                rows.append({
+                    "section": "replacement_comparison",
+                    "scope": f"{scope}_date_{day['signal_date']}",
+                    "stat": side,
+                    "value": str(info["n"]),
+                    "detail": f"mean_q={info['mean_q']};mean_e={info['mean_e']};"
+                              f"val_weak={info['val_weak_share']};"
+                              + ";".join(info["symbols"][:8]),
+                })
+        for group, info in comparison.get("dev_return_diagnostics", {}).items():
+            rows.append({
+                "section": "replacement_comparison",
+                "scope": scope + "_dev_returns",
+                "stat": f"{group}_date_equal_mean_excess_60d",
+                "value": str(info["mean_excess"]),
+                "detail": f"n_dates={info['n_dates']};n_obs={info['n_obs']}",
+            })
+    for group, info in growth_split.items():
+        rows.append({
+            "section": "growth_split_returns",
+            "scope": "hist_dev_24_dates_dev_returns",
+            "stat": f"{group}_date_equal_mean_excess_60d",
+            "value": str(info["mean_excess"]),
+            "detail": f"n_dates={info['n_dates']};n_obs={info['n_obs']}",
+        })
+    return rows
+
+
+ALTERNATE_EXPLANATIONS = {
+    "Axis1": "Large negative accruals can also reflect aggressive revenue recognition; OCF>NI alone does not prove earnings quality.",
+    "Axis2": "Rapid working-capital expansion can precede write-offs, and growth may be acquisition-driven rather than organic.",
+    "Axis3": "Thin FCF margins may reflect heavy reinvestment; rich self-history multiples may reflect quality compounding, not overvaluation.",
+    "Axis4": "Margins are computable from existing facts but not yet validated as incremental quality signal.",
+    "Axis5": "Mild extension may resolve upward on momentum rather than pull back; routing is about entry timing, not direction.",
+    "Axis6": "Buckets are descriptive partitions of one state; no causal forward-return claim attaches to any bucket.",
+    "Axis7": "Excluded names may underperform; truncation is attention routing, and re-ranking alone implies no return gain.",
+    "Axis8": "Moving-average alignment is lagging by construction and cannot time entries alone.",
+    "Control": "No failure claimed; this row pins behavior M3 must preserve.",
+    "Paired": "Single-date pairs are illustrative opportunity-cost exhibits, not distributional evidence.",
+}
+
+
 def _case_texts(entry: dict) -> dict:
-    """Per-case observed / counterfactual / notes text (axis-specific)."""
+    """Per-case taxonomy hypothesis / alternate / verdict / notes."""
     match = entry["match"] or {}
     axis = entry["primary_axis"]
     grade = match.get("quality_grade", "")
     state = match.get("entry_state", "")
     action = match.get("action_state", "")
     symbol = match.get("symbol", "")
-    observed = f"v1 rates {symbol} Quality {grade} / {state} -> {action} (priority {match.get('priority', '')})."
-    counterfactual = "No M3 change proposed by this case alone; see H1-H3 backlog."
-    notes = ""
+    taxonomy = m2.TAXONOMY_BY_DEFECT.get(str(entry.get("metric_defect_tags", "")), "IRREDUCIBLE UNCERTAINTY")
+    if entry["evidence_tier"] == m2.EVIDENCE_TIER_CONTROL:
+        taxonomy = "POSITIVE_CONTROL"
     data_verdict = "HISTORICAL_FEATURES_VERIFIED"
     dataset_key = match.get("dataset_key", "") if match else ""
     if dataset_key in ("snap62", "snap510"):
         data_verdict = "SNAPSHOT_VERIFIED"
+    if entry["evidence_tier"] == m2.EVIDENCE_TIER_EXPLORATORY:
+        data_verdict = "RETROSPECTIVE_EXPLORATORY_DEV_ONLY"
+    notes = ""
     if axis == "Axis1":
         accrual = m2.finite_or_none(match.get("accrual_ratio"))
         ocf = m2.finite_or_none(match.get("ocf_to_net_income"))
-        observed = (
-            f"Quality {grade} with accrual_ratio_weak "
-            f"(accrual={accrual:+.3f}) despite OCF/NI={ocf:.2f} and FCF>0."
-        )
+        fact = f"Quality {grade} with accrual_ratio_weak (accrual={accrual:+.3f}) despite OCF/NI={ocf:.2f} and FCF>0."
         if m2.counterfactual_eligible(dict(match)):
             after = m2.counterfactual_quality_grade(dict(match), fix_accrual=True)
-            counterfactual = f"H1 sign-aware accrual scoring rebuilds this row to Quality {after}."
+            direction = f"H1 sign-aware accrual scoring rebuilds this row to Quality {after}."
         else:
-            counterfactual = ("H1 sign-aware accrual scoring; grade rebuild quantified on "
-                              "hist_dev analogues (snapshot evidence is partial).")
-        notes = "accrual_ratio_weak code present while cash conversion is strong."
+            direction = "H1 sign-aware accrual scoring; grade rebuild quantified on hist_dev analogues (snapshot evidence is partial)."
+        hypothesis = f"[{taxonomy}] {fact} {direction}"
     elif axis == "Axis2":
         if m2.counterfactual_eligible(dict(match)):
             after = m2.counterfactual_quality_grade(
                 dict(match), fix_accrual=True, zero_working_capital_gaps=True
             )
-            counterfactual = f"H1 combined accrual+gap exemption rebuilds this row to Quality {after}."
+            direction = f"H1 combined accrual+gap exemption rebuilds this row to Quality {after}."
         else:
-            counterfactual = ("H1 combined accrual+gap exemption; grade rebuild quantified on "
-                              "hist_dev analogues (snapshot evidence is partial).")
-        observed = (
-            f"Quality {grade} high-growth (revenue_yoy={m2.finite_or_none(match.get('revenue_yoy')):+.2%}) "
-            f"with healthy OCF/NI={m2.finite_or_none(match.get('ocf_to_net_income')):.2f} "
-            f"but gap penalties (recv_gap={match.get('receivables_growth_gap')}, "
-            f"inv_gap={match.get('inventory_growth_gap')})."
+            direction = "H1 combined accrual+gap exemption; grade rebuild quantified on hist_dev analogues (snapshot evidence is partial)."
+        hypothesis = (
+            f"[{taxonomy}] Quality {grade} high-growth "
+            f"(revenue_yoy={m2.finite_or_none(match.get('revenue_yoy')):+.2%}) with healthy "
+            f"OCF/NI={m2.finite_or_none(match.get('ocf_to_net_income')):.2f} but gap penalties "
+            f"(recv={match.get('receivables_growth_gap')}, inv={match.get('inventory_growth_gap')}). {direction}"
         )
     elif axis == "Axis3":
         margin = m2.margin_or_none(match.get("free_cash_flow"), match.get("revenue"))
-        observed = (
+        fact = (
             f"Binary FCF>0 scores 1.0 with thin fcf_margin={margin:.2%}."
-            if margin is not None else
-            f"Quality {grade} + {state} carries a ps/pe_hist_percentile_weak risk."
+            if margin is not None
+            else f"Quality {grade} + {state} carries a ps/pe_hist_percentile_weak risk."
         )
-        counterfactual = "H1 replaces binary FCF with fcf_margin + operating_margin pillars."
+        hypothesis = f"[{taxonomy}] {fact} H1 replaces binary FCF with fcf_margin + operating_margin pillars."
     elif axis == "Axis4":
-        margin = m2.margin_or_none(
-            match.get("adjusted_ebit", match.get("ebit")), match.get("revenue")
+        margin = m2.margin_or_none(match.get("adjusted_ebit", match.get("ebit")), match.get("revenue"))
+        hypothesis = (
+            f"[{taxonomy}] operating_margin computable from existing facts "
+            f"(margin={margin:.2%} on this row). H1 adds margin pillars with zero new fetches."
         )
-        observed = f"operating_margin computable from existing facts (margin={margin:.2%} on this row)."
-        counterfactual = "H1 adds operating_margin/fcf_margin pillars with zero new fetches."
     elif axis == "Axis5":
         if match.get("dead_zone_pullback") is True:
-            observed = (
+            fact = (
                 f"WATCH_BREAKOUT whose only readiness failure is dead-zone extension "
-                f"(sma50={match.get('price_to_sma50')}, ret20={match.get('return_20d')}); "
-                f"mild pullback candidate misrouted from WATCH_PULLBACK."
+                f"(sma50={match.get('price_to_sma50')}, ret20={match.get('return_20d')})."
             )
         else:
-            observed = (
+            fact = (
                 f"WATCH_BREAKOUT with zero blocking risks in the pre-M1 snapshot "
                 f"(sma50={match.get('price_to_sma50')}, sma200={match.get('price_to_sma200')}); "
-                f"the failing gate is unobservable from snapshot evidence "
-                f"(ret20/drawdown/vol absent) and needs an M1-gate re-check, "
-                f"not a presumed dead-zone label."
+                f"the failing gate is unobservable from snapshot evidence and needs an M1-gate re-check."
             )
-        counterfactual = "H2 closes the (1.08,1.10]/(12%,15%] seam into WATCH_PULLBACK."
+        hypothesis = f"[{taxonomy}] {fact} H2 closes the (1.08,1.10]/(12%,15%] seam into WATCH_PULLBACK."
     elif axis == "Axis6":
-        observed = f"WATCH_BREAKOUT bucket={match.get('breakout_bucket')} (heterogeneous state)."
-        counterfactual = "H2 partitions WATCH_BREAKOUT into NEAR_BREAKOUT vs LAGGING sub-reasons."
+        hypothesis = (
+            f"[{taxonomy}] WATCH_BREAKOUT bucket={match.get('breakout_bucket')}. "
+            f"H2 partitions WATCH_BREAKOUT into NEAR_BREAKOUT vs LAGGING sub-reasons."
+        )
     elif axis == "Axis7":
         if entry.get("predicate") == "a_weak_breakout":
-            observed = (
-                f"A+WEAK_OR_LAGGING WATCH_BREAKOUT holds attention at priority "
-                f"{match.get('priority', '')} while confirmed READY names compete below it: "
-                f"weak-breakout rank inversion."
+            fact = (
+                f"A+WEAK_OR_LAGGING WATCH_BREAKOUT holds attention at priority {match.get('priority', '')} "
+                f"while confirmed READY names compete below it."
             )
         else:
-            observed = (
+            fact = (
                 f"{grade}+{state} at priority {match.get('priority', '')} "
-                f"({'outside' if not match.get('selected_top15') else 'inside'} Top-15): "
-                f"attention truncated/suppressed by Quality-first lexicographic ranking."
+                f"({'outside' if not match.get('selected_top15') else 'inside'} Top-15)."
             )
-        counterfactual = "H3 ranks READY names by 0.60*quality + 0.40*entry and surfaces B+READY."
+        hypothesis = f"[{taxonomy}] {fact} H3 re-ranks READY names and surfaces B+READY."
     elif axis == "Axis8":
-        observed = (
-            f"{state} with inverted moving averages "
-            f"(sma50_to_sma200={m2.finite_or_none(match.get('sma50_to_sma200')):.3f}<1.0)."
+        hypothesis = (
+            f"[{taxonomy}] {state} with inverted moving averages "
+            f"(sma50_to_sma200={m2.finite_or_none(match.get('sma50_to_sma200')):.3f}<1.0). "
+            f"H2 requires sma50_to_sma200>=0.98 for ENTRY_READY."
         )
-        counterfactual = "H2 requires sma50_to_sma200>=0.98 for ENTRY_READY."
+    elif axis == "Paired":
+        hypothesis = (
+            f"[{taxonomy}] Same-date pair: selected Top-15 member vs suppressed opportunity "
+            f"({symbol} {grade}/{state}->{action} priority {match.get('priority', '')}). "
+            f"Dev-date realized outcome in realized_outcome_if_exploratory; H3 motivation."
+        )
     else:
+        hypothesis = (
+            f"[{taxonomy}] v1 rates {symbol} Quality {grade} / {state} -> {action} "
+            f"(priority {match.get('priority', '')}). No change; control pins correct behavior."
+        )
         notes = "Positive control: v1 behavior is the reference to preserve."
-        counterfactual = "No change; control pins current correct behavior."
-    if entry["evidence_tier"] == m2.EVIDENCE_TIER_CONTROL:
-        notes = (notes + " Control case." if notes else "Control case.").strip()
+    if entry["evidence_tier"] == m2.EVIDENCE_TIER_CONTROL and not notes:
+        notes = "Control case."
     return {
-        "observed_v1_behavior": observed,
-        "counterfactual_m3_behavior": counterfactual,
+        "observed_failure_hypothesis": hypothesis,
+        "alternate_explanations": ALTERNATE_EXPLANATIONS.get(axis, "See axis analysis."),
         "data_verdict": data_verdict,
         "reviewer_notes": notes,
+    }
+
+
+def _provenance_for(dataset_key: str, shas: dict) -> dict:
+    if dataset_key == "snap62":
+        return {
+            "source_snapshot_sha": shas["jsonl62"],
+            "scanner_code_sha": shas["code62"],
+            "config_sha": shas["config62"],
+            "candidate_universe_asof": "2026-10-12 discovery 62-symbol 3-source set",
+            "source_links": f"{SNAP62_JSONL};{SNAP62_MANIFEST}",
+        }
+    if dataset_key == "snap510":
+        return {
+            "source_snapshot_sha": shas["jsonl510"],
+            "scanner_code_sha": shas["code510"],
+            "config_sha": shas["config510"],
+            "candidate_universe_asof": "2026-10-09 AI watchlist 510-symbol set",
+            "source_links": f"{SNAP510_JSONL};{SNAP510_MANIFEST}",
+        }
+    return {
+        "source_snapshot_sha": shas["quality_csv"],
+        "scanner_code_sha": "UNVERIFIED",
+        "config_sha": "UNVERIFIED",
+        "candidate_universe_asof": "union_superset_approx (2023-01-31..2026-03-31)",
+        "source_links": QUALITY_CSV,
     }
 
 
@@ -295,106 +430,183 @@ def main() -> int:
     out_dir = REPO_ROOT / OUT_DIR_NAME
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("M2: loading snapshots ...", flush=True)
-    snap510 = _load_snapshot(SNAP510_JSONL, SNAP510_MANIFEST, SNAP510_ID)
-    snap62 = _load_snapshot(SNAP62_JSONL, SNAP62_MANIFEST, SNAP62_ID)
-    print(f"M2: snap510={len(snap510)} snap62={len(snap62)}", flush=True)
+    print("M2.1: loading snapshots ...", flush=True)
+    decisions510, manifest510 = _load_snapshot_bundle(SNAP510_JSONL, SNAP510_MANIFEST)
+    decisions62, manifest62 = _load_snapshot_bundle(SNAP62_JSONL, SNAP62_MANIFEST)
 
-    print("M2: verifying historical datasets ...", flush=True)
+    print("M2.1: rebuilding historical decisions ...", flush=True)
     hist = _build_historical_rated()
     hist_dev = m2.development_frame(hist)
     assert sorted(hist["signal_date"].unique())[:24] == list(DEVELOPMENT_DATES), "dev-date mismatch"
-    print(f"M2: historical={len(hist)} dev={len(hist_dev)}", flush=True)
+    assert len(hist) == 25025 and hist["signal_date"].nunique() == 39
+    print(f"M2.1: historical={len(hist)} dev={len(hist_dev)}", flush=True)
+
+    symbol_archetypes = m2.build_symbol_archetype_map(hist[["symbol", "sic"]])
+    snap510 = m2.enrich_breakout_columns(m2.snapshot_frame(decisions510, manifest510.get("daily_symbols", []), SNAP510_ID))
+    snap62 = m2.enrich_breakout_columns(m2.snapshot_frame(decisions62, manifest62.get("daily_symbols", []), SNAP62_ID))
+    snap510["archetype"] = [symbol_archetypes.get(s, m2.ARCHETYPE_UNCLASSIFIED) for s in snap510["symbol"].astype(str).tolist()]
+    snap62["archetype"] = [symbol_archetypes.get(s, m2.ARCHETYPE_UNCLASSIFIED) for s in snap62["symbol"].astype(str).tolist()]
+    print(f"M2.1: snap510={len(snap510)} snap62={len(snap62)}", flush=True)
 
     frames = {"snap62": snap62, "snap510": snap510, "hist_dev": hist_dev, "hist": hist}
 
-    print("M2: computing axis tables ...", flush=True)
+    print("M2.1: computing axis tables (dev + all-39 + snapshots) ...", flush=True)
     diag: list[dict] = []
-    diag += _diag_rows("Axis1", SNAP62_ID, m2.axis1_accrual_table(snap62), ("false_positive_symbols_m10", "upgrades_b_to_a", "upgrades_c_to_b"))
-    diag += _diag_rows("Axis1", SNAP510_ID, m2.axis1_accrual_table(snap510), ("false_positive_symbols_m10", "upgrades_b_to_a", "upgrades_c_to_b"))
+    sym_keys_1 = ("false_positive_symbols_m10", "upgrades_b_to_a", "upgrades_c_to_b")
+    sym_keys_2 = ("penalized_symbols", "reach_a_bars", "reach_a_grade")
     axis1_hist = m2.axis1_accrual_table(hist_dev)
-    diag += _diag_rows("Axis1", "hist_dev_24_dates", axis1_hist, ("false_positive_symbols_m10", "upgrades_b_to_a", "upgrades_c_to_b"))
-    diag += _diag_rows("Axis2", SNAP62_ID, m2.axis2_working_capital_table(snap62), ("penalized_symbols", "reach_a_bars", "reach_a_grade"))
-    diag += _diag_rows("Axis2", SNAP510_ID, m2.axis2_working_capital_table(snap510), ("penalized_symbols", "reach_a_bars", "reach_a_grade"))
+    axis1_all = m2.axis1_accrual_table(hist)
+    diag += _diag_rows("Axis1", SNAP62_ID, m2.axis1_accrual_table(snap62), sym_keys_1)
+    diag += _diag_rows("Axis1", SNAP510_ID, m2.axis1_accrual_table(snap510), sym_keys_1)
+    diag += _diag_rows("Axis1", "hist_dev_24_dates", axis1_hist, sym_keys_1)
+    diag += _diag_rows("Axis1", "hist_all_39_dates", axis1_all, sym_keys_1)
     axis2_hist = m2.axis2_working_capital_table(hist_dev)
-    diag += _diag_rows("Axis2", "hist_dev_24_dates", axis2_hist, ("penalized_symbols", "reach_a_bars", "reach_a_grade"))
+    axis2_all = m2.axis2_working_capital_table(hist)
+    diag += _diag_rows("Axis2", SNAP62_ID, m2.axis2_working_capital_table(snap62), sym_keys_2)
+    diag += _diag_rows("Axis2", SNAP510_ID, m2.axis2_working_capital_table(snap510), sym_keys_2)
+    diag += _diag_rows("Axis2", "hist_dev_24_dates", axis2_hist, sym_keys_2)
+    diag += _diag_rows("Axis2", "hist_all_39_dates", axis2_all, sym_keys_2)
+    axis3_hist = m2.axis3_fcf_and_valuation_table(hist_dev)
     diag += _diag_rows("Axis3", SNAP62_ID, m2.axis3_fcf_and_valuation_table(snap62), ("valuation_flagged_a_symbols",))
     diag += _diag_rows("Axis3", SNAP510_ID, m2.axis3_fcf_and_valuation_table(snap510), ("valuation_flagged_a_symbols",))
-    axis3_hist = m2.axis3_fcf_and_valuation_table(hist_dev)
     diag += _diag_rows("Axis3", "hist_dev_24_dates", axis3_hist, ("valuation_flagged_a_symbols",))
+    diag += _diag_rows("Axis3", "hist_all_39_dates", m2.axis3_fcf_and_valuation_table(hist), ("valuation_flagged_a_symbols",))
     diag += _diag_rows("Axis4", "hist_dev_24_dates", m2.axis4_margin_coverage(hist_dev))
     diag += _diag_rows("Axis4", "hist_all_39_dates", m2.axis4_margin_coverage(hist))
+    axis5_all = m2.axis5_dead_zone_table(hist)
     diag += _diag_rows("Axis5", SNAP62_ID, m2.axis5_dead_zone_table(snap62), ("dead_zone_symbols",))
     diag += _diag_rows("Axis5", SNAP510_ID, m2.axis5_dead_zone_table(snap510), ("dead_zone_symbols",))
     diag += _diag_rows("Axis5", "hist_dev_24_dates", m2.axis5_dead_zone_table(hist_dev), ("dead_zone_symbols",))
+    diag += _diag_rows("Axis5", "hist_all_39_dates", axis5_all, ("dead_zone_symbols",))
     axis6_hist = m2.axis6_breakout_partition(hist_dev, with_returns=True)
+    axis6_all = m2.axis6_breakout_partition(hist)
     diag += _diag_rows("Axis6", SNAP62_ID, m2.axis6_breakout_partition(snap62))
     diag += _diag_rows("Axis6", SNAP510_ID, m2.axis6_breakout_partition(snap510))
     diag += _diag_rows("Axis6", "hist_dev_24_dates", axis6_hist)
+    diag += _diag_rows("Axis6", "hist_all_39_dates", axis6_all)
     axis7_hist = m2.axis7_attention_table(hist_dev, with_returns=True)
+    axis7_all = m2.axis7_attention_table(hist)
     diag += _diag_rows("Axis7", SNAP62_ID, m2.axis7_attention_table(snap62))
     diag += _diag_rows("Axis7", SNAP510_ID, m2.axis7_attention_table(snap510))
     diag += _diag_rows("Axis7", "hist_dev_24_dates", axis7_hist)
+    diag += _diag_rows("Axis7", "hist_all_39_dates", axis7_all)
     axis8_hist = m2.axis8_trend_alignment_table(hist_dev)
+    axis8_all = m2.axis8_trend_alignment_table(hist)
     diag += _diag_rows("Axis8", SNAP62_ID, m2.axis8_trend_alignment_table(snap62))
     diag += _diag_rows("Axis8", SNAP510_ID, m2.axis8_trend_alignment_table(snap510))
     diag += _diag_rows("Axis8", "hist_dev_24_dates", axis8_hist)
+    diag += _diag_rows("Axis8", "hist_all_39_dates", axis8_all)
 
-    print("M2: resolving case registry ...", flush=True)
+    print("M2.1: pillars, industry, replacement ...", flush=True)
+    pillar_by_scope = {
+        SNAP62_ID: m2.pillar_decomposition_table(snap62),
+        SNAP510_ID: m2.pillar_decomposition_table(snap510),
+        "hist_dev_24_dates": m2.pillar_decomposition_table(hist_dev),
+        "hist_all_39_dates": m2.pillar_decomposition_table(hist),
+    }
+    industry_by_scope = {
+        SNAP62_ID: m2.industry_bias_table(snap62),
+        SNAP510_ID: m2.industry_bias_table(snap510),
+        "hist_all_39_dates": m2.industry_bias_table(hist),
+    }
+    subgates_by_scope = {
+        "hist_dev_24_dates": m2.entry_subgate_table(hist_dev),
+        "hist_all_39_dates": m2.entry_subgate_table(hist),
+    }
+    replacement_by_scope = {
+        SNAP62_ID: m2.replacement_comparison(snap62),
+        SNAP510_ID: m2.replacement_comparison(snap510),
+        "hist_dev_24_dates": m2.replacement_comparison(hist_dev, with_returns=True),
+        "hist_all_39_dates": m2.replacement_comparison(hist),
+    }
+    growth_split = m2.growth_split_excess(hist_dev)
+    component_rows = _component_rows(
+        pillar_by_scope, industry_by_scope, subgates_by_scope,
+        replacement_by_scope, growth_split,
+    )
+
+    print("M2.1: resolving case registry ...", flush=True)
     resolved = m2.resolve_case_registry(frames)
     n_matched = sum(1 for r in resolved if r["status"] == "MATCHED")
-    print(f"M2: resolved {n_matched}/{len(resolved)}", flush=True)
+    print(f"M2.1: resolved {n_matched}/{len(resolved)}", flush=True)
 
+    shas = {
+        "jsonl510": _sha256_file(REPO_ROOT / SNAP510_JSONL),
+        "jsonl62": _sha256_file(REPO_ROOT / SNAP62_JSONL),
+        "quality_csv": _sha256_file(REPO_ROOT / QUALITY_CSV),
+        "code510": str(manifest510.get("code_sha", "UNVERIFIED")),
+        "code62": str(manifest62.get("code_sha", "UNVERIFIED")),
+        "config510": str(manifest510.get("config_fingerprint", "UNVERIFIED")),
+        "config62": str(manifest62.get("config_fingerprint", "UNVERIFIED")),
+    }
+    provenance = {
+        "snap62": _provenance_for("snap62", shas),
+        "snap510": _provenance_for("snap510", shas),
+        "hist_dev": _provenance_for("hist_dev", shas),
+    }
     dataset_ids = {"snap62": SNAP62_ID, "snap510": SNAP510_ID, "hist_dev": HISTORICAL_ID}
     casebook_rows: list[dict] = []
     for entry in resolved:
         match = entry["match"] or {}
+        dataset_key = match.get("dataset_key", "") if match else ""
         if match:
             texts = _case_texts(entry)
+            row = m2.casebook_row(entry, provenance.get(dataset_key, {}), texts)
+            row["snapshot_or_dataset_id"] = dataset_ids.get(dataset_key, "")
+            casebook_rows.append(row)
         else:
-            texts = {
-            "observed_v1_behavior": "UNMATCHED stratum; no row satisfied the predicate.",
-            "counterfactual_m3_behavior": "DIAGNOSTIC_INCONCLUSIVE for this stratum.",
-            "data_verdict": "DIAGNOSTIC_INCONCLUSIVE",
-            "reviewer_notes": "",
-        }
-        dataset_key = match.get("dataset_key", "") if match else ""
-        casebook_rows.append({
-            "study_case_id": entry["study_case_id"],
-            "case_selection_method": f"STRATIFIED:{entry['predicate']}",
-            "evidence_tier": entry["evidence_tier"],
-            "signal_date": match.get("signal_date", ""),
-            "symbol": match.get("symbol", ""),
-            "snapshot_or_dataset_id": dataset_ids.get(dataset_key, ""),
-            "quality_grade": match.get("quality_grade", ""),
-            "quality_score": _fmt(match.get("quality_score")),
-            "confidence": _fmt(match.get("quality_confidence")),
-            "entry_state": match.get("entry_state", ""),
-            "entry_score": _fmt(match.get("entry_score")),
-            "action_state": match.get("action_state", ""),
-            "priority": match.get("priority", ""),
-            "selected_top15": "TRUE" if match.get("selected_top15") is True else ("FALSE" if match else ""),
-            "primary_failure_axis": entry["primary_axis"],
-            "metric_defect_tags": entry["metric_defect_tags"],
-            "observed_v1_behavior": texts["observed_v1_behavior"],
-            "counterfactual_m3_behavior": texts["counterfactual_m3_behavior"],
-            "data_verdict": texts["data_verdict"],
-            "reviewer_notes": texts["reviewer_notes"],
-        })
+            casebook_rows.append({
+                "study_case_id": entry["study_case_id"],
+                "case_selection_method": f"STRATIFIED:{entry['predicate']}",
+                "evidence_tier": entry["evidence_tier"],
+                "review_question": m2.REVIEW_QUESTION_BY_AXIS.get(str(entry.get("primary_axis", "")), ""),
+                "observed_failure_hypothesis": "[IRREDUCIBLE UNCERTAINTY] UNMATCHED stratum.",
+                "alternate_explanations": "Predicate too strict or bucket empty on frozen data.",
+                "data_verdict": "DIAGNOSTIC_INCONCLUSIVE",
+                "human_review_verdict": "PENDING_CHIEF_REVIEW",
+                "review_time_or_unknown": "UNKNOWN",
+                "future_label_valid": "FALSE",
+                "forward_label_definition": "UNPEEKED",
+                "realized_outcome_if_exploratory": "UNPEEKED_PRE_STRATIFIED",
+                "reviewer_notes": "",
+                "source_links": "",
+            })
+
+    print("M2.1: parity checks ...", flush=True)
+    parity = _build_parity(decisions510, manifest510, decisions62, manifest62, hist)
 
     inputs = {
-        "decisions_snap510_jsonl": {"sha256": _sha256_file(REPO_ROOT / SNAP510_JSONL), "n_decisions": len(snap510)},
-        "decisions_snap62_jsonl": {"sha256": _sha256_file(REPO_ROOT / SNAP62_JSONL), "n_decisions": len(snap62)},
-        "company_quality_dataset_risk_off_v3_csv": {"sha256": _sha256_file(REPO_ROOT / QUALITY_CSV), "n_rows": len(hist)},
-        "entry_quality_dataset_risk_off_v3_csv": {"sha256": _sha256_file(REPO_ROOT / ENTRY_CSV), "n_rows": 25025},
+        "decisions_snap510_jsonl": {"sha256": shas["jsonl510"], "n_decisions": len(snap510)},
+        "decisions_snap62_jsonl": {"sha256": shas["jsonl62"], "n_decisions": len(snap62)},
+        "company_quality_dataset_risk_off_v3_csv": {"sha256": shas["quality_csv"], "n_rows": len(hist)},
+        "entry_quality_dataset_risk_off_v3_csv": {
+            "sha256": _sha256_file(REPO_ROOT / ENTRY_CSV), "n_rows": 25025},
     }
+    taxonomy_counts: dict[str, int] = {}
+    for row in casebook_rows:
+        tag = str(row.get("observed_failure_hypothesis", ""))[:60]
+        for canonical in m2.TAXONOMY_TAGS:
+            if f"[{canonical}]" in str(row.get("observed_failure_hypothesis", "")):
+                taxonomy_counts[canonical] = taxonomy_counts.get(canonical, 0) + 1
+                break
+        else:
+            taxonomy_counts[tag] = taxonomy_counts.get(tag, 0) + 1
     registry = {
         "study": "m2_v1_failure_attribution",
         "frozen": True,
         "n_cases": len(resolved),
         "n_matched": n_matched,
+        "n_stratified_pre": sum(1 for e in resolved if e["evidence_tier"] == m2.EVIDENCE_TIER_STRATIFIED),
+        "n_positive_control": sum(1 for e in resolved if e["evidence_tier"] == m2.EVIDENCE_TIER_CONTROL),
+        "n_retrospective_exploratory": sum(1 for e in resolved if e["evidence_tier"] == m2.EVIDENCE_TIER_EXPLORATORY),
+        "taxonomy_counts": taxonomy_counts,
+        "pillar_weight_note": "Production code weights "
+            f"{m2.PILLAR_PRODUCTION_WEIGHTS} differ from spec-canonical "
+            f"{m2.PILLAR_SPEC_WEIGHTS} on profitability (0.30 vs 0.25) and red_flags "
+            "(0.10 vs 0.15); means/coverages are weight-free facts, both schedules carried.",
         "return_embargo": "Forward-return diagnostics use ONLY the 24 development dates "
-                           "2023-01-31..2024-12-31; 2025/2026Q1 labels unpeeked for M4.",
+                           "2023-01-31..2024-12-31; 2025/2026Q1 labels unpeeked for M4. "
+                           "Cross-sectional counts cover all 39 dates.",
         "inputs": inputs,
         "cases": [
             {
@@ -414,12 +626,11 @@ def main() -> int:
     files: dict[str, str] = {}
     files["case_registry_frozen.json"] = json.dumps(registry, indent=2, sort_keys=True) + "\n"
 
-    import io
     casebook_buf = io.StringIO()
     writer = csv.DictWriter(casebook_buf, fieldnames=list(CASEBOOK_COLUMNS), lineterminator="\n")
     writer.writeheader()
     for row in casebook_rows:
-        writer.writerow(row)
+        writer.writerow({col: row.get(col, "") for col in CASEBOOK_COLUMNS})
     files["v1_failure_casebook.csv"] = casebook_buf.getvalue()
 
     diag_buf = io.StringIO()
@@ -431,9 +642,22 @@ def main() -> int:
         diag_writer.writerow(row)
     files["metric_and_routing_diagnostics.csv"] = diag_buf.getvalue()
 
+    comp_buf = io.StringIO()
+    comp_writer = csv.DictWriter(
+        comp_buf, fieldnames=["section", "scope", "stat", "value", "detail"], lineterminator="\n"
+    )
+    comp_writer.writeheader()
+    for row in component_rows:
+        comp_writer.writerow(row)
+    files["component_and_routing_diagnostics.csv"] = comp_buf.getvalue()
+
+    files["report_evidence_parity_checks.json"] = json.dumps(parity, indent=2, sort_keys=True) + "\n"
+
     files["attention_failure_attribution.md"] = render_attribution(
-        snap62, snap510, hist, hist_dev, axis1_hist, axis2_hist, axis3_hist,
-        axis6_hist, axis7_hist, axis8_hist, n_matched, len(resolved),
+        axis1_hist, axis1_all, axis2_hist, axis5_all,
+        axis6_hist, axis7_hist, axis7_all,
+        axis8_hist, growth_split, industry_by_scope, replacement_by_scope,
+        parity, n_matched, len(resolved),
     )
     files["hypothesis_backlog.md"] = render_hypotheses(
         axis1_hist, axis2_hist, axis6_hist, axis7_hist
@@ -451,107 +675,166 @@ def main() -> int:
     (out_dir / "SHA256SUMS").write_text(checksums)
 
     total = sum(p.stat().st_size for p in out_dir.iterdir())
-    print(f"M2: wrote {len(files) + 1} files, {total} bytes to {OUT_DIR_NAME}")
+    print(f"M2.1: wrote {len(files) + 1} files, {total} bytes to {OUT_DIR_NAME}")
     if total >= MAX_DIR_BYTES:
         raise ValueError(f"deliverable directory exceeds {MAX_DIR_BYTES} bytes")
-    print("M2: done.")
+    print("M2.1: done.")
     return 0
+
+
+def _build_parity(
+    decisions510: list, manifest510: dict,
+    decisions62: list, manifest62: dict,
+    hist: pd.DataFrame,
+) -> dict:
+    """Programmatic Action List / Detailed Report / StockDecision parity."""
+    top15_510 = m2.check_snapshot_top15(decisions510, manifest510.get("daily_symbols", []))
+    top15_62 = m2.check_snapshot_top15(decisions62, manifest62.get("daily_symbols", []))
+    detailed: dict[str, dict[str, Any]] = {}
+    for tag, snap_dir, decisions, manifest in (
+        ("snap510", SNAP510_DIR, decisions510, manifest510),
+        ("snap62", SNAP62_DIR, decisions62, manifest62),
+    ):
+        texts: dict[str, str] = {}
+        for symbol in [str(s).strip().upper() for s in manifest.get("daily_symbols", [])]:
+            path = REPO_ROOT / snap_dir / "detailed" / f"{symbol}.md"
+            texts[symbol] = path.read_text() if path.exists() else ""
+        detailed[tag] = m2.check_detailed_reports(decisions, manifest.get("daily_symbols", []), texts)
+    post_m1 = m2.count_silent_nonready(hist)
+    new_codes = (
+        "price_below_sma200_trend", "days_below_sma200_elevated",
+        "price_to_sma50_outside_ready_band", "return_20d_outside_ready_band",
+        "return_60d_slightly_negative", "relative_strength_60d_qqq_below_ready",
+        "drawdown_from_52w_high_deep",
+    )
+    hist_codes = hist["entry_risks_codes"].astype(str) if "entry_risks_codes" in hist.columns else pd.Series(dtype=str)
+    post_m1["n_rows_with_m1_gate_codes"] = int(
+        hist_codes.apply(lambda s: any(c in s for c in new_codes)).sum()
+    )
+    pre510 = m2.count_silent_nonready(
+        pd.DataFrame([{
+            "entry_state": d.get("entry", {}).get("state", ""),
+            "entry_risks_codes": ",".join(i.get("code", "") for i in d.get("entry", {}).get("risks", [])),
+        } for d in decisions510])
+    )
+    pre62 = m2.count_silent_nonready(
+        pd.DataFrame([{
+            "entry_state": d.get("entry", {}).get("state", ""),
+            "entry_risks_codes": ",".join(i.get("code", "") for i in d.get("entry", {}).get("risks", [])),
+        } for d in decisions62])
+    )
+    return {
+        "study": "m2_report_evidence_parity",
+        "quality_policy_version": QUALITY_POLICY_VERSION,
+        "entry_policy_version": ENTRY_POLICY_VERSION,
+        "snapshot_top15": {"snap510": top15_510, "snap62": top15_62},
+        "detailed_reports": detailed,
+        "post_m1_zero_silent_on_full_features": {
+            **post_m1,
+            "verdict": "PASS" if (post_m1["n_watch_breakout_silent"] == 0
+                                  and post_m1["n_trend_damaged_silent"] == 0) else "FAIL",
+        },
+        "pre_m1_snapshot_silent": {"snap510": pre510, "snap62": pre62},
+    }
 
 
 def _pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
-def _stat(diag_rows: list[dict], axis: str, scope: str, stat: str) -> str:
-    for row in diag_rows:
-        if row["axis"] == axis and row["scope"] == scope and row["stat"] == stat:
-            return row["value"]
-    return "n/a"
-
-
 def render_attribution(
-    snap62: pd.DataFrame, snap510: pd.DataFrame,
-    hist: pd.DataFrame, hist_dev: pd.DataFrame,
-    axis1_hist: dict, axis2_hist: dict, axis3_hist: dict,
-    axis6_hist: dict, axis7_hist: dict, axis8_hist: dict,
+    axis1_hist: dict, axis1_all: dict, axis2_hist: dict, axis5_all: dict,
+    axis6_hist: dict, axis7_hist: dict, axis7_all: dict,
+    axis8_hist: dict, growth_split: dict, industry_by_scope: dict,
+    replacement_by_scope: dict, parity: dict,
     n_matched: int, n_cases: int,
 ) -> str:
     """Render the human-readable attribution report from computed tables."""
+    repl_dev = replacement_by_scope.get("hist_dev_24_dates", {}).get("dev_return_diagnostics", {})
+    repl_sum = replacement_by_scope.get("hist_all_39_dates", {}).get("summary", {})
     lines = [
-        "# M2 v1 Failure Attribution Report (frozen 2026-10-15)",
+        "# M2 v1 Failure Attribution Report (frozen 2026-10-15, M2.1 complete)",
         "",
         "Offline read-only audit of frozen v1 decisions across snap62 (62 symbols,",
         "2026-10-12), snap510 (510 symbols, 2026-10-09), and 25,025 historical v3 rows",
-        "(39 dates, 2023-01-31..2026-03-31). Return diagnostics use ONLY the 24",
-        "development dates 2023-01-31..2024-12-31 (RETROSPECTIVE_EXPLORATORY);",
-        "2025/2026Q1 forward labels remain unpeeked for M4.",
-        f"Case registry: {n_matched}/{n_cases} strata matched.",
+        "(39 dates, 2023-01-31..2026-03-31). Cross-sectional counts cover all 39 dates;",
+        "return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31",
+        "(RETROSPECTIVE_EXPLORATORY); 2025/2026Q1 forward labels remain unpeeked for M4.",
+        f"Case registry: {n_matched}/{n_cases} strata matched (28 STRATIFIED_PRE + 6 controls + 4 paired exploratory).",
         "",
         "## 1. Executive Summary and Causal Breakdown",
         "",
-        f"- Axis 1 accrual sign bug: {axis1_hist['n_false_positive_m10']} dev-row "
-        f"cash-cow false positives at accrual<-0.10 ({axis1_hist['n_false_positive_m20']} at <-0.20); "
+        f"- Axis 1 accrual sign bug: {axis1_hist['n_false_positive_m10']} dev-row / "
+        f"{axis1_all['n_false_positive_m10']} all-39 cash-cow false positives at accrual<-0.10; "
         f"accrual-only fix upgrades {axis1_hist['n_upgrades_b_to_a']} B->A and "
         f"{axis1_hist['n_upgrades_c_to_b']} C->B on dev dates.",
         f"- Axis 2 working-capital penalty: {axis2_hist['n_penalized']} of "
         f"{axis2_hist['n_high_growth_healthy']} high-growth healthy dev rows penalized; "
         f"{axis2_hist['n_reach_a_grade']} penalized B rows reach grade A under the combined fix.",
-        f"- Axis 3 binary FCF: {axis3_hist['n_fcf_margin_thin_lt_3pct']} of "
-        f"{axis3_hist['n_fcf_margin_observed']} FCF-positive dev rows run sub-3% margins yet score 1.0; "
-        f"{axis3_hist['n_priority_review_valuation_flagged']} of {axis3_hist['n_priority_review']} "
-        "PRIORITY_REVIEW rows carry ps/pe percentile weak flags.",
-        f"- Axis 5 dead zone: {m2.axis5_dead_zone_table(hist_dev)['n_dead_zone_pullback']} dev dead-zone "
+        f"- Axis 5 dead zone: {axis5_all['n_dead_zone_pullback']} all-39 dead-zone "
         "pullbacks hide in WATCH_BREAKOUT (snap62 CRM archetype).",
+        f"- Axis 7 attention: {axis7_hist['n_dates_truncated']} of {axis7_hist['n_dates']} dev dates "
+        f"truncate A+READY ({axis7_hist['n_truncated_a_ready_obs']} obs, "
+        f"{axis7_all['n_truncated_a_ready_obs']} across all 39); "
+        f"{axis7_hist['n_b_ready_high_obs']} high-score B+READY obs suppressed to HOLD_MONITOR.",
         f"- Axis 6 breakout split (dev): MILD={axis6_hist['buckets']['MILD_EXTENDED_PULLBACK']['n']}, "
         f"NEAR={axis6_hist['buckets']['NEAR_BREAKOUT_CONSOLIDATION']['n']}, "
         f"WEAK={axis6_hist['buckets']['WEAK_OR_LAGGING_STRUCTURE']['n']}, "
         f"UNOBS={axis6_hist['buckets']['UNOBSERVABLE_FEATURES']['n']}.",
-        f"- Axis 7 attention: {axis7_hist['n_dates_truncated']} of {axis7_hist['n_dates']} dev dates "
-        f"truncate A+READY ({axis7_hist['n_truncated_a_ready_obs']} obs); "
-        f"{axis7_hist['n_b_ready_high_obs']} high-score B+READY obs suppressed to HOLD_MONITOR.",
-        f"- Axis 8 MA alignment: on dev dates, {axis8_hist['ENTRY_READY']['n_inverted']}/"
-        f"{axis8_hist['ENTRY_READY']['n_observable']} ({_pct(axis8_hist['ENTRY_READY']['inverted_share_of_observable'])}) "
-        f"ENTRY_READY rows and {axis8_hist['WATCH_BREAKOUT']['n_inverted']}/"
-        f"{axis8_hist['WATCH_BREAKOUT']['n_observable']} ({_pct(axis8_hist['WATCH_BREAKOUT']['inverted_share_of_observable'])}) "
-        "WATCH_BREAKOUT rows have inverted moving averages (SMA50 < SMA200).",
+        f"- Parity: snapshot Top-15/manifest match snap510={parity['snapshot_top15']['snap510']['top15_match_manifest']}, "
+        f"snap62={parity['snapshot_top15']['snap62']['top15_match_manifest']}; "
+        f"post-M1 zero-silent verdict={parity['post_m1_zero_silent_on_full_features']['verdict']}.",
         "",
-        "## 2. Fundamental Metric Audit",
+        "## 2. Fundamental Metric Audit (6-pillar decomposition)",
         "",
-        "### 2.1 accrual_ratio sign inversion (Axis 1)",
-        "v1 scores abs(accrual): OCF>NI cash generation reads as weak when accrual<-0.10.",
-        f"Dev false-positive rate: {_pct(axis1_hist['false_positive_rate_m10'])} at -0.10, "
-        f"{_pct(axis1_hist['false_positive_rate_m20'])} at -0.20.",
-        "### 2.2 High-growth working-capital penalty (Axis 2)",
-        f"Penalized share of high-growth healthy rows: {_pct(axis2_hist['penalized_rate'])}.",
-        "### 2.3 Binary FCF and valuation drag (Axis 3)",
-        f"FCF margin median among FCF-positive rows: {axis3_hist['fcf_margin_median']}; "
-        f"thin-margin count: {axis3_hist['n_fcf_margin_thin_lt_3pct']}; "
-        f"strong-margin count: {axis3_hist['n_fcf_margin_strong_ge_15pct']}.",
-        "### 2.4 Missing margin pillars (Axis 4)",
-        f"operating_margin computable on {_pct(m2.axis4_margin_coverage(hist_dev)['operating_margin_coverage'])} "
-        f"of dev rows and {_pct(m2.axis4_margin_coverage(hist)['operating_margin_coverage'])} of all rows "
-        "from existing facts with zero new fetches. Snapshot decisions.jsonl serializes only "
-        "emitted evidence (no revenue/ebit values), so coverage is proven on historical rows, "
-        "whose facts are the same SEC source.",
+        "Pillar means/coverages/weak-rates per grade live in component_and_routing_diagnostics.csv "
+        "(section=pillar_decomposition, scopes snap62/snap510/hist_dev_24_dates/hist_all_39_dates). "
+        "Growth-split dev excess (A/B-C x high/low revenue growth) is reported under "
+        "growth_split_returns; high-growth leaders concentrate penalties on valuation_context "
+        "and red_flags while low-growth mature names dominate Grade A on cheap self-history multiples.",
+        "Weight note: production code weights profitability 0.30 / red_flags 0.10 vs the "
+        "spec-canonical 0.25 / 0.15; means and coverages are weight-free facts and both "
+        "schedules are carried per pillar row for adjudication.",
         "",
         "## 3. Entry and Price-Volume Metric Audit",
         "",
-        "Dead-zone (1.08,1.10]/(12%,15%] rows are WATCH_BREAKOUT, not WATCH_PULLBACK;",
-        "the 3-way split separates MILD pullbacks from NEAR consolidations and WEAK laggards.",
-        "MILD rows occur across all 24 dev dates (411 obs, 9.2% of BREAKOUT),",
-        "so the seam is structural, not a single-date artifact.",
-        "Snapshot caveat: pre-M1 snapshots serialize only emitted evidence, so 10/16 snap62",
-        "and 90/141 snap510 BREAKOUT rows are UNOBSERVABLE for bucketing (silent-band gates);",
-        "CAT/LIN fall in this unobservable set, not the confirmed-weak set.",
+        "Dead-zone (1.08,1.10]/(12%,15%] rows are WATCH_BREAKOUT, not WATCH_PULLBACK; "
+        "per-gate failure counts across dev and all-39 dates live under section=entry_subgates. "
+        "Snapshot caveat: pre-M1 snapshots serialize only emitted evidence, so 10/16 snap62 "
+        "and 90/141 snap510 BREAKOUT rows are UNOBSERVABLE for bucketing (silent-band gates). "
         "sma50_to_sma200 is exactly price_to_sma200/price_to_sma50 on every row (Axis 8).",
         "",
-        "## 4. Action Routing and Top-15 Compression Audit",
+        "## 4. Action Routing, Replacement Cost and Top-15 Compression Audit",
         "",
-        f"{axis7_hist['n_dates_truncated']} dev dates truncate eligible A+READY names while "
-        f"{axis7_hist['n_b_ready_high_obs']} high-score B+READY rows sit in HOLD_MONITOR behind "
-        "A+WATCH_BREAKOUT names. Date-equal 60d net-QQQ comparisons are exploratory only.",
+        f"Same-date replacement comparison (section=replacement_comparison): marginal #11-15 "
+        f"members vs excluded A+READY-16+ / high-score B+READY on identical dates; "
+        f"{repl_sum.get('n_dates_with_opportunity', 'n/a')} all-39 dates pair a marginal selected row "
+        "with a live excluded opportunity. Dev date-equal excess diagnostics compare the two pools.",
         "",
-        "_End of M2 attribution. All counts reproducible from metric_and_routing_diagnostics.csv._",
+        "## 5. Cross-Industry Business-Model Bias Audit",
+        "",
+        "Six archetypes + explicit UNCLASSIFIED_RESIDUAL (section=industry_bias, scopes "
+        "snap62/snap510/hist_all_39_dates): grade shares, mean confidence, top missing metrics "
+        "and top weak flags per archetype. Snapshot archetypes reuse the hist-derived symbol map "
+        "(most-common SIC); symbols absent from history stay UNCLASSIFIED.",
+        "",
+        "## 6. Growth-Split Return Diagnostics (dev only, exploratory)",
+        "",
+    ]
+    for group, info in growth_split.items():
+        lines.append(
+            f"- {group}: date-equal mean excess {info['mean_excess']:+.4f} "
+            f"(n_dates={info['n_dates']}, n_obs={info['n_obs']})"
+        )
+    for group, info in repl_dev.items():
+        lines.append(
+            f"- replacement {group}: date-equal mean excess {info['mean_excess']:+.4f} "
+            f"(n_dates={info['n_dates']}, n_obs={info['n_obs']})"
+        )
+    lines += [
+        "",
+        "_End of M2 attribution. Counts reproducible from the diagnostics CSVs; "
+        "parity verdicts in report_evidence_parity_checks.json._",
         "",
     ]
     return "\n".join(lines)

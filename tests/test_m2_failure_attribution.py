@@ -309,9 +309,8 @@ class TestCaseRegistry(unittest.TestCase):
         first = m2.resolve_case_registry(frames)
         second = m2.resolve_case_registry(frames)
         self.assertEqual(first, second)
-        self.assertTrue(30 <= len(first) <= 36)
+        self.assertTrue(30 <= len(first) <= 42)
         matched = [c for c in first if c["status"] == "MATCHED"]
-        keys = [(c["signal_date"] if False else 0) for c in matched]
         seen = set()
         for entry in matched:
             key = (entry["match"]["signal_date"], entry["match"]["symbol"])
@@ -319,9 +318,14 @@ class TestCaseRegistry(unittest.TestCase):
             seen.add(key)
 
     def test_casebook_schema_columns(self) -> None:
-        self.assertEqual(len(m2.CASEBOOK_COLUMNS), 20)
-        self.assertIn("selected_top15", m2.CASEBOOK_COLUMNS)
-        self.assertIn("counterfactual_m3_behavior", m2.CASEBOOK_COLUMNS)
+        self.assertEqual(len(m2.CASEBOOK_COLUMNS), 36)
+        self.assertEqual(m2.CASEBOOK_COLUMNS[0], "study_case_id")
+        self.assertEqual(m2.CASEBOOK_COLUMNS[-1], "source_links")
+        for col in ("selected_top5", "excluded_reason", "review_question",
+                    "observed_failure_hypothesis", "alternate_explanations",
+                    "human_review_verdict", "future_label_valid",
+                    "forward_label_definition", "realized_outcome_if_exploratory"):
+            self.assertIn(col, m2.CASEBOOK_COLUMNS)
 
 
 class TestGuards(unittest.TestCase):
@@ -352,5 +356,301 @@ class TestGuards(unittest.TestCase):
         self.assertFalse(m2.counterfactual_eligible(sparse))
 
 
+    def test_counterfactual_eligibility_gate(self) -> None:
+        self.assertTrue(m2.counterfactual_eligible(_rated_row()))
+        sparse = {"accrual_ratio": -0.3, "ocf_to_net_income": 1.5}
+        self.assertFalse(m2.counterfactual_eligible(sparse))
+
+
+def _comp_row(**overrides) -> dict:
+    base = _rated_row()
+    base.update({
+        "comp_profitability_cash": 0.80,
+        "comp_growth_stability": 0.60,
+        "comp_balance_sheet": 0.90,
+        "comp_dilution": 1.00,
+        "comp_valuation_context": 0.40,
+        "comp_operating_red_flags": 0.70,
+        "quality_missing_codes": "",
+    })
+    base.update(overrides)
+    return base
+
+
+class TestPillarDecomposition(unittest.TestCase):
+    def test_means_coverages_and_weights(self) -> None:
+        frame = pd.DataFrame([
+            _comp_row(symbol="A1", quality_grade="A",
+                      quality_risks_codes="ps_hist_percentile_weak"),
+            _comp_row(symbol="A2", quality_grade="A", quality_risks_codes="",
+                      comp_valuation_context=0.80),
+            _comp_row(symbol="B1", quality_grade="B"),
+        ])
+        table = m2.pillar_decomposition_table(frame)
+        by_key = {(r["grade"], r["pillar"]): r for r in table}
+        val_a = by_key[("A", "valuation_context")]
+        self.assertAlmostEqual(val_a["mean_score"], 0.60)
+        self.assertAlmostEqual(val_a["coverage"], 1.0)
+        self.assertAlmostEqual(val_a["weak_flag_rate"], 0.5)
+        profit_a = by_key[("A", "profitability_and_cash_conversion")]
+        self.assertEqual(profit_a["weight_production"], 0.30)
+        self.assertEqual(profit_a["weight_spec_canonical"], 0.25)
+        # spec display names cover all six pillars
+        self.assertEqual(
+            {r["pillar"] for r in table if r["grade"] == "A"},
+            {"profitability_and_cash_conversion", "growth_and_stability",
+             "balance_sheet_resilience", "dilution_and_capital_discipline",
+             "valuation_context", "red_flags"},
+        )
+
+    def test_growth_split_dev_only(self) -> None:
+        rows = [
+            _rated_row(symbol="AH", signal_date="2023-01-31", quality_grade="A",
+                       revenue_yoy=0.40, fwd_ret_60=0.10, qqq_return_60=0.02),
+            _rated_row(symbol="AL", signal_date="2023-01-31", quality_grade="A",
+                       revenue_yoy=0.05, fwd_ret_60=0.04, qqq_return_60=0.02),
+            _rated_row(symbol="BH", signal_date="2025-06-30", quality_grade="B",
+                       revenue_yoy=0.50, fwd_ret_60=9.0, qqq_return_60=-9.0),
+        ]
+        out = m2.growth_split_excess(pd.DataFrame(rows))
+        self.assertIn("A_HIGH_GROWTH", out)
+        self.assertIn("A_LOW_GROWTH", out)
+        self.assertNotIn("BC_HIGH_GROWTH", out)  # embargoed 2025 row excluded
+        self.assertAlmostEqual(out["A_HIGH_GROWTH"]["mean_excess"], 0.08)
+
+
+class TestIndustryArchetypes(unittest.TestCase):
+    def test_sic_mapping_and_residual(self) -> None:
+        self.assertEqual(m2.sic_to_archetype(7372), m2.ARCHETYPE_SOFTWARE)
+        self.assertEqual(m2.sic_to_archetype(3674), m2.ARCHETYPE_SEMI)
+        self.assertEqual(m2.sic_to_archetype(3721), m2.ARCHETYPE_INDUSTRIAL)
+        self.assertEqual(m2.sic_to_archetype(4911), m2.ARCHETYPE_HEAVY)
+        self.assertEqual(m2.sic_to_archetype(1311), m2.ARCHETYPE_CYCLICAL)
+        self.assertEqual(m2.sic_to_archetype(6199), m2.ARCHETYPE_FINANCIAL)
+        self.assertEqual(m2.sic_to_archetype(6798), m2.ARCHETYPE_FINANCIAL)
+        self.assertEqual(m2.sic_to_archetype(2836), m2.ARCHETYPE_UNCLASSIFIED)
+        self.assertEqual(m2.sic_to_archetype(None), m2.ARCHETYPE_UNCLASSIFIED)
+        self.assertEqual(m2.sic_to_archetype(5211), m2.ARCHETYPE_UNCLASSIFIED)
+
+    def test_bias_table_shares(self) -> None:
+        frame = pd.DataFrame([
+            _rated_row(symbol="S1", sic=7372, quality_grade="A",
+                       quality_risks_codes="", quality_missing_codes=""),
+            _rated_row(symbol="S2", sic=7372, quality_grade="C",
+                       quality_risks_codes="accrual_ratio_weak",
+                       quality_missing_codes="pe_hist_percentile_missing"),
+            _rated_row(symbol="F1", sic=6199, quality_grade="B",
+                       quality_risks_codes="", quality_missing_codes=""),
+        ])
+        table = m2.industry_bias_table(frame)
+        by_arch = {r["archetype"]: r for r in table}
+        soft = by_arch[m2.ARCHETYPE_SOFTWARE]
+        self.assertEqual(soft["n"], 2)
+        self.assertAlmostEqual(soft["share_a"] + soft["share_b"] + soft["share_c"] + soft["share_unrated"], 1.0)
+        self.assertIn("accrual_ratio_weak", soft["top_weak_flags"])
+        self.assertIn("pe_hist_percentile_missing", soft["top_missing"])
+
+    def test_symbol_map_majority_sic(self) -> None:
+        frame = pd.DataFrame([
+            {"symbol": "X", "sic": 7372},
+            {"symbol": "X", "sic": 7372},
+            {"symbol": "X", "sic": 4911},
+        ])
+        self.assertEqual(
+            m2.build_symbol_archetype_map(frame)["X"], m2.ARCHETYPE_SOFTWARE
+        )
+
+
+class TestReplacementComparison(unittest.TestCase):
+    def _frame(self) -> pd.DataFrame:
+        rows = []
+        for i in range(15):
+            rows.append(_rated_row(
+                symbol=f"M{i:02d}", signal_date="2023-01-31", quality_grade="A",
+                entry_state="ENTRY_READY", action_state="PRIORITY_REVIEW",
+                priority=i + 1, selected_top15=True,
+                quality_score=0.80, entry_score=0.90,
+                fwd_ret_60=0.05, qqq_return_60=0.02,
+            ))
+        rows.append(_rated_row(
+            symbol="EXCA", signal_date="2023-01-31", quality_grade="A",
+            entry_state="ENTRY_READY", action_state="PRIORITY_REVIEW",
+            priority=16, selected_top15=False,
+            quality_score=0.78, entry_score=0.88,
+            fwd_ret_60=0.09, qqq_return_60=0.02,
+        ))
+        rows.append(_rated_row(
+            symbol="EXCB", signal_date="2023-01-31", quality_grade="B",
+            entry_state="ENTRY_READY", action_state="HOLD_MONITOR",
+            priority=40, selected_top15=False,
+            quality_score=0.70, entry_score=0.90,
+            fwd_ret_60=0.01, qqq_return_60=0.02,
+        ))
+        rows.append(_rated_row(
+            symbol="EMB", signal_date="2025-06-30", quality_grade="A",
+            entry_state="ENTRY_READY", action_state="PRIORITY_REVIEW",
+            priority=16, selected_top15=False,
+            quality_score=0.78, entry_score=0.88,
+            fwd_ret_60=9.0, qqq_return_60=-9.0,
+        ))
+        return pd.DataFrame(rows)
+
+    def test_opportunity_pairing_and_embargo(self) -> None:
+        frame = self._frame()
+        out = m2.replacement_comparison(frame, with_returns=True)
+        self.assertEqual(out["summary"]["n_dates_with_opportunity"], 1)
+        day = [d for d in out["per_date"] if d["signal_date"] == "2023-01-31"][0]
+        self.assertEqual(day["marginal_11_15"]["n"], 5)
+        self.assertEqual(day["excluded_a_ready_16plus"]["n"], 1)
+        self.assertEqual(day["excluded_b_ready_high"]["n"], 1)
+        diag = out["dev_return_diagnostics"]
+        # embargoed 2025 row must not leak into either pool
+        self.assertAlmostEqual(diag["MARGINAL_11_15"]["mean_excess"], 0.03)
+        self.assertAlmostEqual(diag["EXCLUDED_OPPORTUNITY"]["mean_excess"], 0.03)
+        self.assertEqual(diag["EXCLUDED_OPPORTUNITY"]["n_obs"], 2)
+
+
+class TestEntrySubgates(unittest.TestCase):
+    def test_nan_is_unobservable_not_fail(self) -> None:
+        frame = pd.DataFrame([
+            _rated_row(symbol="A", price_to_sma200=0.90),
+            _rated_row(symbol="B", price_to_sma200=None),
+        ])
+        table = {r["gate"]: r for r in m2.entry_subgate_table(frame)}
+        sma = table["sma200_below_1"]
+        self.assertEqual(sma["n_observable"], 1)
+        self.assertEqual(sma["n_fail"], 1)
+        self.assertAlmostEqual(sma["fail_share"], 1.0)
+
+
+class TestParityChecks(unittest.TestCase):
+    def _decisions(self) -> list:
+        return [
+            {"symbol": "AAA", "priority": 1, "action_state": "PRIORITY_REVIEW",
+             "quality": {"grade": "A"}, "entry": {"state": "ENTRY_READY", "risks": []}},
+            {"symbol": "BBB", "priority": 2, "action_state": "PRIORITY_REVIEW",
+             "quality": {"grade": "A"}, "entry": {"state": "ENTRY_READY", "risks": []}},
+        ]
+
+    def test_top15_manifest_check(self) -> None:
+        out = m2.check_snapshot_top15(self._decisions(), ["AAA", "BBB"])
+        self.assertTrue(out["top15_match_manifest"])
+        self.assertTrue(out["all_top15_priority_review"])
+        bad = m2.check_snapshot_top15(self._decisions(), ["BBB", "AAA"])
+        self.assertFalse(bad["top15_match_manifest"])
+
+    def test_detailed_report_check(self) -> None:
+        out = m2.check_detailed_reports(
+            self._decisions(), ["AAA", "BBB"],
+            {"AAA": "# AAA\nPRIORITY_REVIEW A", "BBB": "# BBB\nPRIORITY_REVIEW A"},
+        )
+        self.assertTrue(out["consistent"])
+        missing = m2.check_detailed_reports(self._decisions(), ["AAA", "BBB"], {"AAA": "AAA PRIORITY_REVIEW A"})
+        self.assertFalse(missing["consistent"])
+        self.assertEqual(missing["missing_files"], ["BBB"])
+
+    def test_silent_counts(self) -> None:
+        frame = pd.DataFrame([
+            {"entry_state": "WATCH_BREAKOUT", "entry_risks_codes": ""},
+            {"entry_state": "WATCH_BREAKOUT", "entry_risks_codes": "return_20d_outside_ready_band"},
+            {"entry_state": "TREND_DAMAGED", "entry_risks_codes": ""},
+        ])
+        out = m2.count_silent_nonready(frame)
+        self.assertEqual(out["n_watch_breakout_silent"], 1)
+        self.assertEqual(out["n_trend_damaged_silent"], 1)
+
+
+class TestCasebook36AndTaxonomy(unittest.TestCase):
+    def test_row_builder_schema_and_unpeeked(self) -> None:
+        entry = {
+            "study_case_id": "M2-A1-X", "primary_axis": "Axis1",
+            "predicate": "accrual_cash_cow_b", "evidence_tier": m2.EVIDENCE_TIER_STRATIFIED,
+            "metric_defect_tags": "accrual_sign_inversion", "match": None,
+        }
+        prov = {"source_snapshot_sha": "abc", "scanner_code_sha": "def",
+                "config_sha": "ghi", "candidate_universe_asof": "u",
+                "source_links": "some/relative.jsonl"}
+        texts = {"observed_failure_hypothesis": "[ACCOUNTING SEMANTIC GAP] x",
+                 "alternate_explanations": "alt", "data_verdict": "v",
+                 "reviewer_notes": "n"}
+        row = m2.casebook_row(entry, prov, texts)
+        self.assertEqual(list(row.keys()), list(m2.CASEBOOK_COLUMNS))
+        self.assertEqual(row["realized_outcome_if_exploratory"], "UNPEEKED_PRE_STRATIFIED")
+        self.assertEqual(row["future_label_valid"], "FALSE")
+        for tag in m2.TAXONOMY_TAGS:
+            self.assertIn(tag, m2.TAXONOMY_TAGS)
+        self.assertIn("[ACCOUNTING SEMANTIC GAP]", row["observed_failure_hypothesis"])
+
+    def test_retro_realized_dev_only(self) -> None:
+        entry = {
+            "study_case_id": "M2-R-X", "primary_axis": "Paired",
+            "predicate": "retro_marginal_selected",
+            "evidence_tier": m2.EVIDENCE_TIER_EXPLORATORY,
+            "metric_defect_tags": "top15_opportunity_cost",
+            "match": _rated_row(signal_date="2023-01-31", fwd_ret_60=0.10, qqq_return_60=0.02),
+        }
+        prov = {"source_snapshot_sha": "abc", "scanner_code_sha": "UNVERIFIED",
+                "config_sha": "UNVERIFIED", "candidate_universe_asof": "u", "source_links": "q.csv"}
+        texts = {"observed_failure_hypothesis": "[RANK/CAP STRUCTURAL GAP] pair",
+                 "alternate_explanations": "alt", "data_verdict": "RETROSPECTIVE_EXPLORATORY_DEV_ONLY",
+                 "reviewer_notes": ""}
+        row = m2.casebook_row(entry, prov, texts)
+        self.assertTrue(row["case_selection_method"].startswith("PAIRED:"))
+        self.assertEqual(row["future_label_valid"], "TRUE")
+        self.assertIn("0.08", row["realized_outcome_if_exploratory"])
+        # embargo: non-dev dates never realize
+        entry["match"] = _rated_row(signal_date="2025-06-30", fwd_ret_60=9.0, qqq_return_60=-9.0)
+        row2 = m2.casebook_row(entry, prov, texts)
+        self.assertEqual(row2["future_label_valid"], "FALSE")
+        self.assertEqual(row2["realized_outcome_if_exploratory"], "UNPEEKED_PRE_STRATIFIED")
+
+    def test_excluded_reasons(self) -> None:
+        self.assertEqual(m2.excluded_reason_for({"selected_top15": True}), "NOT_EXCLUDED_TOP15")
+        self.assertEqual(
+            m2.excluded_reason_for({"action_state": "PRIORITY_REVIEW", "quality_grade": "A",
+                                    "entry_state": "ENTRY_READY", "selected_top15": False}),
+            "RANK_16_PLUS_TRUNCATED",
+        )
+        self.assertEqual(
+            m2.excluded_reason_for({"action_state": "HOLD_MONITOR", "quality_grade": "B",
+                                    "entry_state": "ENTRY_READY", "selected_top15": False}),
+            "B_READY_SUPPRESSED_HOLD_MONITOR",
+        )
+
+
+class TestRetroPairing(unittest.TestCase):
+    def test_same_date_pairs(self) -> None:
+        rows = []
+        for date in ("2023-01-31", "2023-02-28"):
+            for i in range(25):
+                rows.append(_rated_row(
+                    symbol=f"S{date[5:7]}{i:02d}", signal_date=date, quality_grade="A",
+                    entry_state="ENTRY_READY", action_state="PRIORITY_REVIEW",
+                    priority=i + 1, selected_top15=(i < 15),
+                    quality_score=0.80, entry_score=0.90,
+                    quality_risks_codes="",
+                ))
+            for j in range(4):
+                rows.append(_rated_row(
+                    symbol=f"BX{date[5:7]}{j}", signal_date=date, quality_grade="B",
+                    entry_state="ENTRY_READY", action_state="HOLD_MONITOR",
+                    priority=50 + j, selected_top15=False,
+                    quality_score=0.70, entry_score=0.90,
+                    quality_risks_codes="",
+                ))
+        frames = {"hist_dev": m2.enrich_breakout_columns(pd.DataFrame(rows))}
+        resolved = m2.resolve_case_registry(frames)
+        retro = [c for c in resolved if c["study_case_id"].startswith("M2-R-")]
+        self.assertEqual(len(retro), 4)
+        for entry in retro:
+            self.assertEqual(entry["status"], "MATCHED")
+        sel1 = next(c for c in retro if c["study_case_id"] == "M2-R-SEL01")
+        rej1 = next(c for c in retro if c["study_case_id"] == "M2-R-REJ01")
+        self.assertEqual(
+            sel1["match"]["signal_date"], rej1["match"]["signal_date"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
+

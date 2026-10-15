@@ -339,6 +339,46 @@
       "status": "MATCHED",
       "study_case_id": "M2-C-DAMAGED01",
       "symbol": "AAPL"
+    },
+    {
+      "evidence_tier": "RETROSPECTIVE_EXPLORATORY",
+      "predicate": "retro_marginal_selected",
+      "primary_axis": "Paired",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-R-SEL01",
+      "symbol": "BRKR"
+    },
+    {
+      "evidence_tier": "RETROSPECTIVE_EXPLORATORY",
+      "predicate": "retro_suppressed_opportunity",
+      "primary_axis": "Paired",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-R-REJ01",
+      "symbol": "AVT"
+    },
+    {
+      "evidence_tier": "RETROSPECTIVE_EXPLORATORY",
+      "predicate": "retro_marginal_selected",
+      "primary_axis": "Paired",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-R-SEL02",
+      "symbol": "FLEX"
+    },
+    {
+      "evidence_tier": "RETROSPECTIVE_EXPLORATORY",
+      "predicate": "retro_suppressed_opportunity",
+      "primary_axis": "Paired",
+      "signal_date": "2023-01-31",
+      "snapshot_or_dataset_id": "historical_v3_20261011_03",
+      "status": "MATCHED",
+      "study_case_id": "M2-R-REJ02",
+      "symbol": "AVY"
     }
   ],
   "frozen": true,
@@ -360,8 +400,19 @@
       "sha256": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e"
     }
   },
-  "n_cases": 34,
-  "n_matched": 34,
-  "return_embargo": "Forward-return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31; 2025/2026Q1 labels unpeeked for M4.",
-  "study": "m2_v1_failure_attribution"
+  "n_cases": 38,
+  "n_matched": 38,
+  "n_positive_control": 6,
+  "n_retrospective_exploratory": 4,
+  "n_stratified_pre": 28,
+  "pillar_weight_note": "Production code weights {'profitability_cash': 0.3, 'growth_stability': 0.2, 'balance_sheet': 0.2, 'dilution': 0.1, 'valuation_context': 0.1, 'operating_red_flags': 0.1} differ from spec-canonical {'profitability_cash': 0.25, 'growth_stability': 0.2, 'balance_sheet': 0.2, 'dilution': 0.1, 'valuation_context': 0.1, 'operating_red_flags': 0.15} on profitability (0.30 vs 0.25) and red_flags (0.10 vs 0.15); means/coverages are weight-free facts, both schedules carried.",
+  "return_embargo": "Forward-return diagnostics use ONLY the 24 development dates 2023-01-31..2024-12-31; 2025/2026Q1 labels unpeeked for M4. Cross-sectional counts cover all 39 dates.",
+  "study": "m2_v1_failure_attribution",
+  "taxonomy_counts": {
+    "ACCOUNTING SEMANTIC GAP": 13,
+    "ENTRY TIMING GAP": 5,
+    "EVIDENCE PRESENTATION GAP": 5,
+    "POSITIVE_CONTROL": 6,
+    "RANK/CAP STRUCTURAL GAP": 9
+  }
 }

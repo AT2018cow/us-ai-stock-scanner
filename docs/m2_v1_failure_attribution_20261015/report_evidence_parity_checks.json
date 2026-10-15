@@ -1,0 +1,69 @@
+{
+  "detailed_reports": {
+    "snap510": {
+      "consistent": true,
+      "content_mismatches": [],
+      "missing_files": [],
+      "n_reports_found": 15,
+      "n_top15": 15
+    },
+    "snap62": {
+      "consistent": true,
+      "content_mismatches": [],
+      "missing_files": [],
+      "n_reports_found": 15,
+      "n_top15": 15
+    }
+  },
+  "entry_policy_version": "entry_quality_v1_2026-10-10",
+  "post_m1_zero_silent_on_full_features": {
+    "n_rows_with_m1_gate_codes": 18297,
+    "n_trend_damaged": 9316,
+    "n_trend_damaged_silent": 0,
+    "n_watch_breakout": 7310,
+    "n_watch_breakout_silent": 0,
+    "verdict": "PASS"
+  },
+  "pre_m1_snapshot_silent": {
+    "snap510": {
+      "n_trend_damaged": 230,
+      "n_trend_damaged_silent": 13,
+      "n_watch_breakout": 141,
+      "n_watch_breakout_silent": 74
+    },
+    "snap62": {
+      "n_trend_damaged": 29,
+      "n_trend_damaged_silent": 2,
+      "n_watch_breakout": 16,
+      "n_watch_breakout_silent": 9
+    }
+  },
+  "quality_policy_version": "company_quality_v1_2026-10-10",
+  "snapshot_top15": {
+    "snap510": {
+      "all_top15_priority_review": true,
+      "mismatches": [],
+      "n_decisions": 510,
+      "non_pr_members": [],
+      "top15_match_manifest": true
+    },
+    "snap62": {
+      "all_top15_priority_review": false,
+      "mismatches": [],
+      "n_decisions": 62,
+      "non_pr_members": [
+        "AMD=WATCH_PULLBACK",
+        "AMAT=WATCH_PULLBACK",
+        "META=WATCH_PULLBACK",
+        "CRM=WATCH_BREAKOUT",
+        "TXN=WATCH_BREAKOUT",
+        "CAT=WATCH_BREAKOUT",
+        "LIN=WATCH_BREAKOUT",
+        "PG=WATCH_BREAKOUT",
+        "GOOGL=WATCH_BREAKOUT"
+      ],
+      "top15_match_manifest": true
+    }
+  },
+  "study": "m2_report_evidence_parity"
+}

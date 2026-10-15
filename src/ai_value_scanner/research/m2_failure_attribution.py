@@ -529,9 +529,18 @@ def snapshot_frame(
             row[metric] = entry_features.get(metric)
         for metric in QUALITY_VALUE_METRICS:
             row[metric] = quality_values.get(metric)
+        comp_scores = quality.get("component_scores", {}) if isinstance(quality, Mapping) else {}
+        for pillar in PRODUCTION_PILLARS:
+            value = comp_scores.get(pillar) if isinstance(comp_scores, Mapping) else None
+            row[f"comp_{pillar}"] = finite_or_none(value)
+        provenance = decision.get("provenance", {})
+        row["filing_accession"] = (
+            provenance.get("fundamental_latest_periodic_accession")
+            if isinstance(provenance, Mapping) else None
+        )
         for side, prefix in (("quality", "quality"), ("entry", "entry")):
             section = decision.get(side, {})
-            for key in ("risks", "positives"):
+            for key in ("risks", "positives", "missing"):
                 items = section.get(key, []) if isinstance(section, Mapping) else []
                 codes = [
                     str(item.get("code", ""))
@@ -944,22 +953,80 @@ CASEBOOK_COLUMNS: tuple[str, ...] = (
     "evidence_tier",
     "signal_date",
     "symbol",
-    "snapshot_or_dataset_id",
+    "source_snapshot_sha",
+    "scanner_code_sha",
+    "config_sha",
+    "candidate_universe_asof",
+    "security_id_or_unverified",
+    "issuer_cik_or_unverified",
+    "filing_accession_or_unverified",
+    "facts_fingerprint_or_unverified",
     "quality_grade",
     "quality_score",
     "confidence",
+    "quality_evidence_codes",
+    "missing_codes",
     "entry_state",
-    "entry_score",
+    "entry_evidence_codes",
     "action_state",
     "priority",
+    "selected_top5",
     "selected_top15",
-    "primary_failure_axis",
-    "metric_defect_tags",
-    "observed_v1_behavior",
-    "counterfactual_m3_behavior",
+    "excluded_reason",
+    "review_question",
+    "observed_failure_hypothesis",
+    "alternate_explanations",
     "data_verdict",
+    "human_review_verdict",
+    "review_time_or_unknown",
+    "future_label_valid",
+    "forward_label_definition",
+    "realized_outcome_if_exploratory",
     "reviewer_notes",
+    "source_links",
 )
+
+TAXONOMY_TAGS = (
+    "DATA/IDENTITY ERROR",
+    "ACCOUNTING SEMANTIC GAP",
+    "EVIDENCE PRESENTATION GAP",
+    "RANK/CAP STRUCTURAL GAP",
+    "ENTRY TIMING GAP",
+    "UNIVERSE/PIT BIAS",
+    "CORPORATE_ACTION/LABEL UNCERTAINTY",
+    "IRREDUCIBLE UNCERTAINTY",
+    "POSITIVE_CONTROL",
+)
+
+TAXONOMY_BY_DEFECT: dict[str, str] = {
+    "accrual_sign_inversion": "ACCOUNTING SEMANTIC GAP",
+    "working_capital_growth_penalty": "ACCOUNTING SEMANTIC GAP",
+    "binary_fcf_gate": "ACCOUNTING SEMANTIC GAP",
+    "valuation_percentile_drag": "ACCOUNTING SEMANTIC GAP",
+    "missing_margin_pillars": "ACCOUNTING SEMANTIC GAP",
+    "specialist_accounting_scope": "ACCOUNTING SEMANTIC GAP",
+    "pullback_dead_zone": "ENTRY TIMING GAP",
+    "ma_alignment_missing": "ENTRY TIMING GAP",
+    "breakout_heterogeneity": "EVIDENCE PRESENTATION GAP",
+    "top15_truncation": "RANK/CAP STRUCTURAL GAP",
+    "b_ready_suppression": "RANK/CAP STRUCTURAL GAP",
+    "weak_breakout_rank": "RANK/CAP STRUCTURAL GAP",
+    "top15_opportunity_cost": "RANK/CAP STRUCTURAL GAP",
+    "none": "POSITIVE_CONTROL",
+}
+
+REVIEW_QUESTION_BY_AXIS: dict[str, str] = {
+    "Axis1": "Does abs(accrual) penalize cash-cow OCF>NI economics?",
+    "Axis2": "Do point-in-time WC gaps penalize funded high growth?",
+    "Axis3": "Does binary FCF>0 / self-history valuation misgrade quality?",
+    "Axis4": "Are operating/fcf margins computable from existing facts?",
+    "Axis5": "Is this WATCH_BREAKOUT a dead-zone pullback misrouted from WATCH_PULLBACK?",
+    "Axis6": "Which WATCH_BREAKOUT sub-bucket (mild/near/weak) applies?",
+    "Axis7": "Who lost Top-15 attention to cap/rank mechanics on this date?",
+    "Axis8": "Are trend moving averages aligned (sma50_to_sma200>=1)?",
+    "Control": "Does v1 behave correctly here (reference to preserve)?",
+    "Paired": "Same-date opportunity cost: selected member vs suppressed alternative?",
+}
 
 EVIDENCE_TIER_STRATIFIED = "STRATIFIED_PRE"
 EVIDENCE_TIER_EXPLORATORY = "RETROSPECTIVE_EXPLORATORY"
@@ -1036,6 +1103,18 @@ def _stratum_predicates() -> dict[str, Any]:
             f["entry_state"].astype(str).eq("WATCH_BREAKOUT")
             & frame_number(f, "sma50_to_sma200").lt(1.0)
         ) if "sma50_to_sma200" in f.columns else pd.Series(False, index=f.index),
+        "retro_marginal_selected": lambda f: (
+            f["action_state"].astype(str).eq("PRIORITY_REVIEW")
+            & pd.to_numeric(f["priority"], errors="coerce").between(11, 15)
+        ) if {"action_state", "priority"}.issubset(f.columns) else pd.Series(False, index=f.index),
+        "retro_suppressed_opportunity": lambda f: (
+            (f["quality_grade"].astype(str).eq("A")
+             & f["entry_state"].astype(str).eq("ENTRY_READY")
+             & ~f["selected_top15"].astype(bool))
+            | (f["quality_grade"].astype(str).eq("B")
+               & f["entry_state"].astype(str).eq("ENTRY_READY")
+               & frame_number(f, "quality_score").ge(0.65))
+        ) if {"quality_grade", "entry_state", "selected_top15"}.issubset(f.columns) else pd.Series(False, index=f.index),
         "clean_ready_control": lambda f: (
             f["quality_grade"].astype(str).eq("A")
             & f["entry_state"].astype(str).eq("ENTRY_READY")
@@ -1098,6 +1177,10 @@ CASE_STRATA: tuple[tuple[str, str, tuple[str, ...], str, tuple[str, ...], str, s
     ("M2-C-UNRATED01", "Control", ("snap510", "snap62", "hist_dev"), "specialist_unrated", ("GS", "JPM", "PLD"), EVIDENCE_TIER_CONTROL, "specialist_accounting_scope"),
     ("M2-C-PULLBACK01", "Control", ("hist_dev", "snap510"), "pullback_control", (), EVIDENCE_TIER_CONTROL, "none"),
     ("M2-C-DAMAGED01", "Control", ("hist_dev", "snap510"), "damaged_control", (), EVIDENCE_TIER_CONTROL, "none"),
+    ("M2-R-SEL01", "Paired", ("hist_dev",), "retro_marginal_selected", (), EVIDENCE_TIER_EXPLORATORY, "top15_opportunity_cost", None),
+    ("M2-R-REJ01", "Paired", ("hist_dev",), "retro_suppressed_opportunity", (), EVIDENCE_TIER_EXPLORATORY, "top15_opportunity_cost", "M2-R-SEL01"),
+    ("M2-R-SEL02", "Paired", ("hist_dev",), "retro_marginal_selected", (), EVIDENCE_TIER_EXPLORATORY, "top15_opportunity_cost", None),
+    ("M2-R-REJ02", "Paired", ("hist_dev",), "retro_suppressed_opportunity", (), EVIDENCE_TIER_EXPLORATORY, "top15_opportunity_cost", "M2-R-SEL02"),
 )
 
 
@@ -1115,13 +1198,26 @@ def resolve_case_registry(
     predicates = _stratum_predicates()
     used: set[tuple[str, str, str]] = set()
     resolved: list[dict[str, Any]] = []
-    for case_id, axis, datasets, predicate_key, preferred, tier, tags in CASE_STRATA:
+    by_id: dict[str, dict[str, Any]] = {}
+    for stratum in CASE_STRATA:
+        case_id, axis, datasets, predicate_key, preferred, tier, tags = stratum[:7]
+        same_date_as = stratum[7] if len(stratum) > 7 else None
         predicate = predicates[predicate_key]
         match: dict[str, Any] | None = None
+        pair_date: str | None = None
+        if same_date_as is not None and same_date_as in by_id:
+            pair_match = by_id[same_date_as].get("match") or {}
+            pair_date = str(pair_match.get("signal_date", "") or "") or None
         for dataset_key in datasets:
             frame = frames.get(dataset_key)
             if frame is None or frame.empty:
                 continue
+            if pair_date is not None:
+                if "signal_date" not in frame.columns:
+                    continue
+                frame = frame.loc[frame["signal_date"].astype(str).eq(pair_date)]
+                if frame.empty:
+                    continue
             try:
                 mask = predicate(frame).fillna(False).astype(bool)
             except (KeyError, TypeError, ValueError):
@@ -1154,9 +1250,11 @@ def resolve_case_registry(
             "preferred_symbols": list(preferred),
             "evidence_tier": tier,
             "metric_defect_tags": tags,
+            "same_date_as": same_date_as,
             "status": "MATCHED" if match is not None else "UNMATCHED",
             "match": match,
         })
+        by_id[case_id] = resolved[-1]
     return resolved
 
 
@@ -1183,3 +1281,509 @@ def axis8_trend_alignment_table(frame: pd.DataFrame) -> dict[str, Any]:
             ),
         }
     return result
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 -- 6-pillar Company Quality v1 decomposition
+# ---------------------------------------------------------------------------
+
+PRODUCTION_PILLARS: tuple[str, ...] = (
+    "profitability_cash",
+    "growth_stability",
+    "balance_sheet",
+    "dilution",
+    "valuation_context",
+    "operating_red_flags",
+)
+
+PILLAR_DISPLAY_NAMES: dict[str, str] = {
+    "profitability_cash": "profitability_and_cash_conversion",
+    "growth_stability": "growth_and_stability",
+    "balance_sheet": "balance_sheet_resilience",
+    "dilution": "dilution_and_capital_discipline",
+    "valuation_context": "valuation_context",
+    "operating_red_flags": "red_flags",
+}
+
+# Production code weights (quality.py) vs spec-canonical weights. The audit
+# reports means/coverage/rates (weight-free facts) under the spec display
+# names; both weight schedules are carried for adjudication because they
+# differ on profitability (0.30 vs 0.25) and red_flags (0.10 vs 0.15).
+PILLAR_PRODUCTION_WEIGHTS: dict[str, float] = {
+    "profitability_cash": 0.30,
+    "growth_stability": 0.20,
+    "balance_sheet": 0.20,
+    "dilution": 0.10,
+    "valuation_context": 0.10,
+    "operating_red_flags": 0.10,
+}
+PILLAR_SPEC_WEIGHTS: dict[str, float] = {
+    "profitability_cash": 0.25,
+    "growth_stability": 0.20,
+    "balance_sheet": 0.20,
+    "dilution": 0.10,
+    "valuation_context": 0.10,
+    "operating_red_flags": 0.15,
+}
+
+PILLAR_METRIC_KEYS: dict[str, tuple[str, ...]] = {
+    "profitability_cash": ("net_margin", "free_cash_flow", "ocf_to_net_income", "accrual_ratio"),
+    "growth_stability": ("revenue_yoy", "adjusted_net_income_yoy", "net_income_yoy", "operating_cash_flow_yoy"),
+    "balance_sheet": ("net_debt_to_ebitda", "interest_coverage", "current_ratio"),
+    "dilution": ("shares_yoy",),
+    "valuation_context": ("fcf_yield", "ps_hist_percentile", "pe_hist_percentile"),
+    "operating_red_flags": ("receivables_growth_gap", "inventory_growth_gap"),
+}
+
+
+def pillar_decomposition_table(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Mean score / coverage / missing / weak-flag rate per pillar per grade.
+
+    Requires comp_<production-pillar> score columns plus quality codes
+    columns; rows lacking codes report None rates (never fabricated).
+    """
+    rows: list[dict[str, Any]] = []
+    if frame.empty or "quality_grade" not in frame.columns:
+        return rows
+    has_codes = {"quality_risks_codes", "quality_missing_codes"}.issubset(frame.columns)
+    for grade in ("A", "B", "C", "UNRATED"):
+        group = frame.loc[frame["quality_grade"].astype(str).eq(grade)]
+        if group.empty:
+            continue
+        risks = group["quality_risks_codes"].astype(str) if has_codes else pd.Series("", index=group.index)
+        missing = group["quality_missing_codes"].astype(str) if has_codes else pd.Series("", index=group.index)
+        for pillar in PRODUCTION_PILLARS:
+            scores = pd.to_numeric(group.get(f"comp_{pillar}"), errors="coerce")
+            keys = PILLAR_METRIC_KEYS[pillar]
+            weak = pd.Series(False, index=group.index)
+            miss = pd.Series(False, index=group.index)
+            for key in keys:
+                weak = weak | risks.str.contains(f"{key}_weak", regex=False)
+                miss = miss | missing.str.contains(f"{key}_missing", regex=False)
+            rows.append({
+                "grade": grade,
+                "pillar": PILLAR_DISPLAY_NAMES[pillar],
+                "production_pillar": pillar,
+                "n": int(len(group)),
+                "mean_score": round(float(scores.mean()), 6) if scores.notna().any() else None,
+                "coverage": round(float(scores.notna().mean()), 6),
+                "missing_rate": round(float(miss.mean()), 6) if has_codes else None,
+                "weak_flag_rate": round(float(weak.mean()), 6) if has_codes else None,
+                "weight_production": PILLAR_PRODUCTION_WEIGHTS[pillar],
+                "weight_spec_canonical": PILLAR_SPEC_WEIGHTS[pillar],
+            })
+    return rows
+
+
+def growth_split_excess(frame: pd.DataFrame) -> dict[str, dict[str, float | int]]:
+    """Dev-only date-equal 60d excess: A/B-C x high/low revenue growth."""
+    dev = development_frame(frame)
+    if dev.empty:
+        return {}
+    dev = dev.copy()
+    rev = frame_number(dev, "revenue_yoy")
+    grade = dev["quality_grade"].astype(str) if "quality_grade" in dev.columns else ""
+    dev["growth_group"] = "OTHER"
+    dev.loc[grade.eq("A") & rev.ge(0.25), "growth_group"] = "A_HIGH_GROWTH"
+    dev.loc[grade.eq("A") & rev.lt(0.25), "growth_group"] = "A_LOW_GROWTH"
+    dev.loc[grade.isin(["B", "C"]) & rev.ge(0.25), "growth_group"] = "BC_HIGH_GROWTH"
+    dev.loc[grade.isin(["B", "C"]) & rev.lt(0.25), "growth_group"] = "BC_LOW_GROWTH"
+    return date_equal_excess_by_group(dev, "growth_group")
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 -- cross-industry / business-model bias audit
+# ---------------------------------------------------------------------------
+
+ARCHETYPE_SOFTWARE = "SOFTWARE_AND_ASSET_LIGHT_TECH"
+ARCHETYPE_SEMI = "SEMICONDUCTOR_AND_AI_HARDWARE"
+ARCHETYPE_INDUSTRIAL = "INDUSTRIAL_AND_MANUFACTURING"
+ARCHETYPE_HEAVY = "HEAVY_ASSET_AND_UTILITIES"
+ARCHETYPE_CYCLICAL = "CYCLICAL_RESOURCES_AND_ENERGY"
+ARCHETYPE_FINANCIAL = "FINANCIALS_AND_SPECIALIST_REITS"
+ARCHETYPE_UNCLASSIFIED = "UNCLASSIFIED_RESIDUAL"
+
+ARCHETYPES: tuple[str, ...] = (
+    ARCHETYPE_SOFTWARE,
+    ARCHETYPE_SEMI,
+    ARCHETYPE_INDUSTRIAL,
+    ARCHETYPE_HEAVY,
+    ARCHETYPE_CYCLICAL,
+    ARCHETYPE_FINANCIAL,
+)
+
+
+def sic_to_archetype(sic: Any) -> str:
+    """Deterministic SIC -> business-model archetype (documented ranges).
+
+    Anything outside the six archetype ranges reports UNCLASSIFIED_RESIDUAL
+    (listed explicitly, never force-fit).
+    """
+    try:
+        if sic is None or (not isinstance(sic, str) and pd.isna(sic)):
+            return ARCHETYPE_UNCLASSIFIED
+        code = int(float(str(sic).strip()))
+    except (TypeError, ValueError):
+        return ARCHETYPE_UNCLASSIFIED
+    if 6000 <= code <= 6999:
+        return ARCHETYPE_FINANCIAL
+    if 4000 <= code <= 4999:
+        return ARCHETYPE_HEAVY
+    if 1000 <= code <= 1499:
+        return ARCHETYPE_CYCLICAL
+    if 2830 <= code <= 2839:
+        return ARCHETYPE_UNCLASSIFIED
+    if (2800 <= code <= 2899) or (2900 <= code <= 2999):
+        return ARCHETYPE_CYCLICAL
+    if 3200 <= code <= 3399:
+        return ARCHETYPE_CYCLICAL
+    if (3570 <= code <= 3579) or (3660 <= code <= 3669) or (3670 <= code <= 3679):
+        return ARCHETYPE_SEMI
+    if 7370 <= code <= 7379:
+        return ARCHETYPE_SOFTWARE
+    if (1500 <= code <= 1799) or (2400 <= code <= 2799) or (3000 <= code <= 3199):
+        return ARCHETYPE_INDUSTRIAL
+    if (3400 <= code <= 3569) or (3580 <= code <= 3659) or (3680 <= code <= 3999):
+        return ARCHETYPE_INDUSTRIAL
+    if 5000 <= code <= 5199:
+        return ARCHETYPE_INDUSTRIAL
+    return ARCHETYPE_UNCLASSIFIED
+
+
+def build_symbol_archetype_map(frame: pd.DataFrame) -> dict[str, str]:
+    """Most-common SIC per symbol -> archetype (for snapshot enrichment)."""
+    if frame.empty or not {"symbol", "sic"}.issubset(frame.columns):
+        return {}
+    mapping: dict[str, str] = {}
+    symbols = frame["symbol"].astype(str)
+    for symbol, group in frame.groupby(symbols, sort=True):
+        try:
+            mode_sic = pd.to_numeric(group["sic"], errors="coerce").dropna().mode()
+        except (TypeError, ValueError):
+            mode_sic = pd.Series(dtype=float)
+        mapping[str(symbol)] = sic_to_archetype(mode_sic.iloc[0] if len(mode_sic) else None)
+    return mapping
+
+
+def _top_codes(series: pd.Series, suffix: str, top: int = 3) -> list[str]:
+    counts: dict[str, int] = {}
+    for text in series.astype(str).tolist():
+        for code in text.split(","):
+            code = code.strip()
+            if code.endswith(suffix):
+                counts[code] = counts.get(code, 0) + 1
+    return [f"{code}={counts[code]}" for code in sorted(counts, key=lambda c: (-counts[c], c))[:top]]
+
+
+def industry_bias_table(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Per-archetype grade shares, confidence, missing rates, top flags."""
+    rows: list[dict[str, Any]] = []
+    if frame.empty:
+        return rows
+    if "archetype" not in frame.columns:
+        if "sic" in frame.columns:
+            frame = frame.copy()
+            frame["archetype"] = [sic_to_archetype(v) for v in frame["sic"].tolist()]
+        else:
+            return rows
+    conf = frame_number(frame, "quality_confidence")
+    has_codes = {"quality_risks_codes", "quality_missing_codes"}.issubset(frame.columns)
+    for archetype in (*ARCHETYPES, ARCHETYPE_UNCLASSIFIED):
+        group = frame.loc[frame["archetype"].astype(str).eq(archetype)]
+        if group.empty:
+            continue
+        grades = group["quality_grade"].astype(str) if "quality_grade" in group.columns else pd.Series(dtype=str)
+        rows.append({
+            "archetype": archetype,
+            "n": int(len(group)),
+            "share_a": round(float(grades.eq("A").mean()), 6) if len(group) else 0.0,
+            "share_b": round(float(grades.eq("B").mean()), 6) if len(group) else 0.0,
+            "share_c": round(float(grades.eq("C").mean()), 6) if len(group) else 0.0,
+            "share_unrated": round(float(grades.eq("UNRATED").mean()), 6) if len(group) else 0.0,
+            "mean_confidence": round(float(conf.loc[group.index].mean()), 6) if conf.loc[group.index].notna().any() else None,
+            "top_missing": ";".join(_top_codes(group["quality_missing_codes"], "_missing")) if has_codes else "",
+            "top_weak_flags": ";".join(_top_codes(group["quality_risks_codes"], "_weak")) if has_codes else "",
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 -- same-date Top-15 replacement / opportunity-cost comparison
+# ---------------------------------------------------------------------------
+
+
+def replacement_comparison(frame: pd.DataFrame, *, with_returns: bool = False) -> dict[str, Any]:
+    """Marginal #11-15 members vs excluded A+READY-16+ / B+READY, same dates."""
+    per_date: list[dict[str, Any]] = []
+    if frame.empty or "signal_date" not in frame.columns:
+        return {"per_date": per_date, "summary": {}}
+    for date, group in frame.groupby("signal_date", sort=True):
+        is_pr = group["action_state"].astype(str).eq("PRIORITY_REVIEW") if "action_state" in group.columns else pd.Series(False, index=group.index)
+        marginal = group.loc[is_pr & pd.to_numeric(group.get("priority"), errors="coerce").between(11, 15)] if "priority" in group.columns else group.iloc[0:0]
+        excl_a = group.loc[
+            group["quality_grade"].astype(str).eq("A")
+            & group["entry_state"].astype(str).eq("ENTRY_READY")
+            & ~group["selected_top15"].astype(bool)
+        ] if {"quality_grade", "entry_state", "selected_top15"}.issubset(group.columns) else group.iloc[0:0]
+        excl_b = group.loc[
+            group["quality_grade"].astype(str).eq("B")
+            & group["entry_state"].astype(str).eq("ENTRY_READY")
+            & frame_number(group, "quality_score").ge(0.65)
+        ] if {"quality_grade", "entry_state"}.issubset(group.columns) else group.iloc[0:0]
+        if marginal.empty and excl_a.empty and excl_b.empty:
+            continue
+        has_opportunity = (not marginal.empty) and (not excl_a.empty or not excl_b.empty)
+
+        def _chars(sub: pd.DataFrame) -> dict[str, Any]:
+            if sub.empty:
+                return {"n": 0, "symbols": [], "mean_q": None, "mean_e": None, "val_weak_share": None}
+            codes = sub["quality_risks_codes"].astype(str) if "quality_risks_codes" in sub.columns else pd.Series("", index=sub.index)
+            val_weak = codes.str.contains("ps_hist_percentile_weak") | codes.str.contains("pe_hist_percentile_weak")
+            return {
+                "n": int(len(sub)),
+                "symbols": sorted(str(s) for s in sub["symbol"].tolist()) if "symbol" in sub.columns else [],
+                "mean_q": round(float(frame_number(sub, "quality_score").mean()), 4) if frame_number(sub, "quality_score").notna().any() else None,
+                "mean_e": round(float(frame_number(sub, "entry_score").mean()), 4) if frame_number(sub, "entry_score").notna().any() else None,
+                "val_weak_share": round(float(val_weak.mean()), 4),
+            }
+
+        per_date.append({
+            "signal_date": str(date),
+            "has_opportunity": bool(has_opportunity),
+            "marginal_11_15": _chars(marginal),
+            "excluded_a_ready_16plus": _chars(excl_a),
+            "excluded_b_ready_high": _chars(excl_b),
+        })
+    result: dict[str, Any] = {
+        "per_date": per_date,
+        "summary": {
+            "n_dates_with_opportunity": int(sum(
+                1 for d in per_date
+                if (d["excluded_a_ready_16plus"]["n"] or d["excluded_b_ready_high"]["n"]) and d["marginal_11_15"]["n"]
+            )),
+            "n_dates": int(frame["signal_date"].nunique()),
+        },
+    }
+    if with_returns:
+        pool = frame.copy()
+        pool["replacement_group"] = "OTHER"
+        is_pr = pool["action_state"].astype(str).eq("PRIORITY_REVIEW") if "action_state" in pool.columns else pd.Series(False, index=pool.index)
+        marginal_mask = is_pr & pd.to_numeric(pool.get("priority"), errors="coerce").between(11, 15) if "priority" in pool.columns else pd.Series(False, index=pool.index)
+        excl_mask = (
+            (pool["quality_grade"].astype(str).eq("A") & pool["entry_state"].astype(str).eq("ENTRY_READY") & ~pool["selected_top15"].astype(bool))
+            | (pool["quality_grade"].astype(str).eq("B") & pool["entry_state"].astype(str).eq("ENTRY_READY") & frame_number(pool, "quality_score").ge(0.65))
+        ) if {"quality_grade", "entry_state", "selected_top15"}.issubset(pool.columns) else pd.Series(False, index=pool.index)
+        pool.loc[marginal_mask, "replacement_group"] = "MARGINAL_11_15"
+        pool.loc[excl_mask, "replacement_group"] = "EXCLUDED_OPPORTUNITY"
+        result["dev_return_diagnostics"] = date_equal_excess_by_group(pool, "replacement_group")
+        result["return_scope"] = "RETROSPECTIVE_EXPLORATORY_2023_2024_DEV_ONLY"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Gap 5 -- report-evidence parity checks
+# ---------------------------------------------------------------------------
+
+
+def check_snapshot_top15(
+    decisions: list[dict[str, Any]], daily_symbols: list[str]
+) -> dict[str, Any]:
+    """Verify manifest Top-15 == first-15 by priority and all PRIORITY_REVIEW."""
+    ordered = sorted(
+        [d for d in decisions if isinstance(d, dict)],
+        key=lambda d: (d.get("priority") if isinstance(d.get("priority"), int) else 10**9,
+                       str(d.get("symbol", ""))),
+    )
+    top15 = [str(d.get("symbol", "") or "").strip().upper() for d in ordered[:15]]
+    expected = [str(s).strip().upper() for s in daily_symbols]
+    mismatches = [f"rank{i + 1}:{got}!=manifest:{want}" for i, (got, want) in enumerate(zip(top15, expected)) if got != want]
+    if len(top15) != len(expected):
+        mismatches.append(f"length {len(top15)} != manifest {len(expected)}")
+    non_pr = [
+        f"{str(d.get('symbol', ''))}={d.get('action_state')}"
+        for d in ordered[:15] if d.get("action_state") != "PRIORITY_REVIEW"
+    ]
+    return {
+        "n_decisions": len(ordered),
+        "top15_match_manifest": not mismatches,
+        "mismatches": mismatches,
+        "all_top15_priority_review": not non_pr,
+        "non_pr_members": non_pr,
+    }
+
+
+def check_detailed_reports(
+    decisions: list[dict[str, Any]],
+    daily_symbols: list[str],
+    detailed_texts: dict[str, str],
+) -> dict[str, Any]:
+    """Verify each Top-15 detailed report exists and names its decision."""
+    by_symbol = {str(d.get("symbol", "") or "").strip().upper(): d for d in decisions if isinstance(d, dict)}
+    missing_files: list[str] = []
+    content_mismatches: list[str] = []
+    for symbol in [str(s).strip().upper() for s in daily_symbols]:
+        text = detailed_texts.get(symbol, "")
+        if not text:
+            missing_files.append(symbol)
+            continue
+        decision = by_symbol.get(symbol, {})
+        for token in (symbol, str(decision.get("action_state", "")), str((decision.get("quality", {}) or {}).get("grade", ""))):
+            if token and token not in text:
+                content_mismatches.append(f"{symbol}:missing:{token}")
+    return {
+        "n_top15": len(daily_symbols),
+        "n_reports_found": len(daily_symbols) - len(missing_files),
+        "missing_files": missing_files,
+        "content_mismatches": content_mismatches,
+        "consistent": not missing_files and not content_mismatches,
+    }
+
+
+def count_silent_nonready(frame: pd.DataFrame) -> dict[str, Any]:
+    """Count WATCH_BREAKOUT / TREND_DAMAGED rows with zero entry risks."""
+    codes = frame["entry_risks_codes"].astype(str) if "entry_risks_codes" in frame.columns else pd.Series("", index=frame.index)
+    empty = codes.str.strip().eq("")
+    states = frame["entry_state"].astype(str) if "entry_state" in frame.columns else pd.Series("", index=frame.index)
+    wb = states.eq("WATCH_BREAKOUT")
+    td = states.eq("TREND_DAMAGED")
+    return {
+        "n_watch_breakout": int(wb.sum()),
+        "n_watch_breakout_silent": int((wb & empty).sum()),
+        "n_trend_damaged": int(td.sum()),
+        "n_trend_damaged_silent": int((td & empty).sum()),
+    }
+
+
+def entry_subgate_table(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Per-gate ENTRY_READY failure counts (observable rows only)."""
+    cols = {
+        "sma200": frame_number(frame, "price_to_sma200"),
+        "sma50": frame_number(frame, "price_to_sma50"),
+        "ret20": frame_number(frame, "return_20d"),
+        "ret60": frame_number(frame, "return_60d"),
+        "rs60": frame_number(frame, "relative_strength_60d_qqq"),
+        "drawdown": frame_number(frame, "drawdown_from_52w_high"),
+        "vol": frame_number(frame, "volatility_60d"),
+    }
+    gates: list[tuple[str, str, Any]] = [
+        ("sma200_below_1", "sma200", cols["sma200"].lt(1.0)),
+        ("sma50_outside_ready_band", "sma50",
+         cols["sma50"].lt(ENTRY_READY_SMA50_LO) | cols["sma50"].gt(ENTRY_READY_SMA50_HI)),
+        ("ret20_outside_ready_band", "ret20",
+         cols["ret20"].lt(ENTRY_READY_RET20_LO) | cols["ret20"].gt(ENTRY_READY_RET20_HI)),
+        ("ret60_negative", "ret60", cols["ret60"].lt(0.0)),
+        ("rs60_below_ready", "rs60", cols["rs60"].lt(READY_RS60_MIN)),
+        ("drawdown_above_cap", "drawdown", cols["drawdown"].gt(ENTRY_READY_DD_MAX)),
+        ("volatility_high", "vol", cols["vol"].gt(ENTRY_VOL_MAX)),
+    ]
+    rows: list[dict[str, Any]] = []
+    for name, key, fail in gates:
+        observable = cols[key].notna()
+        n_fail = int((fail.fillna(False) & observable).sum())
+        rows.append({
+            "gate": name,
+            "n_observable": int(observable.sum()),
+            "n_fail": n_fail,
+            "fail_share": round(n_fail / int(observable.sum()), 6) if observable.sum() else 0.0,
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Gap 4 -- 36-column casebook row builder + paired RETRO strata
+# ---------------------------------------------------------------------------
+
+
+def excluded_reason_for(match: Mapping[str, Any]) -> str:
+    """Machine-readable exclusion reason for a casebook row."""
+    if match.get("selected_top15") is True:
+        return "NOT_EXCLUDED_TOP15"
+    action = str(match.get("action_state", ""))
+    grade = str(match.get("quality_grade", ""))
+    state = str(match.get("entry_state", ""))
+    if action == "PRIORITY_REVIEW":
+        return "RANK_16_PLUS_TRUNCATED"
+    if grade == "B" and state == "ENTRY_READY":
+        return "B_READY_SUPPRESSED_HOLD_MONITOR"
+    if state == "WATCH_BREAKOUT":
+        return "WATCH_BREAKOUT_NOT_READY"
+    if state == "WATCH_PULLBACK":
+        return "PULLBACK_WATCH_NOT_READY"
+    if state == "TREND_DAMAGED":
+        return "TREND_DAMAGED_HOLD_MONITOR"
+    if action == "AVOID":
+        return "AVOID_GRADE_OR_INSUFFICIENT"
+    return "NOT_SELECTED"
+
+
+def realized_excess_text(match: Mapping[str, Any]) -> str | None:
+    """Realized 60d net-QQQ outcome; None unless a dev-date row (embargo)."""
+    date = str(match.get("signal_date", "") or "")
+    if date not in DEVELOPMENT_DATE_SET:
+        return None
+    fwd = finite_or_none(match.get("fwd_ret_60"))
+    qqq = finite_or_none(match.get("qqq_return_60"))
+    if fwd is None or qqq is None:
+        return "LABEL_MISSING_DEV_DATE"
+    return f"{fwd - qqq:+.6f}_60d_net_qqq_excess"
+
+
+def casebook_row(
+    entry: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    texts: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build one exact 36-column roadmap casebook row."""
+    match = entry.get("match") or {}
+    tier = str(entry.get("evidence_tier", ""))
+    is_retro = tier == EVIDENCE_TIER_EXPLORATORY
+    realized = realized_excess_text(match) if (is_retro and match) else None
+    priority = match.get("priority", "")
+    try:
+        selected_top5 = "TRUE" if int(priority) <= 5 else "FALSE"
+    except (TypeError, ValueError):
+        selected_top5 = ""
+    quality_codes = str(match.get("quality_positives_codes", "") or "")
+    if match.get("quality_risks_codes"):
+        quality_codes = f"{quality_codes}|{match.get('quality_risks_codes')}" if quality_codes else str(match.get("quality_risks_codes"))
+    entry_codes = str(match.get("entry_positives_codes", "") or "")
+    if match.get("entry_risks_codes"):
+        entry_codes = f"{entry_codes}|{match.get('entry_risks_codes')}" if entry_codes else str(match.get("entry_risks_codes"))
+    return {
+        "study_case_id": entry.get("study_case_id", ""),
+        "case_selection_method": f"STRATIFIED:{entry.get('predicate', '')}" if tier != EVIDENCE_TIER_EXPLORATORY else f"PAIRED:{entry.get('predicate', '')}",
+        "evidence_tier": tier,
+        "signal_date": match.get("signal_date", ""),
+        "symbol": match.get("symbol", ""),
+        "source_snapshot_sha": provenance.get("source_snapshot_sha", "UNVERIFIED"),
+        "scanner_code_sha": provenance.get("scanner_code_sha", "UNVERIFIED"),
+        "config_sha": provenance.get("config_sha", "UNVERIFIED"),
+        "candidate_universe_asof": provenance.get("candidate_universe_asof", "UNVERIFIED"),
+        "security_id_or_unverified": match.get("symbol", "") or "UNVERIFIED",
+        "issuer_cik_or_unverified": match.get("cik", "") or "UNVERIFIED",
+        "filing_accession_or_unverified": match.get("filing_accession", "") or "UNVERIFIED",
+        "facts_fingerprint_or_unverified": match.get("facts_fingerprint", "") or "UNVERIFIED",
+        "quality_grade": match.get("quality_grade", ""),
+        "quality_score": match.get("quality_score", ""),
+        "confidence": match.get("quality_confidence", ""),
+        "quality_evidence_codes": quality_codes,
+        "missing_codes": match.get("quality_missing_codes", ""),
+        "entry_state": match.get("entry_state", ""),
+        "entry_evidence_codes": entry_codes,
+        "action_state": match.get("action_state", ""),
+        "priority": priority,
+        "selected_top5": selected_top5 if match else "",
+        "selected_top15": "TRUE" if match.get("selected_top15") is True else ("FALSE" if match else ""),
+        "excluded_reason": excluded_reason_for(match) if match else "UNMATCHED",
+        "review_question": REVIEW_QUESTION_BY_AXIS.get(str(entry.get("primary_axis", "")), ""),
+        "observed_failure_hypothesis": texts.get("observed_failure_hypothesis", ""),
+        "alternate_explanations": texts.get("alternate_explanations", ""),
+        "data_verdict": texts.get("data_verdict", ""),
+        "human_review_verdict": "PENDING_CHIEF_REVIEW",
+        "review_time_or_unknown": "UNKNOWN",
+        "future_label_valid": "TRUE" if (is_retro and realized not in (None, "LABEL_MISSING_DEV_DATE")) else "FALSE",
+        "forward_label_definition": "fwd_ret_60_minus_qqq_return_60_over_60_trading_days" if is_retro else "UNPEEKED",
+        "realized_outcome_if_exploratory": realized if realized is not None else "UNPEEKED_PRE_STRATIFIED",
+        "reviewer_notes": texts.get("reviewer_notes", ""),
+        "source_links": provenance.get("source_links", ""),
+    }
