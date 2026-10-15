@@ -2594,6 +2594,19 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
 
 
 PARSED_FUND_CACHE_VERSION = 9
+PENDING_CHECKED_SCAN_COOLDOWN_SEC = 43200.0
+_TERMINAL_PENDING_FALLBACK_STATUSES = frozenset(
+    {
+        "ineligible_form",
+        "non_usd_core",
+        "core_facts_incomplete",
+        "ttm_not_fresh",
+        "xbrl_unavailable",
+        "facts_unavailable",
+        "no_usable_facts",
+        "filing_mismatch",
+    }
+)
 
 
 def _parsed_fund_cache_meta(
@@ -2604,11 +2617,13 @@ def _parsed_fund_cache_meta(
     ticker_map_sha: str | None = None,
     facts_content_sha: str | None = None,
     submissions_content_sha: str | None = None,
+    edgartools_fallback_used: bool = False,
+    pending_checked_status: str | None = None,
 ) -> dict[str, object]:
     # latest_filing/latest_accession track the newest PERIODIC filing (see
     # _submissions_latest_relevant_filing), with raw-newest fallback when
     # submissions list no periodic form.
-    return {
+    meta: dict[str, object] = {
         "v": PARSED_FUND_CACHE_VERSION,
         "cfg": _parsed_fund_config_fingerprint(config),
         "latest_filing": latest_filing,
@@ -2622,6 +2637,11 @@ def _parsed_fund_cache_meta(
         "facts_content_sha": facts_content_sha,
         "submissions_content_sha": submissions_content_sha,
     }
+    if edgartools_fallback_used:
+        meta["edgartools_fallback_used"] = True
+    if pending_checked_status:
+        meta["pending_checked_status"] = str(pending_checked_status)
+    return meta
 
 
 # Serializes parsed-cache writers: concurrent refreshes must never leave a
@@ -2829,13 +2849,28 @@ def load_valid_parsed_fundamental_cache(
                     not facts_pending
                     and (latest_accession is None or facts_covered == latest_accession)
                 )
+                fallback_ready = bool(
+                    meta.get("edgartools_fallback_used") is True
+                    and latest_accession is not None
+                    and meta.get("facts_covered_accession") == latest_accession
+                )
+                pending_checked_ready = bool(
+                    max_age_sec is None
+                    and meta.get("pending_checked_status") in _TERMINAL_PENDING_FALLBACK_STATUSES
+                    and age <= min(parsed_ttl, PENDING_CHECKED_SCAN_COOLDOWN_SEC)
+                    and meta.get("facts_covered_accession") == facts_covered
+                )
+                coverage_ok = (
+                    (facts_ready and meta.get("facts_covered_accession") == facts_covered)
+                    or fallback_ready
+                    or pending_checked_ready
+                )
                 if (
                     meta.get("v") == PARSED_FUND_CACHE_VERSION
                     and meta.get("cfg") == _parsed_fund_config_fingerprint(config)
                     and meta.get("latest_filing") == latest_filing
                     and meta.get("latest_accession") == latest_accession
-                    and meta.get("facts_covered_accession") == facts_covered
-                    and facts_ready
+                    and coverage_ok
                     and identity_payload_ready(
                         cached,
                         current_map_sha=current_map_sha,
@@ -3392,24 +3427,47 @@ def load_one_fundamental(
                 not facts_pending
                 and (latest_accession is None or facts_covered == latest_accession)
             )
-            # Never persist a derived cache while companyfacts is known to lag
-            # the newest submission; doing so would freeze stale fundamentals
-            # ahead of SecClient's pending-accession retry loop.
-            if facts_ready:
+            fallback_covered = bool(
+                fallback_used
+                and fundamental_facts_cover_latest_periodic is True
+                and latest_accession is not None
+                and latest_accession == latest_periodic_accession
+            )
+            pending_terminal_checked = bool(
+                not facts_ready
+                and not fallback_covered
+                and fallback_status in _TERMINAL_PENDING_FALLBACK_STATUSES
+            )
+            # Persist parsed_fund when:
+            # 1) raw companyfacts covers the latest periodic filing (facts_ready), OR
+            # 2) EdgarTools exact-10Q fallback patched and verified TTM coverage
+            #    (fallback_covered), OR
+            # 3) EdgarTools confirmed a deterministic non-transient unpatchable
+            #    status (pending_terminal_checked, e.g. 20-F foreign issuer or
+            #    incomplete XBRL tags), allowing same-day scans to reuse the
+            #    fail-closed result for 12h while daily cron still re-checks SEC.
+            if facts_ready or fallback_covered or pending_terminal_checked:
                 cache_payload = dict(result)
                 try:
                     write_map_sha = sec.ticker_map_snapshot().get("sha256")
                 except Exception:
                     write_map_sha = None
+                effective_covered_accn = (
+                    latest_accession if fallback_covered else facts_covered
+                )
                 cache_payload["_cache_meta"] = _parsed_fund_cache_meta(
                     config,
                     latest_filing,
                     latest_accession,
-                    facts_covered,
+                    effective_covered_accn,
                     ticker_map_sha=write_map_sha,
                     facts_content_sha=_file_sha256(
                         Path(config.cache_dir) / f"facts_{cik}.json"),
                     submissions_content_sha=_file_sha256(subs_cache),
+                    edgartools_fallback_used=fallback_covered,
+                    pending_checked_status=(
+                        fallback_status if pending_terminal_checked else None
+                    ),
                 )
                 _atomic_write_json(parsed_path, cache_payload)
         except Exception:

@@ -2,9 +2,8 @@
 
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
 
-> **当前运行状态（2026-10-15 MVP v2 已完成）：**
-> - **默认兼容模式（v1）**：不带额外参数运行 `run_scan.py` 时，默认保持 `decision_policy_version="v1"` 与 `report_layout_version="v1"`，确保历史快照与既有自动化脚本 100% 向后兼容。
-> - **MVP v2 选股策略与新版报告（推荐人工研究使用）**：已完整实现并通过 M0–M5 双轨验证（支持 `--decision-policy-version v2 --report-layout-version v2` 直接启用，或使用 `--enable-v2-shadow` 在一次扫描中同时输出 v1 主快照与 v2 影子快照）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
+> **当前运行状态（2026-10-15 MVP v2 已默认启用）：**
+> - **生产配置默认输出 MVP v2**：`configs/config.risk_off.json`、`configs/config.risk_on.json` 与 `configs/config.strict_candidate.json` 已默认设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`。直接运行 `python run_scan.py --config configs/config.risk_off.json` 即可产出完整的 MVP v2 选股结果与 v2 折叠卡片式报告（如需回退旧版可传 `--decision-policy-version v1 --report-layout-version v1`）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
 > - **通用三源候选池发现（Opt-In）**：扫描器支持通过 `discovery_source_files` 接入独立的 **US Core Universe / Thematic Universe / Manual Research Universe** CSV（见 [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md) 与 [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)）。
 
 > **当前产品目标（北极星）：**
@@ -228,24 +227,13 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
    $$\text{Joint Conviction Score} = 0.60 \times \text{Quality Score} + 0.40 \times \text{Entry Score} + 0.04 \times \mathbb{I}(\text{Quality Grade} == \text{A})$$
    兼顾基本面厚度与当下买点质量；在 `HOLD_MONITOR` 内部，将剩余 `ENTRY_READY` 标的排在趋势受损（`TREND_DAMAGED`）的 A 级股之前。
 
-#### （4）MVP v2 的三种运行命令
-1. **直接以 MVP v2 策略 + v2 折叠卡片式报告运行扫描**：
+#### （4）MVP v2 的运行命令
+1. **日常标准扫描（生产配置已默认启用 MVP v2 策略 + v2 折叠卡片式报告）**：
    ```bash
-   python run_scan.py \
-     --config configs/config.risk_off.json \
-     --decision-policy-version v2 \
-     --report-layout-version v2
+   python run_scan.py --config configs/config.risk_off.json
    ```
-   *(也可在 JSON 配置文件中设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`)*
-2. **双轨影子对照模式（一次扫描、零额外网络请求，同时输出 v1 主目录 + v2 影子目录）**：
-   ```bash
-   python run_scan.py \
-     --config configs/config.risk_off.json \
-     --enable-v2-shadow
-   ```
-   - v1 主快照：`outputs/decisions/YYYY-MM-DD/risk_off/`
-   - v2 影子快照：`outputs/decisions/YYYY-MM-DD/risk_off_shadow_v2/`（含 v2 策略 `decisions.jsonl`、折叠卡片式 `action_list.md`、一屏记分卡式 `detailed/*.md` 及含 `"decision_policy_version": "v2"` 的 `run_manifest.json`）
-3. **离线将任意已有快照重渲染为 v2 折叠卡片式报告**：
+   *(注：`configs/config.risk_off.json` 与 `configs/config.risk_on.json` 已默认配置 `"decision_policy_version": "v2", "report_layout_version": "v2"`，并已将 Alpaca 缓存 TTL 设为 12 小时 `43200s`)*
+2. **离线将任意已有快照重渲染为 v2 折叠卡片式报告**：
    ```bash
    python scripts/render_snapshot_preview.py \
      --snapshot-dir outputs/decisions/YYYY-MM-DD/risk_off \

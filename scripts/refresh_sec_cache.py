@@ -352,7 +352,10 @@ def refresh_symbols(
                     summary["pending_ciks"][str(cik)] = {
                         "symbol": symbol, "accession": pending,
                     }
-                consecutive_failures += 1
+                # SEC HTTP request succeeded; a pending/unpatchable filing is
+                # not a transport outage and must not trip the 5-exception
+                # circuit breaker when valid_skips are interspersed.
+                consecutive_failures = 0
                 log(f"WARNING: {symbol} CIK {cik}: no eligible parsed cache "
                     "(pending facts, missing cache, or provenance mismatch)")
             else:
