@@ -2,35 +2,17 @@
 
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
 
-> **当前运行状态：** 已验收的 v1 扫描仍然使用历史 AI/主题 watchlist，
-> `configs/config.risk_off.json` 以及固定的 Quality/Entry/Action 规则。
-> **长期产品方向：** 将候选发现解耦为 **US Core Universe / Thematic Universe /
-> Manual Research Universe**；AI 为可选主题而非唯一股票来源。
-> 本项目前瞻方向为设计阶段，**尚未切换实际 scanner、候选底单或门槛**。
-> 设计与迁移前置条件见
-> [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md)。
+> **当前运行状态（2026-10-15 MVP v2 已完成）：**
+> - **默认兼容模式（v1）**：不带额外参数运行 `run_scan.py` 时，默认保持 `decision_policy_version="v1"` 与 `report_layout_version="v1"`，确保历史快照与既有自动化脚本 100% 向后兼容。
+> - **MVP v2 选股策略与新版报告（推荐人工研究使用）**：已完整实现并通过 M0–M5 双轨验证（支持 `--decision-policy-version v2 --report-layout-version v2` 直接启用，或使用 `--enable-v2-shadow` 在一次扫描中同时输出 v1 主快照与 v2 影子快照）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
+> - **通用三源候选池发现（Opt-In）**：扫描器支持通过 `discovery_source_files` 接入独立的 **US Core Universe / Thematic Universe / Manual Research Universe** CSV（见 [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md) 与 [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)）。
 
-> **通用候选池的可选实现：** 扫描器可通过新增的 `discovery_source_files`
-> 接入独立的 US Core / Thematic / Manual CSV，并在 snapshot 中保留
-> 各来源 membership、原始输入 CSV、被禁用/无效行及 SHA256。
-> **未设置该字段时默认仍使用原 AI 底单，行为保持兼容。**
-> 完整字段定义、离线检查、实验指令与审核证据清单见
-> [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)。
-> 本功能尚未向默认生产配置开启，也没有经真实凭证运行的多来源验收。
-
-> **综合研究 PR #57：** 已冻结 62 个唯一证券代码的跨行业诊断候选池，
-> 并提供 Quality v1、Entry v1、IEX 流动性以及 Action List 的联合审计工具；
-> 可选的 IEX 20 日成交金额及 QQQ/SPY/行业代理基准对照只用于研究，
-> 不改动 v1 的评分或 Entry 买点。
-> 运行前请阅读 [综合研究与 Evidence 验收协议](docs/generalized_end_to_end_research_v0.md)。
-> 本研究池不是美股市场代表样本，业务模式标签尚待验证，也尚未执行需凭证的研究实验。
-
-> **当前产品目标（2026-10-10 起）：**
+> **当前产品目标（北极星）：**
 > **先找到值得拥有的公司，再判断现在是不是一个相对合理的买入时点。**
 >
 > 本项目不是自动量化交易系统。它不负责自动下单、账户持仓管理、自动调仓或高频交易；
-> 它负责把较大的观察池压缩成少量值得人工研究的候选，并把“公司质量”和“入场位置”
-> 分开解释。完整方向见
+> 它负责把较大的观察池压缩成少量（通常 5–15 只）值得人工深度研究的候选，并把“公司质量（Company Quality）”和“入场位置（Entry Quality）”
+> 分开评估与解释。完整方向见
 > [docs/product_direction_low_frequency_manual_selection.md](docs/product_direction_low_frequency_manual_selection.md)。
 
 当前目标模型：
@@ -204,6 +186,72 @@ Action List、Weekly Review、Detailed Report、Action mapping 与 attention cap
 完整验收标准见
 [docs/mvp_full_scan_acceptance.md](docs/mvp_full_scan_acceptance.md)。候选宇宙的三层语义、排除原因和外部实验提交规范见
 [docs/mvp_candidate_universe_provenance.md](docs/mvp_candidate_universe_provenance.md)。
+
+### 3.4.2 MVP v2 选股策略详解与使用方式
+
+MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority v2 → Report Layout v2”** 对选股准确度、高增长龙头识别、买点结构过滤以及报告可读性进行了系统升级：
+
+#### （1）Company Quality v2（基本面质量评估：回答“这家公司是否值得长期拥有”）
+保持 6 大基本面维度加权框架（总分 `0.00–1.00`，`Grade A`: `score >= 0.72, confidence >= 0.80` 且无严重红旗；`Grade B`: `score >= 0.52, confidence >= 0.60`；`Grade C`: 其余已评级公司；`UNRATED`: 核心数据缺失/过期或金融/REIT 等特殊会计模型）：
+1. **盈利与现金流转化（`profitability_cash`，权重 30%）**：
+   - 考核指标：`net_margin`（净利率）、**`fcf_margin`（自由现金流率 `FCF / Revenue`，`>=15%` 满分，`>=8%` 良好，`<3%` 薄利润率预警）**、**`operating_margin`（营业利润率 `Adjusted EBIT / Revenue`，`>=20%` 满分，`>=12%` 良好）**、`ocf_to_net_income`（经营现金流/净利润转化率 `>=1.0x`）、以及 **符号感知的 `accrual_ratio`（应计比率）**。
+   - **核心升级**：当 `accrual_ratio <= 0` 且 `OCF/NI >= 0.80` 时，说明公司经营现金流高于账面净利润（如 SaaS 递延收入预收款或高折旧现金牛），直接得满分 `1.0`，彻底消除了 v1 因取绝对值 `abs()` 把 `META / MSFT / CRM / EOG` 误判为财务弱项的缺陷。
+2. **成长与稳定性（`growth_stability`，权重 20%）**：
+   - 考核指标：TTM `revenue_yoy`（营收增速 `>=15%` 强劲）、`adjusted_net_income_yoy`（经调整净利增速 `>=15%` 强劲）、`operating_cash_flow_yoy`（经营现金流增速 `>=15%` 强劲）。
+3. **资产负债表韧性（`balance_sheet`，权重 20%）**：
+   - 考核指标：`net_debt_to_ebitda`（净负债/EBITDA `<=1.5x` 支持，`>4.0x` 预警）、`interest_coverage`（利息保障倍数 `>=4.0x` 支持，`<1.0x` 严重风险）、`current_ratio`（流动比率 `>=1.0x`）。
+4. **股本稀释与资本纪律（`dilution`，权重 10%）**：
+   - 考核指标：`shares_yoy`（同比股本变化 `<=3%` 支持，`>12%` 预警）。
+   - **股本口径分离保障（M1）**：市值与估值倍数分母严格采用 SEC 时点普通股股本（`POINT_IN_TIME_SHARES_TAGS`），而同比稀释率分母严格采用同口径加权平均股本（`WEIGHTED_AVERAGE_SHARES_TAGS`），杜绝双层股权结构（如 `HEI`）跳变造成的虚假稀释。
+5. **估值背景（`valuation_context`，权重 10%）**：
+   - 考核指标：`fcf_yield`（自由现金流收益率 `>=2%` 支持）、`ps_hist_percentile` 与 `pe_hist_percentile`（自身历史分位）。
+   - **核心升级**：对现金流健康（`fcf_yield >= 2%`）或高增长现金牛公司，将自身历史 P/S、P/E 分位得分保底为 `0.35`（不触发弱项红旗），避免长期慢牛与创历史新高的优质股被自身历史分位机械扣分。
+6. **营运红旗（`operating_red_flags`，权重 10%）**：
+   - 考核指标：`receivables_growth_gap`（应收增速 - 营收增速）与 `inventory_growth_gap`（存货增速 - 营收增速）。
+   - **核心升级（高增长现金牛营运资本豁免）**：当公司处于高速扩张且回款健康（`revenue_yoy >= 25%` 且 `OCF/NI >= 0.80`）时，豁免期末时点应收/存货增速差扣分与一票否决项，使 `MU`、`NVDA`、`TER` 等高景气龙头不再因单季末备货/应收时间基准错配被误降为 B 级。
+
+#### （2）Entry Quality v2（量价买点评估：回答“现在是不是相对合理的入场位置”）
+将候选股划分为 5 个清晰状态（`ENTRY_READY`, `WATCH_PULLBACK`, `WATCH_BREAKOUT`, `TREND_DAMAGED`, `INSUFFICIENT_DATA`），其中 **`ENTRY_READY` 必须同时满足 7 大买点门限**：
+1. **行情新鲜度**：`market_data_age_days <= 3d`；
+2. **长期趋势健康**：`price_to_sma200 >= 1.00` 且近 20 日低于 SMA200 天数 `<= 3`；
+3. **中长期均线多头对齐（v2 新增）**：`sma50_to_sma200 = SMA50 / SMA200 >= 0.98`（过滤 50 日均线死叉在 200 日均线之下的假突破）；
+4. **中期动量非负**：`return_60d >= 0.0%`；
+5. **相对强度达标**：`relative_strength_60d_qqq >= -3.0%`（若市场处于防守/下跌 `regime="down"`，则要求 `RS60 >= +5.0%` 且 `return_20d >= 0.0%`）；
+6. **短期买点带宽（不追高、不破位）**：`0.98 <= price_to_sma50 <= 1.08` 且 `-3.0% <= return_20d <= +12.0%`；
+   - **回调死带闭合（v2 升级）**：凡是长期趋势、中期动量、相对强度与回撤全部健康，仅因短期偏热（`price_to_sma50 > 1.08` 或 `return_20d > +12.0%`）未进 `ENTRY_READY` 的强势股，统一归入 **`WATCH_PULLBACK`（等待回调至 SMA50 带宽）**，不再误入 `WATCH_BREAKOUT`。
+7. **回撤与波动率受控**：距 52 周高点回撤 `drawdown_from_52w_high <= 22%`，60 日年化波动率 `volatility_60d <= 80%`。
+   - **`WATCH_BREAKOUT` 蓄势 vs 滞后细分（v2 升级）**：将等待突破的标的显式区分为 `watch_breakout_near_consolidation`（站上 SMA200、均线对齐、60d 与 RS 接近就绪）与 `watch_breakout_lagging_structure`（趋势或相对强度明显滞后，扣减 `0.10` 分），且每一只非 `ENTRY_READY` 股票 100% 显式列出尚未达标的具体门限。
+
+#### （3）Action & Priority v2（行动状态路由与 Top-15 联合排序）
+1. **高确信度 `Quality B + ENTRY_READY` 提拔**：当 `Quality B` 满足 `quality.score >= 0.68`、`confidence >= 0.80` 且处于高分买点 `ENTRY_READY (entry.score >= 0.80)` 时，直接提拔进入 **`PRIORITY_REVIEW`**，避免优质成长股因单一指标暂处 B 级上限而被埋没在 `HOLD_MONITOR`。
+2. **`PRIORITY_REVIEW` 内部联合确信度排序**：
+   $$\text{Joint Conviction Score} = 0.60 \times \text{Quality Score} + 0.40 \times \text{Entry Score} + 0.04 \times \mathbb{I}(\text{Quality Grade} == \text{A})$$
+   兼顾基本面厚度与当下买点质量；在 `HOLD_MONITOR` 内部，将剩余 `ENTRY_READY` 标的排在趋势受损（`TREND_DAMAGED`）的 A 级股之前。
+
+#### （4）MVP v2 的三种运行命令
+1. **直接以 MVP v2 策略 + v2 折叠卡片式报告运行扫描**：
+   ```bash
+   python run_scan.py \
+     --config configs/config.risk_off.json \
+     --decision-policy-version v2 \
+     --report-layout-version v2
+   ```
+   *(也可在 JSON 配置文件中设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`)*
+2. **双轨影子对照模式（一次扫描、零额外网络请求，同时输出 v1 主目录 + v2 影子目录）**：
+   ```bash
+   python run_scan.py \
+     --config configs/config.risk_off.json \
+     --enable-v2-shadow
+   ```
+   - v1 主快照：`outputs/decisions/YYYY-MM-DD/risk_off/`
+   - v2 影子快照：`outputs/decisions/YYYY-MM-DD/risk_off_shadow_v2/`（含 v2 策略 `decisions.jsonl`、折叠卡片式 `action_list.md`、一屏记分卡式 `detailed/*.md` 及含 `"decision_policy_version": "v2"` 的 `run_manifest.json`）
+3. **离线将任意已有快照重渲染为 v2 折叠卡片式报告**：
+   ```bash
+   python scripts/render_snapshot_preview.py \
+     --snapshot-dir outputs/decisions/YYYY-MM-DD/risk_off \
+     --output-dir outputs/preview_v2 \
+     --layout v2
+   ```
 
 ### 3.5 官方配置
 
