@@ -7,12 +7,13 @@
 > Product north star:
 > `docs/product_direction_low_frequency_manual_selection.md`
 >
-> This document records the **implemented v1 MVP architecture** and validation
+> This document records the **implemented v1 and v2 MVP architecture** and validation
 > invariants. The *long-term target* is a source-agnostic US-listed-company
 > research assistant, not a permanent AI-themed scanner.
 > The proposed discovery-universe and business-model-aware Quality v2 contract
-> is in `docs/general_purpose_discovery_and_quality_v2_design.md`.
-> This design addendum is **not** authorization to change v1 runtime behavior.
+> is in `docs/general_purpose_discovery_and_quality_v2_design.md`, and the
+> completed M0–M5 MVP v2 implementation and validation ledger is in
+> `docs/mvp_v2_completion_and_handoff_20261015.md`.
 
 ---
 
@@ -1037,3 +1038,27 @@ Before changing this design, answer:
 - Can a mature third-party tool provide the generic part instead?
 
 If none apply, it is probably outside the MVP.
+
+---
+
+## 19. Implemented MVP v2 Selection & Reporting Upgrade (M0–M5, 2026-10-15)
+
+Following the M0–M5 failure-attribution and validation roadmap (`docs/mvp_v2_completion_and_handoff_20261015.md`), the repository now includes a complete, opt-in **MVP v2 (`policy_version="v2"`, `layout_version="v2"`)** alongside the default `v1` baseline:
+
+1. **Share-Scope Integrity & Non-Ready Gate Completeness (Phase M1)**:
+   - Point-in-time common shares (`POINT_IN_TIME_SHARES_TAGS`) are strictly separated from weighted-average shares (`WEIGHTED_AVERAGE_SHARES_TAGS`) in `fundamentals/shares.py`, with `select_consistent_share_records` enforcing YoY tag/basis consistency.
+   - `decision/entry.py` emits explicit negative `EvidenceItem`s for every unmet `ENTRY_READY` condition on `WATCH_BREAKOUT` and `TREND_DAMAGED` rows (`0` silent non-ready decisions).
+2. **Company Quality v2 (`build_company_quality_v2` in `decision/quality.py`)**:
+   - **Sign-aware accrual scoring (`_score_accrual_v2`)**: Negative accruals (`OCF > NI`) score `1.0` when `OCF/NI >= 0.80`, eliminating false-positive `accrual_ratio_weak` penalties on cash-generative compounders.
+   - **Scale-normalized profitability (`fcf_margin` & `operating_margin`)**: Replaces binary `FCF > 0` with `fcf_margin = free_cash_flow / revenue` (with graceful fallback on partial dicts) and adds `operating_margin = adjusted_ebit / revenue` to `profitability_cash`.
+   - **High-growth working-capital exemption**: When `revenue_yoy >= 25%` and `ocf_to_net_income >= 0.80`, floors `receivables_growth_gap` and `inventory_growth_gap` at `0.75` and exempts them from `severe_checks`.
+   - **Valuation-percentile floor**: Floors `ps_hist_percentile` and `pe_hist_percentile` at `0.35` when `fcf_yield >= 2%` or high-growth cash-generative.
+3. **Entry Quality v2 (`build_entry_quality_v2` in `decision/entry.py`)**:
+   - **Pullback seam closure**: Healthy-trend stocks whose only readiness failure is `price_to_sma50 > 1.08` or `return_20d > 0.12` route directly to `WATCH_PULLBACK` instead of `WATCH_BREAKOUT`.
+   - **Moving-average alignment gate**: Requires `sma50_to_sma200 = price_to_sma200 / price_to_sma50 >= 0.98` for `ENTRY_READY` and emits `sma50_above_sma200_aligned` (`>= 1.00`) or `sma50_below_sma200_inverted` (`< 1.00`).
+   - **`WATCH_BREAKOUT` sub-bucket differentiation**: Distinguishes `watch_breakout_near_consolidation` from `watch_breakout_lagging_structure` (`-0.10` score penalty).
+4. **Action & Priority v2 (`map_action_state_v2` & `assign_action_priorities_v2` in `decision/action.py`)**:
+   - Promotes high-conviction `Quality B (score >= 0.68, confidence >= 0.80) + ENTRY_READY (score >= 0.80)` into `PRIORITY_REVIEW`.
+   - Ranks `PRIORITY_REVIEW` by `0.60 * quality.score + 0.40 * entry.score + 0.04 * I(grade == A)` and ranks remaining `ENTRY_READY` ahead of `TREND_DAMAGED` inside `HOLD_MONITOR`.
+5. **Presentation IR & Report Layout v2 (`decision/view_model.py`, `reporting/decision.py`, `reporting/snapshot.py`)**:
+   - Collapsible `<details>` accordion cards in Action List v2, cross-pillar `Why Own` highlights, 6-Pillar Quality Scorecard table and 7-Gate Readiness Checklist table in Detailed Report v2, and CLI support via `--decision-policy-version v2`, `--report-layout-version v2`, and `--enable-v2-shadow`.
