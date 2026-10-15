@@ -132,6 +132,8 @@ def build_run_manifest(
     input_provenance: Mapping[str, Any] | None = None,
     candidate_universe_summary: Mapping[str, Any] | None = None,
     discovery_source_summary: Mapping[str, Any] | None = None,
+    policy_version: str = "v1",
+    layout_version: str = "v1",
 ) -> dict[str, Any]:
     materialized = tuple(decisions)
     daily = tuple(daily_attention)
@@ -143,6 +145,14 @@ def build_run_manifest(
         "strategy_style": strategy_style,
         "code_sha": code_sha,
         "config_fingerprint": str(config_fingerprint),
+        **(
+            {
+                "decision_policy_version": str(policy_version),
+                "report_layout_version": str(layout_version),
+            }
+            if (policy_version != "v1" or layout_version != "v1")
+            else {}
+        ),
         "counts": {
             "decisions": len(materialized),
             "daily_attention": len(daily),
@@ -185,6 +195,8 @@ def write_decision_snapshot(
     discovery_source_rejections: Iterable[Mapping[str, Any]] = (),
     discovery_source_summary: Mapping[str, Any] | None = None,
     ticker_map_rows: Iterable[Mapping[str, Any]] | None = None,
+    policy_version: str = "v1",
+    layout_version: str = "v1",
 ) -> DecisionSnapshotPaths:
     """Write an immutable prospective snapshot with derived Markdown views.
 
@@ -235,6 +247,7 @@ def write_decision_snapshot(
                 daily_tuple,
                 title="Daily Action List",
                 cadence="daily",
+                layout_version=layout_version,
             ),
             encoding="utf-8",
         )
@@ -243,6 +256,7 @@ def write_decision_snapshot(
                 weekly_tuple,
                 title="Weekly Review List",
                 cadence="weekly",
+                layout_version=layout_version,
             ),
             encoding="utf-8",
         )
@@ -275,7 +289,10 @@ def write_decision_snapshot(
         }
         for symbol in sorted(detailed_symbols):
             (detailed_dir / f"{symbol}.md").write_text(
-                render_detailed_report(detailed_symbols[symbol]),
+                render_detailed_report(
+                    detailed_symbols[symbol],
+                    layout_version=layout_version,
+                ),
                 encoding="utf-8",
             )
 
@@ -311,6 +328,8 @@ def write_decision_snapshot(
             },
             candidate_universe_summary=candidate_universe_summary,
             discovery_source_summary=discovery_source_summary,
+            policy_version=policy_version,
+            layout_version=layout_version,
         )
         (tmp_root / "run_manifest.json").write_text(
             json.dumps(
