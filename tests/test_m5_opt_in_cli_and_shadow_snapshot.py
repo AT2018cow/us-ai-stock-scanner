@@ -159,6 +159,122 @@ class TestM5OptInCliAndShadowSnapshot(unittest.TestCase):
             self.assertIn("Company Quality — 6-Pillar Scorecard", detailed_mu_v2)
             self.assertIn("Entry Quality — 7-Gate Readiness Checklist", detailed_mu_v2)
 
+    def test_production_configs_default_to_v2_and_12h_alpaca_ttl(self) -> None:
+        from ai_value_scanner.scanner import load_config
+
+        for path in (
+            "configs/config.risk_off.json",
+            "configs/config.risk_on.json",
+            "configs/config.strict_candidate.json",
+        ):
+            cfg = load_config(path)
+            self.assertEqual(cfg.decision_policy_version, "v2", path)
+            self.assertEqual(cfg.report_layout_version, "v2", path)
+            self.assertEqual(cfg.alpaca_cache_ttl_snapshots_sec, 43200, path)
+            self.assertEqual(cfg.alpaca_cache_ttl_bars_sec, 43200, path)
+            self.assertEqual(cfg.alpaca_cache_ttl_assets_sec, 43200, path)
+
+    def test_edgartools_fallback_and_terminal_pending_persist_to_parsed_cache(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ai_value_scanner import scanner
+
+        cik = "0000004904"
+        accn = "0000004904-26-000059"
+        subs = {
+            "sic": "4911",
+            "sicDescription": "ELECTRIC SERVICES",
+            "tickers": ["AEP"],
+            "filings": {
+                "recent": {
+                    "form": ["10-Q", "10-Q", "10-K"],
+                    "filingDate": ["2026-07-30", "2026-05-05", "2026-02-12"],
+                    "accessionNumber": [accn, "0000004904-26-000034", "0000004904-26-000013"],
+                }
+            },
+        }
+        old_facts = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {
+                        "units": {
+                            "USD": [
+                                {"start": "2025-07-01", "end": "2025-09-30", "val": 100.0, "filed": "2025-10-29", "accn": "q3-25", "form": "10-Q"},
+                                {"start": "2025-10-01", "end": "2025-12-31", "val": 100.0, "filed": "2026-02-12", "accn": "q4-25", "form": "10-K"},
+                                {"start": "2026-01-01", "end": "2026-03-31", "val": 100.0, "filed": "2026-05-05", "accn": "0000004904-26-000034", "form": "10-Q"},
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                {"start": "2025-07-01", "end": "2025-09-30", "val": 20.0, "filed": "2025-10-29", "accn": "q3-25", "form": "10-Q"},
+                                {"start": "2025-10-01", "end": "2025-12-31", "val": 20.0, "filed": "2026-02-12", "accn": "q4-25", "form": "10-K"},
+                                {"start": "2026-01-01", "end": "2026-03-31", "val": 20.0, "filed": "2026-05-05", "accn": "0000004904-26-000034", "form": "10-Q"},
+                            ]
+                        }
+                    },
+                    "NetCashProvidedByUsedInOperatingActivities": {
+                        "units": {
+                            "USD": [
+                                {"start": "2025-07-01", "end": "2025-09-30", "val": 30.0, "filed": "2025-10-29", "accn": "q3-25", "form": "10-Q"},
+                                {"start": "2025-10-01", "end": "2025-12-31", "val": 30.0, "filed": "2026-02-12", "accn": "q4-25", "form": "10-K"},
+                                {"start": "2026-01-01", "end": "2026-03-31", "val": 30.0, "filed": "2026-05-05", "accn": "0000004904-26-000034", "form": "10-Q"},
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+        patch_payload = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {"units": {"USD": [{"start": "2026-04-01", "end": "2026-06-30", "val": 120.0, "filed": "2026-07-30", "accn": accn, "form": "10-Q"}]}},
+                    "NetIncomeLoss": {"units": {"USD": [{"start": "2026-04-01", "end": "2026-06-30", "val": 25.0, "filed": "2026-07-30", "accn": accn, "form": "10-Q"}]}},
+                    "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [{"start": "2026-04-01", "end": "2026-06-30", "val": 35.0, "filed": "2026-07-30", "accn": accn, "form": "10-Q"}]}},
+                }
+            }
+        }
+
+        class _FakeSec:
+            def __init__(self, cache_dir: Path) -> None:
+                self.cache_dir = cache_dir
+                self.calls: list[str] = []
+
+            def ticker_map_snapshot(self):
+                return {"sha256": "map-sha-1"}
+
+            def get_submissions(self, c: str):
+                self.calls.append("submissions")
+                (self.cache_dir / f"submissions_{c}.json").write_text(json.dumps(subs))
+                return subs
+
+            def get_companyfacts(self, c: str):
+                self.calls.append("facts")
+                (self.cache_dir / f"facts_{c}.json").write_text(json.dumps(old_facts))
+                (self.cache_dir / f"facts_meta_{c}.json").write_text(
+                    json.dumps({"covered_accession": None, "pending_accession": accn})
+                )
+                return json.loads(json.dumps(old_facts))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            cfg = ScanConfig(cache_dir=tmp, sec_cache_ttl_submissions_sec=86400)
+            sec = _FakeSec(cache_dir)
+            fb_res = SimpleNamespace(status="used", used=True, patch=patch_payload)
+            with patch.object(scanner, "fetch_usd_10q_companyfacts_patch", return_value=fb_res) as fb_mock:
+                first = scanner.load_one_fundamental(sec, "AEP", cik, cfg, force_refresh_parsed=True)
+                self.assertTrue(first["fundamental_edgartools_fallback_used"])
+                self.assertEqual(fb_mock.call_count, 1)
+                # Verify both cron validator (max_age_sec=72000) and scan validator (max_age_sec=None) hit cache!
+                cron_hit = scanner.load_valid_parsed_fundamental_cache(sec, "AEP", cik, cfg, max_age_sec=72000)
+                self.assertIsNotNone(cron_hit)
+                sec.calls.clear()
+                second = scanner.load_one_fundamental(sec, "AEP", cik, cfg)
+                self.assertEqual(sec.calls, [])
+                self.assertEqual(fb_mock.call_count, 1)
+                self.assertEqual(second["revenue"], 420.0)
+
 
 if __name__ == "__main__":
     unittest.main()

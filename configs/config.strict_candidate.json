@@ -4,9 +4,9 @@
   "chunk_size": 200,
   "request_timeout_sec": 20,
   "alpaca_cache_enabled": true,
-  "alpaca_cache_ttl_assets_sec": 21600,
-  "alpaca_cache_ttl_snapshots_sec": 120,
-  "alpaca_cache_ttl_bars_sec": 21600,
+  "alpaca_cache_ttl_assets_sec": 43200,
+  "alpaca_cache_ttl_snapshots_sec": 43200,
+  "alpaca_cache_ttl_bars_sec": 43200,
   "watchlist_csv_path": "data/ai_watchlist.csv",
   "watchlist_fetch_timeout_sec": 20,
   "ai_link_benchmark_etfs": [
@@ -438,5 +438,7 @@
     "negative_momentum"
   ],
   "low_value_min_research_score": 0.0,
-  "sec_cache_ttl_submissions_sec": 86400
+  "sec_cache_ttl_submissions_sec": 86400,
+  "decision_policy_version": "v2",
+  "report_layout_version": "v2"
 }
