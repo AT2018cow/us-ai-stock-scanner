@@ -786,3 +786,198 @@ def _build_entry_with_thresholds(
         risks=tuple(risks),
         market_asof=normalized_market_asof,
     )
+
+
+ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-10-15"
+
+ENTRY_V2_MA_ALIGNMENT_MIN = 0.98
+ENTRY_V2_LAGGING_SCORE_PENALTY = 0.10
+
+
+def _sma50_to_sma200_ratio(
+    price_to_sma200: float | None, price_to_sma50: float | None
+) -> float | None:
+    """Exact identity: SMA50/SMA200 = price_to_sma200 / price_to_sma50."""
+    if price_to_sma200 is None or price_to_sma50 is None:
+        return None
+    if price_to_sma50 <= 0:
+        return None
+    return price_to_sma200 / price_to_sma50
+
+
+def _v2_core_uptrend_ready_except_extension(
+    metrics: Mapping[str, Any],
+    *,
+    ready_rs60_min: float,
+    overextended_return20_gt: float,
+) -> bool:
+    """H2 Fix 1 predicate: everything READY except mild high-side extension."""
+    sma200 = _finite_value(metrics, "price_to_sma200")
+    sma50 = _finite_value(metrics, "price_to_sma50")
+    return_20d = _finite_value(metrics, "return_20d")
+    return_60d = _finite_value(metrics, "return_60d")
+    drawdown = _finite_value(metrics, "drawdown_from_52w_high")
+    relative_strength = _finite_value(metrics, "relative_strength_60d_qqq")
+    volatility = _finite_value(metrics, "volatility_60d")
+    days_below = _finite_value(metrics, "days_below_sma200")
+    ratio = _sma50_to_sma200_ratio(sma200, sma50)
+    regime = str(metrics.get("regime", "") or "").strip().lower()
+    benchmark_trend_ok = _optional_bool(metrics.get("benchmark_trend_ok"))
+    defensive_regime = regime == "down" or benchmark_trend_ok is False
+    defensive_entry_ok = (
+        not defensive_regime
+        or (
+            relative_strength is not None
+            and relative_strength >= 0.05
+            and return_20d is not None
+            and return_20d >= 0.0
+        )
+    )
+    _ = overextended_return20_gt
+    return bool(
+        sma200 is not None
+        and sma200 >= 1.00
+        and ratio is not None
+        and ratio >= ENTRY_V2_MA_ALIGNMENT_MIN
+        and (days_below is None or days_below <= 3)
+        and return_60d is not None
+        and return_60d >= 0.0
+        and relative_strength is not None
+        and relative_strength >= ready_rs60_min
+        and drawdown is not None
+        and drawdown <= 0.22
+        and (volatility is None or volatility <= 0.80)
+        and defensive_entry_ok
+        and sma50 is not None
+        and sma50 >= 0.98
+        and return_20d is not None
+        and return_20d >= -0.03
+        and (sma50 > 1.08 or return_20d > 0.12)
+    )
+
+
+def build_entry_quality_v2(
+    metrics: Mapping[str, Any],
+    *,
+    decision_date: str | date | None = None,
+    market_asof: str | date | None = None,
+) -> EntryDecision:
+    """Pre-registered H2 Entry candidate: v1 evidence plus 3 structure fixes.
+
+    Wraps the frozen v1 builder (score, confidence, and all M1 silent-gate
+    evidence are inherited unchanged), then applies: the pullback-seam
+    close, the sma50_to_sma200 alignment gate + evidence, and the
+    WATCH_BREAKOUT near-vs-lagging differentiation (0.10 score penalty for
+    lagging structure only).
+    """
+    ready_rs60_min = -0.03
+    overextended_return20_gt = 0.15
+    base = _build_entry_with_thresholds(
+        metrics,
+        decision_date=decision_date,
+        market_asof=market_asof,
+        ready_rs60_min=ready_rs60_min,
+        overextended_return20_gt=overextended_return20_gt,
+    )
+    positives: list[EvidenceItem] = list(base.positives)
+    risks: list[EvidenceItem] = list(base.risks)
+    state = base.state
+    score = base.score
+
+    sma200 = _finite_value(metrics, "price_to_sma200")
+    sma50 = _finite_value(metrics, "price_to_sma50")
+    ratio = _sma50_to_sma200_ratio(sma200, sma50)
+    if ratio is not None:
+        if ratio >= 1.0:
+            positives.append(
+                _item(
+                    code="sma50_above_sma200_aligned",
+                    label="SMA50 / SMA200 alignment",
+                    polarity="positive",
+                    metric="sma50_to_sma200",
+                    value=ratio,
+                    threshold=">=1.00 golden-cross alignment",
+                    message=(
+                        f"50d SMA is {ratio:.2f}x 200d SMA (aligned uptrend)."
+                    ),
+                )
+            )
+        elif ratio < 1.0:
+            risks.append(
+                _item(
+                    code="sma50_below_sma200_inverted",
+                    label="SMA50 / SMA200 alignment",
+                    polarity="negative",
+                    metric="sma50_to_sma200",
+                    value=ratio,
+                    threshold=">=0.98 required for ENTRY_READY",
+                    message=(
+                        f"50d SMA is {ratio:.2f}x 200d SMA "
+                        "(inverted medium/long trend)."
+                    ),
+                )
+            )
+
+    ma_alignment_ok = ratio is not None and ratio >= ENTRY_V2_MA_ALIGNMENT_MIN
+    if state is EntryState.WATCH_BREAKOUT and _v2_core_uptrend_ready_except_extension(
+        metrics,
+        ready_rs60_min=ready_rs60_min,
+        overextended_return20_gt=overextended_return20_gt,
+    ):
+        state = EntryState.WATCH_PULLBACK
+    elif state is EntryState.ENTRY_READY and not ma_alignment_ok:
+        state = EntryState.WATCH_BREAKOUT
+
+    if state is EntryState.WATCH_BREAKOUT:
+        return_60d = _finite_value(metrics, "return_60d")
+        relative_strength = _finite_value(metrics, "relative_strength_60d_qqq")
+        near_breakout = bool(
+            sma200 is not None
+            and sma200 >= 1.0
+            and return_60d is not None
+            and return_60d >= -0.03
+            and relative_strength is not None
+            and relative_strength >= -0.06
+            and (ratio is None or ratio >= ENTRY_V2_MA_ALIGNMENT_MIN)
+        )
+        if near_breakout:
+            positives.append(
+                _item(
+                    code="watch_breakout_near_consolidation",
+                    label="Near-breakout consolidation",
+                    polarity="positive",
+                    metric="entry_sub_bucket",
+                    value="near-breakout consolidation",
+                    threshold="trend/60d/RS/alignment within readiness reach",
+                    message=(
+                        "Near-breakout consolidation: price structure is within "
+                        "readiness reach on trend, momentum, and relative strength."
+                    ),
+                )
+            )
+        else:
+            score = max(0.0, round(score - ENTRY_V2_LAGGING_SCORE_PENALTY, 6))
+            risks.append(
+                _item(
+                    code="watch_breakout_lagging_structure",
+                    label="Lagging breakout structure",
+                    polarity="negative",
+                    metric="entry_sub_bucket",
+                    value="lagging structure below breakout readiness",
+                    threshold="near-breakout consolidation",
+                    message=(
+                        "Lagging structure below breakout readiness: trend, momentum, "
+                        "relative strength, or MA alignment lags the near-breakout "
+                        "consolidation bar."
+                    ),
+                )
+            )
+
+    return EntryDecision(
+        state=state,
+        score=score,
+        confidence=base.confidence,
+        positives=tuple(positives),
+        risks=tuple(risks),
+        market_asof=base.market_asof,
+    )

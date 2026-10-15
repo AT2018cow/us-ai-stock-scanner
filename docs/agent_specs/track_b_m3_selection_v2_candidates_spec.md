@@ -3,7 +3,7 @@
 > **Target Agent**: Muse Spark 1.3 (Execution Agent)
 > **Reviewer**: Chief Technical Lead / Independent Research Auditor
 > **Roadmap Reference**: `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md` (§4 M3)
-> **Prerequisite Evidence**: `docs/m2_v1_failure_attribution_20261015/` (34/34 frozen strata matched across `snap62`, `snap510`, and 25,025-row `historical_v3`)
+> **Prerequisite Evidence**: `docs/m2_v1_failure_attribution_20261015/` (38/38 frozen strata matched across `snap62`, `snap510`, and 25,025-row `historical_v3`: 28 `STRATIFIED_PRE`, 6 `POSITIVE_CONTROL`, 4 paired `RETROSPECTIVE_EXPLORATORY`)
 
 ---
 
@@ -189,14 +189,14 @@ Generate these **5 compact files + `SHA256SUMS`** (total size `< 120 KB`, zero `
        - `mean_top15_jaccard_vs_v1` (Top-15 turnover / Jaccard similarity vs `v1_baseline` across the 24 dev dates)
      - Exploratory 2023–2024 dev-period date-equal 60d net QQQ excess (`RETROSPECTIVE_EXPLORATORY`) for `TOP15`, `PRIORITY_REVIEW`, `QUALITY_A`, and `ENTRY_READY`.
 3. **`m3_casebook_verification.csv`**:
-   - Re-evaluates all **34 frozen cases** from `docs/m2_v1_failure_attribution_20261015/case_registry_frozen.json` under `v1_baseline`, `h1_quality_only`, `h2_entry_only`, `h3_action_only`, and `v2_combined`, recording `v1_outcome`, `v2_outcome`, `failure_resolved` (`TRUE`/`FALSE`/`CONTROL_PRESERVED`), and verifying **100% preservation of the 6 positive control cases (`M2-C-*`)**.
+   - Re-evaluates all **38 frozen cases** from `docs/m2_v1_failure_attribution_20261015/case_registry_frozen.json` under `v1_baseline`, `h1_quality_only`, `h2_entry_only`, `h3_action_only`, and `v2_combined`, recording `v1_outcome`, `v2_outcome`, `failure_resolved` (`TRUE`/`FALSE`/`CONTROL_PRESERVED`), and verifying **100% preservation of the 6 positive control cases (`M2-C-*`)**.
 4. **`m3_top15_diff_snap62_and_snap510.csv`**:
    - Concrete symbol-level Top-15 membership comparison between `v1_baseline` and `v2_combined` on `snap62`, `snap510`, and sample development dates (`2023-01-31`, `2024-06-28`, `2024-12-31`), showing which stocks enter/exit Top-15 and why.
 5. **`m3_preflight_report.md`**:
    - Concise engineering & research preflight report summarizing:
      - Variant-by-variant non-return gate results;
      - Exact defect reduction rates (Axes 1, 2, 5, 6, 7, 8);
-     - Verification of the 34 frozen M2 cases + 6 positive controls;
+     - Verification of the 38 frozen M2 cases + 6 positive controls;
      - Readiness recommendation for Phase M4 (formal 2025/2026Q1 held-out comparative validation).
 
 ---

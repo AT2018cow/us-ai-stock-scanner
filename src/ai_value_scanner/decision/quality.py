@@ -756,3 +756,586 @@ def build_company_quality_v1(
         missing=tuple(missing),
         data_asof=normalized_data_asof,
     )
+
+
+QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-10-15"
+
+QUALITY_V2_HIGH_GROWTH_MIN = 0.25
+QUALITY_V2_HEALTHY_OCF_MIN = 0.80
+QUALITY_V2_GAP_FLOOR = 0.75
+QUALITY_V2_VALUATION_FLOOR = 0.35
+
+
+def _score_accrual_v2(value: float, ocf_to_ni: float | None = None) -> float:
+    """Sign-aware accrual scoring (H1 Fix 1).
+
+    Negative accruals (OCF exceeds accounting net income) score 1.0 whenever
+    cash conversion is healthy or unknown; only a negative accrual combined
+    with weak conversion falls back to the v1 magnitude penalty. Positive
+    accruals keep the exact v1 bands.
+    """
+    if value <= 0.0:
+        if ocf_to_ni is None or ocf_to_ni >= QUALITY_V2_HEALTHY_OCF_MIN:
+            return 1.0
+        return _score_accrual(value)
+    if value <= 0.05:
+        return 1.0
+    if value <= 0.10:
+        return 0.80
+    if value <= 0.20:
+        return 0.50
+    if value <= 0.35:
+        return 0.20
+    return 0.0
+
+
+def _score_fcf_margin(margin: float) -> float:
+    """Scale-normalized FCF margin scoring (H1 Fix 2)."""
+    if margin >= 0.15:
+        return 1.0
+    if margin >= 0.08:
+        return 0.85
+    if margin >= 0.03:
+        return 0.65
+    if margin > 0.0:
+        return 0.25
+    if margin > -0.05:
+        return 0.15
+    return 0.0
+
+
+def _score_operating_margin(margin: float) -> float:
+    """Operating margin scoring (H1 Fix 2)."""
+    if margin >= 0.20:
+        return 1.0
+    if margin >= 0.12:
+        return 0.80
+    if margin >= 0.05:
+        return 0.55
+    if margin >= 0.0:
+        return 0.30
+    return 0.0
+
+
+def _is_high_growth_cash_generative(metrics: Mapping[str, Any]) -> bool:
+    """H1 Fix 3 exemption condition (mirrors M2 attribution definition)."""
+    revenue_yoy = _finite_value(metrics, "revenue_yoy")
+    ocf = _finite_value(metrics, "ocf_to_net_income")
+    return (
+        revenue_yoy is not None
+        and revenue_yoy >= QUALITY_V2_HIGH_GROWTH_MIN
+        and ocf is not None
+        and ocf >= QUALITY_V2_HEALTHY_OCF_MIN
+    )
+
+
+def build_company_quality_v2(
+    metrics: Mapping[str, Any],
+    *,
+    decision_date: str | date | None = None,
+    data_asof: str | date | None = None,
+) -> QualityDecision:
+    """Pre-registered H1 Quality candidate: v1 pillars with 4 metric fixes.
+
+    Grade thresholds, pillar weights, confidence mechanics, severe-risk
+    gates, and UNRATED guards are identical to v1 (same constants). Only
+    the four M2-proven metric defects change: sign-aware accruals,
+    fcf_margin + operating_margin pillars, high-growth gap exemption, and
+    the valuation-percentile floor for cash-generative compounders.
+    """
+    positives: list[EvidenceItem] = []
+    risks: list[EvidenceItem] = []
+    missing: list[EvidenceItem] = []
+
+    work: dict[str, Any] = dict(metrics)
+    ocf_value = _finite_value(work, "ocf_to_net_income")
+    revenue_value = _finite_value(work, "revenue")
+    fcf_value = _finite_value(work, "free_cash_flow")
+    high_growth = _is_high_growth_cash_generative(work)
+
+    if revenue_value is not None and revenue_value > 0.0 and fcf_value is not None:
+        work["fcf_margin"] = fcf_value / revenue_value
+        fcf_assessment = ("fcf_margin", "FCF margin", _score_fcf_margin, 0.80, 0.25,
+                          ">=8% supportive; <=0% weak")
+    else:
+        # Graceful fallback for partial dicts (e.g. snapshot evidence maps
+        # without revenue): identical v1 binary-FCF assessment, so confidence
+        # is not artificially reduced.
+        fcf_assessment = ("free_cash_flow", "Free cash flow", _score_fcf, 0.80, 0.25,
+                          ">0 supportive; <0 weak")
+
+    ebit_value = _finite_value(work, "adjusted_ebit")
+    if ebit_value is None:
+        ebit_value = _finite_value(work, "ebit")
+    operating_margin_computable = (
+        revenue_value is not None and revenue_value > 0.0 and ebit_value is not None
+    )
+    if operating_margin_computable:
+        work["operating_margin"] = ebit_value / revenue_value  # type: ignore[operator]
+
+    def _gap_score_fn(base_fn: Any) -> Any:
+        if high_growth:
+            return lambda value: max(float(base_fn(value)), QUALITY_V2_GAP_FLOOR)
+        return base_fn
+
+    fcf_yield_value = _finite_value(work, "fcf_yield")
+    valuation_floor = (
+        fcf_yield_value is not None and fcf_yield_value >= 0.02
+    ) or high_growth
+
+    def _valuation_score_fn(value: float) -> float:
+        scored = float(_score_valuation_percentile(value))
+        if valuation_floor:
+            return max(scored, QUALITY_V2_VALUATION_FLOOR)
+        return scored
+
+    profitability_cash_scores = [
+        _assess_numeric_metric(
+            work,
+            key="net_margin",
+            label="Net margin",
+            score_fn=_score_net_margin,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=10% supportive; <0% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key=fcf_assessment[0],
+            label=fcf_assessment[1],
+            score_fn=fcf_assessment[2],
+            strong_score=fcf_assessment[3],
+            weak_score=fcf_assessment[4],
+            threshold_text=fcf_assessment[5],
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="ocf_to_net_income",
+            label="Operating cash-flow conversion",
+            score_fn=_score_ocf_conversion,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=0.8 supportive; <0.5 weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="accrual_ratio",
+            label="Accrual quality",
+            score_fn=lambda value: _score_accrual_v2(value, ocf_value),
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text="<=0 (with OCF/NI>=0.8) or <=0.10 supportive; >0.35 weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+    ]
+    if operating_margin_computable:
+        profitability_cash_scores.append(
+            _assess_numeric_metric(
+                work,
+                key="operating_margin",
+                label="Operating margin",
+                score_fn=_score_operating_margin,
+                strong_score=0.80,
+                weak_score=0.25,
+                threshold_text=">=12% supportive; <0% weak",
+                positives=positives,
+                risks=risks,
+                missing=missing,
+            )
+        )
+
+    earnings_growth_key = (
+        "adjusted_net_income_yoy"
+        if _finite_value(work, "adjusted_net_income_yoy") is not None
+        else "net_income_yoy"
+    )
+    growth_scores = [
+        _assess_numeric_metric(
+            work,
+            key="revenue_yoy",
+            label="Revenue growth",
+            score_fn=_score_revenue_growth,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=8% supportive; <-10% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key=earnings_growth_key,
+            label="Earnings growth",
+            score_fn=_score_earnings_growth,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=15% strong; <-10% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="operating_cash_flow_yoy",
+            label="Operating cash-flow growth",
+            score_fn=_score_ocf_growth,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=15% strong; <-10% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+    ]
+
+    balance_scores = [
+        _assess_numeric_metric(
+            work,
+            key="net_debt_to_ebitda",
+            label="Net debt / EBITDA",
+            score_fn=_score_net_debt,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text="<=1.5 supportive; >4 weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="interest_coverage",
+            label="Interest coverage",
+            score_fn=_score_interest_coverage,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text=">=4 supportive; <1 weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="current_ratio",
+            label="Current ratio",
+            score_fn=_score_current_ratio,
+            strong_score=0.75,
+            weak_score=0.25,
+            threshold_text=">=1 supportive; <0.75 weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+    ]
+
+    dilution_scores = [
+        _assess_numeric_metric(
+            work,
+            key="shares_yoy",
+            label="Share-count change",
+            score_fn=_score_dilution,
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text="<=3% supportive; >12% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        )
+    ]
+
+    valuation_scores = [
+        _assess_numeric_metric(
+            work,
+            key="fcf_yield",
+            label="FCF yield",
+            score_fn=_score_fcf_yield,
+            strong_score=0.75,
+            weak_score=0.25,
+            threshold_text=">=2% supportive; <-2% weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="ps_hist_percentile",
+            label="Historical P/S percentile",
+            score_fn=_valuation_score_fn,
+            strong_score=0.70,
+            weak_score=0.25,
+            threshold_text="<=60% supportive; >80% expensive",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="pe_hist_percentile",
+            label="Historical P/E percentile",
+            score_fn=_valuation_score_fn,
+            strong_score=0.70,
+            weak_score=0.25,
+            threshold_text="<=60% supportive; >80% expensive",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+    ]
+
+    red_flag_scores = [
+        _assess_numeric_metric(
+            work,
+            key="receivables_growth_gap",
+            label="Receivables growth gap",
+            score_fn=_gap_score_fn(_score_receivables_gap),
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text="<=5pp supportive; >25pp weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+        _assess_numeric_metric(
+            work,
+            key="inventory_growth_gap",
+            label="Inventory growth gap",
+            score_fn=_gap_score_fn(_score_inventory_gap),
+            strong_score=0.80,
+            weak_score=0.25,
+            threshold_text="<=10pp supportive; >30pp weak",
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        ),
+    ]
+
+    component_inputs = {
+        "profitability_cash": profitability_cash_scores,
+        "growth_stability": growth_scores,
+        "balance_sheet": balance_scores,
+        "dilution": dilution_scores,
+        "valuation_context": valuation_scores,
+        "operating_red_flags": red_flag_scores,
+    }
+    component_scores: dict[str, float | None] = {}
+    component_coverage: dict[str, float] = {}
+    effective_score = 0.0
+    confidence = 0.0
+    for name, scores in component_inputs.items():
+        score, coverage = _component(scores)
+        component_scores[name] = None if score is None else round(score, 6)
+        component_coverage[name] = coverage
+        weight = QUALITY_V1_COMPONENT_WEIGHTS[name]
+        confidence += weight * coverage
+        if score is not None:
+            effective_score += weight * score * coverage
+
+    shares_stale = work.get("shares_stale")
+    if shares_stale is True:
+        risks.append(
+            _metric_item(
+                code="shares_data_stale",
+                label="Share-count data stale",
+                polarity="negative",
+                metric="shares_stale",
+                value="true",
+                threshold="false",
+                message="Share-count provenance is stale and weakens dilution confidence.",
+            )
+        )
+
+    decision_dt = _parse_iso_date(decision_date)
+    data_dt = _parse_iso_date(data_asof)
+    stale_unrated = False
+    data_integrity_blocked = False
+    normalized_data_asof = data_dt.isoformat() if data_dt is not None else None
+
+    if work.get("fundamental_facts_cover_latest_periodic") is False:
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="latest_periodic_filing_not_covered",
+                label="Latest periodic filing not covered",
+                polarity="missing",
+                metric="fundamental_latest_periodic_filing_date",
+                value=work.get("fundamental_latest_periodic_filing_date"),
+                threshold="latest periodic filing must be represented in recognized Company Facts",
+                message=(
+                    "SEC submissions show a newer periodic filing than the recognized "
+                    "Company Facts used for Quality; stale metrics are not promoted."
+                ),
+            )
+        )
+
+    if work.get("fundamental_currency_supported") is False:
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="fundamental_currency_unsupported",
+                label="Fundamental reporting currency unsupported",
+                polarity="missing",
+                metric="fundamental_reporting_currency",
+                value=work.get("fundamental_reporting_currency"),
+                threshold="USD monetary facts required by live valuation path",
+                message=(
+                    "Core monetary facts are available only in a non-USD reporting "
+                    "currency; the live scanner will not mix them with USD market cap "
+                    "without an explicit FX normalization layer."
+                ),
+            )
+        )
+    _entity_flag_present = "fundamental_operating_entity_verified" in work
+    _entity_flag = work.get("fundamental_operating_entity_verified")
+    if _entity_flag is False or (_entity_flag_present and _entity_flag is None):
+        data_integrity_blocked = True
+        confidence = min(confidence, 0.49)
+        missing.append(
+            _metric_item(
+                code="operating_entity_unverified",
+                label="Operating filing entity unverified",
+                polarity="missing",
+                metric="fundamental_operating_entity_detail",
+                value=work.get("fundamental_operating_entity_detail"),
+                threshold="ticker must map to the operating issuer with core facts",
+                message=(
+                    "The ticker->CIK binding does not verifiably represent the "
+                    "operating issuer (ticker absent from the entity filing "
+                    "record, an entity with filings but no revenue, net "
+                    "income or operating-cash-flow facts, or an unchecked "
+                    "binding). No reliable grade can be claimed; verify the "
+                    "filing entity before use."
+                ),
+            )
+        )
+    if decision_dt is not None and data_dt is not None:
+        if data_dt > decision_dt:
+            raise ValueError(
+                f"fundamental data_asof {data_dt.isoformat()} is after "
+                f"decision_date {decision_dt.isoformat()}"
+            )
+        age_days = (decision_dt - data_dt).days
+        if age_days > QUALITY_V1_STALE_UNRATED_DAYS:
+            stale_unrated = True
+            confidence = min(confidence, 0.49)
+            risks.append(
+                _metric_item(
+                    code="fundamental_data_severely_stale",
+                    label="Fundamental data severely stale",
+                    polarity="negative",
+                    metric="fundamental_data_age_days",
+                    value=age_days,
+                    threshold=f"<={QUALITY_V1_STALE_UNRATED_DAYS}",
+                    message="Fundamental evidence is too stale to assign a rated Company Quality grade.",
+                )
+            )
+        elif age_days > QUALITY_V1_STALE_WARN_DAYS:
+            confidence *= 0.90
+            risks.append(
+                _metric_item(
+                    code="fundamental_data_stale",
+                    label="Fundamental data stale",
+                    polarity="negative",
+                    metric="fundamental_data_age_days",
+                    value=age_days,
+                    threshold=f"<={QUALITY_V1_STALE_WARN_DAYS}",
+                    message="Fundamental evidence is older than the preferred freshness window.",
+                )
+            )
+        elif not data_integrity_blocked:
+            positives.append(
+                _metric_item(
+                    code="fundamental_data_fresh",
+                    label="Fundamental data freshness",
+                    polarity="positive",
+                    metric="fundamental_data_age_days",
+                    value=age_days,
+                    threshold=f"<={QUALITY_V1_STALE_WARN_DAYS}",
+                    message="Fundamental evidence is within the pre-registered freshness window.",
+                )
+            )
+    elif data_dt is None:
+        confidence = min(confidence, 0.79)
+        missing.append(
+            _metric_item(
+                code="fundamental_data_asof_missing",
+                label="Fundamental data as-of missing",
+                polarity="missing",
+                metric="fundamental_data_asof",
+                value=None,
+                threshold="required for Quality A",
+                message="Filing freshness cannot be verified, so Quality A is suppressed.",
+            )
+        )
+
+    severe_risks = 0
+    severe_checks: list[tuple[float | None, Any]] = [
+        (_finite_value(work, "net_debt_to_ebitda"), lambda x: x > 5.0),
+        (_finite_value(work, "interest_coverage"), lambda x: x < 1.0),
+        (_finite_value(work, "shares_yoy"), lambda x: x > 0.15),
+    ]
+    if not high_growth:
+        severe_checks.extend(
+            [
+                (_finite_value(work, "receivables_growth_gap"), lambda x: x > 0.30),
+                (_finite_value(work, "inventory_growth_gap"), lambda x: x > 0.35),
+            ]
+        )
+    severe_risks += sum(
+        1 for value, predicate in severe_checks if value is not None and predicate(value)
+    )
+    if (
+        (_finite_value(work, "net_margin") or 0.0) < 0.0
+        and (_finite_value(work, "free_cash_flow") or 0.0) < 0.0
+    ):
+        severe_risks += 1
+
+    score = round(max(0.0, min(1.0, effective_score)), 6)
+    confidence = round(max(0.0, min(1.0, confidence)), 6)
+    profitability_score = component_scores["profitability_cash"]
+    balance_score = component_scores["balance_sheet"]
+
+    if stale_unrated or confidence < QUALITY_V1_MIN_CONFIDENCE_RATED:
+        grade = QualityGrade.UNRATED
+    elif (
+        score >= QUALITY_V1_GRADE_A_MIN_SCORE
+        and confidence >= QUALITY_V1_GRADE_A_MIN_CONFIDENCE
+        and profitability_score is not None
+        and profitability_score >= 0.60
+        and balance_score is not None
+        and balance_score >= 0.50
+        and component_coverage["profitability_cash"] >= 0.75
+        and component_coverage["balance_sheet"] >= (2.0 / 3.0)
+        and severe_risks == 0
+    ):
+        grade = QualityGrade.A
+    elif (
+        score >= QUALITY_V1_GRADE_B_MIN_SCORE
+        and confidence >= QUALITY_V1_GRADE_B_MIN_CONFIDENCE
+        and severe_risks < 2
+    ):
+        grade = QualityGrade.B
+    else:
+        grade = QualityGrade.C
+
+    return QualityDecision(
+        grade=grade,
+        score=score,
+        confidence=confidence,
+        component_scores=component_scores,
+        positives=tuple(positives),
+        risks=tuple(risks),
+        missing=tuple(missing),
+        data_asof=normalized_data_asof,
+    )
