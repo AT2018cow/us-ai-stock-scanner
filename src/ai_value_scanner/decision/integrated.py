@@ -247,6 +247,9 @@ def build_stock_decisions(
             "fundamental_source",
             "fundamental_edgartools_fallback_status",
             "fundamental_edgartools_fallback_version",
+            "share_count_basis",
+            "share_count_tag",
+            "share_count_source_tag",
         ):
             value = _text(row.get(key))
             if value is not None:

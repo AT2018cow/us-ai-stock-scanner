@@ -422,6 +422,36 @@ def _build_entry_with_thresholds(
                     message="Long-term price structure is materially damaged.",
                 )
             )
+    # M1 evidence completeness: the [0.95, 1.00) band blocks ENTRY_READY
+    # (which requires sma200 >= 1.00) but previously emitted no EvidenceItem.
+    if sma200 is not None and 0.95 <= sma200 < 1.00:
+        risks.append(
+            _item(
+                code="price_below_sma200_trend",
+                label="Price below SMA200",
+                polarity="negative",
+                metric="price_to_sma200",
+                value=round(sma200, 6),
+                threshold=">=1.00 for ENTRY_READY",
+                message="Price is slightly below its 200-day average and does not confirm ENTRY_READY.",
+            )
+        )
+
+    # M1 evidence completeness: days_below_sma200 >= 15 triggers TREND_DAMAGED
+    # but previously emitted no EvidenceItem (ISRG archetype).
+    if days_below is not None and days_below >= 15:
+        days_value = float(days_below)
+        risks.append(
+            _item(
+                code="days_below_sma200_elevated",
+                label="Persistent days below SMA200",
+                polarity="negative",
+                metric="days_below_sma200",
+                value=int(days_value) if days_value.is_integer() else round(days_value, 2),
+                threshold="<15 days",
+                message="Stock has spent 15 or more recent sessions below SMA200, flagging trend damage.",
+            )
+        )
 
     if sma50 is not None:
         if 0.98 <= sma50 <= 1.08:
@@ -460,6 +490,22 @@ def _build_entry_with_thresholds(
                     message="Shorter-term trend confirmation is weak.",
                 )
             )
+    # M1 evidence completeness: the near-miss bands [0.97, 0.98) and
+    # (1.08, 1.10] block ENTRY_READY (band 0.98-1.08) but were silent (CRM).
+    if sma50 is not None and (
+        (0.97 <= sma50 < 0.98) or (1.08 < sma50 <= 1.10)
+    ):
+        risks.append(
+            _item(
+                code="price_to_sma50_outside_ready_band",
+                label="Price outside SMA50 readiness band",
+                polarity="negative",
+                metric="price_to_sma50",
+                value=round(sma50, 6),
+                threshold="0.98–1.08",
+                message="Price is outside the 0.98–1.08 SMA50 readiness band.",
+            )
+        )
 
     if return_20d is not None:
         if -0.03 <= return_20d <= 0.12:
@@ -490,6 +536,22 @@ def _build_entry_with_thresholds(
                     ),
                 )
             )
+    # M1 evidence completeness: 20d momentum outside -3%..+12% but not above
+    # the overextension gate blocks ENTRY_READY yet was silent (CRM).
+    if return_20d is not None and (
+        return_20d < -0.03 or (0.12 < return_20d <= overextended_return20_gt)
+    ):
+        risks.append(
+            _item(
+                code="return_20d_outside_ready_band",
+                label="20d return outside readiness band",
+                polarity="negative",
+                metric="return_20d",
+                value=round(return_20d, 6),
+                threshold="-3% to +12%",
+                message="20d momentum is outside the -3% to +12% readiness band.",
+            )
+        )
 
     if return_60d is not None:
         if return_60d >= 0:
@@ -516,6 +578,20 @@ def _build_entry_with_thresholds(
                     message="Medium-term momentum is weak.",
                 )
             )
+    # M1 evidence completeness: mildly negative 60d returns block ENTRY_READY
+    # (which requires return_60d >= 0) but were silent (TXN, EQIX).
+    if return_60d is not None and -0.08 < return_60d < 0.0:
+        risks.append(
+            _item(
+                code="return_60d_slightly_negative",
+                label="60d trend slightly negative",
+                polarity="negative",
+                metric="return_60d",
+                value=round(return_60d, 6),
+                threshold=">=0% for ENTRY_READY",
+                message="60d return is negative and blocks ENTRY_READY.",
+            )
+        )
 
     if relative_strength is not None:
         if relative_strength >= ready_rs60_min:
@@ -558,6 +634,25 @@ def _build_entry_with_thresholds(
                     message="60d QQQ relative strength is below the versioned ENTRY_READY gate.",
                 )
             )
+    # M1 evidence completeness: RS60 in (-10%, ready gate) blocks ENTRY_READY
+    # but was silent under the canonical -3% gate (PG, GOOGL, TXN, AAPL).
+    # Non-default candidate gates already emit below_candidate_ready above.
+    if (
+        ready_rs60_min == -0.03
+        and relative_strength is not None
+        and -0.10 < relative_strength < ready_rs60_min
+    ):
+        risks.append(
+            _item(
+                code="relative_strength_60d_qqq_below_ready",
+                label="60d relative strength below readiness gate",
+                polarity="negative",
+                metric="relative_strength_60d_qqq",
+                value=round(relative_strength, 6),
+                threshold=">=-3%",
+                message="60d QQQ relative strength is below the -3% ENTRY_READY gate.",
+            )
+        )
 
     if volatility is not None and volatility > 0.80:
         risks.append(
@@ -569,6 +664,21 @@ def _build_entry_with_thresholds(
                 value=round(volatility, 6),
                 threshold="<=80% annualized for ENTRY_READY",
                 message="Volatility is too high for the ENTRY_READY state.",
+            )
+        )
+
+    # M1 evidence completeness: drawdown > 22% blocks ENTRY_READY but never
+    # emitted an EvidenceItem (CRM archetype when drawdown is deep).
+    if drawdown is not None and drawdown > 0.22:
+        risks.append(
+            _item(
+                code="drawdown_from_52w_high_deep",
+                label="52w drawdown exceeds readiness cap",
+                polarity="negative",
+                metric="drawdown_from_52w_high",
+                value=round(drawdown, 6),
+                threshold="<=22% for ENTRY_READY",
+                message="Drawdown from 52-week high exceeds the 22% ENTRY_READY cap.",
             )
         )
 

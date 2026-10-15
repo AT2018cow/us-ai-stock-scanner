@@ -67,7 +67,12 @@ from ai_value_scanner.fundamentals.reconstruction import (
     rolling_ttm_points,
     ttm_points_with_annual_fallback,
 )
-from ai_value_scanner.fundamentals.shares import assess_share_count_integrity
+from ai_value_scanner.fundamentals.shares import (
+    POINT_IN_TIME_SHARES_TAGS,
+    WEIGHTED_AVERAGE_SHARES_TAGS,
+    assess_share_count_integrity,
+    select_consistent_share_records,
+)
 from ai_value_scanner.fundamentals.identity import (
     downgrade_on_hard_findings,
     verify_operating_entity,
@@ -187,11 +192,12 @@ LIVE_REVENUE_TAGS = REVENUE_TAGS + [
     "RegulatedAndUnregulatedOperatingRevenue",
 ]
 NET_INCOME_TAGS = ["NetIncomeLoss", "ProfitLoss"]
+# M1 share-scope separation: point-in-time outstanding tags must never be
+# pooled with period-weighted average tags. SHARES_TAGS stays defined as the
+# concatenation (same order, same tag_priority) for backward compatibility.
 SHARES_TAGS = [
-    "EntityCommonStockSharesOutstanding",
-    "CommonStockSharesOutstanding",
-    "WeightedAverageNumberOfSharesOutstandingBasic",
-    "WeightedAverageNumberOfDilutedSharesOutstanding",
+    *POINT_IN_TIME_SHARES_TAGS,
+    *WEIGHTED_AVERAGE_SHARES_TAGS,
 ]
 
 # Two-layer filter architecture: core hard gates + soft scoring dimensions.
@@ -3007,36 +3013,65 @@ def load_one_fundamental(
     interest_expense, interest_expense_prev, _ = pick_flow_pair(INTEREST_EXPENSE_TAGS, "USD")
     da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
 
-    shares, shares_prev = pick_latest_with_forms(SHARES_TAGS, "shares")
-    share_integrity = assess_share_count_integrity(
-        share_records=extract_fact_records(
-            companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS
+    # M1 share-scope integrity: current shares and year-ago shares must come
+    # from the same share-count basis (point-in-time outstanding preferred;
+    # weighted-average fallback only). This prevents HEI-class 55M <-> 138M
+    # alternation in market_cap and shares_yoy.
+    _share_records = extract_fact_records(
+        companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS
+    )
+    _share_eps_records = extract_fact_records(
+        companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS
+    )
+    _share_ni_records = extract_fact_records(
+        companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
+    )
+    _share_metric_groups = (
+        extract_fact_records(
+            companyfacts, LIVE_REVENUE_TAGS, "USD", QUARTERLY_FORMS
         ),
-        eps_records=extract_fact_records(
-            companyfacts, EPS_TAGS, "USD/shares", QUARTERLY_FORMS
-        ),
-        net_income_records=extract_fact_records(
+        extract_fact_records(
             companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
         ),
-        metric_record_groups=(
-            extract_fact_records(
-                companyfacts, LIVE_REVENUE_TAGS, "USD", QUARTERLY_FORMS
-            ),
-            extract_fact_records(
-                companyfacts, NET_INCOME_TAGS, "USD", QUARTERLY_FORMS
-            ),
-        ),
+    )
+    _consistent_share_records, _share_basis = select_consistent_share_records(
+        _share_records,
+        cutoff=None,
+        metric_record_groups=_share_metric_groups,
+    )
+    _consistent_latest, _consistent_prev = shared_latest_and_year_ago_level(
+        _consistent_share_records
+    )
+    share_integrity = assess_share_count_integrity(
+        share_records=_share_records,
+        eps_records=_share_eps_records,
+        net_income_records=_share_ni_records,
+        metric_record_groups=_share_metric_groups,
     )
     shares = share_integrity.value
+    if shares is not None and _consistent_prev is not None and share_integrity.scale_factor != 1.0:
+        # Unit reconciliation (thousands/millions) applies to the whole
+        # consistent series so shares_yoy stays scale-invariant.
+        shares_prev = float(_consistent_prev) * float(share_integrity.scale_factor)
+    else:
+        shares_prev = _consistent_prev
     shares_asof_end = (
         share_integrity.period_end.isoformat()
         if share_integrity.period_end is not None
         else None
     )
     shares_stale = bool(share_integrity.stale)
+    share_count_basis = share_integrity.basis
+    share_count_tag = share_integrity.source_tag
     revenue_ttm_history = build_ttm_history(companyfacts, LIVE_REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
-    shares_history = build_fact_history(companyfacts, SHARES_TAGS, "shares", QUARTERLY_FORMS)
+    _collapsed_consistent_shares = collapse_fact_records_by_end(
+        _consistent_share_records
+    )
+    shares_history = [
+        (record.period_end.isoformat(), float(record.value))
+        for record in _collapsed_consistent_shares[-24:]
+    ]
     shares_form = "periodic" if shares is not None else None
     cash_and_equivalents, _ = pick_latest_with_forms(CASH_AND_EQUIVALENTS_TAGS, "USD")
     debt_long_term, _ = pick_latest_with_forms(LONG_TERM_DEBT_TAGS, "USD")
@@ -3263,6 +3298,9 @@ def load_one_fundamental(
         "shares_outstanding": shares,
         "shares_asof_end": shares_asof_end,
         "shares_stale": shares_stale,
+        "share_count_basis": share_count_basis,
+        "share_count_tag": share_count_tag,
+        "share_count_source_tag": share_count_tag,
         "fundamental_data_asof": fundamental_data_asof,
         "fundamental_latest_periodic_filing_date": latest_periodic_filing_date,
         "fundamental_latest_periodic_form": latest_periodic_form,
@@ -3403,6 +3441,9 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "net_income": None,
                         "net_income_form": None,
                         "shares_outstanding": None,
+                        "share_count_basis": "missing",
+                        "share_count_tag": None,
+                        "share_count_source_tag": None,
                         "fundamental_data_asof": None,
                         "fundamental_latest_periodic_filing_date": None,
                         "fundamental_latest_periodic_form": None,
