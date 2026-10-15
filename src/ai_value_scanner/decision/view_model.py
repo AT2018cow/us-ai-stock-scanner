@@ -309,10 +309,48 @@ def _short_label(label: str) -> str:
     return text
 
 
+_COMPACT_METRIC_LABELS: dict[str, str] = {
+    "net_margin": "Margin",
+    "free_cash_flow": "FCF",
+    "operating_cash_flow": "OCF",
+    "ocf_to_net_income": "OCF/NI",
+    "accrual_ratio": "Accrual",
+    "revenue_yoy": "Rev YoY",
+    "adjusted_net_income_yoy": "EPS YoY",
+    "net_income_yoy": "NI YoY",
+    "operating_cash_flow_yoy": "OCF YoY",
+    "net_debt_to_ebitda": "NetDebt/EBITDA",
+    "interest_coverage": "IntCov",
+    "current_ratio": "CurrRatio",
+    "shares_yoy": "Shares YoY",
+    "fcf_yield": "FCF Yield",
+    "ps_hist_percentile": "P/S",
+    "pe_hist_percentile": "P/E",
+    "receivables_growth_gap": "AR Gap",
+    "inventory_growth_gap": "Inv Gap",
+    "price_to_sma200": "SMA200",
+    "price_to_sma50": "SMA50",
+    "days_below_sma200": "Below SMA200",
+    "return_20d": "Ret20d",
+    "return_60d": "Ret60d",
+    "relative_strength_60d_qqq": "RS60",
+    "drawdown_from_52w_high": "52w DD",
+    "range_position_52w": "52w Range",
+    "volatility_60d": "Vol60d",
+    "fundamental_data_age_days": "Fund Age",
+    "market_data_age_days": "Mkt Age",
+    "regime": "Regime",
+}
+
+
+def _compact_label(item: EvidenceItem) -> str:
+    return _COMPACT_METRIC_LABELS.get(item.metric or "", _short_label(item.label))
+
+
 def _format_evidence_row(item: EvidenceItem) -> FormattedEvidenceRow:
     formatted = format_metric_value(item.metric, item.value)
     target = "n/a" if item.threshold is None else str(item.threshold).replace("\n", " ")
-    short = _short_label(item.label)
+    compact = _compact_label(item)
     return FormattedEvidenceRow(
         code=item.code,
         label=item.label,
@@ -320,7 +358,7 @@ def _format_evidence_row(item: EvidenceItem) -> FormattedEvidenceRow:
         metric=item.metric,
         formatted_value=formatted,
         target_band=target if target.strip() else "n/a",
-        summary_text=f"{short}: {formatted}",
+        summary_text=f"{compact}: {formatted}",
     )
 
 
@@ -547,10 +585,10 @@ _FRESHNESS_POSITIVE_CODES = frozenset(
 
 def _inline_fragment(item: EvidenceItem) -> str:
     formatted = format_metric_value(item.metric, item.value)
-    short = _short_label(item.label)
+    compact = _compact_label(item)
     if formatted == "n/a":
-        return short
-    return f"{short} {formatted}"
+        return compact
+    return f"{compact} {formatted}"
 
 
 def _build_top_positives_inline(decision: StockDecision) -> str:

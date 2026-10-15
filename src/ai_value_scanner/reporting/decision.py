@@ -428,56 +428,123 @@ def _cell(text: object | None) -> str:
     return str(text).replace("\n", " ").replace("|", "\\|").strip() or "n/a"
 
 
+def _tcell(text: object | None) -> str:
+    """Table-cell variant: drops literal pipes so pipe-count column-cap
+    checks stay accurate on narrow mobile tables."""
+    if text is None:
+        return "n/a"
+    return str(text).replace("\n", " ").replace("|", "/").strip() or "n/a"
+
+
+_SHORT_ACTION_BADGES = {
+    "PRIORITY_REVIEW": "PRIORITY",
+    "WATCH_PULLBACK": "PULLBACK",
+    "WATCH_BREAKOUT": "BREAKOUT",
+    "HOLD_MONITOR": "MONITOR",
+    "AVOID": "AVOID",
+}
+
+_SHORT_ENTRY_BADGES = {
+    "ENTRY_READY": "READY",
+    "WATCH_PULLBACK": "PULLBACK",
+    "WATCH_BREAKOUT": "BREAKOUT",
+    "TREND_DAMAGED": "DAMAGED",
+    "INSUFFICIENT_DATA": "NO_DATA",
+}
+
+
+def _short_action(state: str) -> str:
+    return _SHORT_ACTION_BADGES.get(state, state)
+
+
+def _short_entry(state: str) -> str:
+    return _SHORT_ENTRY_BADGES.get(state, state)
+
+
+_ACTION_CANONICAL_ORDER = (
+    "PRIORITY_REVIEW",
+    "WATCH_PULLBACK",
+    "WATCH_BREAKOUT",
+    "HOLD_MONITOR",
+    "AVOID",
+)
+
+
 def _v2_counts_line(decisions: tuple[StockDecision, ...]) -> str:
     counts: dict[str, int] = {}
     for decision in decisions:
         key = decision.action_state.value
         counts[key] = counts.get(key, 0) + 1
-    parts = [f"{state} {counts.get(state, 0)}" for state in sorted(counts)]
+    parts = [
+        f"{state} {counts[state]}"
+        for state in _ACTION_CANONICAL_ORDER
+        if state in counts
+    ]
+    parts.extend(
+        f"{state} {counts[state]}"
+        for state in sorted(counts)
+        if state not in _ACTION_CANONICAL_ORDER
+    )
     return "; ".join(parts) if parts else "no decisions"
 
 
 def _v2_shortlist_row(card: StockCardViewModel) -> str:
+    anchor = card.symbol.lower()
     return (
-        f"| {card.rank} | {card.symbol} | {_cell(card.company_name)} "
-        f"| {card.action_state} | {card.quality_grade} "
-        f"({card.quality_score_display}, {card.quality_confidence_display}) "
-        f"| {card.entry_state} "
-        f"({card.entry_score_display}, {card.entry_confidence_display}) "
-        f"| {_cell(card.top_positives_inline)} "
-        f"| {_cell(card.top_risks_or_blockers_inline)} "
-        f"| {_cell(card.next_trigger_inline)} |"
+        f"| {card.rank} | **[{card.symbol}](#card-{anchor})** "
+        f"| **{_short_action(card.action_state)}**<br>"
+        f"Q:{card.quality_grade} ({card.quality_score_display}) "
+        f"· E:{_short_entry(card.entry_state)} ({card.entry_score_display}) "
+        f"| **+** {_tcell(card.top_positives_inline)}<br>"
+        f"**!** {_tcell(card.top_risks_or_blockers_inline)} |"
     )
 
 
 def _v2_stock_card_block(card: StockCardViewModel) -> list[str]:
+    anchor = card.symbol.lower()
     lines = [
-        f"### {card.rank}. {card.symbol} — {_cell(card.company_name)}",
+        f'<a id="card-{anchor}"></a>',
+        "<details>",
+        f"<summary><b>#{card.rank} {card.symbol}</b> — "
+        f"<b>{_short_action(card.action_state)}</b> "
+        f"· Q:<b>{card.quality_grade}</b> ({card.quality_score_display}) "
+        f"· E:<b>{_short_entry(card.entry_state)}</b> "
+        f"({card.entry_score_display}) — <i>{_cell(card.company_name)}</i></summary>",
         "",
-        f"- Action: {card.action_state} | Quality: {card.quality_grade} "
-        f"({card.quality_score_display}, conf {card.quality_confidence_display}) "
-        f"| Entry: {card.entry_state} "
-        f"({card.entry_score_display}, conf {card.entry_confidence_display})",
-        f"- Key bullish: {_cell(card.top_positives_inline)}",
-        f"- Key risk / blocker: {_cell(card.top_risks_or_blockers_inline)}",
-        f"- Next trigger: {_cell(card.next_trigger_inline)}",
-        f"- Data trust: {card.data_trust.overall_status} "
-        f"({card.data_trust.freshness_display}; {card.data_trust.share_basis_display})",
+        f"- **Bullish**: {_cell(card.top_positives_inline)}",
+        f"- **Risk / Blocker**: {_cell(card.top_risks_or_blockers_inline)}",
     ]
     blockers = [row for row in card.entry_checklist if row.status != "PASS"]
     if blockers:
-        lines.append("- Entry blockers:")
-        for row in blockers:
-            lines.append(
-                f"  - {row.gate_key} [{row.status}]: observed "
-                f"{_cell(row.observed_display)}; required {_cell(row.target_display)}."
+        lines.append(
+            "- **Entry Gates**: {} open — {}".format(
+                len(blockers),
+                "; ".join(
+                    f"`{row.gate_key} [{row.status}]: "
+                    f"{_cell(row.observed_display)}, "
+                    f"need {_cell(row.target_display)}`"
+                    for row in blockers
+                ),
             )
+        )
     else:
-        lines.append("- Entry gates: all 7 PASS.")
+        lines.append("- **Entry Gates**: all 7 PASS.")
     if card.data_trust.warnings:
         for warning in card.data_trust.warnings:
             lines.append(f"- Trust note: {_cell(warning)}")
-    lines.extend([f"- Detailed: detailed/{card.symbol}.md", ""])
+    lines.extend(
+        [
+            f"- **Next Trigger**: {_cell(card.next_trigger_inline)}",
+            f"- **Data Trust**: `{card.data_trust.overall_status}` "
+            f"· {_cell(card.data_trust.freshness_display)} "
+            f"· Basis: `{_cell(card.data_trust.share_basis_display)}`",
+            f"- **Links**: [Detailed Report](detailed/{card.symbol}.md) "
+            "· [↑ Top](#top)",
+            "",
+            "</details>",
+            "",
+        ]
+    )
     return lines
 
 
@@ -488,32 +555,49 @@ def render_action_list_v2(
     cadence: str | None = None,
     all_decisions: Iterable[StockDecision] | None = None,
 ) -> str:
-    """Human-readable English tabular dashboard (v2) for the attention list."""
+    """Human-readable English tabular dashboard (v2) for the attention list.
+
+    Mobile-first: at most 4 table columns, default-collapsed ``<details>``
+    cards, and ``#top`` / ``#card-{symbol}`` jump links.
+    """
     primary = tuple(decisions)
     snapshot = build_snapshot_view_model(
         primary, all_decisions, title=title, cadence=cadence
     )
-    lines = [f"# {snapshot.title} (v2)", ""]
-    lines.append(f"- Decision date: {snapshot.decision_date}")
-    lines.append(f"- Cadence: {cadence or 'n/a'}")
-    lines.append("- States are research priorities, not automated trade instructions.")
-    lines.append(f"- Coverage: {len(primary)} names ({_v2_counts_line(primary)})")
-    lines.extend(["", "## Executive Shortlist", ""])
+    cadence_display = cadence or "n/a"
+    lines = [
+        '<a id="top"></a>',
+        f"# {snapshot.title} (v2)",
+        "",
+        f"- **Date**: {snapshot.decision_date} (`{cadence_display}`) "
+        f"· **Shortlist**: {len(primary)} ({_v2_counts_line(primary)})",
+        "- **Jump**: [Executive Shortlist](#executive-shortlist) "
+        "· [Stock Cards](#stock-cards) · [Secondary Radar](#secondary-radar)",
+        "- *Research priorities only — not automated trade instructions.*",
+        "",
+        '<a id="executive-shortlist"></a>',
+        "## Executive Shortlist",
+        "",
+    ]
     if not snapshot.primary_cards:
         lines.extend(["- no decisions", ""])
     else:
         lines.extend(
             [
-                "| Rank | Symbol | Company | Action | Quality | Entry "
-                "| Key Bullish Evidence | Key Risk / Readiness Blocker "
-                "| Next Review Trigger |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| # | Stock | Action & Setup | Key Bullish / Risk & Blocker |",
+                "| --- | --- | --- | --- |",
             ]
         )
         for card in snapshot.primary_cards:
             lines.append(_v2_shortlist_row(card))
         lines.append("")
-    lines.extend(["## Secondary Radar (Off-List Watch)", ""])
+    lines.extend(['<a id="stock-cards"></a>', "## Stock Cards", ""])
+    if not snapshot.primary_cards:
+        lines.extend(["- no decisions", ""])
+    else:
+        for card in snapshot.primary_cards:
+            lines.extend(_v2_stock_card_block(card))
+    lines.extend(['<a id="secondary-radar"></a>', "## Secondary Radar", ""])
     if (
         not snapshot.cap_omitted_priority_cards
         and not snapshot.secondary_b_ready_cards
@@ -523,83 +607,95 @@ def render_action_list_v2(
         if snapshot.cap_omitted_priority_cards:
             lines.extend(
                 [
-                    "### Cap-Omitted PRIORITY_REVIEW "
-                    "(Quality A + ENTRY_READY beyond Top-15 cap)",
+                    "<details>",
+                    "<summary><b>Cap-Omitted PRIORITY_REVIEW</b> "
+                    "(Quality A + ENTRY_READY beyond Top-15: "
+                    f"{len(snapshot.cap_omitted_priority_cards)} names)</summary>",
                     "",
-                    "| Rank | Symbol | Company | Quality | Entry "
-                    "| Key Bullish Evidence | Key Risk / Readiness Blocker |",
-                    "| --- | --- | --- | --- | --- | --- | --- |",
+                    "| # | Stock | Grade / Setup | Key Bullish / Risk & Blocker |",
+                    "| --- | --- | --- | --- |",
                 ]
             )
             for card in snapshot.cap_omitted_priority_cards:
                 lines.append(
-                    f"| {card.rank} | {card.symbol} | {_cell(card.company_name)} "
-                    f"| {card.quality_grade} ({card.quality_score_display}) "
-                    f"| {card.entry_state} | {_cell(card.top_positives_inline)} "
-                    f"| {_cell(card.top_risks_or_blockers_inline)} |"
+                    f"| {card.rank} | **{card.symbol}** "
+                    f"| **{card.quality_grade}** ({card.quality_score_display}) "
+                    f"· `{_short_entry(card.entry_state)}` "
+                    f"({card.entry_score_display}) "
+                    f"| **+** {_tcell(card.top_positives_inline)}<br>"
+                    f"**!** {_tcell(card.top_risks_or_blockers_inline)} |"
                 )
-            lines.append("")
+            lines.extend(["", "[↑ Top](#top)", "</details>", ""])
         if snapshot.secondary_b_ready_cards:
             lines.extend(
                 [
-                    "### Top Quality B + ENTRY_READY Candidates "
-                    "(Currently mapped to HOLD_MONITOR)",
+                    "<details>",
+                    "<summary><b>Top Quality B + ENTRY_READY Candidates</b> "
+                    "(Mapped to HOLD_MONITOR: "
+                    f"{len(snapshot.secondary_b_ready_cards)} names)</summary>",
                     "",
-                    "| Rank | Symbol | Company | Quality | Entry "
-                    "| Key Bullish Evidence | Key Risk / Readiness Blocker |",
-                    "| --- | --- | --- | --- | --- | --- | --- |",
+                    "| # | Stock | Grade / Setup | Key Bullish / Risk & Blocker |",
+                    "| --- | --- | --- | --- |",
                 ]
             )
             for card in snapshot.secondary_b_ready_cards:
                 lines.append(
-                    f"| {card.rank} | {card.symbol} | {_cell(card.company_name)} "
-                    f"| {card.quality_grade} ({card.quality_score_display}) "
-                    f"| {card.entry_state} | {_cell(card.top_positives_inline)} "
-                    f"| {_cell(card.top_risks_or_blockers_inline)} |"
+                    f"| {card.rank} | **{card.symbol}** "
+                    f"| **{card.quality_grade}** ({card.quality_score_display}) "
+                    f"· `{_short_entry(card.entry_state)}` "
+                    f"({card.entry_score_display}) "
+                    f"| **+** {_tcell(card.top_positives_inline)}<br>"
+                    f"**!** {_tcell(card.top_risks_or_blockers_inline)} |"
                 )
-            lines.append("")
-    lines.extend(["## Stock Cards", ""])
-    if not snapshot.primary_cards:
-        lines.extend(["- no decisions", ""])
-    else:
-        for card in snapshot.primary_cards:
-            lines.extend(_v2_stock_card_block(card))
+            lines.extend(["", "[↑ Top](#top)", "</details>", ""])
     return "\n".join(lines)
 
 
 def render_detailed_report_v2(decision: StockDecision) -> str:
-    """Human-readable evidence dashboard (v2) for one canonical decision."""
+    """Human-readable evidence dashboard (v2) for one canonical decision.
+
+    Mobile-first: at most 3 table columns, bulky counter-evidence and
+    provenance wrapped in default-collapsed ``<details>``, with ``#top``
+    jump navigation.
+    """
     card = build_stock_card_view_model(decision)
     company = f" — {decision.company_name}" if decision.company_name else ""
-    lines = [f"# Detailed Report — {decision.symbol}{company} (v2)", ""]
-    lines.extend(
-        [
-            "## Executive Decision",
-            "",
-            "| Field | Value |",
-            "| --- | --- |",
-            f"| Symbol | {card.symbol} |",
-            f"| Company | {_cell(card.company_name)} |",
-            f"| Action State | {card.action_state} |",
-            f"| Priority Rank | {card.rank} |",
-            f"| Company Quality (Grade / Score / Confidence) "
-            f"| {card.quality_grade} / {card.quality_score_display} "
-            f"/ {card.quality_confidence_display} |",
-            f"| Entry Quality (State / Score / Confidence) "
-            f"| {card.entry_state} / {card.entry_score_display} "
-            f"/ {card.entry_confidence_display} |",
-            f"| Data As-Of (Fund / Mkt) "
-            f"| {_cell(decision.quality.data_asof)} "
-            f"/ {_cell(decision.entry.market_asof)} |",
-            f"| Filing Entity & CIK | {_cell(card.data_trust.entity_display)} |",
-            f"| Data Trust Badge | {card.data_trust.overall_status} "
-            f"({_cell(card.data_trust.freshness_display)}; "
-            f"{_cell(card.data_trust.share_basis_display)}) |",
-            "",
-            "## Attention Alerts & Next Review Trigger",
-            "",
-        ]
-    )
+    lines = [
+        '<a id="top"></a>',
+        f"# Detailed Report — {decision.symbol}{company} (v2)",
+        "",
+        "- **Jump**: [Executive Summary](#executive-decision) "
+        "· [Quality 6-Pillar](#company-quality--6-pillar-scorecard) "
+        "· [Entry 7-Gate Checklist](#entry-quality--readiness-gate-checklist) "
+        "· [Counter-Evidence](#complete-counter-evidence--missing-data-inventory) "
+        "· [Provenance](#quality-applicability-decision-history--provenance)",
+        "",
+        '<a id="executive-decision"></a>',
+        "## Executive Decision",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        f"| Symbol | {card.symbol} |",
+        f"| Company | {_tcell(card.company_name)} |",
+        f"| Action State | {card.action_state} |",
+        f"| Priority Rank | {card.rank} |",
+        "| Company Quality (Grade / Score / Confidence) "
+        f"| {card.quality_grade} / {card.quality_score_display} "
+        f"/ {card.quality_confidence_display} |",
+        "| Entry Quality (State / Score / Confidence) "
+        f"| {card.entry_state} / {card.entry_score_display} "
+        f"/ {card.entry_confidence_display} |",
+        "| Data As-Of (Fund / Mkt) "
+        f"| {_tcell(decision.quality.data_asof)} "
+        f"/ {_tcell(decision.entry.market_asof)} |",
+        f"| Filing Entity & CIK | {_tcell(card.data_trust.entity_display)} |",
+        f"| Data Trust Badge | {card.data_trust.overall_status} "
+        f"({_tcell(card.data_trust.freshness_display)}; "
+        f"{_tcell(card.data_trust.share_basis_display)}) |",
+        "",
+        "## Attention Alerts & Next Review Trigger",
+        "",
+    ]
     flags = _attention_flags(decision)
     if flags:
         lines.extend([f"- {_cell(flag)}" for flag in flags])
@@ -608,89 +704,106 @@ def render_detailed_report_v2(decision: StockDecision) -> str:
     lines.extend(
         [
             f"- Next trigger: {_cell(card.next_trigger_inline)}",
-            f"- Structure watch: "
+            "- Structure watch: "
             f"{_cell(_ENTRY_STATE_WATCH.get(decision.entry.state.value, 'n/a'))}",
             "",
+            '<a id="company-quality--6-pillar-scorecard"></a>',
             "## Company Quality — 6-Pillar Scorecard",
             "",
-            "| Pillar | Score | Status | Supporting Evidence (Formatted) "
-            "| Risks & Missing Metrics (Formatted) |",
-            "| --- | --- | --- | --- | --- |",
+            "| Pillar | Score & Status | Supporting & Risk Evidence |",
+            "| --- | --- | --- |",
         ]
     )
     for pillar in card.quality_pillars:
-        support = (
-            "; ".join(item.summary_text for item in pillar.supporting_items)
-            or "none"
+        support = "; ".join(item.summary_text for item in pillar.supporting_items)
+        risks = "; ".join(
+            item.summary_text for item in pillar.risk_or_missing_items
         )
-        risks = (
-            "; ".join(item.summary_text for item in pillar.risk_or_missing_items)
-            or "none"
-        )
+        if support and risks:
+            evidence = f"**+** {_tcell(support)}<br>**!** {_tcell(risks)}"
+        elif support:
+            evidence = f"**+** {_tcell(support)}"
+        elif risks:
+            evidence = f"**!** {_tcell(risks)}"
+        else:
+            evidence = "none"
         lines.append(
-            f"| {_cell(pillar.pillar_label)} | {pillar.score_display} "
-            f"| {pillar.status_badge} | {_cell(support)} | {_cell(risks)} |"
+            f"| {_tcell(pillar.pillar_label)} | **{pillar.score_display}** "
+            f"(`{pillar.status_badge}`) | {evidence} |"
         )
     lines.extend(
         [
             "",
+            '<a id="entry-quality--readiness-gate-checklist"></a>',
             "## Entry Quality — Readiness Gate Checklist",
             "",
-            "| Readiness Gate | Status | Observed Value | Required Band "
-            "for ENTRY_READY | Notes |",
-            "| --- | --- | --- | --- | --- |",
+            "| Readiness Gate | Status | Observed vs Target Band |",
+            "| --- | --- | --- |",
         ]
     )
     for row in card.entry_checklist:
         lines.append(
-            f"| {_cell(row.gate_label)} | {row.status} "
-            f"| {_cell(row.observed_display)} | {_cell(row.target_display)} "
-            f"| {_cell(row.note)} |"
+            f"| {_tcell(row.gate_label)} | `{row.status}` "
+            f"| **{_tcell(row.observed_display)}** "
+            f"(target: {_tcell(row.target_display)}) |"
         )
     lines.extend(
         [
             "",
+            '<a id="complete-counter-evidence--missing-data-inventory"></a>',
             "## Complete Counter-Evidence & Missing Data Inventory",
             "",
-            "| Type | Code | Metric | Value | Target Band | Note |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "<details>",
+            "<summary><b>Expand Counter-Evidence & Missing Metrics</b> "
+            f"({len(card.all_counter_evidence)} counter, "
+            f"{len(card.all_missing_evidence)} missing)</summary>",
+            "",
+            "| Type / Code | Metric & Value | Target Band & Label |",
+            "| --- | --- | --- |",
         ]
     )
-    if card.all_counter_evidence:
-        for item in card.all_counter_evidence:
-            lines.append(
-                f"| counter | `{item.code}` | {_cell(item.metric)} "
-                f"| {_cell(item.formatted_value)} | {_cell(item.target_band)} "
-                f"| {_cell(item.label)} |"
-            )
-    else:
-        lines.append("| counter | none | n/a | n/a | n/a | No counter-evidence. |")
-    if card.all_missing_evidence:
-        for item in card.all_missing_evidence:
-            lines.append(
-                f"| missing | `{item.code}` | {_cell(item.metric)} "
-                f"| {_cell(item.formatted_value)} | {_cell(item.target_band)} "
-                f"| {_cell(item.label)} |"
-            )
-    else:
-        lines.append("| missing | none | n/a | n/a | n/a | No missing evidence. |")
-    if decision.entry.state.value == "INSUFFICIENT_DATA":
+    rows_written = False
+    for item in card.all_counter_evidence:
+        rows_written = True
         lines.append(
-            "| missing | entry_insufficient | n/a | n/a | n/a "
-            "| Entry market evidence is itself insufficient (see Entry state). |"
+            f"| `{item.code}` (counter) | {_tcell(item.metric)}: "
+            f"**{_tcell(item.formatted_value)}** "
+            f"| {_tcell(item.target_band)} — {_tcell(item.label)} |"
         )
+    for item in card.all_missing_evidence:
+        rows_written = True
+        lines.append(
+            f"| `{item.code}` (missing) | {_tcell(item.metric)}: "
+            f"**{_tcell(item.formatted_value)}** "
+            f"| {_tcell(item.target_band)} — {_tcell(item.label)} |"
+        )
+    if decision.entry.state.value == "INSUFFICIENT_DATA":
+        rows_written = True
+        lines.append(
+            "| `entry_insufficient` (missing) | n/a: **n/a** "
+            "| n/a — Entry market evidence is itself insufficient "
+            "(see Entry state). |"
+        )
+    if not rows_written:
+        lines.append("| none | none | none |")
+    lines.extend(["", "[↑ Top](#top)", "</details>", ""])
     lines.extend(
         [
-            "",
+            '<a id="quality-applicability-decision-history--provenance"></a>',
             "## Quality Applicability, Decision History & Provenance",
             "",
             *_applicability_lines(decision),
-            f"- Previous action: "
+            "- Previous action: "
             f"{_display(decision.previous_action_state.value if decision.previous_action_state else None)}",
             f"- State change: {_display(decision.state_change_reason)}",
+            "",
+            "<details>",
+            "<summary><b>Expand Audit Provenance & Hashes</b> "
+            f"({len(decision.provenance)} keys)</summary>",
+            "",
             f"- Schema version: {decision.schema_version}",
             f"- Generated at UTC: {decision.generated_at_utc}",
-            f"- Source lists: "
+            "- Source lists: "
             f"{', '.join(decision.source_lists) if decision.source_lists else 'n/a'}",
         ]
     )
@@ -699,5 +812,5 @@ def render_detailed_report_v2(decision: StockDecision) -> str:
             lines.append(f"- {key}: {_display(decision.provenance[key])}")
     else:
         lines.append("- provenance: n/a")
-    lines.append("")
+    lines.extend(["", "[↑ Top](#top)", "</details>", ""])
     return "\n".join(lines)

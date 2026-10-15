@@ -319,6 +319,97 @@ class LayoutVersionParityTests(unittest.TestCase):
         self.assertNotIn("15154000000.0", listed)
 
 
+def _table_lines(rendered: str) -> list[str]:
+    return [line for line in rendered.splitlines() if line.startswith("|")]
+
+
+class MobileFirstCompactTests(unittest.TestCase):
+    def test_compact_inline_labels(self) -> None:
+        card = build_stock_card_view_model(_decision(symbol="CRM"))
+        self.assertEqual(
+            card.top_positives_inline, "Margin 23.6%; FCF $15.15B; SMA200 1.08x"
+        )
+        pillar = card.quality_pillars[0]
+        self.assertEqual(pillar.supporting_items[0].summary_text, "Margin: 23.6%")
+        self.assertEqual(pillar.supporting_items[1].summary_text, "FCF: $15.15B")
+
+    def test_compact_risk_labels(self) -> None:
+        decision = _decision(
+            symbol="KO",
+            quality_risks=(
+                _ev("ps_hist_percentile_weak", polarity="negative",
+                    metric="ps_hist_percentile", value=1.0,
+                    threshold="t", label="Historical P/S percentile weak"),
+                _ev("pe_hist_percentile_weak", polarity="negative",
+                    metric="pe_hist_percentile", value=1.0,
+                    threshold="t", label="Historical P/E percentile weak"),
+            ),
+        )
+        card = build_stock_card_view_model(decision)
+        self.assertEqual(
+            card.top_risks_or_blockers_inline, "P/S 100th pctl; P/E 100th pctl"
+        )
+
+    def test_action_list_v2_tables_have_at_most_4_columns(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 4)
+        )
+        b_ready = (
+            _decision(symbol="B01", priority=10, grade=QualityGrade.B,
+                      entry_state=EntryState.ENTRY_READY,
+                      action=ActionState.HOLD_MONITOR),
+        )
+        rendered = render_action_list(
+            primaries, title="Daily Action List", cadence="daily",
+            layout_version="v2", all_decisions=primaries + b_ready,
+        )
+        rows = _table_lines(rendered)
+        self.assertGreater(len(rows), 0)
+        for line in rows:
+            with self.subTest(line=line[:60]):
+                self.assertLessEqual(line.count("|"), 5)
+
+    def test_detailed_report_v2_tables_have_at_most_3_columns(self) -> None:
+        for decision in (_decision(symbol="CRM"), _crm_like_breakout()):
+            with self.subTest(symbol=decision.symbol):
+                rendered = render_detailed_report(decision, layout_version="v2")
+                rows = _table_lines(rendered)
+                self.assertGreater(len(rows), 0)
+                for line in rows:
+                    with self.subTest(line=line[:60]):
+                        self.assertLessEqual(line.count("|"), 4)
+
+    def test_action_list_v2_details_collapsed_with_jump_links(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 4)
+        )
+        b_ready = (
+            _decision(symbol="B01", priority=10, grade=QualityGrade.B,
+                      entry_state=EntryState.ENTRY_READY,
+                      action=ActionState.HOLD_MONITOR),
+        )
+        rendered = render_action_list(
+            primaries, title="Daily Action List", cadence="daily",
+            layout_version="v2", all_decisions=primaries + b_ready,
+        )
+        self.assertIn("<details>", rendered)
+        self.assertIn("<summary>", rendered)
+        self.assertEqual(rendered.count("<details open"), 0)
+        self.assertIn('<a id="top"></a>', rendered)
+        self.assertIn("#card-a01", rendered)
+        self.assertIn("[↑ Top](#top)", rendered)
+
+    def test_detailed_report_v2_details_collapsed_with_jump_links(self) -> None:
+        rendered = render_detailed_report(
+            _crm_like_breakout(), layout_version="v2"
+        )
+        self.assertIn("<details>", rendered)
+        self.assertIn("<summary>", rendered)
+        self.assertEqual(rendered.count("<details open"), 0)
+        self.assertIn('<a id="top"></a>', rendered)
+        self.assertIn("[↑ Top](#top)", rendered)
+
+
 class PreviewCliSmokeTests(unittest.TestCase):
     def test_preview_cli_writes_v2_files(self) -> None:
         decisions = (
