@@ -760,6 +760,10 @@ def build_company_quality_v1(
 
 QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-10-15"
 
+QUALITY_V2_PRE_EARNINGS_WARN_DAYS = 70
+QUALITY_V2_ORGANIC_SHARES_YOY_MIN = -0.30
+QUALITY_V2_ORGANIC_SHARES_YOY_MAX = 1.00
+
 QUALITY_V2_HIGH_GROWTH_MIN = 0.25
 QUALITY_V2_HEALTHY_OCF_MIN = 0.80
 QUALITY_V2_GAP_FLOOR = 0.75
@@ -1038,20 +1042,46 @@ def build_company_quality_v2(
         ),
     ]
 
-    dilution_scores = [
-        _assess_numeric_metric(
-            work,
-            key="shares_yoy",
-            label="Share-count change",
-            score_fn=_score_dilution,
-            strong_score=0.80,
-            weak_score=0.25,
-            threshold_text="<=3% supportive; >12% weak",
-            positives=positives,
-            risks=risks,
-            missing=missing,
+    shares_yoy_val = _finite_value(work, "shares_yoy")
+    if shares_yoy_val is not None and (
+        shares_yoy_val < QUALITY_V2_ORGANIC_SHARES_YOY_MIN
+        or shares_yoy_val > QUALITY_V2_ORGANIC_SHARES_YOY_MAX
+    ):
+        # Reverse-split / share-basis discontinuity (e.g. AMCR -79.9% on a
+        # 1-for-5 reverse split): neutralize dilution to 0.50 with full
+        # coverage instead of a false strong/weak score.
+        dilution_scores = [0.50]
+        risks.append(
+            _metric_item(
+                code="shares_yoy_split_or_basis_discontinuity",
+                label="Share-count split / basis discontinuity",
+                polarity="negative",
+                metric="shares_yoy",
+                value=round(shares_yoy_val, 6),
+                threshold="-30% to +100% organic YoY range",
+                message=(
+                    f"Reported YoY share change ({shares_yoy_val * 100:+.1f}%) is outside "
+                    "the organic buyback/issuance band and likely reflects a stock split "
+                    "or share-basis discontinuity; dilution score neutralized to 0.50 and "
+                    "per-share YoY metrics require manual verification."
+                ),
+            )
         )
-    ]
+    else:
+        dilution_scores = [
+            _assess_numeric_metric(
+                work,
+                key="shares_yoy",
+                label="Share-count change",
+                score_fn=_score_dilution,
+                strong_score=0.80,
+                weak_score=0.25,
+                threshold_text="<=3% supportive; >12% weak",
+                positives=positives,
+                risks=risks,
+                missing=missing,
+            )
+        ]
 
     valuation_scores = [
         _assess_numeric_metric(
@@ -1226,6 +1256,23 @@ def build_company_quality_v2(
                 f"decision_date {decision_dt.isoformat()}"
             )
         age_days = (decision_dt - data_dt).days
+        if QUALITY_V2_PRE_EARNINGS_WARN_DAYS <= age_days <= QUALITY_V1_STALE_WARN_DAYS:
+            # Pre-earnings window warning: informational only — it never
+            # reduces score, confidence, or grade (priority ranking reads it).
+            risks.append(
+                _metric_item(
+                    code="pre_earnings_window_risk",
+                    label="Pre-earnings window (aging filing)",
+                    polarity="negative",
+                    metric="fundamental_data_age_days",
+                    value=age_days,
+                    threshold=f"<{QUALITY_V2_PRE_EARNINGS_WARN_DAYS}d before next quarterly window",
+                    message=(
+                        f"Latest periodic filing is {age_days}d old (~90d quarterly cycle); "
+                        "next earnings release is likely imminent (binary event risk)."
+                    ),
+                )
+            )
         if age_days > QUALITY_V1_STALE_UNRATED_DAYS:
             stale_unrated = True
             confidence = min(confidence, 0.49)
@@ -1283,7 +1330,12 @@ def build_company_quality_v2(
     severe_checks: list[tuple[float | None, Any]] = [
         (_finite_value(work, "net_debt_to_ebitda"), lambda x: x > 5.0),
         (_finite_value(work, "interest_coverage"), lambda x: x < 1.0),
-        (_finite_value(work, "shares_yoy"), lambda x: x > 0.15),
+        # Organic severe dilution only: a split/basis discontinuity above the
+        # organic band must not count as a severe risk.
+        (
+            _finite_value(work, "shares_yoy"),
+            lambda x: 0.15 < x <= QUALITY_V2_ORGANIC_SHARES_YOY_MAX,
+        ),
     ]
     if not high_growth:
         severe_checks.extend(
