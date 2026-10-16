@@ -1,12 +1,12 @@
 # MVP v2 Completion & Internal Work-Tracking Handoff (M0–M5)
 
-> **Date**: 2026-10-15
-> **Status**: **M0–M5 COMPLETE** (`834` unit tests passing on `main`)
+> **Date**: 2026-10-16
+> **Status**: **M0–M5 + Post-Review Production Hardening COMPLETE** (`895` unit tests passing on `main`)
 > **Roadmap Executed**: `docs/next_phase_v1_failure_attribution_and_v2_research_plan_20261014.md`
 
 ---
 
-## 1. Milestone & PR Ledger (M0–M5)
+## 1. Milestone & PR Ledger (M0–M5 & Production Rollout)
 
 | Phase / Track | PR & `main` Commit | `evidence-observations` Commit | Core Deliverable & Outcome |
 | :--- | :--- | :--- | :--- |
@@ -18,7 +18,10 @@
 | **Phase M2 / M2.1 — v1 Failure Attribution** | PR #77 (`f3d12e0`), PR #78 (`238afe0`) | `b5621e75e778a8db988d9466f809fce9853f5ee3` | `docs/m2_v1_failure_attribution_20261015/`: 8-axis metric audit, 6-pillar Quality decomposition, 6-bucket industry bias table, 38-case 36-col casebook, and parity checks. |
 | **Phase M3 — v2 Candidate Policies & Preflight** | PR #79 (`dca24b6`) | `8c9864b7d1e96773d98c67cb651e56348ef08c8c` | `H1-Quality` (`quality.py`), `H2-Entry` (`entry.py`), `H3-Action` (`action.py`), `integrated.py` wiring, and `docs/m3_candidate_preflight_20261015/`. |
 | **Phase M4 — Dual-Track Paired Validation** | PR #80 (`374ea90`) | `e976300de2b5a6de92c81b9aa2202cc5834965b5` | `docs/m4_paired_validation_20261015/`: Track 1 Human Utility (`PASS`) + Track 2 Paired Economics across `DEV_2023_2024`, unsealed `POST2024_HELD_OUT`, and `ALL_39_DATES`. |
-| **Phase M5 — CLI & Shadow Snapshot Wiring** | PR #81 (`e4c17cf`) | — | Added `decision_policy_version`, `report_layout_version`, and `enable_v2_shadow` to `ScanConfig`, `write_decision_snapshot`, and `run_scan.py`. |
+| **Phase M5 — CLI & Shadow Snapshot Wiring** | PR #81 (`e4c17cf`), PR #82 (`355f55b`) | — | Added `decision_policy_version`, `report_layout_version`, and `enable_v2_shadow` to `ScanConfig`, `write_decision_snapshot`, and `run_scan.py`, plus full user/internal documentation. |
+| **Production Default v2 & SEC Cache Persistence** | PR #83 (`6e59510`) | — | Switched `config.risk_off.json`, `config.risk_on.json`, and `config.strict_candidate.json` defaults to `v2`; persisted EdgarTools 10-Q fallback and terminal-pending checks in `parsed_fund_{cik}.json` (`PARSED_FUND_CACHE_VERSION = 9`). |
+| **Daily Cron Orchestrator & Two-Tier TTL** | PR #84 (`1e0a861`), PR #85 (`9c94940`) | — | Separated pure `scripts/refresh_sec_cache.py` (`run_sec_prewarm`) from dedicated `scripts/run_daily_cron.py` (`--max-age-hours 4.0`, `--alpaca-ttl-sec 3600`, `allow_existing_decision_snapshot=True`, `outputs/decisions/latest_<style>.json` pointer, and `21600s` [6h] interactive TTL). |
+| **Post-Review v2 & Report Enhancements** | PR #86 (`0200825`) | — | Added pre-earnings window warning (`pre_earnings_window_risk` at `70..400d` + `-0.06` priority penalty), 60d/SMA200 extension score deduction (`price_extended_above_sma200`, `return_60d_extended`), reverse-split share discontinuity guard (`shares_yoy_split_or_basis_discontinuity`), and `Pool & Concentration` disclosure. |
 
 ---
 
@@ -48,22 +51,25 @@ Implemented in `decision/quality.py`, `decision/entry.py`, `decision/action.py`,
    - **Scale-Normalized Profitability (`fcf_margin` + `operating_margin`)**: Replaces binary `free_cash_flow > 0` with `fcf_margin = free_cash_flow / revenue` (`>= 15% -> 1.0`, `>= 8% -> 0.85`, `>= 3% -> 0.65`, `0..3% -> 0.25 [weak]`, with graceful fallback to `_score_fcf` when `revenue` is absent) and adds `operating_margin = adjusted_ebit / revenue` (`>= 20% -> 1.0`, `>= 12% -> 0.80`) to `profitability_cash`.
    - **High-Growth Working-Capital Exemption**: When `revenue_yoy >= 0.25` and `ocf_to_net_income >= 0.80`, floors `receivables_growth_gap` and `inventory_growth_gap` scores at `0.75` AND exempts them from `severe_checks`, allowing cash-generative high-growth leaders (`MU`, `TER`, `ACLS`, `CARG`) to reach `Quality A`.
    - **Valuation Percentile Floor**: Floors `ps_hist_percentile` and `pe_hist_percentile` at `0.35` when `fcf_yield >= 0.02` or high-growth cash-generative.
+   - **Reverse-Split / Share-Basis Discontinuity Guard (PR #86)**: When `shares_yoy < -0.30` or `> 1.00` (outside organic buyback/issuance range, e.g., `AMCR` `-79.9%` after a 1-for-5 reverse split), neutralizes `dilution` pillar to `0.50`, emits `shares_yoy_split_or_basis_discontinuity`, and restricts organic severe dilution checks to `0.15 < shares_yoy <= 1.00`.
+   - **Pre-Earnings Window Warning (PR #86)**: When `70 <= age_days <= 400`, emits informational `pre_earnings_window_risk` (without changing `Quality` score/grade/confidence) so downstream ranking and cards highlight imminent quarterly earnings risk.
 2. **`H2-Entry` (`build_entry_quality_v2`, policy `entry_quality_v2_2026-10-15`)**:
    - **Pullback Dead-Zone Closure**: Routes healthy-trend stocks whose only readiness failure is `price_to_sma50 > 1.08` or `return_20d > 0.12` directly to `WATCH_PULLBACK`.
    - **Moving-Average Alignment Gate (`sma50_to_sma200 >= 0.98`)**: Computes `sma50_to_sma200 = price_to_sma200 / price_to_sma50`; requires `>= 0.98` for `ENTRY_READY`, emits `sma50_above_sma200_aligned` when `>= 1.00`, and emits `sma50_below_sma200_inverted` when `< 1.00`.
    - **`WATCH_BREAKOUT` Sub-Bucket Differentiation**: Emits `watch_breakout_near_consolidation` vs `watch_breakout_lagging_structure` (`-0.10` score penalty on lagging structures).
+   - **Medium-Term Extension Deduction (PR #86)**: Deducts `0.06` (mild: `price_to_sma200 > 1.35` or `return_60d > 0.35`) or `0.10` (severe: `price_to_sma200 > 1.45` or `return_60d > 0.45`) from `entry.score` and emits non-blocking `price_extended_above_sma200` / `return_60d_extended` risk items while preserving `EntryState.ENTRY_READY`.
 3. **`H3-Action` (`map_action_state_v2` & `assign_action_priorities_v2`)**:
    - **High-Conviction `B + ENTRY_READY` Promotion**: Promotes `Quality B (score >= 0.68, confidence >= 0.80) + ENTRY_READY (score >= 0.80)` into `ActionState.PRIORITY_REVIEW` with explicit `h3_b_ready_promotion` rationale.
-   - **Joint Conviction Ranking**: Ranks within `PRIORITY_REVIEW` by `0.60 * quality.score + 0.40 * entry.score + 0.04 * I(grade == A)`, and ranks remaining `ENTRY_READY` ahead of `TREND_DAMAGED` inside `HOLD_MONITOR`.
+   - **Joint Conviction Ranking + Pre-Earnings Penalty**: Ranks within `PRIORITY_REVIEW` by `0.60 * quality.score + 0.40 * entry.score + 0.04 * I(grade == A) - 0.06 * I(pre_earnings_window_risk)`, and ranks remaining `ENTRY_READY` ahead of `TREND_DAMAGED` inside `HOLD_MONITOR`.
 
-### 2.4 Presentation IR & Report Readability v2 (Track A)
+### 2.4 Presentation IR & Report Readability v2 (Track A + PR #86)
 Implemented in `src/ai_value_scanner/decision/view_model.py` and `src/ai_value_scanner/reporting/decision.py` (`layout_version="v2"`):
-- **Action List v2**: Quick-jump anchor bar, collapsible `<details>` accordion cards for every stock, cross-pillar `Why Own` highlights (requiring `>= 1` growth/margin metric + `>= 1` cash/balance-sheet metric), explicit `Entry Gate Check` / `What to Wait For` lines, and compact Secondary Radar summary table.
-- **Detailed Report v2**: One-screen 6-Pillar Quality Scorecard table, 7-Gate Entry Readiness Checklist table (`PASS`/`WAIT`/`FAIL` with actual vs target values), and collapsible Audit Trail & Provenance sections with relative-only links and zero absolute paths.
+- **Action List v2**: Quick-jump anchor bar, top `- **Pool & Concentration**:` summary line (`watchlist_bucket` + top source ETFs), collapsible `<details>` accordion cards with inline warning badges (`⚠️Pre-Earnings(78d)`, `⚠️Extended(...)`, `⚠️Share-Basis/Split`), per-card `**Pool**:` provenance, cross-pillar `Why Own` highlights, explicit `Entry Gate Check` / `What to Wait For` lines, and compact Secondary Radar summary.
+- **Detailed Report v2**: One-screen 6-Pillar Quality Scorecard table, 7-Gate Entry Readiness Checklist table (`PASS`/`WAIT`/`FAIL` with actual vs target values; non-blocking extension warnings never flip passing gates), and collapsible Audit Trail & Provenance sections with relative-only links and zero absolute paths.
 
-### 2.5 Dual-Track Validation Summary (Phase M4 — `docs/m4_paired_validation_20261015/`)
+### 2.5 Dual-Track Validation Summary (Phase M4 — `docs/m4_paired_validation_20261015/`) & Production Configuration
 - **Track 1 (Human Utility)**: `v2_combined` eliminates `100%` (`4,949 -> 0`) of contradictory cash-cow accrual narratives across all 39 dates, eliminates `100%` of silent non-ready gates, raises Top-15 `ENTRY_READY` share (`40.0% -> 66.7%` on `snap62`, `92.4% -> 96.9%` on `POST2024_HELD_OUT`, `90.6% -> 94.7%` on `ALL_39_DATES`), and passes Report v2 parity checks (`0` exceptions, `0` ordering mismatches, `0` absolute paths).
 - **Track 2 (Paired Economics)**:
   - On `PRIORITY_REVIEW`, `v2_combined` achieves **`+0.64%` mean / `+1.32%` median 60d paired delta** (`66.7%` win rate, `LOO_min = +0.23%`, `+1.52%` on 120d) on the 15 unsealed `POST2024_HELD_OUT` dates and **`+0.55%` mean delta** (`LOO_min = +0.36%`, `POSITIVE_ROBUST`) across `ALL_39_DATES`, outperforming `v1_baseline` in all 4 calendar periods (`2023`, `2024`, `2025`, `2026Q1`).
   - On `TOP15`, `h2_entry_only` (`+0.34%`, `LOO_min = +0.16%`) and `h3_action_only` (`+0.46%`, `LOO_min = +0.14%`) are `POSITIVE_ROBUST` across all 39 dates, while `v2_combined` achieves `+0.09%` mean / `+0.96%` median (`66.7%` win rate, `+0.94%` on 120d) on `POST2024_HELD_OUT`.
-- **Default Policy Discipline**: Per Gate G4/G5 rules, `ScanConfig` keeps `decision_policy_version="v1"` and `report_layout_version="v1"` as the backward-compatible default while exposing `--decision-policy-version v2`, `--report-layout-version v2`, and `--enable-v2-shadow` for opt-in v2 and dual-track shadow operation.
+- **Production Default & Backward Compatibility (PR #83–#85)**: Production configs (`configs/config.risk_off.json`, `configs/config.risk_on.json`, `configs/config.strict_candidate.json`) default to `"decision_policy_version": "v2", "report_layout_version": "v2"` with a 6-hour (`21600s`) interactive Alpaca TTL, while `ScanConfig` Python defaults remain `"v1"` so all historical v1 unit tests stay unmodified. Daily scheduled execution runs via `scripts/run_daily_cron.py` (Stage 1 SEC prewarm via `refresh_sec_cache.run_sec_prewarm` at `4.0h` max age + Stage 2 `run_scan` at `3600s` Alpaca TTL, updating `outputs/decisions/latest_<style>.json`).

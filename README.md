@@ -166,7 +166,8 @@ outputs/decisions/
 - `detailed/*.md` 只解释同一个 `StockDecision`，不重新计算状态；
 - 默认 attention cap 为 15，可用 `--decision-attention-cap` 调整；
 - `--max-symbols` 的试运行会写到 `outputs/decision_samples/`，避免污染正式 prospective archive；
-- 同一日期、同一 style 的正式 snapshot 不会被覆盖；如需保留第二次独立运行，可显式指定新的
+- 每次全量扫描（`max_symbols=null`）会自动刷新 `outputs/decisions/latest_<strategy_style>.json` 快捷指针（仅保存相对路径，指向最新一期 `action_list.md`、`weekly_review.md` 与 `run_manifest.json`）；
+- 同一日期、同一 style 的正式 snapshot 不会被覆盖（在 `scripts/run_daily_cron.py` 中启用 `allow_existing_decision_snapshot=True`，周末或同日重跑会自动保留既有不可变快照并跳过覆盖）；如需保留第二次独立运行，可显式指定新的
   `--decision-output-root`。
 
 新 decision 输出采用 failure-contained 集成：若 snapshot 写入失败，legacy scanner CSV、
@@ -226,12 +227,14 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 4. **股本稀释与资本纪律（`dilution`，权重 10%）**：
    - 考核指标：`shares_yoy`（同比股本变化 `<=3%` 支持，`>12%` 预警）。
    - **股本口径分离保障（M1）**：市值与估值倍数分母严格采用 SEC 时点普通股股本（`POINT_IN_TIME_SHARES_TAGS`），而同比稀释率分母严格采用同口径加权平均股本（`WEIGHTED_AVERAGE_SHARES_TAGS`），杜绝双层股权结构（如 `HEI`）跳变造成的虚假稀释。
+   - **拆股/股本口径断裂保护（v2 新增）**：当 `shares_yoy < -30%` 或 `> +100%`（超出正常回购/增发区间，如 `AMCR` 1-for-5 反向拆股导致的 `-79.9%`），不再按字面打强/弱分，而是将 `dilution` 支柱中性化为 `0.50` 并挂 `shares_yoy_split_or_basis_discontinuity` 风险项，要求人工复核拆分调整后的每股同比口径；严重稀释一票否决仅保留有机区间 `0.15 < shares_yoy <= 1.00`。
 5. **估值背景（`valuation_context`，权重 10%）**：
    - 考核指标：`fcf_yield`（自由现金流收益率 `>=2%` 支持）、`ps_hist_percentile` 与 `pe_hist_percentile`（自身历史分位）。
    - **核心升级**：对现金流健康（`fcf_yield >= 2%`）或高增长现金牛公司，将自身历史 P/S、P/E 分位得分保底为 `0.35`（不触发弱项红旗），避免长期慢牛与创历史新高的优质股被自身历史分位机械扣分。
 6. **营运红旗（`operating_red_flags`，权重 10%）**：
    - 考核指标：`receivables_growth_gap`（应收增速 - 营收增速）与 `inventory_growth_gap`（存货增速 - 营收增速）。
    - **核心升级（高增长现金牛营运资本豁免）**：当公司处于高速扩张且回款健康（`revenue_yoy >= 25%` 且 `OCF/NI >= 0.80`）时，豁免期末时点应收/存货增速差扣分与一票否决项，使 `MU`、`NVDA`、`TER` 等高景气龙头不再因单季末备货/应收时间基准错配被误降为 B 级。
+- **财报临近窗口预警（v2 新增，仅提示不扣分）**：当最新定期财报账龄进入 `70–400` 天区间（接近约 90 天财报周期尾声，如 `MSFT 78d`、`AMD 71d`、`FAST 91d`、`FDS 106d`），`build_company_quality_v2` 挂载 `pre_earnings_window_risk` 反方证据项并在报告中显示 **`⚠️Pre-Earnings(<age>d)`** 徽标，同时在 `PRIORITY_REVIEW` 联合排序中扣减 `0.06`（让财报刚落地 `<70d` 的同分标的排在前面）。该预警**不改变** `quality.score`、`confidence`、`grade`、`ENTRY_READY` / `PRIORITY_REVIEW` 状态。
 
 #### （2）Entry Quality v2（量价买点评估：回答“现在是不是相对合理的入场位置”）
 将候选股划分为 5 个清晰状态（`ENTRY_READY`, `WATCH_PULLBACK`, `WATCH_BREAKOUT`, `TREND_DAMAGED`, `INSUFFICIENT_DATA`），其中 **`ENTRY_READY` 必须同时满足 7 大买点门限**：
@@ -244,19 +247,20 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
    - **回调死带闭合（v2 升级）**：凡是长期趋势、中期动量、相对强度与回撤全部健康，仅因短期偏热（`price_to_sma50 > 1.08` 或 `return_20d > +12.0%`）未进 `ENTRY_READY` 的强势股，统一归入 **`WATCH_PULLBACK`（等待回调至 SMA50 带宽）**，不再误入 `WATCH_BREAKOUT`。
 7. **回撤与波动率受控**：距 52 周高点回撤 `drawdown_from_52w_high <= 22%`，60 日年化波动率 `volatility_60d <= 80%`。
    - **`WATCH_BREAKOUT` 蓄势 vs 滞后细分（v2 升级）**：将等待突破的标的显式区分为 `watch_breakout_near_consolidation`（站上 SMA200、均线对齐、60d 与 RS 接近就绪）与 `watch_breakout_lagging_structure`（趋势或相对强度明显滞后，扣减 `0.10` 分），且每一只非 `ENTRY_READY` 股票 100% 显式列出尚未达标的具体门限。
+   - **中期过热扣分与徽标（v2 新增，状态不变）**：当 `price_to_sma200 > 1.35x`（`>1.45x` 加重）或 `return_60d > +35%`（`>+45%` 加重）时，`entry.score` 分别扣减 `0.06` / `0.10`（可叠加、有 `0` 分下限），并挂 `price_extended_above_sma200` / `return_60d_extended` 反方证据与 **`⚠️Extended(...)`** 徽标——如 60d 大涨 `+45%..+53%`、贴在 `1.43x..1.51x` SMA200 上方的 `CRM`、`MSFT`、`AMD` 不再拿到人为的 `1.00` 满分，在联合排序中排到未过热 setup（如 `KEYS`、`ADI`、`EXPE`）之后。`ENTRY_READY` / `PRIORITY_REVIEW` 状态本身保持不变；且这两项属于非阻塞性提示，不会把已通过的 SMA200/60d 门限翻转为 `FAIL_BLOCKER`。
 
 #### （3）Action & Priority v2（行动状态路由与 Top-15 联合排序）
 1. **高确信度 `Quality B + ENTRY_READY` 提拔**：当 `Quality B` 满足 `quality.score >= 0.68`、`confidence >= 0.80` 且处于高分买点 `ENTRY_READY (entry.score >= 0.80)` 时，直接提拔进入 **`PRIORITY_REVIEW`**，避免优质成长股因单一指标暂处 B 级上限而被埋没在 `HOLD_MONITOR`。
 2. **`PRIORITY_REVIEW` 内部联合确信度排序**：
    $$\text{Joint Conviction Score} = 0.60 \times \text{Quality Score} + 0.40 \times \text{Entry Score} + 0.04 \times \mathbb{I}(\text{Quality Grade} == \text{A})$$
-   兼顾基本面厚度与当下买点质量；在 `HOLD_MONITOR` 内部，将剩余 `ENTRY_READY` 标的排在趋势受损（`TREND_DAMAGED`）的 A 级股之前。
+   兼顾基本面厚度与当下买点质量；携带 `pre_earnings_window_risk` 的标的在排序分上再扣减 `0.06`（`HOLD_MONITOR` 与其余状态分支同样适用该扣减）；在 `HOLD_MONITOR` 内部，将剩余 `ENTRY_READY` 标的排在趋势受损（`TREND_DAMAGED`）的 A 级股之前。
 
 #### （4）MVP v2 的运行命令
 1. **日常标准扫描（生产配置已默认启用 MVP v2 策略 + v2 折叠卡片式报告）**：
    ```bash
    python run_scan.py --config configs/config.risk_off.json
    ```
-   *(注：`configs/config.risk_off.json` 与 `configs/config.risk_on.json` 已默认配置 `"decision_policy_version": "v2", "report_layout_version": "v2"`，并已将 Alpaca 缓存 TTL 设为 12 小时 `43200s`)*
+   *(注：`configs/config.risk_off.json`、`configs/config.risk_on.json` 与 `configs/config.strict_candidate.json` 已默认配置 `"decision_policy_version": "v2", "report_layout_version": "v2"`，并将交互式 Alpaca 缓存 TTL 设为 6 小时 `21600s`；每日定时任务 `scripts/run_daily_cron.py` 则在 Stage 2 自动采用 1 小时 `3600s` Alpaca 保鲜窗口)*
 2. **离线将任意已有快照重渲染为 v2 折叠卡片式报告**：
    ```bash
    python scripts/render_snapshot_preview.py \
@@ -264,6 +268,13 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
      --output-dir outputs/preview_v2 \
      --layout v2
    ```
+
+#### （5）Report Layout v2（报告呈现层：警告徽标、池归属与集中度披露）
+- **名单集中度总览行**：`action_list.md` 日期行正下方新增一行 `- **Pool & Concentration**: ...`，汇总候选池规模（如 `Pool (511 names)`）、Top-15 的 `watchlist_bucket` 分布（如 `ai_core 11/15, ai_peripheral 4/15`）与出现最多的来源 ETF（如 `Top ETFs: XLK (5), IGV (4)`），仅当快照携带 watchlist 来源元数据时渲染。
+- **卡片警告徽标**：每只股票 `<summary>` 行尾直接追加徽标——`⚠️Pre-Earnings(78d)`（财报临近窗口）、`⚠️Extended(SMA200 1.47x, 60d +51.4%)`（中期过热）、`⚠️Share-Basis/Split`（拆股/股本口径断裂或加权平均股本兜底）。
+- **池归属显示**：`- **Company**: ...` 行在有来源元数据时追加 `· **Pool**: \`ai_core\` (XLK, IGV)`。
+- **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
+- 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
 
 ### 3.5 官方配置
 
@@ -483,9 +494,9 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 | `alpaca_max_requests_per_sec` | `2.5` | Alpaca 限速上限。 |
 | `sec_max_requests_per_sec` | `5.0` | SEC 限速上限。 |
 | `alpaca_cache_enabled` | `true` | 是否启用 Alpaca 本地缓存。 |
-| `alpaca_cache_ttl_assets_sec` | `21600` | `assets` 缓存 TTL（秒）。 |
-| `alpaca_cache_ttl_snapshots_sec` | `120` | `snapshots` 缓存 TTL（秒）。 |
-| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒）。网络失败使用过期缓存时不会刷新原文件 mtime；network JSON/Markdown 会记录 source、feed、市场数据 `data_asof`、最大 cache age、降级原因和 stale-fallback 标记。 |
+| `alpaca_cache_ttl_assets_sec` | `21600` | `assets` 缓存 TTL（秒，默认 6 小时；`run_daily_cron.py` Stage 2 自动覆盖为 `3600` 秒）。 |
+| `alpaca_cache_ttl_snapshots_sec` | `21600` | `snapshots` 缓存 TTL（秒，默认 6 小时；`run_daily_cron.py` Stage 2 自动覆盖为 `3600` 秒）。 |
+| `alpaca_cache_ttl_bars_sec` | `21600` | `bars` 缓存 TTL（秒，默认 6 小时；`run_daily_cron.py` Stage 2 自动覆盖为 `3600` 秒）。网络失败使用过期缓存时不会刷新原文件 mtime；network JSON/Markdown 会记录 source、feed、市场数据 `data_asof`、最大 cache age、降级原因和 stale-fallback 标记。 |
 | `cache_dir` | `cache` | 缓存目录（默认值来自代码）。 |
 | `output_dir` | `outputs` | 输出目录（默认值来自代码）。 |
 

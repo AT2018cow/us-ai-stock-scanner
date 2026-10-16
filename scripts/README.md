@@ -4,7 +4,9 @@
 
 ## 1. Core MVP Execution & Validation
 
+- `run_daily_cron.py` — Dedicated daily cron orchestrator: Stage 1 SEC parsed-cache prewarm (`run_sec_prewarm`) + Stage 2 MVP v2 scan (`run_scan(..., allow_existing_decision_snapshot=True)` with `3600s` Alpaca freshness window and `outputs/decisions/latest_<style>.json` pointer).
 - `run_mvp_full_scan.py` — Run end-to-end MVP scan emitting `decisions.jsonl`, `action_list.md`, `weekly_review.md`, `detailed/*.md`, and `run_manifest.json`.
+- `render_snapshot_preview.py` — Offline preview CLI to re-render any existing decision snapshot into Report Layout v2 (`action_list_v2.md`, `weekly_review_v2.md`, `detailed_v2/*.md`).
 - `validate_mvp_snapshot.py` — Validate decision snapshot integrity, renderer consistency, and provenance completeness.
 - `audit_mvp_strategy_snapshot.py` — Read-only cross-sectional audit of an MVP decision snapshot.
 - `m0_build_baseline_review.py` — Deterministic read-only builder for Phase M0 baseline inventory, 18-case human review worksheet, attention failure families, and M1 gate.
