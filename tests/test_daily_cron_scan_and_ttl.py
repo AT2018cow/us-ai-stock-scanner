@@ -1,9 +1,13 @@
 """Unified daily cron pipeline & two-tier freshness TTL (no network).
 
-Covers the 10:30 cron contract:
+Single-responsibility contract:
+- ``scripts/refresh_sec_cache.py`` is 100% pure SEC prewarm and must never
+  trigger a stock scan (no ``run_scan`` reference, no ``--skip-scan`` flag).
+- ``scripts/run_daily_cron.py`` orchestrates Stage 1 SEC prewarm
+  (``--max-age-hours 4.0``) + Stage 2 MVP scan (``--alpaca-ttl-sec 3600``).
+
+Also covers the cron freshness contract:
 - interactive (manual) Alpaca TTLs default to 21600s (6h);
-- cron Stage 1 SEC ``--max-age-hours`` defaults to 4.0h;
-- cron Stage 2 forces a 3600s (1h) Alpaca freshness window;
 - Stage 2 runs when the prewarm has incompletes but is not aborted;
 - Stage 2 is skipped on abort/conflict/--skip-scan/limit;
 - same-session/weekend reruns preserve an existing immutable snapshot;
@@ -12,7 +16,9 @@ Covers the 10:30 cron contract:
 
 from __future__ import annotations
 
+import contextlib
 import inspect
+import io
 import json
 import os
 import sys
@@ -27,7 +33,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import refresh_sec_cache as rsc
-from refresh_sec_cache import run_daily_scan_after_prewarm
+import run_daily_cron as rdc
+from run_daily_cron import run_daily_scan_after_prewarm
 
 
 def _clean_summary(**overrides):
@@ -153,6 +160,36 @@ class Stage2ScanTests(unittest.TestCase):
         self.assertEqual(seen[0].alpaca_cache_ttl_snapshots_sec, 1800)
         self.assertEqual(seen[0].alpaca_cache_ttl_bars_sec, 1800)
 
+    def test_default_alpaca_ttl_sec_is_3600(self) -> None:
+        param = inspect.signature(run_daily_scan_after_prewarm).parameters[
+            "alpaca_ttl_sec"
+        ]
+        self.assertEqual(param.default, 3600)
+
+    def test_custom_alpaca_ttl_passthrough(self) -> None:
+        seen = []
+
+        def fake_scan(scan_cfg, **kwargs):
+            seen.append(scan_cfg)
+            return Path("out")
+
+        run_daily_scan_after_prewarm(
+            self._cfg(ttl=21600),
+            config_path="configs/config.risk_off.json",
+            summary=_clean_summary(),
+            alpaca_ttl_sec=1800,
+            scan_fn=fake_scan,
+        )
+        self.assertEqual(seen[0].alpaca_cache_ttl_bars_sec, 1800)
+        run_daily_scan_after_prewarm(
+            self._cfg(ttl=21600),
+            config_path="configs/config.risk_off.json",
+            summary=_clean_summary(),
+            alpaca_ttl_sec=7200,
+            scan_fn=fake_scan,
+        )
+        self.assertEqual(seen[1].alpaca_cache_ttl_bars_sec, 7200)
+
     def test_skip_scan_flag_skips(self) -> None:
         def fail_if_called(scan_cfg, **kwargs):  # pragma: no cover
             raise AssertionError("scan_fn must not be called")
@@ -237,7 +274,29 @@ class Stage2ScanTests(unittest.TestCase):
         )
 
 
-class CronMainTests(unittest.TestCase):
+class RefreshPurityTests(unittest.TestCase):
+    """`refresh_sec_cache.py` is 100% pure SEC prewarm: no scan wiring."""
+
+    def test_no_scan_references_in_module(self) -> None:
+        self.assertFalse(hasattr(rsc, "run_scan"))
+        self.assertFalse(hasattr(rsc, "run_daily_scan_after_prewarm"))
+
+    def test_help_has_no_skip_scan_flag(self) -> None:
+        buf = io.StringIO()
+        with patch.object(sys, "argv", ["refresh_sec_cache.py", "--help"]):
+            with contextlib.redirect_stdout(buf):
+                with self.assertRaises(SystemExit) as ctx:
+                    rsc.main()
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertNotIn("skip-scan", buf.getvalue())
+
+    def test_skip_scan_flag_rejected(self) -> None:
+        with patch.object(sys, "argv", ["refresh_sec_cache.py", "--skip-scan"]):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    rsc.main()
+        self.assertEqual(ctx.exception.code, 2)
+
     def _patch_prewarm_stack(self, summary):
         captured = {}
         sec_instance = MagicMock()
@@ -274,57 +333,156 @@ class CronMainTests(unittest.TestCase):
         _, sec_kwargs = sec_cls_mock.call_args
         self.assertEqual(sec_kwargs.get("submissions_ttl_sec"), int(4.0 * 3600))
 
-    def test_main_runs_stage2_when_credentials_present(self) -> None:
+    def test_main_never_scans_even_with_credentials(self) -> None:
+        # No scan entry point exists in this module: a full prewarm with
+        # Alpaca credentials configured still only refreshes SEC cache.
         stack, _, _ = self._patch_prewarm_stack(_clean_summary())
         with stack:
-            with patch.object(
-                rsc,
-                "run_daily_scan_after_prewarm",
-                return_value={
-                    "scan_executed": True,
-                    "scan_failed": False,
-                    "output_path": "outputs/x.csv",
-                },
-            ) as stage2:
-                self._run_main([], {"ALPACA_API_KEY": "test-key"})
+            self._run_main([], {"ALPACA_API_KEY": "test-key"})
+
+    def test_main_exits_1_on_failed_summary(self) -> None:
+        stack, _, _ = self._patch_prewarm_stack(_clean_summary(failed=2))
+        with stack:
+            with self.assertRaises(SystemExit) as ctx:
+                self._run_main(["--limit", "1"], {})
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_run_sec_prewarm_defaults_and_limit(self) -> None:
+        from ai_value_scanner.scanner import ScanConfig
+
+        param = inspect.signature(rsc.run_sec_prewarm).parameters["max_age_hours"]
+        self.assertEqual(param.default, 4.0)
+        stack, captured, _ = self._patch_prewarm_stack(_clean_summary())
+        cfg = ScanConfig()
+        with stack:
+            summary = rsc.run_sec_prewarm(
+                cfg,
+                repo=Path("."),
+                user_agent="unittest-agent",
+                limit=1,
+            )
+        self.assertEqual(summary["refreshed"], 1)
+        self.assertEqual(captured.get("max_age_sec"), 4.0 * 3600)
+
+    def test_run_sec_prewarm_exits_1_without_symbols(self) -> None:
+        from ai_value_scanner.scanner import ScanConfig
+
+        with patch.object(rsc, "collect_symbols", return_value=([], [])):
+            with self.assertRaises(SystemExit) as ctx:
+                rsc.run_sec_prewarm(
+                    ScanConfig(), repo=Path("."), user_agent="unittest-agent"
+                )
+        self.assertEqual(ctx.exception.code, 1)
+
+
+class DailyCronMainTests(unittest.TestCase):
+    """`run_daily_cron.py` orchestrates Stage 1 + Stage 2."""
+
+    def _run_main(self, argv, extra_env, prewarm_summary, stage2_result):
+        env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": ""}
+        env.update(extra_env)
+        with patch.object(sys, "argv", ["run_daily_cron.py", *argv]):
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(
+                    rdc, "run_sec_prewarm", return_value=prewarm_summary
+                ) as prewarm:
+                    with patch.object(
+                        rdc,
+                        "run_daily_scan_after_prewarm",
+                        return_value=stage2_result,
+                    ) as stage2:
+                        rdc.main()
+        return prewarm, stage2
+
+    def test_defaults_wire_stage1_4h_and_stage2_3600(self) -> None:
+        prewarm, stage2 = self._run_main(
+            [],
+            {"ALPACA_API_KEY": "test-key"},
+            _clean_summary(),
+            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+        )
+        self.assertEqual(prewarm.call_count, 1)
+        _, pre_kwargs = prewarm.call_args
+        self.assertEqual(pre_kwargs.get("max_age_hours"), 4.0)
+        self.assertEqual(pre_kwargs.get("limit"), 0)
         self.assertEqual(stage2.call_count, 1)
-        _, kwargs = stage2.call_args
-        self.assertEqual(kwargs.get("config_path"), "configs/config.risk_off.json")
-        self.assertEqual(kwargs.get("limit"), 0)
-        self.assertEqual(kwargs.get("skip_scan"), False)
+        _, scan_kwargs = stage2.call_args
+        self.assertEqual(scan_kwargs.get("config_path"), "configs/config.risk_off.json")
+        self.assertEqual(scan_kwargs.get("limit"), 0)
+        self.assertEqual(scan_kwargs.get("skip_scan"), False)
+        self.assertEqual(scan_kwargs.get("alpaca_ttl_sec"), 3600)
+
+    def test_custom_freshness_windows_pass_through(self) -> None:
+        prewarm, stage2 = self._run_main(
+            ["--max-age-hours", "2.0", "--alpaca-ttl-sec", "1800"],
+            {"ALPACA_API_KEY": "test-key"},
+            _clean_summary(),
+            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+        )
+        _, pre_kwargs = prewarm.call_args
+        self.assertEqual(pre_kwargs.get("max_age_hours"), 2.0)
+        _, scan_kwargs = stage2.call_args
+        self.assertEqual(scan_kwargs.get("alpaca_ttl_sec"), 1800)
 
     def test_main_skips_stage2_without_credentials(self) -> None:
-        stack, _, _ = self._patch_prewarm_stack(_clean_summary())
-        with stack:
-            with patch.object(
-                rsc, "run_daily_scan_after_prewarm"
-            ) as stage2:
-                self._run_main([], {"ALPACA_API_KEY": ""})
+        prewarm, stage2 = self._run_main(
+            [],
+            {"ALPACA_API_KEY": ""},
+            _clean_summary(),
+            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+        )
+        self.assertEqual(prewarm.call_count, 1)
         self.assertEqual(stage2.call_count, 0)
 
     def test_main_skips_stage2_with_skip_scan_flag(self) -> None:
-        stack, _, _ = self._patch_prewarm_stack(_clean_summary())
-        with stack:
-            with patch.object(
-                rsc, "run_daily_scan_after_prewarm"
-            ) as stage2:
-                self._run_main(["--skip-scan"], {"ALPACA_API_KEY": "test-key"})
+        prewarm, stage2 = self._run_main(
+            ["--skip-scan"],
+            {"ALPACA_API_KEY": "test-key"},
+            _clean_summary(),
+            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+        )
+        self.assertEqual(prewarm.call_count, 1)
+        self.assertEqual(stage2.call_count, 0)
+
+    def test_main_skips_stage2_with_limit(self) -> None:
+        prewarm, stage2 = self._run_main(
+            ["--limit", "3"],
+            {"ALPACA_API_KEY": "test-key"},
+            _clean_summary(),
+            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+        )
+        self.assertEqual(prewarm.call_count, 1)
         self.assertEqual(stage2.call_count, 0)
 
     def test_main_exits_1_when_stage2_fails(self) -> None:
-        stack, _, _ = self._patch_prewarm_stack(_clean_summary())
-        with stack:
-            with patch.object(
-                rsc,
-                "run_daily_scan_after_prewarm",
-                return_value={
-                    "scan_executed": False,
-                    "scan_failed": True,
-                    "error": "boom",
-                },
-            ):
-                with self.assertRaises(SystemExit) as ctx:
-                    self._run_main([], {"ALPACA_API_KEY": "test-key"})
+        env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": "test-key"}
+        with patch.object(sys, "argv", ["run_daily_cron.py"]):
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(
+                    rdc, "run_sec_prewarm", return_value=_clean_summary()
+                ):
+                    with patch.object(
+                        rdc,
+                        "run_daily_scan_after_prewarm",
+                        return_value={
+                            "scan_executed": False,
+                            "scan_failed": True,
+                            "error": "boom",
+                        },
+                    ):
+                        with self.assertRaises(SystemExit) as ctx:
+                            rdc.main()
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_main_exits_1_on_failed_prewarm(self) -> None:
+        env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": ""}
+        with patch.object(sys, "argv", ["run_daily_cron.py", "--limit", "1"]):
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(
+                    rdc, "run_sec_prewarm", return_value=_clean_summary(failed=1)
+                ):
+                    with self.assertRaises(SystemExit) as ctx:
+                        rdc.main()
         self.assertEqual(ctx.exception.code, 1)
 
 

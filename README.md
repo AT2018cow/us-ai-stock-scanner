@@ -113,6 +113,30 @@ python run_scan.py --config configs/config.risk_off.json --max-symbols 300
 python run_scan.py --config configs/config.risk_off.json
 ```
 
+### 3.4.0 每日定时任务（SEC 预热 + 全量扫描）
+
+每日 cron 使用专用编排器 `scripts/run_daily_cron.py`（职责分离设计）：
+
+```bash
+python scripts/run_daily_cron.py --config configs/config.risk_off.json
+```
+
+- **Stage 1（SEC 预热）**：调用 `refresh_sec_cache.run_sec_prewarm(...)`，默认
+  `--max-age-hours 4.0`，保证每天抓到 EDGAR 22:00 ET 截止后的最新申报。
+- **Stage 2（全量 MVP v2 扫描）**：紧接着运行 `run_scan(...,
+  allow_existing_decision_snapshot=True)`，Alpaca 行情强制 1 小时新鲜度
+  （`--alpaca-ttl-sec`，默认 `3600`，即使前一晚跑过手工扫描也会重抓盘后
+  日线/快照），并刷新 `outputs/decisions/latest_<style>.json` 指针。
+- `--limit N` 烟雾测试与 `--skip-scan` 只跑 Stage 1；周末/非交易日重跑会
+  保留已存在的同日期不可变快照。
+
+`scripts/refresh_sec_cache.py` 是纯 SEC 缓存预热脚本（只刷新
+`cache/` 解析缓存，从不触发扫描、不写报告），适合手工单独预热：
+
+```bash
+python scripts/refresh_sec_cache.py --config configs/config.risk_off.json
+```
+
 ### 3.4.1 MVP Action List / Detailed Report
 
 同一条 `run_scan.py` 命令现在会在保留所有 legacy CSV/report 的同时，额外生成
