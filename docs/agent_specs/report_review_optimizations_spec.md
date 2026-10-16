@@ -224,7 +224,65 @@ Based on real-world review of the `2026-10-15` daily MVP v2 report, we implement
 
 ---
 
-## 4. Verification Commands
+## 4. Follow-Up Polish & Secondary Radar Wiring (Post-PR #86 Review)
+
+Based on review of the regenerated `2026-10-15` report, implement the following three targeted refinements by modifying ONLY:
+1. `src/ai_value_scanner/decision/view_model.py`
+2. `src/ai_value_scanner/reporting/decision.py`
+3. `src/ai_value_scanner/reporting/snapshot.py`
+4. `scripts/render_snapshot_preview.py`
+5. `tests/test_report_review_optimizations.py`
+
+### 4.1 Primary-Bucket Normalization & Clean Multi-Bucket Formatting (`view_model.py`)
+In `data/ai_watchlist.csv`, a stock belonging to multiple buckets has a comma-separated string such as `"ai_enabler,core_ai"`. Treating `"ai_enabler,core_ai"` as an atomic bucket string caused `ai_enabler,core_ai 4/15` and `core_ai 3/15` to appear side-by-side in `concentration_summary_line`.
+1. Define canonical bucket priority in `src/ai_value_scanner/decision/view_model.py`:
+   ```python
+   _BUCKET_PRIORITY: tuple[str, ...] = (
+       "core_ai",
+       "ai_core",
+       "ai_enabler",
+       "ai_peripheral",
+       "ai_smallcap",
+   )
+   ```
+2. Add two helpers in `src/ai_value_scanner/decision/view_model.py`:
+   - `_normalize_primary_bucket(raw_bucket: Any) -> str`:
+     Split `str(raw_bucket or "")` on `","` into stripped non-empty tokens. If empty, return `""`. Return the first token matching `_BUCKET_PRIORITY` in priority order (or `tokens[0]` if none are in `_BUCKET_PRIORITY`).
+     - Example: `"ai_enabler,core_ai"` $\rightarrow$ `"core_ai"`; `"ai_core"` $\rightarrow$ `"ai_core"`.
+   - `_format_bucket_tokens(raw_bucket: Any) -> str`:
+     Split `str(raw_bucket or "")` on `","` into unique stripped non-empty tokens, sorted by `_BUCKET_PRIORITY` index (then alphabetically), joined with `"/"`.
+     - Example: `"ai_enabler,core_ai"` $\rightarrow$ `"core_ai/ai_enabler"`; `"ai_core"` $\rightarrow$ `"ai_core"`.
+3. In `_build_pool_display(decision: StockDecision)`:
+   Use `bucket = _format_bucket_tokens(decision.provenance.get("watchlist_bucket"))` so single-bucket strings remain `` `ai_core` `` while multi-bucket strings render cleanly as `` `core_ai/ai_enabler` ``.
+4. In `_build_concentration_summary_line(primary_cards, pool_size)`:
+   Count `bucket = _normalize_primary_bucket(card.decision.provenance.get("watchlist_bucket"))` per card so each shortlist stock is counted once under its canonical primary bucket (`core_ai 7/15, ai_peripheral 3/15, ai_smallcap 3/15, ai_enabler 2/15`), summing to `15/15` with zero composite `"a,b"` keys!
+
+### 4.2 Wire `all_decisions` in `write_decision_snapshot` & Expand Secondary Radar Cap-Omitted Priority Review to 15 with Warning Badges (`snapshot.py`, `view_model.py`, `reporting/decision.py`)
+1. **Why `Pool (538 names)` and `Secondary Radar` were omitted during `write_decision_snapshot`**:
+   In `src/ai_value_scanner/reporting/snapshot.py` (`write_decision_snapshot`, lines 245–262), `render_action_list(daily_tuple, ...)` and `render_action_list(weekly_tuple, ...)` were called without `all_decisions=decisions_tuple`!
+   - Fix in `src/ai_value_scanner/reporting/snapshot.py`:
+     - Pass `all_decisions=decisions_tuple` to both `render_action_list(daily_tuple, ..., layout_version=layout_version, all_decisions=decisions_tuple)` and `render_action_list(weekly_tuple, ..., layout_version=layout_version, all_decisions=decisions_tuple)`. (Note: when `layout_version == "v1"`, `render_action_list` ignores `all_decisions`, so `v1` output remains 100% byte-identical!)
+     - When `layout_version == "v2"`, also include the symbols from `daily_view.cap_omitted_priority_cards`, `weekly_view.cap_omitted_priority_cards`, `daily_view.secondary_b_ready_cards`, and `weekly_view.secondary_b_ready_cards` (via `build_snapshot_view_model`) in `detailed_symbols` (lines 286–297) so that every `[Full Report →](./detailed/<SYMBOL>.md)` link in `Secondary Radar` has its `detailed/<SYMBOL>.md` file generated!
+2. **Increase `cap_omitted_priority_cards` slice from `[:5]` to `[:15]` in `build_snapshot_view_model` (`src/ai_value_scanner/decision/view_model.py`)**:
+   - On `2026-10-15`, `FDS` is `#19`, `AMD` is `#20`, `MSFT` is `#22`, and `FIVN` is `#28`. Slicing `[:5]` cut off at `#20` and hid `MSFT` (`#22`) and `FIVN` (`#28`)!
+   - Change the `cap_omitted` slice in `build_snapshot_view_model` from `[:5]` to **`[:15]`** (so up to 15 cap-omitted `PRIORITY_REVIEW` names `#16..#30` are shown in the collapsible `Cap-Omitted Priority Review` drawer; keep `secondary_b_ready_cards` at `[:5]`).
+3. **Include Warning Badges & Entry Snapshot in `Secondary Radar` (`src/ai_value_scanner/reporting/decision.py`)**:
+   - In `render_action_list_v2` (`src/ai_value_scanner/reporting/decision.py`), for each `card` in `snapshot.cap_omitted_priority_cards` and `snapshot.secondary_b_ready_cards`:
+     - If `card.warning_badges_inline` is non-empty, include `f" · {card.warning_badges_inline}"` right before `· [Full Report →]({rel_report})` on the main bullet line!
+     - Also include `f"  - **Entry**: {_plain(card.entry_Snapshot_inline)}"` right between `Highlights` and `Watchouts` so reviewers checking `MSFT` or `AMD` in `Secondary Radar` can immediately see their `SMA200 / SMA50 / 20d / 60d` numbers and `⚠️Pre-Earnings(78d) · ⚠️Extended(...)` badges without even opening the detailed report!
+
+### 4.3 Non-Destructive `--recompute-v2` Mode in `scripts/render_snapshot_preview.py`
+To ensure we never overwrite an immutable formal snapshot in `outputs/decisions/<date>/<style>/` when testing or previewing `v2` policy/report updates on the same day:
+- Add `--recompute-v2` (`action="store_true", default=False`) to `scripts/render_snapshot_preview.py`.
+- When `--recompute-v2` is NOT passed (default): preserve 100% of existing behavior.
+- When `--recompute-v2` IS passed:
+  - Read `decisions.jsonl` and `run_manifest.json` from `--snapshot-dir` **read-only** (never modify anything in `--snapshot-dir`).
+  - Recompute the `v2` Quality/Entry/Action adjustments on the loaded `StockDecision` list (applying `shares_yoy_split_or_basis_discontinuity` guard when `shares_yoy < -0.30` or `> 1.00`, `pre_earnings_window_risk` when `70 <= age_days <= 400`, `price_extended_above_sma200` / `return_60d_extended` Entry score deductions when not already present, `map_action_state_v2`, `assign_action_priorities_v2`, and `select_daily_attention`/`select_weekly_attention` with `cap=15`).
+  - Write `action_list_v2.md`, `weekly_review_v2.md`, `detailed_v2/*.md`, and `decisions_recomputed_v2.jsonl` to `--output-dir`.
+
+---
+
+## 5. Verification Commands
 
 Run locally:
 ```bash
