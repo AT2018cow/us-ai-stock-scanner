@@ -15,12 +15,13 @@ def write_csv_atomic(df: "pd.DataFrame", path: str | Path) -> None:
 
     Production input files (watchlist, universes, cohort ledgers) must never
     be left truncated if the process dies mid-write or another run reads a
-    half-written file.
+    half-written file. Output always uses Unix LF line endings so watchlist
+    snapshots stay byte-stable across platforms.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    df.to_csv(tmp, index=False)
+    df.to_csv(tmp, index=False, lineterminator="\n")
     os.replace(tmp, target)
 
 def log_status(started_at: datetime, level: str, message: str) -> None:

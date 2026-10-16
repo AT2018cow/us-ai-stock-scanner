@@ -2108,6 +2108,12 @@ def fetch_stockanalysis_etf_symbols(
         m2 = re.search(r"holdings:\[(.*?)\]\s*[,}]", html, flags=re.S)
         if m2:
             block = m2.group(1)
+        else:
+            m3 = re.search(
+                r"holdingsTable:\{.*?data:\[(.*?)\]\}", html, flags=re.S
+            )
+            if m3:
+                block = m3.group(1)
     if not block:
         return [], "holdings_block_not_found"
 
@@ -2240,6 +2246,226 @@ def load_watchlist_scores(config: ScanConfig) -> pd.DataFrame:
         return pd.DataFrame(columns=WATCHLIST_SCORE_COLUMNS)
     raw = pd.read_csv(path)
     return watchlist_rows_to_scores(raw)
+
+
+WATCHLIST_CSV_COLUMNS = [
+    "symbol",
+    "bucket",
+    "etf_count",
+    "etfs",
+    "enabled",
+    "updated_utc",
+]
+
+
+def _watchlist_cell_text(raw: Any) -> str:
+    """Cell text for CSV values, treating NaN/None as empty."""
+    if raw is None:
+        return ""
+    try:
+        if pd.isna(raw):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(raw)
+
+
+def _watchlist_token_split(raw: Any) -> tuple[list[str], list[str]]:
+    """Split an ``etfs`` cell into (etf_tokens, src_tokens), sorted + unique."""
+    etf_tokens: set[str] = set()
+    src_tokens: set[str] = set()
+    for token in _watchlist_cell_text(raw).split(","):
+        name = token.strip().upper()
+        if not name:
+            continue
+        if name.startswith("SRC:"):
+            src_tokens.add(name)
+        else:
+            etf_tokens.add(name)
+    return sorted(etf_tokens), sorted(src_tokens)
+
+
+def _watchlist_enabled_flag(raw: Any) -> int:
+    """Preserve the user's ``0``/``1`` override; only an explicit 0 disables."""
+    text = _watchlist_cell_text(raw).strip().lower()
+    if text in {"0", "0.0", "false", "no", "n"}:
+        return 0
+    return 1
+
+
+def _collapse_watchlist_rows(
+    frame: pd.DataFrame | None,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Normalize and collapse a watchlist frame to one record per (symbol, bucket)."""
+    collapsed: dict[tuple[str, str], dict[str, Any]] = {}
+    if frame is None or getattr(frame, "empty", True):
+        return collapsed
+    for record in frame.to_dict(orient="records"):
+        symbol = normalize_equity_symbol(record.get("symbol"))
+        bucket = _watchlist_cell_text(record.get("bucket")).strip().lower()
+        if not symbol or not bucket:
+            continue
+        etf_tokens, src_tokens = _watchlist_token_split(record.get("etfs"))
+        enabled = _watchlist_enabled_flag(record.get("enabled"))
+        updated_utc = _watchlist_cell_text(record.get("updated_utc")) or None
+        key = (symbol, bucket)
+        prev = collapsed.get(key)
+        if prev is None:
+            collapsed[key] = {
+                "symbol": symbol,
+                "bucket": bucket,
+                "etf_tokens": set(etf_tokens),
+                "src_tokens": set(src_tokens),
+                "enabled": enabled,
+                "updated_utc": updated_utc,
+                "raw_etfs": _watchlist_cell_text(record.get("etfs")),
+            }
+            continue
+        prev["etf_tokens"].update(etf_tokens)
+        prev["src_tokens"].update(src_tokens)
+        if enabled == 0:
+            prev["enabled"] = 0
+        if prev.get("updated_utc") is None and updated_utc is not None:
+            prev["updated_utc"] = updated_utc
+        prev["raw_etfs"] = None
+    return collapsed
+
+
+def _canonical_watchlist_etfs(
+    etf_tokens: Iterable[str], src_tokens: Iterable[str]
+) -> str:
+    return ",".join(sorted(etf_tokens) + sorted(src_tokens))
+
+
+def merge_refreshed_watchlist(
+    existing: pd.DataFrame,
+    refreshed_etfs: pd.DataFrame,
+    *,
+    prune_dropped_etf_rows: bool = False,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Safely merge freshly fetched ETF rows into an existing watchlist DataFrame.
+
+    Returns (merged_df, stats_dict) where stats_dict contains:
+      - existing_rows: int
+      - fetched_etf_rows: int
+      - added_rows: int
+      - updated_rows: int
+      - preserved_manual_or_smallcap_rows: int
+      - preserved_prior_etf_rows: int
+      - pruned_etf_rows: int
+      - total_rows: int
+      - unique_symbols: int
+
+    Safety contract: `SRC:*` provenance rows, `ai_smallcap` rows, and user
+    `enabled=0` overrides are never dropped, and prior pure-ETF rows survive
+    unless `prune_dropped_etf_rows=True` is explicitly requested.
+    """
+    existing_index = _collapse_watchlist_rows(existing)
+    refreshed_index = _collapse_watchlist_rows(refreshed_etfs)
+    stats: dict[str, int] = {
+        "existing_rows": len(existing_index),
+        "fetched_etf_rows": len(refreshed_index),
+        "added_rows": 0,
+        "updated_rows": 0,
+        "preserved_manual_or_smallcap_rows": 0,
+        "preserved_prior_etf_rows": 0,
+        "pruned_etf_rows": 0,
+        "total_rows": 0,
+        "unique_symbols": 0,
+    }
+
+    out_rows: list[dict[str, Any]] = []
+    for key, record in existing_index.items():
+        symbol, bucket = key
+        refreshed = refreshed_index.get(key)
+        if refreshed is not None:
+            # Case 1: refresh this pair; keep SRC:* tags (ETF tokens first)
+            # and the user's enabled override. SRC:* never counts as an ETF.
+            stats["updated_rows"] += 1
+            new_etf_tokens = sorted(refreshed["etf_tokens"])
+            out_rows.append(
+                {
+                    "symbol": symbol,
+                    "bucket": bucket,
+                    "etf_count": len(new_etf_tokens),
+                    "etfs": _canonical_watchlist_etfs(
+                        new_etf_tokens, record["src_tokens"]
+                    ),
+                    "enabled": record["enabled"],
+                    "updated_utc": refreshed.get("updated_utc"),
+                }
+            )
+            continue
+        # Case 2: the pair disappeared from the refreshed ETF holdings.
+        is_protected = (
+            bucket == "ai_smallcap"
+            or bool(record["src_tokens"])
+            or record["enabled"] == 0
+        )
+        if is_protected:
+            stats["preserved_manual_or_smallcap_rows"] += 1
+            out_rows.append(
+                {
+                    "symbol": symbol,
+                    "bucket": bucket,
+                    "etf_count": len(record["etf_tokens"]),
+                    "etfs": (
+                        record["raw_etfs"]
+                        if record["raw_etfs"] is not None
+                        else _canonical_watchlist_etfs(
+                            record["etf_tokens"], record["src_tokens"]
+                        )
+                    ),
+                    "enabled": record["enabled"],
+                    "updated_utc": record.get("updated_utc"),
+                }
+            )
+        elif not prune_dropped_etf_rows:
+            stats["preserved_prior_etf_rows"] += 1
+            out_rows.append(
+                {
+                    "symbol": symbol,
+                    "bucket": bucket,
+                    "etf_count": len(record["etf_tokens"]),
+                    "etfs": (
+                        record["raw_etfs"]
+                        if record["raw_etfs"] is not None
+                        else _canonical_watchlist_etfs(
+                            record["etf_tokens"], record["src_tokens"]
+                        )
+                    ),
+                    "enabled": record["enabled"],
+                    "updated_utc": record.get("updated_utc"),
+                }
+            )
+        else:
+            stats["pruned_etf_rows"] += 1
+
+    for key, record in refreshed_index.items():
+        if key in existing_index:
+            continue
+        stats["added_rows"] += 1
+        symbol, bucket = key
+        new_etf_tokens = sorted(record["etf_tokens"])
+        out_rows.append(
+            {
+                "symbol": symbol,
+                "bucket": bucket,
+                "etf_count": len(new_etf_tokens),
+                "etfs": ",".join(new_etf_tokens),
+                "enabled": 1,
+                "updated_utc": record.get("updated_utc"),
+            }
+        )
+
+    merged = pd.DataFrame(out_rows, columns=WATCHLIST_CSV_COLUMNS)
+    if not merged.empty:
+        merged = merged.sort_values(["bucket", "symbol"]).reset_index(drop=True)
+    stats["total_rows"] = int(len(merged))
+    stats["unique_symbols"] = (
+        int(merged["symbol"].nunique()) if not merged.empty else 0
+    )
+    return merged[WATCHLIST_CSV_COLUMNS], stats
 
 
 def archive_watchlist_snapshot(config: ScanConfig, started_at: datetime) -> Path | None:

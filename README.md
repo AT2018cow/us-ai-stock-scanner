@@ -335,6 +335,7 @@ python scripts/tune_parameters.py \
 - 扫描前不会自动刷新 watchlist
 - watchlist 缺失或为空时会直接报错并终止
 - **ETF 只用于构建当前选股底单/watchlist，不是历史回测的数据依赖。** 不追踪、不重建历史 ETF 成分；walk-forward 的时间隔离针对参数选择和前向收益标签，不改变这一 universe 原则。
+- **watchlist 刷新采用安全增量合并**（`merge_refreshed_watchlist`）：刷新 ETF 持仓时只更新/新增 ETF 成分股，`SRC:*` 来源标记行、`ai_smallcap` 层与用户 `enabled=0` 覆盖永不丢失；默认保留已从 ETF 前 N 大持仓中掉出的历史 ETF 行（如需清理显式使用 `--prune-dropped-etf-rows`）。刷新成功后自动归档快照到 `data/watchlist_history/`（`--no-archive` 可跳过，`--dry-run` 只打印不落盘）。
 
 ### 4.2 CSV 字段规范
 
@@ -958,10 +959,24 @@ near-miss 诊断：
 ### 13.2 `scripts/refresh_ai_watchlist.py` —— 刷新 ETF 持仓 watchlist
 
 ```bash
+# 正式刷新（安全增量合并 + 自动归档快照）
 python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv
+
+# 预演：抓取 + 合并统计 + 新增行预览，不写任何文件
+python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --dry-run
+
+# 显式清理已掉出 ETF 前 N 大持仓的历史 ETF 行（SRC:*/ai_smallcap/手工行仍保留）
+python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --prune-dropped-etf-rows
 ```
 
-从 ETF 持仓页面抓取标的并集，重建 `data/ai_watchlist.csv`。建议每周运行一次。
+从 ETF 持仓页面抓取标的并集，并通过 `merge_refreshed_watchlist` **安全增量合并**进现有
+`data/ai_watchlist.csv`：更新已有 ETF 持仓、新增新发现的成分股，同时严格保留 `SRC:MANUAL`
+等 `SRC:*` 来源行、整个 `ai_smallcap` 层与用户 `enabled=0` 覆盖；`SRC:*` 标记不计入
+`etf_count`。默认保留已掉出 ETF 持仓的历史纯 ETF 行（加法模式），仅 `--prune-dropped-etf-rows`
+显式开启裁剪。若 ETF 抓取整体失败返回 0 行且现有文件非空，脚本打印警告并保持原文件不变。
+非 `--dry-run` 且输出为 `cfg.watchlist_csv_path` 时，写盘后自动调用
+`archive_watchlist_snapshot` 归档到 `data/watchlist_history/`（`--no-archive` 跳过）。
+建议每周运行一次；运行顺序：refresh watchlist → smallcap builder → scan。
 
 ### 13.3 `scripts/build_smallcap_universe.py` —— 构建小盘研究层
 
@@ -1182,7 +1197,7 @@ python scripts/audit_universe_coverage.py \
   --benchmark data/benchmarks/nasdaq100_202610.csv:NASDAQ100
 ```
 
-对比本地选股底单 `data/ai_watchlist.csv`（当前 872 行 / 742 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
+对比本地选股底单 `data/ai_watchlist.csv`（当前 907 行 / 761 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
 
 ## 14. 说明与限制
 
