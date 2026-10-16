@@ -1173,6 +1173,17 @@ TTM 净利率−经营利润率裂口与最新单季 `NonoperatingIncomeExpense 
 可选 `--output-json <path>` 输出命中明细；阈值可用 `--min-ttm-gap` /
 `--min-quarterly-ratio` / `--min-quarterly-abs` 覆盖。
 
+### 13.22 `scripts/audit_universe_coverage.py` —— 选股底单基准覆盖率审计（默认离线）
+
+```bash
+python scripts/audit_universe_coverage.py \
+  --watchlist data/ai_watchlist.csv \
+  --benchmark data/benchmarks/sp500_202610.csv:SP500 \
+  --benchmark data/benchmarks/nasdaq100_202610.csv:NASDAQ100
+```
+
+对比本地选股底单 `data/ai_watchlist.csv`（当前 872 行 / 742 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
+
 ## 14. 说明与限制
 
 - 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。

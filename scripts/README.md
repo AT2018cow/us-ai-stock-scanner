@@ -18,6 +18,7 @@
 - `refresh_sec_cache.py` — Prewarm and validate SEC submissions / Company Facts caches with periodic accession parity checks.
 - `diagnose_sec_with_edgartools.py` — Bounded SEC / EdgarTools diagnostic utility.
 - `audit_nonop_gain_screen.py` — Read-only, cache-only post-earnings-season audit for non-operating gain / tax distortion candidates (TTM margin-gap + latest-quarter spike lenses; no network, no scan/report side effects).
+- `audit_universe_coverage.py` — Offline-by-default candidate-universe coverage audit comparing `data/ai_watchlist.csv` against S&P 500 / Nasdaq-100 constituent snapshots under `data/benchmarks/`.
 - `refresh_ai_watchlist.py` — Refresh ETF-seeded AI thematic watchlist snapshot.
 - `export_generalized_pit_bars.py` — Export point-in-time market bar diagnostics.
 
