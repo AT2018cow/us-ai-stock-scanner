@@ -251,6 +251,9 @@ NONRECURRING_GAIN_TAGS = [
     "GainLossOnSaleOfBusiness",
     "GainLossOnSaleOfPropertyPlantEquipment",
     "GainLossOnSaleOfOtherAssets",
+    # Spin-off disposal variant (e.g. SNPS): above-the-line disposal gain that
+    # the original four-tag denylist missed.
+    "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal",
 ]
 INTEREST_EXPENSE_TAGS = [
     "InterestExpense",

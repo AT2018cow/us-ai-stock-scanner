@@ -18,6 +18,7 @@ This directory separates **active product/architecture contracts and current pha
   - `track_b_m4_paired_validation_and_promotion_gate_spec.md` — Spec for Phase M4 (Dual-Track Paired Validation & Promotion Gate).
   - `daily_cron_scan_and_ttl_spec.md` — Spec for Single-Responsibility Cron Orchestrator (`scripts/run_daily_cron.py` vs `scripts/refresh_sec_cache.py`) & Two-Tier Freshness TTL.
   - `report_review_optimizations_spec.md` — Spec for Pre-Earnings Window Warning + Priority Penalty, 60d/SMA200 Extension Score Deduction, Reverse-Split Share Discontinuity Guard & Pool/Concentration Disclosure.
+  - `nonoperating_gain_defense_spec.md` — Spec for Three-Layer Non-Operating Investment Gain & Tax Distortion Defense (`GOOG`, `ZM`, `NTNX`, `AMZN`, `WDC`, `SHOP`, `SNPS`).
 
 ## 2. Active Policy & Operational Specs
 
@@ -37,6 +38,7 @@ This directory separates **active product/architecture contracts and current pha
 - `m2_v1_failure_attribution_20261015/` — **Phase M2 deliverable set**: 8-axis quantitative failure attribution across `snap62`, `snap510`, and 25,025 historical rows (`attention_failure_attribution.md`, `component_and_routing_diagnostics.csv`, `metric_and_routing_diagnostics.csv`, `v1_failure_casebook.csv`, `case_registry_frozen.json`, `report_evidence_parity_checks.json`, `hypothesis_backlog.md`, `SHA256SUMS`).
 - `m3_candidate_preflight_20261015/` — **Phase M3 deliverable set**: Pre-registered `H1-Quality`, `H2-Entry`, `H3-Action`, and `v2_combined` non-return preflight and 38-case verification (`m3_preregistration_protocol.json`, `m3_preflight_comparison.csv`, `m3_casebook_verification.csv`, `m3_top15_diff_snap62_and_snap510.csv`, `m3_preflight_report.md`, `SHA256SUMS`).
 - `m4_paired_validation_20261015/` — **Phase M4 deliverable set**: Dual-track validation (Human Utility + Paired Economics across `DEV_2023_2024`, unsealed `POST2024_HELD_OUT`, and `ALL_39_DATES`) and Gate G4/G5 decision artifact (`m4_human_utility_summary.csv`, `m4_paired_economic_summary.csv`, `m4_year_and_regime_splits.csv`, `m4_promotion_gate.json`, `m4_validation_report.md`, `SHA256SUMS`).
+- `review_nonoperating_investment_gain_blind_spot_20261016.md` — Empirical audit of non-operating investment gains & tax distortions (`GOOG`, `AMZN`, `SHOP`, `WDC`, `SNPS`, plus `ZM`/`NTNX`) and the three-layer defense architecture.
 - `mvp_v1_strategy_audit_20261011.md` — Descriptive audit of the 2026-10-09 510-symbol v1 snapshot (`313c5ff`).
 - `work_handoff_after_pr62_20261013.md` — Baseline summary after Generalized-v0 and PR #62 business-model audit.
 - `mvp_v11_pr_a_final_decision_20261014.md` — Formal `NO-GO / KEEP V1` decision for the PR #70 v1.1 historical parameter study.

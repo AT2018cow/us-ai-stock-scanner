@@ -42,6 +42,10 @@ from ai_value_scanner.decision.model import (
     stock_decisions_to_jsonl,
 )
 from ai_value_scanner.decision.quality import (
+    QUALITY_V2_HEALTHY_OCF_MIN,
+    QUALITY_V2_NONOP_MARGIN_GAP_MIN,
+    QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI,
+    QUALITY_V2_NONOP_NET_MARGIN_FLOOR,
     QUALITY_V2_ORGANIC_SHARES_YOY_MAX,
     QUALITY_V2_ORGANIC_SHARES_YOY_MIN,
     QUALITY_V2_PRE_EARNINGS_WARN_DAYS,
@@ -115,7 +119,7 @@ def _filing_age_days(decision: StockDecision) -> int | None:
 
 
 def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
-    """Overlay v2 quality guards (split/basis + pre-earnings) idempotently."""
+    """Overlay v2 quality guards (split/basis, pre-earnings, non-op gain) idempotently."""
     quality = decision.quality
     codes = {item.code for item in quality.risks}
     positives = list(quality.positives)
@@ -179,6 +183,81 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
             )
         )
         changed = True
+    # Non-operating investment gain / tax distortion overlay. Frozen JSONL
+    # evidence only exposes values outside neutral scoring bands, so the
+    # fallback path below intentionally requires net_margin >= 0.40 when
+    # operating_margin is absent (NTNX-style silent bands).
+    positive_codes = {item.code for item in positives}
+    net_margin = _evidence_number(decision, "net_margin")
+    op_margin = _evidence_number(decision, "operating_margin")
+    fcf_margin = _evidence_number(decision, "fcf_margin")
+    ocf_ni = _evidence_number(decision, "ocf_to_net_income")
+    nonop_gap: float | None = None
+    if "nonoperating_gain_inflation" not in {item.code for item in risks}:
+        if (
+            net_margin is not None
+            and op_margin is not None
+            and net_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR
+            and (net_margin - op_margin) >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
+            and (ocf_ni is None or ocf_ni < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI)
+        ):
+            nonop_gap = round(net_margin - op_margin, 6)
+            basis_text = f"operating margin ({op_margin * 100:.1f}%)"
+        elif (
+            net_margin is not None
+            and op_margin is None
+            and net_margin >= 0.40
+            and "ocf_to_net_income_strong" not in positive_codes
+            and fcf_margin is not None
+            and (net_margin - fcf_margin) >= 0.15
+        ):
+            nonop_gap = round(net_margin - fcf_margin, 6)
+            basis_text = f"FCF margin ({fcf_margin * 100:.1f}%)"
+        if nonop_gap is not None:
+            risks.append(
+                EvidenceItem(
+                    code="nonoperating_gain_inflation",
+                    label="Non-operating gain / tax distortion",
+                    polarity="negative",  # type: ignore[arg-type]
+                    metric="net_margin",
+                    value=nonop_gap,
+                    threshold=(
+                        "net_margin - operating_margin "
+                        f"< +{QUALITY_V2_NONOP_MARGIN_GAP_MIN * 100:.0f}pp"
+                    ),
+                    message=(
+                        f"Reported net margin ({net_margin * 100:.1f}%) exceeds "
+                        f"{basis_text} by +{nonop_gap * 100:.1f}pp; non-operating gains "
+                        "or tax items inflated GAAP earnings (recompute overlay); "
+                        "verify the adjusted basis manually."
+                    ),
+                )
+            )
+            if (ocf_ni is not None and ocf_ni < QUALITY_V2_HEALTHY_OCF_MIN) or (
+                net_margin >= 0.20
+                and ocf_ni is not None
+                and "ocf_to_net_income_strong" not in positive_codes
+            ):
+                if "ocf_conversion_lagging_high_margin" not in {
+                    item.code for item in risks
+                }:
+                    risks.append(
+                        EvidenceItem(
+                            code="ocf_conversion_lagging_high_margin",
+                            label="Cash conversion lagging high net margin",
+                            polarity="negative",  # type: ignore[arg-type]
+                            metric="ocf_to_net_income",
+                            value=round(ocf_ni, 6),
+                            threshold=">=0.80x expected when net margin >=20%",
+                            message=(
+                                f"OCF/NI is {ocf_ni:.2f}x despite "
+                                f"{net_margin * 100:.1f}% reported net margin; "
+                                "earnings include non-cash or non-operating components "
+                                "(recompute overlay)."
+                            ),
+                        )
+                    )
+            changed = True
     if not changed:
         return decision
     return replace(
