@@ -639,9 +639,11 @@ def render_action_list_v2(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
-                        f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) · "
+                        f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display})"
+                        f"{(' · ' + card.warning_badges_inline) if card.warning_badges_inline else ''} · "
                         f"[Full Report →]({rel_report})",
                         f"  - **Highlights**: {_plain(card.quality_highlights_inline)}",
+                        f"  - **Entry**: {_plain(card.entry_Snapshot_inline)}",
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
                 )
@@ -661,9 +663,11 @@ def render_action_list_v2(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
-                        f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) · "
+                        f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display})"
+                        f"{(' · ' + card.warning_badges_inline) if card.warning_badges_inline else ''} · "
                         f"[Full Report →]({rel_report})",
                         f"  - **Highlights**: {_plain(card.quality_highlights_inline)}",
+                        f"  - **Entry**: {_plain(card.entry_Snapshot_inline)}",
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
                 )

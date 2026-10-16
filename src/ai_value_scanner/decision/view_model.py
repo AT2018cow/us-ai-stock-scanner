@@ -1020,7 +1020,7 @@ def _build_warning_badges_inline(
 
 def _build_pool_display(decision: StockDecision) -> str:
     """Compact pool provenance (`bucket` + ETFs) for card headers."""
-    bucket = str(decision.provenance.get("watchlist_bucket") or "").strip()
+    bucket = _format_bucket_tokens(decision.provenance.get("watchlist_bucket"))
     etfs = str(decision.provenance.get("watchlist_etfs") or "").strip()
     if bucket and etfs:
         return f"`{bucket}` ({etfs})"
@@ -1029,6 +1029,47 @@ def _build_pool_display(decision: StockDecision) -> str:
     if etfs:
         return f"({etfs})"
     return ""
+
+
+_BUCKET_PRIORITY: tuple[str, ...] = (
+    "core_ai",
+    "ai_core",
+    "ai_enabler",
+    "ai_peripheral",
+    "ai_smallcap",
+)
+
+
+def _bucket_tokens(raw_bucket: Any) -> list[str]:
+    """Split a comma-separated bucket string into unique stripped tokens."""
+    seen: list[str] = []
+    for token in str(raw_bucket or "").split(","):
+        name = token.strip()
+        if name and name not in seen:
+            seen.append(name)
+    return seen
+
+
+def _normalize_primary_bucket(raw_bucket: Any) -> str:
+    """Aggregate a (possibly multi-bucket) string under one primary bucket."""
+    tokens = _bucket_tokens(raw_bucket)
+    if not tokens:
+        return ""
+    for candidate in _BUCKET_PRIORITY:
+        if candidate in tokens:
+            return candidate
+    return tokens[0]
+
+
+def _format_bucket_tokens(raw_bucket: Any) -> str:
+    """Format bucket tokens cleanly, priority-ordered and slash-joined."""
+    def _sort_key(name: str) -> tuple[int, str]:
+        try:
+            return (_BUCKET_PRIORITY.index(name), name)
+        except ValueError:
+            return (len(_BUCKET_PRIORITY), name)
+
+    return "/".join(sorted(_bucket_tokens(raw_bucket), key=_sort_key))
 
 
 def build_stock_card_view_model(
@@ -1103,7 +1144,7 @@ def _build_concentration_summary_line(
     bucketed = [
         card
         for card in primary_cards
-        if str(card.decision.provenance.get("watchlist_bucket") or "").strip()
+        if _normalize_primary_bucket(card.decision.provenance.get("watchlist_bucket"))
         or str(card.decision.provenance.get("watchlist_etfs") or "").strip()
     ]
     if not bucketed:
@@ -1112,7 +1153,9 @@ def _build_concentration_summary_line(
     bucket_counts: dict[str, int] = {}
     etf_counts: dict[str, int] = {}
     for card in primary_cards:
-        bucket = str(card.decision.provenance.get("watchlist_bucket") or "").strip()
+        bucket = _normalize_primary_bucket(
+            card.decision.provenance.get("watchlist_bucket")
+        )
         if bucket:
             bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
         etfs = str(card.decision.provenance.get("watchlist_etfs") or "").strip()
@@ -1169,7 +1212,7 @@ def build_snapshot_view_model(
             for decision in ordered
             if decision.action_state is ActionState.PRIORITY_REVIEW
             and decision.symbol not in primary_symbols
-        )[:5]
+        )[:15]
         secondary_b = tuple(
             build_stock_card_view_model(decision)
             for decision in ordered

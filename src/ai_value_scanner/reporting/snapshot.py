@@ -18,6 +18,7 @@ from ai_value_scanner.decision.model import (
     stock_decisions_from_jsonl,
     stock_decisions_to_jsonl,
 )
+from ai_value_scanner.decision.view_model import build_snapshot_view_model
 from ai_value_scanner.fundamentals.provenance import (
     canonical_json_bytes,
     sha256_hex,
@@ -248,6 +249,7 @@ def write_decision_snapshot(
                 title="Daily Action List",
                 cadence="daily",
                 layout_version=layout_version,
+                all_decisions=decisions_tuple,
             ),
             encoding="utf-8",
         )
@@ -257,6 +259,7 @@ def write_decision_snapshot(
                 title="Weekly Review List",
                 cadence="weekly",
                 layout_version=layout_version,
+                all_decisions=decisions_tuple,
             ),
             encoding="utf-8",
         )
@@ -287,6 +290,22 @@ def write_decision_snapshot(
             decision.symbol: decision
             for decision in (*weekly_tuple, *daily_tuple)
         }
+        if layout_version == "v2":
+            # Secondary Radar links need their detailed reports generated too.
+            by_symbol_all = {decision.symbol: decision for decision in decisions_tuple}
+            for view_decisions, cadence in ((daily_tuple, "daily"), (weekly_tuple, "weekly")):
+                view = build_snapshot_view_model(
+                    view_decisions,
+                    decisions_tuple,
+                    title="Daily Action List" if cadence == "daily" else "Weekly Review List",
+                    cadence=cadence,
+                )
+                for card in (
+                    *view.cap_omitted_priority_cards,
+                    *view.secondary_b_ready_cards,
+                ):
+                    if card.symbol in by_symbol_all:
+                        detailed_symbols.setdefault(card.symbol, by_symbol_all[card.symbol])
         for symbol in sorted(detailed_symbols):
             (detailed_dir / f"{symbol}.md").write_text(
                 render_detailed_report(
