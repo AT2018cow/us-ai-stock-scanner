@@ -16,6 +16,7 @@ SEC propagation and publication can lag; the latest facts may remain pending.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import random
@@ -24,7 +25,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import date
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import pandas as pd
 import requests
@@ -40,6 +41,7 @@ from ai_value_scanner.scanner import (  # noqa: E402
     load_config,
     load_one_fundamental,
     load_valid_parsed_fundamental_cache,
+    run_scan,
     _submissions_latest_relevant_filing,
 )
 
@@ -389,11 +391,64 @@ def refresh_symbols(
     return summary
 
 
+def run_daily_scan_after_prewarm(
+    cfg: ScanConfig,
+    *,
+    config_path: str,
+    summary: Mapping[str, Any],
+    limit: int = 0,
+    skip_scan: bool = False,
+    scan_fn: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Stage 2 of the unified daily cron: full MVP scan right after prewarm.
+
+    Forces a 1-hour (3600s) Alpaca freshness window so the cron scan always
+    fetches fresh post-close market data even if a manual scan ran the night
+    before, while 100% reusing the SEC parsed caches just written by Stage 1
+    (they are minutes old). Pure decision logic; all network I/O stays inside
+    ``scan_fn``/``run_scan``.
+    """
+    if skip_scan or (limit and limit > 0):
+        return {
+            "scan_executed": False,
+            "scan_failed": False,
+            "reason": "skipped_by_flag_or_limit",
+        }
+    if summary.get("aborted") is True or bool(summary.get("conflicted")):
+        return {
+            "scan_executed": False,
+            "scan_failed": False,
+            "reason": "aborted_or_conflicted_prewarm",
+        }
+    scan_cfg = dataclasses.replace(
+        cfg,
+        alpaca_cache_ttl_assets_sec=min(cfg.alpaca_cache_ttl_assets_sec, 3600),
+        alpaca_cache_ttl_snapshots_sec=min(cfg.alpaca_cache_ttl_snapshots_sec, 3600),
+        alpaca_cache_ttl_bars_sec=min(cfg.alpaca_cache_ttl_bars_sec, 3600),
+    )
+    try:
+        out_path = (scan_fn or run_scan)(
+            scan_cfg,
+            scan_config_path=config_path,
+            allow_existing_decision_snapshot=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - cron must report, not crash
+        log(f"ERROR: daily MVP scan failed: {type(exc).__name__}: {exc}")
+        return {"scan_executed": False, "scan_failed": True, "error": str(exc)}
+    return {"scan_executed": True, "scan_failed": False, "output_path": str(out_path)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Client-side SEC parsed-cache prewarm.")
     parser.add_argument("--config", default="configs/config.risk_off.json")
-    parser.add_argument("--max-age-hours", type=float, default=20.0)
+    parser.add_argument("--max-age-hours", type=float, default=4.0)
     parser.add_argument("--limit", type=int, default=0, help="Optional smoke-test cap")
+    parser.add_argument(
+        "--skip-scan",
+        action="store_true",
+        default=False,
+        help="Only prewarm the SEC cache; skip the Stage 2 daily MVP scan.",
+    )
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
@@ -465,6 +520,27 @@ def main() -> None:
                     )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 log(f"WARNING: cannot persist SEC pending diagnostics: {exc}")
+        # Stage 2 of the unified daily cron: full MVP scan on the just-warmed
+        # SEC cache. Skipped for smoke-test caps, --skip-scan runs, aborted or
+        # conflicted prewarms, and environments without Alpaca credentials.
+        if not args.skip_scan and not (args.limit and args.limit > 0):
+            if os.getenv("ALPACA_API_KEY", "").strip():
+                scan_res = run_daily_scan_after_prewarm(
+                    cfg,
+                    config_path=args.config,
+                    summary=summary,
+                    limit=args.limit,
+                    skip_scan=args.skip_scan,
+                )
+                if scan_res.get("scan_executed"):
+                    log(f"daily MVP scan finished: {scan_res.get('output_path')}")
+                elif scan_res.get("scan_failed"):
+                    log(f"ERROR: daily MVP scan failed: {scan_res.get('error')}")
+                    sys.exit(1)
+                else:
+                    log(f"daily MVP scan not executed: {scan_res.get('reason')}")
+            else:
+                log("WARNING: ALPACA_API_KEY not set; skipping Stage 2 daily scan")
         if summary["failed"] or summary["aborted"] or summary["conflicted"]:
             sys.exit(1)
     finally:

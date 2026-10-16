@@ -16,6 +16,7 @@ This directory separates **active product/architecture contracts and current pha
   - `track_b_m2_failure_attribution_and_metric_audit_spec.md` — Spec for Phase M2 (Systematic v1 Selection Failure Attribution & Metric Validity Audit).
   - `track_b_m3_selection_v2_candidates_spec.md` — Spec for Phase M3 (Pre-Registered Quality/Entry/Action v2 Candidates & Non-Return Preflight).
   - `track_b_m4_paired_validation_and_promotion_gate_spec.md` — Spec for Phase M4 (Dual-Track Paired Validation & Promotion Gate).
+  - `daily_cron_scan_and_ttl_spec.md` — Spec for Unified Daily Cron Pipeline (SEC Prewarm + Automated MVP v2 Scan) & 20-Hour (`72000s`) TTL Alignment.
 
 ## 2. Active Policy & Operational Specs
 

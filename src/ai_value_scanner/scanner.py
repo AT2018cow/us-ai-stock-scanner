@@ -164,6 +164,7 @@ from ai_value_scanner.decision.universe import (
     sample_limit_exclusions,
 )
 from ai_value_scanner.reporting.snapshot import (
+    decision_snapshot_paths,
     load_previous_snapshot,
     resolve_git_commit_sha,
     write_decision_snapshot,
@@ -2594,7 +2595,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
 
 
 PARSED_FUND_CACHE_VERSION = 9
-PENDING_CHECKED_SCAN_COOLDOWN_SEC = 43200.0
+PENDING_CHECKED_SCAN_COOLDOWN_SEC = 21600.0
 _TERMINAL_PENDING_FALLBACK_STATUSES = frozenset(
     {
         "ineligible_form",
@@ -3601,15 +3602,59 @@ def _coalesce_filing_cik(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=["cik_filing"])
 
 
+def write_latest_decision_pointer(
+    snapshot_root: str | Path,
+    *,
+    decision_date: str,
+    strategy_style: str | None,
+    policy_version: str = "v1",
+    layout_version: str = "v1",
+) -> Path:
+    """Write/refresh the mutable ``latest_<style>.json`` snapshot pointer.
+
+    The pointer always stores paths *relative* to ``snapshot_root``
+    (e.g. ``"2026-10-15/risk_off/action_list.md"``), so it never leaks
+    absolute filesystem locations no matter where the snapshot lives.
+    The immutable decision snapshot itself is never modified here.
+    """
+    root = Path(snapshot_root)
+    snap_paths = decision_snapshot_paths(
+        root,
+        decision_date,
+        strategy_style=strategy_style,
+    )
+    try:
+        rel_dir = snap_paths.root.relative_to(root).as_posix()
+    except ValueError:
+        rel_dir = f"{decision_date}/{snap_paths.root.name}"
+    pointer = {
+        "decision_date": str(decision_date),
+        "strategy_style": strategy_style,
+        "decision_policy_version": str(policy_version),
+        "report_layout_version": str(layout_version),
+        "snapshot_dir": rel_dir,
+        "action_list_md": f"{rel_dir}/action_list.md",
+        "weekly_review_md": f"{rel_dir}/weekly_review.md",
+        "run_manifest_json": f"{rel_dir}/run_manifest.json",
+    }
+    pointer_path = root / f"latest_{strategy_style or 'default'}.json"
+    pointer_path.write_text(
+        json.dumps(pointer, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return pointer_path
+
+
 def run_scan(
     config: ScanConfig,
-    output_path: str | None,
-    diagnostics_output_path: str | None,
+    output_path: str | None = None,
+    diagnostics_output_path: str | None = None,
     network_report_output_path: str | None = None,
     report_output_path: str | None = None,
     scan_config_path: str | None = None,
     decision_output_root: str | None = None,
     decision_attention_cap: int = DEFAULT_ATTENTION_CAP,
+    allow_existing_decision_snapshot: bool = False,
 ) -> Path:
     def resolve_top_n(value: Any, fallback: int) -> int:
         try:
@@ -4796,34 +4841,63 @@ def run_scan(
             if (snapshot_map_frame := sec.ticker_map_snapshot().get("frame"))
             is not None else None
         )
-        decision_paths = write_decision_snapshot(
-            output_root=snapshot_root,
+        decision_paths = None
+        existing_paths = decision_snapshot_paths(
+            snapshot_root,
+            decision_date,
             strategy_style=config.strategy_style,
-            decisions=decisions,
-            daily_attention=daily_attention,
-            weekly_attention=weekly_attention,
-            generated_at_utc=finished_at.isoformat(),
-            decision_date=decision_date,
-            config_fingerprint=config_fingerprint,
-            code_sha=code_sha,
-            universe_exclusions=universe_exclusions,
-            candidate_universe_summary=candidate_universe_summary,
-            discovery_memberships=discovery_memberships,
-            discovery_source_rejections=discovery_rejections,
-            discovery_source_summary=discovery_source_summary,
-            input_provenance=input_prov_payload,
-            ticker_map_rows=ticker_map_rows_arg,
-            policy_version=policy_version,
-            layout_version=layout_version,
         )
-        decision_snapshot_root = decision_paths.root
-        log_status(
-            started_at,
-            "INFO",
-            "MVP decision snapshot: "
-            f"{decision_paths.root} | decisions={len(decisions)} "
-            f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
-        )
+        if allow_existing_decision_snapshot and existing_paths.root.exists():
+            decision_snapshot_root = existing_paths.root
+            log_status(
+                started_at,
+                "INFO",
+                "MVP decision snapshot already exists for "
+                f"{decision_date}/{config.strategy_style}: "
+                f"{existing_paths.root} (preserved immutable snapshot)",
+            )
+        else:
+            decision_paths = write_decision_snapshot(
+                output_root=snapshot_root,
+                strategy_style=config.strategy_style,
+                decisions=decisions,
+                daily_attention=daily_attention,
+                weekly_attention=weekly_attention,
+                generated_at_utc=finished_at.isoformat(),
+                decision_date=decision_date,
+                config_fingerprint=config_fingerprint,
+                code_sha=code_sha,
+                universe_exclusions=universe_exclusions,
+                candidate_universe_summary=candidate_universe_summary,
+                discovery_memberships=discovery_memberships,
+                discovery_source_rejections=discovery_rejections,
+                discovery_source_summary=discovery_source_summary,
+                input_provenance=input_prov_payload,
+                ticker_map_rows=ticker_map_rows_arg,
+                policy_version=policy_version,
+                layout_version=layout_version,
+            )
+            decision_snapshot_root = decision_paths.root
+            log_status(
+                started_at,
+                "INFO",
+                "MVP decision snapshot: "
+                f"{decision_paths.root} | decisions={len(decisions)} "
+                f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
+            )
+        if decision_snapshot_root is not None and config.max_symbols is None:
+            latest_pointer_path = write_latest_decision_pointer(
+                snapshot_root,
+                decision_date=decision_date,
+                strategy_style=config.strategy_style,
+                policy_version=policy_version,
+                layout_version=layout_version,
+            )
+            log_status(
+                started_at,
+                "INFO",
+                f"MVP latest snapshot pointer: {latest_pointer_path}",
+            )
         if getattr(config, "enable_v2_shadow", False) and policy_version == "v1":
             shadow_style = f"{config.strategy_style or 'default'}_shadow_v2"
             shadow_prev = load_previous_snapshot(
