@@ -1213,12 +1213,14 @@ def build_snapshot_view_model(
             if decision.action_state is ActionState.PRIORITY_REVIEW
             and decision.symbol not in primary_symbols
         )[:15]
+        cap_omitted_symbols = {card.symbol for card in cap_omitted}
         secondary_b = tuple(
             build_stock_card_view_model(decision)
             for decision in ordered
             if decision.quality.grade is QualityGrade.B
             and decision.entry.state is EntryState.ENTRY_READY
             and decision.symbol not in primary_symbols
+            and decision.symbol not in cap_omitted_symbols
         )[:5]
     return SnapshotViewModel(
         title=title,

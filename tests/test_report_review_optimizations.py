@@ -569,6 +569,28 @@ class TestCapOmittedSlice15(unittest.TestCase):
             primaries, primaries + b_ready, title="T", cadence="daily")
         self.assertEqual(len(snapshot.secondary_b_ready_cards), 5)
 
+    def test_promoted_b_ready_in_cap_omitted_not_duplicated_in_secondary_b(self) -> None:
+        primaries, _ = self._universe(0)
+        promoted_b = _decision(
+            symbol="NTAP", priority=26,
+            grade=QualityGrade.B,
+            entry_state=EntryState.ENTRY_READY,
+            action=ActionState.PRIORITY_REVIEW,
+        )
+        other_b = tuple(
+            _decision(symbol=f"B{i:02d}", priority=30 + i,
+                      grade=QualityGrade.B,
+                      entry_state=EntryState.ENTRY_READY,
+                      action=ActionState.HOLD_MONITOR)
+            for i in range(6)
+        )
+        snapshot = build_snapshot_view_model(
+            primaries, primaries + (promoted_b,) + other_b, title="T", cadence="daily"
+        )
+        self.assertIn("NTAP", [c.symbol for c in snapshot.cap_omitted_priority_cards])
+        self.assertNotIn("NTAP", [c.symbol for c in snapshot.secondary_b_ready_cards])
+        self.assertEqual(len(snapshot.secondary_b_ready_cards), 5)
+
 
 class TestSecondaryRadarBadgesAndEntry(unittest.TestCase):
     def _badged_radar_decision(self, symbol="MSFT"):
