@@ -354,12 +354,42 @@ def main() -> None:
         print(new_rows[["symbol", "etfs"]].to_string(index=False))
         return
     # Rebuild the ai_smallcap layer from scratch so stale rows (e.g. names that
-    # no longer pass the industry screen) are pruned automatically.
+    # no longer pass the industry screen) are pruned automatically — except
+    # rows carrying SRC:MANUAL that the rebuild did not re-derive: manual
+    # additions must never be lost. (Names already present in new_rows are
+    # re-derived there, so the fresh row wins.)
     if not existing.empty and "bucket" in existing.columns:
-        pruned = int((existing["bucket"].astype(str).str.lower() == BUCKET).sum())
-        existing = existing[existing["bucket"].astype(str).str.lower() != BUCKET]
+        bucket_lower = existing["bucket"].astype(str).str.lower()
+        is_smallcap = bucket_lower == BUCKET
+        new_symbols: set[str] = set()
+        if not new_rows.empty and "symbol" in new_rows.columns:
+            new_symbols = {
+                normalize_equity_symbol(s) for s in new_rows["symbol"].tolist()
+            }
+            new_symbols.discard("")
+        if "symbol" in existing.columns:
+            existing_symbols_norm = existing["symbol"].map(normalize_equity_symbol)
+        else:
+            existing_symbols_norm = pd.Series("", index=existing.index)
+        if "etfs" in existing.columns:
+            manual_mask = (
+                existing["etfs"]
+                .astype(str)
+                .str.upper()
+                .str.contains("SRC:MANUAL", na=False)
+            )
+        else:
+            manual_mask = pd.Series(False, index=existing.index)
+        keep_manual_smallcap = (
+            is_smallcap & manual_mask & ~existing_symbols_norm.isin(new_symbols)
+        )
+        pruned = int((is_smallcap & ~keep_manual_smallcap).sum())
+        existing = existing[~is_smallcap | keep_manual_smallcap]
         if pruned:
             print(f"[smallcap] pruned stale ai_smallcap rows={pruned}")
+        kept_manual = int(keep_manual_smallcap.sum())
+        if kept_manual:
+            print(f"[smallcap] preserved manual ai_smallcap rows={kept_manual}")
     combined = pd.concat([existing, new_rows], ignore_index=True) if not existing.empty else new_rows
     combined = combined.sort_values(["bucket", "symbol"]).drop_duplicates(subset=["symbol", "bucket"], keep="first")
     write_csv_atomic(combined, out)
