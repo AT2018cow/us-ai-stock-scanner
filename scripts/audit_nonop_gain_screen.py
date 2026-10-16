@@ -31,7 +31,11 @@ from ai_value_scanner.decision.quality import (
     QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR,
     QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN,
 )
-from ai_value_scanner.scanner import extract_latest_quarterly_nonop_metrics
+from ai_value_scanner.scanner import (
+    INTEREST_INCOME_TAGS,
+    extract_latest_quarterly_nonop_metrics,
+    pick_latest_and_prev_ttm,
+)
 
 
 def _number(value: Any) -> float | None:
@@ -54,9 +58,12 @@ def _payload_margins(payload: dict[str, Any]) -> dict[str, float | None]:
     if ebit is None:
         ebit = _number(payload.get("ebit"))
     fcf = _number(payload.get("free_cash_flow"))
+    interest_income = _number(payload.get("interest_income"))
+    interest_expense = _number(payload.get("interest_expense"))
     net_margin: float | None = None
     operating_margin: float | None = None
     fcf_margin: float | None = None
+    net_interest_margin = 0.0
     if revenue is not None and revenue > 0.0:
         if earnings is not None:
             net_margin = earnings / revenue
@@ -64,11 +71,19 @@ def _payload_margins(payload: dict[str, Any]) -> dict[str, float | None]:
             operating_margin = ebit / revenue
         if fcf is not None:
             fcf_margin = fcf / revenue
+        if interest_income is not None and interest_income > 0.0:
+            net_interest_margin = max(
+                0.0,
+                (interest_income - abs(interest_expense or 0.0)) / revenue,
+            )
     return {
         "revenue": revenue,
         "net_margin": net_margin,
         "operating_margin": operating_margin,
         "fcf_margin": fcf_margin,
+        "interest_income": interest_income,
+        "interest_expense": interest_expense,
+        "net_interest_margin": net_interest_margin,
     }
 
 
@@ -79,12 +94,13 @@ def _ttm_margin_gap_hit(
     fcf_margin: float | None,
     ocf_to_net_income: float | None,
     min_ttm_gap: float,
+    net_interest_margin: float = 0.0,
 ) -> bool:
     if (
         net_margin is not None
         and operating_margin is not None
         and net_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR
-        and (net_margin - operating_margin) >= min_ttm_gap
+        and (net_margin - operating_margin - net_interest_margin) >= min_ttm_gap
         and (
             ocf_to_net_income is None
             or ocf_to_net_income < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI
@@ -148,6 +164,27 @@ def run_nonop_gain_audit(
                 (q_income, q_revenue, q_ratio, q_end) = (
                     extract_latest_quarterly_nonop_metrics(companyfacts)
                 )
+                if margins["interest_income"] is None:
+                    ttm_int_income, _ = pick_latest_and_prev_ttm(
+                        companyfacts, INTEREST_INCOME_TAGS, "USD"
+                    )
+                    if ttm_int_income is not None:
+                        int_income = max(0.0, float(ttm_int_income))
+                        revenue = margins["revenue"]
+                        if (
+                            revenue is not None
+                            and revenue > 0.0
+                            and int_income > 0.0
+                        ):
+                            margins["net_interest_margin"] = max(
+                                0.0,
+                                (
+                                    int_income
+                                    - abs(margins["interest_expense"] or 0.0)
+                                )
+                                / revenue,
+                            )
+                        margins["interest_income"] = int_income
             except (OSError, ValueError, TypeError):
                 pass
         if q_ratio is None and q_income is not None and q_revenue:
@@ -160,6 +197,7 @@ def run_nonop_gain_audit(
                 "net_margin": margins["net_margin"],
                 "operating_margin": margins["operating_margin"],
                 "fcf_margin": margins["fcf_margin"],
+                "net_interest_margin": margins["net_interest_margin"],
                 "ocf_to_net_income": ocf,
                 "ttm_margin_gap_hit": _ttm_margin_gap_hit(
                     net_margin=margins["net_margin"],
@@ -167,6 +205,7 @@ def run_nonop_gain_audit(
                     fcf_margin=margins["fcf_margin"],
                     ocf_to_net_income=ocf,
                     min_ttm_gap=min_ttm_gap,
+                    net_interest_margin=margins["net_interest_margin"] or 0.0,
                 ),
                 "quarterly_nonop_income": q_income,
                 "quarterly_revenue": q_revenue,

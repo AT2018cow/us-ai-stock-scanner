@@ -60,7 +60,11 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
-from ai_value_scanner.scanner import extract_latest_quarterly_nonop_metrics
+from ai_value_scanner.scanner import (
+    INTEREST_INCOME_TAGS,
+    extract_latest_quarterly_nonop_metrics,
+    pick_latest_and_prev_ttm,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -186,10 +190,13 @@ def _load_local_cache_enrichment(
     if ebit is None:
         ebit = _as_number(payload.get("ebit"))
     fcf = _as_number(payload.get("free_cash_flow"))
+    interest_income = _as_number(payload.get("interest_income"))
+    interest_expense = _as_number(payload.get("interest_expense"))
     enrichment: dict[str, Any] = {
         "net_margin": None,
         "operating_margin": None,
         "fcf_margin": None,
+        "net_interest_margin": None,
         "ocf_to_net_income": _as_number(payload.get("ocf_to_net_income")),
         "adjusted_net_income_yoy": _as_number(
             payload.get("adjusted_net_income_yoy")
@@ -205,6 +212,12 @@ def _load_local_cache_enrichment(
             enrichment["operating_margin"] = ebit / revenue
         if fcf is not None:
             enrichment["fcf_margin"] = fcf / revenue
+        if interest_income is not None:
+            enrichment["net_interest_margin"] = max(
+                0.0,
+                (max(0.0, interest_income) - abs(interest_expense or 0.0))
+                / revenue,
+            )
     cik = str(payload.get("cik") or "").strip()
     facts_path = base / f"facts_{cik}.json"
     if cik and facts_path.exists():
@@ -224,6 +237,21 @@ def _load_local_cache_enrichment(
                     "latest_quarterly_period_end": q_end,
                 }
             )
+            if interest_income is None:
+                ttm_int_income, _ = pick_latest_and_prev_ttm(
+                    companyfacts, INTEREST_INCOME_TAGS, "USD"
+                )
+                if ttm_int_income is not None:
+                    interest_income = max(0.0, float(ttm_int_income))
+                    if revenue is not None and revenue > 0.0:
+                        enrichment["net_interest_margin"] = max(
+                            0.0,
+                            (
+                                interest_income
+                                - abs(interest_expense or 0.0)
+                            )
+                            / revenue,
+                        )
         except (OSError, ValueError, TypeError):
             pass
     return enrichment
@@ -317,6 +345,9 @@ def _with_quality_v2_adjustments(
     op_margin = _evidence_or_enrichment("operating_margin")
     fcf_margin = _evidence_or_enrichment("fcf_margin")
     ocf_ni = _evidence_or_enrichment("ocf_to_net_income")
+    net_interest_margin = (
+        _evidence_or_enrichment("net_interest_margin") or 0.0
+    )
     ani_yoy = _evidence_or_enrichment("adjusted_net_income_yoy")
     if ani_yoy is None:
         ani_yoy = _evidence_or_enrichment("net_income_yoy")
@@ -341,7 +372,8 @@ def _with_quality_v2_adjustments(
             net_margin is not None
             and op_margin is not None
             and net_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR
-            and (net_margin - op_margin) >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
+            and (net_margin - op_margin - net_interest_margin)
+            >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
             and (ocf_ni is None or ocf_ni < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI)
         ):
             nonop_case = "margin_gap"

@@ -913,12 +913,34 @@ def build_company_quality_v2(
         if q_nonop_income is not None and q_rev is not None and q_rev > 0.0:
             q_nonop_ratio = q_nonop_income / q_rev
 
+    # Net interest income exemption (PLTR / ALAB class): recurring Treasury /
+    # cash interest income on net-cash companies sits below EBIT but is fully
+    # cash-backed; it is structural, not non-operating gain pollution.
+    interest_income_val = _finite_value(work, "interest_income")
+    interest_expense_val = _finite_value(work, "interest_expense")
+    net_interest_margin = 0.0
+    if (
+        revenue_value is not None
+        and revenue_value > 0.0
+        and interest_income_val is not None
+        and interest_income_val > 0.0
+    ):
+        exp_abs = (
+            abs(interest_expense_val)
+            if interest_expense_val is not None
+            else 0.0
+        )
+        net_interest_margin = max(
+            0.0, (interest_income_val - exp_abs) / revenue_value
+        )
+
     nonop_inflated = False
     if (
         operating_margin_val is not None
         and raw_net_margin is not None
         and raw_net_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR
-        and (raw_net_margin - operating_margin_val) >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
+        and (raw_net_margin - operating_margin_val - net_interest_margin)
+        >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
         and (ocf_value is None or ocf_value < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI)
     ):
         margin_gap = round(raw_net_margin - operating_margin_val, 6)
