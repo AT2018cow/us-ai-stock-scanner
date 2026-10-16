@@ -53,12 +53,21 @@ H3_JOINT_QUALITY_WEIGHT = 0.60
 H3_JOINT_ENTRY_WEIGHT = 0.40
 H3_GRADE_A_BONUS = 0.04
 H3_PRE_EARNINGS_PRIORITY_PENALTY = 0.06
+H3_NONOPERATING_GAIN_PRIORITY_PENALTY = 0.06
 
 
 def _has_pre_earnings_risk(decision: StockDecision) -> bool:
     """True when the quality leg carries the pre-earnings window risk item."""
     return any(
         item.code == "pre_earnings_window_risk" for item in decision.quality.risks
+    )
+
+
+def _has_nonoperating_gain_risk(decision: StockDecision) -> bool:
+    """True when the quality leg carries the non-operating gain risk item."""
+    return any(
+        item.code == "nonoperating_gain_inflation"
+        for item in decision.quality.risks
     )
 
 
@@ -111,17 +120,23 @@ def assign_action_priorities_v2(
         pre_earn_penalty = (
             H3_PRE_EARNINGS_PRIORITY_PENALTY if _has_pre_earnings_risk(decision) else 0.0
         )
+        nonop_penalty = (
+            H3_NONOPERATING_GAIN_PRIORITY_PENALTY
+            if _has_nonoperating_gain_risk(decision)
+            else 0.0
+        )
+        penalty = pre_earn_penalty + nonop_penalty
         action_order = _ACTION_ORDER_V2[decision.action_state]
         if decision.action_state is ActionState.PRIORITY_REVIEW:
             bonus = H3_GRADE_A_BONUS if decision.quality.grade is QualityGrade.A else 0.0
-            return (action_order, -(joint + bonus - pre_earn_penalty), decision.symbol)
+            return (action_order, -(joint + bonus - penalty), decision.symbol)
         if decision.action_state is ActionState.HOLD_MONITOR:
             ready_first = 0 if decision.entry.state is EntryState.ENTRY_READY else 1
-            return (action_order, ready_first, -(joint - pre_earn_penalty), decision.symbol)
+            return (action_order, ready_first, -(joint - penalty), decision.symbol)
         return (
             action_order,
             _QUALITY_ORDER_V2[decision.quality.grade],
-            -(joint - pre_earn_penalty),
+            -(joint - penalty),
             decision.symbol,
         )
 

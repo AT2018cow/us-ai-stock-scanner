@@ -377,6 +377,10 @@ def _compact_label(item: EvidenceItem) -> str:
         return "Pre-Earnings Filing Age"
     if item.code == "shares_yoy_split_or_basis_discontinuity":
         return "Shares YoY (Split/Basis)"
+    if item.code == "nonoperating_gain_inflation":
+        return "Non-Op Gain Margin Gap"
+    if item.code == "ocf_conversion_lagging_high_margin":
+        return "OCF/NI (Low vs Margin)"
     if item.metric and item.metric in _COMPACT_METRIC_LABELS:
         return _COMPACT_METRIC_LABELS[item.metric]
     return _short_label(item.label)
@@ -704,6 +708,13 @@ def _inline_fragment(item: EvidenceItem) -> str:
         return f"⚠️ Pre-Earnings ({format_metric_value(item.metric, item.value)} filing)"
     if item.code == "shares_yoy_split_or_basis_discontinuity":
         return f"⚠️ Share Split/Basis ({format_metric_value(item.metric, item.value)})"
+    if item.code == "nonoperating_gain_inflation":
+        val_num = _as_float(item.value)
+        if val_num is not None:
+            return f"⚠️ Non-Op Gain (+{val_num * 100:.1f}pp vs OpMargin)"
+        return "⚠️ Non-Op Gain"
+    if item.code == "ocf_conversion_lagging_high_margin":
+        return f"OCF/NI {format_metric_value(item.metric, item.value)} (lagging margin)"
     formatted = format_metric_value(item.metric, item.value)
     short = _compact_label(item)
     if formatted == "n/a":
@@ -1001,6 +1012,14 @@ def _build_warning_badges_inline(
             except (TypeError, ValueError):
                 continue
             badges.append(f"⚠️Pre-Earnings({age}d)")
+            break
+    for item in decision.quality.risks:
+        if item.code == "nonoperating_gain_inflation":
+            val_num = _as_float(item.value)
+            if val_num is not None:
+                badges.append(f"⚠️NonOp-Gain(+{val_num * 100:.1f}pp)")
+            else:
+                badges.append("⚠️NonOp-Gain")
             break
     parts: list[str] = []
     for item in decision.entry.risks:

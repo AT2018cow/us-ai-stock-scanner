@@ -769,6 +769,16 @@ QUALITY_V2_HEALTHY_OCF_MIN = 0.80
 QUALITY_V2_GAP_FLOOR = 0.75
 QUALITY_V2_VALUATION_FLOOR = 0.35
 
+# Tag-agnostic non-operating investment gain / tax distortion defense
+# (three-layer architecture, 2026-10-16 audit): catches below-the-line
+# investment gains and one-time tax benefits that inflate GAAP net income
+# without changing operating income or operating cash flow.
+QUALITY_V2_NONOP_MARGIN_GAP_MIN = 0.05
+QUALITY_V2_NONOP_NET_MARGIN_FLOOR = 0.12
+QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI = 1.50
+QUALITY_V2_NONOP_YOY_GAP_MIN = 0.40
+QUALITY_V2_HIGH_MARGIN_CONVERSION_WARN_MARGIN = 0.20
+
 
 def _score_accrual_v2(value: float, ocf_to_ni: float | None = None) -> float:
     """Sign-aware accrual scoring (H1 Fix 1).
@@ -877,6 +887,98 @@ def build_company_quality_v2(
     if operating_margin_computable:
         work["operating_margin"] = ebit_value / revenue_value  # type: ignore[operator]
 
+    # --- Three-layer non-operating gain defense (tag-agnostic) --------------
+    # Layer 1: below-the-line investment gains / one-time tax items inflate
+    # GAAP net margin (and often net-income YoY) without touching operating
+    # income or operating cash flow. Detect the margin gap, score the clean
+    # operating basis, and de-pollute earnings growth.
+    raw_net_margin = _finite_value(work, "net_margin")
+    operating_margin_val = _finite_value(work, "operating_margin")
+    fcf_margin_val = _finite_value(work, "fcf_margin")
+    ani_yoy_val = _finite_value(work, "adjusted_net_income_yoy")
+    if ani_yoy_val is None:
+        ani_yoy_val = _finite_value(work, "net_income_yoy")
+    ebit_yoy_val = _finite_value(work, "adjusted_ebit_yoy")
+    if ebit_yoy_val is None:
+        ebit_yoy_val = _finite_value(work, "ebit_yoy")
+
+    nonop_inflated = False
+    if (
+        operating_margin_val is not None
+        and raw_net_margin is not None
+        and raw_net_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR
+        and (raw_net_margin - operating_margin_val) >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
+        and (ocf_value is None or ocf_value < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI)
+    ):
+        margin_gap = round(raw_net_margin - operating_margin_val, 6)
+        nonop_inflated = True
+        work["net_margin"] = operating_margin_val
+        risks.append(
+            _metric_item(
+                code="nonoperating_gain_inflation",
+                label="Non-operating gain / tax distortion",
+                polarity="negative",
+                metric="net_margin",
+                value=margin_gap,
+                threshold=(
+                    "net_margin - operating_margin "
+                    f"< +{QUALITY_V2_NONOP_MARGIN_GAP_MIN * 100:.0f}pp"
+                ),
+                message=(
+                    f"Reported net margin ({raw_net_margin * 100:.1f}%) exceeds "
+                    f"operating margin ({operating_margin_val * 100:.1f}%) by "
+                    f"+{margin_gap * 100:.1f}pp; non-operating gains or tax items "
+                    "inflated GAAP earnings — net margin capped at operating margin."
+                ),
+            )
+        )
+    elif (
+        operating_margin_val is None
+        and raw_net_margin is not None
+        and raw_net_margin >= 0.25
+        and (ocf_value is None or ocf_value < QUALITY_V2_HEALTHY_OCF_MIN)
+        and fcf_margin_val is not None
+        and (raw_net_margin - fcf_margin_val) >= 0.15
+    ):
+        margin_gap = round(raw_net_margin - fcf_margin_val, 6)
+        nonop_inflated = True
+        work["net_margin"] = max(0.0, fcf_margin_val)
+        risks.append(
+            _metric_item(
+                code="nonoperating_gain_inflation",
+                label="Non-operating gain / tax distortion",
+                polarity="negative",
+                metric="net_margin",
+                value=margin_gap,
+                threshold="net_margin - fcf_margin < +15pp (operating margin unavailable)",
+                message=(
+                    f"Reported net margin ({raw_net_margin * 100:.1f}%) exceeds "
+                    f"FCF margin ({fcf_margin_val * 100:.1f}%) by "
+                    f"+{margin_gap * 100:.1f}pp with no operating-margin evidence; "
+                    "non-operating gains or tax items inflated GAAP earnings — "
+                    "net margin capped at FCF margin."
+                ),
+            )
+        )
+
+    earnings_growth_key = (
+        "adjusted_net_income_yoy"
+        if _finite_value(work, "adjusted_net_income_yoy") is not None
+        else "net_income_yoy"
+    )
+    if (
+        ebit_yoy_val is not None
+        and ani_yoy_val is not None
+        and (
+            nonop_inflated
+            or abs(ani_yoy_val - ebit_yoy_val) >= QUALITY_V2_NONOP_YOY_GAP_MIN
+        )
+    ):
+        # Score clean operating income growth instead of the investment-gain
+        # distorted net-income YoY (fixes both upward inflation and
+        # base-effect drag distortions).
+        work[earnings_growth_key] = ebit_yoy_val
+
     def _gap_score_fn(base_fn: Any) -> Any:
         if high_growth:
             return lambda value: max(float(base_fn(value)), QUALITY_V2_GAP_FLOOR)
@@ -959,11 +1061,31 @@ def build_company_quality_v2(
             )
         )
 
-    earnings_growth_key = (
-        "adjusted_net_income_yoy"
-        if _finite_value(work, "adjusted_net_income_yoy") is not None
-        else "net_income_yoy"
-    )
+    # Layer 2: high-margin companies whose cash conversion sits in the silent
+    # (0.5, 0.8) OCF/NI band get an explicit review flag instead of a pass.
+    if (
+        raw_net_margin is not None
+        and raw_net_margin >= QUALITY_V2_HIGH_MARGIN_CONVERSION_WARN_MARGIN
+        and ocf_value is not None
+        and ocf_value < QUALITY_V2_HEALTHY_OCF_MIN
+        and not any(r.code == "ocf_to_net_income_weak" for r in risks)
+    ):
+        risks.append(
+            _metric_item(
+                code="ocf_conversion_lagging_high_margin",
+                label="Cash conversion lagging high net margin",
+                polarity="negative",
+                metric="ocf_to_net_income",
+                value=round(ocf_value, 6),
+                threshold=">=0.80x expected when net margin >=20%",
+                message=(
+                    f"OCF/NI is {ocf_value:.2f}x despite "
+                    f"{raw_net_margin * 100:.1f}% reported net margin; "
+                    "earnings include non-cash or non-operating components."
+                ),
+            )
+        )
+
     growth_scores = [
         _assess_numeric_metric(
             work,
