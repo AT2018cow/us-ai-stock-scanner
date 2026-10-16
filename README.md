@@ -1160,6 +1160,19 @@ $100K/$1M 大单买方主动性（tick rule 近似）、场外占比与 3 日价
 定位是注释层（不进选股闸门）；单日流向是噪声，以多日聚合为准。
 - runner 调度/结果摘要日志：`.debug_logs/daily_YYYYMMDD.log`；子进程完整输出仍直接写控制台
 
+### 13.21 `scripts/audit_nonop_gain_screen.py` —— 非经营利得季度审计（只读）
+
+```bash
+python scripts/audit_nonop_gain_screen.py --cache-dir cache
+```
+
+每个财报季结束后运行：只读扫描本地 SEC 缓存（零网络、零扫描/报告副作用），用
+TTM 净利率−经营利润率裂口与最新单季 `NonoperatingIncomeExpense / 营收` 尖峰
+（≥25% 且 ≥$200M）两条透镜列出非经营投资利得 / 税务扭曲候选，并标注处置类利得
+冲减。新命中进入人工复核队列，永不直接晋升为生产阈值（AGENTS.md §8）。
+可选 `--output-json <path>` 输出命中明细；阈值可用 `--min-ttm-gap` /
+`--min-quarterly-ratio` / `--min-quarterly-abs` 覆盖。
+
 ## 14. 说明与限制
 
 - 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。

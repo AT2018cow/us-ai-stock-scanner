@@ -256,3 +256,33 @@ XBRL 标签 `EquitySecuritiesFvNiUnrealizedGainLoss`（仅明细标签、无总�
   2. FAIL：任一实质分歧无法在半天内归因，则维持 T1+T2 现状，结论记入 spike 文档，不再追。
 - **非目标**：不评估 Simfin / yfinance / 付费 API（PIT 对账成本已判净负，见正文 §四）；
   不碰 v1；不产生生产行为变更（spike 只读、可丢弃分支）。
+
+### As-Built & Follow-Up Sync (2026-10-16, post-PR #90)
+
+> 本节为 PR #90 合入后的 as-built 记录与跟进裁决，供后续读者对照 §8 T1–T3 的原始规格。
+
+- **T1（P1）已实现（as-built 与原始规格存在记录在案的口径差）**：生产触发不是"单季非经营
+  收入 / 营收 > 25%"（该口径保留为 **Case C** 兜底），而是 **TTM 净利率 − 经营利润率裂口**
+  语义：`QUALITY_V2_NONOP_MARGIN_GAP_MIN = 0.05`、`QUALITY_V2_NONOP_NET_MARGIN_FLOOR = 0.12`、
+  `QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI = 1.50`（Case A）；无经营利润率时回退 FCF 裂口
+  （Case B）；单季尖峰触发为 `QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN = 0.25` +
+  `QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR = 200_000_000.0`（Case C，SHOP 类）。常量定义于
+  `src/ai_value_scanner/decision/quality.py`；排序惩罚为
+  `H3_NONOPERATING_GAIN_PRIORITY_PENALTY = 0.06`（`src/ai_value_scanner/decision/action.py`）。
+  徽章与 Watchouts 文案位于 `src/ai_value_scanner/decision/view_model.py`。
+- **T2 已实现（收窄版）**：本次仅吃进实证变体标签
+  `DisposalGroupNotDiscontinuedOperationGainLossOnDisposal`（`scanner.py` 的
+  `NONRECURRING_GAIN_TAGS`）；其余 below-the-line 投资利得标签**故意不进入 strip 集**
+  （会错误冲减 `OperatingIncomeLoss`，见 `test_below_the_line_gain_tags_not_stripped_from_ebit`），
+  由标签无关的 Layer-1 A/B/C 覆盖。taxonomy 程序化生成与 edgartools parity 对账未做。
+- **T3 正式标记为 Deferred (2026-10-16)**：edgartools 映射层 spike 未执行，理由——标签无关的
+  Layer-1（Cases A/B/C）+ 只读审计脚本
+  （`scripts/audit_nonop_gain_screen.py`）已覆盖当前全部实证污染案（GOOG/AMZN/SHOP/WDC/ZM/
+  NTNX/SNPS），接管 Tag→标准行映射属 Borrow 收益不足；仅当未来出现同时逃逸 TTM 裂口与单季
+  尖峰的 filing 类别时再重启评估。
+- **跟进增强（本 PR）**：P1-1 Case C 单季触发；P2-3 经营口径增速替代可追溯
+  （`operating_growth_basis_substituted`，不参与排序惩罚）；P2-2 `--recompute-v2` 同步
+  Highlights（经营利润率封顶与增速替代），消除预览自相矛盾；P2-1 `action_list_v2.md` 在
+  `Pool & Concentration` 下方披露因质量完整性被挤出 Top-15 的 `PRIORITY_REVIEW` 标的；
+  P1-3 只读审计 CLI 入库（见 `scripts/README.md`）。
+

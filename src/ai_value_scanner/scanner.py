@@ -255,6 +255,14 @@ NONRECURRING_GAIN_TAGS = [
     # the original four-tag denylist missed.
     "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal",
 ]
+# Below-the-line non-operating income series (e.g. SHOP / GOOG investment
+# gains booked inside NonoperatingIncomeExpense). Deliberately NOT part of
+# NONRECURRING_GAIN_TAGS: these tags sit below OperatingIncomeLoss, so
+# stripping them from EBIT would corrupt the clean operating basis. Used only
+# for the Layer-1 Case C quarterly-spike screen.
+NONOPERATING_INCOME_TAGS = [
+    "NonoperatingIncomeExpense",
+]
 INTEREST_EXPENSE_TAGS = [
     "InterestExpense",
     "InterestAndDebtExpense",
@@ -1618,6 +1626,35 @@ def build_ttm_history(
         (point.period_end.isoformat(), float(point.value))
         for point in points[-int(max(1, max_points)) :]
     ]
+
+
+def extract_latest_quarterly_nonop_metrics(
+    companyfacts: dict[str, Any],
+) -> tuple[float | None, float | None, float | None, str | None]:
+    """Return (latest_q_nonop_income, latest_q_revenue, latest_q_nonop_to_revenue, latest_q_end).
+
+    Matches NonoperatingIncomeExpense to the exact period_end of the latest
+    reconstructed revenue quarter so stale historical tags from prior years
+    cannot trigger false positives.
+    """
+    q_rev, _ = _reconstruct_flow_periods(companyfacts, LIVE_REVENUE_TAGS, "USD")
+    q_nonop, _ = _reconstruct_flow_periods(
+        companyfacts, NONOPERATING_INCOME_TAGS, "USD"
+    )
+    if not q_rev or not q_nonop:
+        return (None, None, None, None)
+    rev_end, rev_val = q_rev[-1]
+    nonop_by_end = dict(q_nonop)
+    if rev_end not in nonop_by_end or rev_val is None or float(rev_val) <= 0.0:
+        return (
+            None,
+            float(rev_val) if rev_val is not None else None,
+            None,
+            rev_end,
+        )
+    nonop_val = float(nonop_by_end[rev_end])
+    ratio = nonop_val / float(rev_val)
+    return (nonop_val, float(rev_val), ratio, rev_end)
 
 
 def build_fact_history(
@@ -3104,6 +3141,12 @@ def load_one_fundamental(
     share_count_tag = share_integrity.source_tag
     revenue_ttm_history = build_ttm_history(companyfacts, LIVE_REVENUE_TAGS, "USD")
     net_income_ttm_history = build_ttm_history(companyfacts, NET_INCOME_TAGS, "USD")
+    (
+        latest_q_nonop_income,
+        latest_q_revenue,
+        latest_q_nonop_to_revenue,
+        latest_q_end,
+    ) = extract_latest_quarterly_nonop_metrics(companyfacts)
     _collapsed_consistent_shares = collapse_fact_records_by_end(
         _consistent_share_records
     )
@@ -3396,6 +3439,12 @@ def load_one_fundamental(
         "adjusted_ebitda": adjusted_ebitda,
         "adjusted_net_income_yoy": adjusted_net_income_yoy,
         "adjusted_ebit_yoy": adjusted_ebit_yoy,
+        # Layer-1 Case C (P1-1): latest quarter non-operating income spike
+        # screen inputs, matched to the latest reconstructed revenue quarter.
+        "latest_quarterly_nonoperating_income": latest_q_nonop_income,
+        "latest_quarterly_revenue": latest_q_revenue,
+        "latest_quarterly_nonop_to_revenue": latest_q_nonop_to_revenue,
+        "latest_quarterly_period_end": latest_q_end,
         "interest_coverage": interest_coverage,
         "net_debt_to_ebitda": net_debt_to_ebitda,
         "current_ratio": current_ratio,
@@ -3554,6 +3603,10 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "adjusted_ebitda": None,
                         "adjusted_net_income_yoy": None,
                         "adjusted_ebit_yoy": None,
+                        "latest_quarterly_nonoperating_income": None,
+                        "latest_quarterly_revenue": None,
+                        "latest_quarterly_nonop_to_revenue": None,
+                        "latest_quarterly_period_end": None,
                         "interest_coverage": None,
                         "net_debt_to_ebitda": None,
                         "current_ratio": None,

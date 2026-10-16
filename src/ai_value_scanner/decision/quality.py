@@ -778,6 +778,11 @@ QUALITY_V2_NONOP_NET_MARGIN_FLOOR = 0.12
 QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI = 1.50
 QUALITY_V2_NONOP_YOY_GAP_MIN = 0.40
 QUALITY_V2_HIGH_MARGIN_CONVERSION_WARN_MARGIN = 0.20
+# Single-quarter non-operating spike trigger (Layer-1 Case C, SHOP class):
+# a huge mark-to-market gain can hide behind a sub-threshold TTM margin gap,
+# so screen the latest reconstructed quarter as well.
+QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN: float = 0.25
+QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR: float = 200_000_000.0
 
 
 def _score_accrual_v2(value: float, ocf_to_ni: float | None = None) -> float:
@@ -901,6 +906,12 @@ def build_company_quality_v2(
     ebit_yoy_val = _finite_value(work, "adjusted_ebit_yoy")
     if ebit_yoy_val is None:
         ebit_yoy_val = _finite_value(work, "ebit_yoy")
+    q_nonop_income = _finite_value(work, "latest_quarterly_nonoperating_income")
+    q_nonop_ratio = _finite_value(work, "latest_quarterly_nonop_to_revenue")
+    if q_nonop_ratio is None:
+        q_rev = _finite_value(work, "latest_quarterly_revenue")
+        if q_nonop_income is not None and q_rev is not None and q_rev > 0.0:
+            q_nonop_ratio = q_nonop_income / q_rev
 
     nonop_inflated = False
     if (
@@ -960,24 +971,90 @@ def build_company_quality_v2(
                 ),
             )
         )
+    elif (
+        q_nonop_income is not None
+        and q_nonop_income >= QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR
+        and q_nonop_ratio is not None
+        and q_nonop_ratio >= QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN
+    ):
+        # Case C: single-quarter non-operating spike (SHOP class). A huge
+        # mark-to-market gain in the latest quarter can hide behind a
+        # sub-threshold TTM margin gap; the absolute floor keeps stale cache
+        # entries and small denominators silent.
+        nonop_inflated = True
+        if (
+            operating_margin_val is not None
+            and raw_net_margin is not None
+            and raw_net_margin > operating_margin_val
+        ):
+            work["net_margin"] = operating_margin_val
+        risks.append(
+            _metric_item(
+                code="nonoperating_gain_inflation",
+                label="Non-operating gain / tax distortion",
+                polarity="negative",
+                metric="net_margin",
+                value=round(q_nonop_ratio, 6),
+                threshold=(
+                    "quarterly nonop / revenue "
+                    f"< +{QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN * 100:.0f}% "
+                    f"(>=${QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR / 1e6:.0f}M)"
+                ),
+                message=(
+                    f"Single-quarter non-operating income is "
+                    f"${q_nonop_income / 1e9:.2f}B "
+                    f"({q_nonop_ratio * 100:.1f}% of quarterly revenue); "
+                    "quarterly mark-to-market investment gains distort GAAP earnings."
+                ),
+            )
+        )
 
     earnings_growth_key = (
         "adjusted_net_income_yoy"
         if _finite_value(work, "adjusted_net_income_yoy") is not None
         else "net_income_yoy"
     )
+    yoy_gap_triggered = (
+        not nonop_inflated
+        and operating_margin_val is not None
+        and operating_margin_val >= 0.10
+        and ebit_yoy_val is not None
+        and abs(ebit_yoy_val) <= 2.00
+        and ani_yoy_val is not None
+        and abs(ani_yoy_val - ebit_yoy_val) >= QUALITY_V2_NONOP_YOY_GAP_MIN
+    )
     if (
         ebit_yoy_val is not None
         and ani_yoy_val is not None
-        and (
-            nonop_inflated
-            or abs(ani_yoy_val - ebit_yoy_val) >= QUALITY_V2_NONOP_YOY_GAP_MIN
-        )
+        and (nonop_inflated or yoy_gap_triggered)
     ):
         # Score clean operating income growth instead of the investment-gain
         # distorted net-income YoY (fixes both upward inflation and
         # base-effect drag distortions).
         work[earnings_growth_key] = ebit_yoy_val
+        if yoy_gap_triggered:
+            # Trace/watchout only (no priority penalty): explain why the
+            # report shows operating-income growth instead of GAAP NI YoY.
+            risks.append(
+                _metric_item(
+                    code="operating_growth_basis_substituted",
+                    label="Growth scored on operating-income basis",
+                    polarity="negative",
+                    metric=earnings_growth_key,
+                    value=round(ebit_yoy_val, 6),
+                    threshold=(
+                        "|NI YoY - EBIT YoY| < "
+                        f"{QUALITY_V2_NONOP_YOY_GAP_MIN * 100:.0f}pp"
+                    ),
+                    message=(
+                        f"Growth scored on operating-income basis "
+                        f"({ebit_yoy_val * 100:+.1f}%) because GAAP net-income YoY "
+                        f"({ani_yoy_val * 100:+.1f}%) diverged by "
+                        f"{abs(ani_yoy_val - ebit_yoy_val) * 100:.1f}pp due to "
+                        "prior-period non-operating or tax base effects."
+                    ),
+                )
+            )
 
     def _gap_score_fn(base_fn: Any) -> Any:
         if high_growth:
