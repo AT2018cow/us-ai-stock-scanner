@@ -44,10 +44,13 @@ from ai_value_scanner.decision.view_model import (
 )
 from ai_value_scanner.reporting.decision import render_action_list_v2
 from ai_value_scanner.scanner import (
+    INTEREST_INCOME_TAGS,
     NONOPERATING_INCOME_TAGS,
     NONRECURRING_GAIN_TAGS,
     PARSED_FUND_CACHE_VERSION,
+    ScanConfig,
     extract_latest_quarterly_nonop_metrics,
+    load_one_fundamental,
 )
 
 
@@ -1530,6 +1533,357 @@ class TestNonopGainAuditScreen(unittest.TestCase):
             text = out_json.read_text(encoding="utf-8")
             self.assertNotIn("/tmp/", text)
             self.assertNotIn("/home/", text)
+
+
+class _FakeSecClient:
+    """Minimal SecClient stand-in for interest-income extraction tests."""
+
+    def __init__(self, companyfacts):
+        self._facts = companyfacts
+
+    def get_submissions(self, cik):
+        return {"sic": "3571", "sicDescription": "Electronic Computers"}
+
+    def get_companyfacts(self, cik):
+        return self._facts
+
+
+def _interest_income_facts(interest_quarters):
+    """Companyfacts with a 4-quarter TTM interest-income series."""
+    q_end = ["2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31"]
+
+    def q_vals(values):
+        return [
+            {"end": end, "val": value, "form": "10-Q", "filed": "2026-02-15"}
+            for end, value in zip(q_end, values)
+        ]
+
+    return {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {"units": {"USD": q_vals([130, 120, 110, 100])}},
+                "NetIncomeLoss": {"units": {"USD": q_vals([46, 44, 42, 40])}},
+                "NetCashProvidedByUsedInOperatingActivities": {
+                    "units": {"USD": q_vals([58, 55, 52, 45])}
+                },
+                "OperatingIncomeLoss": {
+                    "units": {"USD": q_vals([70, 65, 60, 55])}
+                },
+                "InterestExpense": {
+                    "units": {"USD": q_vals([-2, -2, -2, -2])}
+                },
+                "InvestmentIncomeInterest": {
+                    "units": {"USD": q_vals(interest_quarters)}
+                },
+            }
+        }
+    }
+
+
+def _pltr_interest_facts_rows():
+    """InvestmentIncomeInterest quarters matching PLTR's TTM ~$266.4M."""
+    return [
+        _quarter_row("2025-07-01", "2025-09-30", 62.0, "2026-02-15"),
+        _quarter_row("2025-10-01", "2025-12-31", 64.0, "2026-02-15"),
+        _quarter_row("2026-01-01", "2026-03-31", 68.0, "2026-02-15"),
+        _quarter_row("2026-04-01", "2026-06-30", 72.4, "2026-08-05"),
+    ]
+
+
+class TestNetInterestIncomeExemption(unittest.TestCase):
+    """Layer-1 Case A net-interest-income exemption (PLTR / ALAB class)."""
+
+    PLTR_METRICS = dict(
+        revenue=5753.0,
+        net_margin=0.490,
+        ebit=2462.0,
+        free_cash_flow=1500.0,
+        ocf_to_net_income=1.127,
+        interest_income=266.4,
+        interest_expense=3.5,
+    )
+
+    def _build(self, **overrides):
+        return build_company_quality_v2(
+            _metrics(**overrides),
+            decision_date="2026-10-15",
+            data_asof="2026-10-01",
+        )
+
+    def test_tag_list_registered(self) -> None:
+        self.assertEqual(
+            INTEREST_INCOME_TAGS,
+            [
+                "InvestmentIncomeInterest",
+                "InterestAndDividendIncomeOperating",
+                "InvestmentIncomeInterestAndDividend",
+                "InterestIncomeOther",
+                "InvestmentIncomeNet",
+            ],
+        )
+
+    def test_pltr_archetype_exempted(self) -> None:
+        decision = self._build(**self.PLTR_METRICS)
+        self.assertEqual(_codes(decision), set())
+        # Net margin keeps the raw reported value (no operating-basis cap).
+        self.assertAlmostEqual(
+            _evidence_value(decision, "net_margin"), 0.490, places=6)
+
+    def test_pltr_without_interest_inputs_would_trigger(self) -> None:
+        metrics = {
+            key: value
+            for key, value in self.PLTR_METRICS.items()
+            if key not in {"interest_income", "interest_expense"}
+        }
+        decision = self._build(**metrics)
+        self.assertIn("nonoperating_gain_inflation", _codes(decision))
+
+    def test_pltr_no_badge_and_no_priority_penalty(self) -> None:
+        quality = self._build(**self.PLTR_METRICS)
+        exempt = _decision(
+            symbol="APLTR",
+            quality_risks=tuple(quality.risks),
+            quality_positives=tuple(quality.positives),
+        )
+        card = build_stock_card_view_model(exempt)
+        self.assertEqual(card.warning_badges_inline, "")
+        clean = _decision(symbol="ZZCLN")
+        ranked = assign_action_priorities_v2([exempt, clean])
+        # No -0.06 penalty: the exempt name keeps the alphabetical tie-break
+        # (a penalty would push it behind the later-sorting clean peer).
+        self.assertEqual([d.symbol for d in ranked], ["APLTR", "ZZCLN"])
+
+    def test_confirmed_polluters_still_caught_with_interest_income(self) -> None:
+        goog = self._build(
+            net_margin=0.55653, revenue=1000.0, ebit=339.925,
+            free_cash_flow=119.482, ocf_to_net_income=0.748,
+            adjusted_net_income_yoy=1.147024, ebit_yoy=0.249,
+            interest_income=11.0, interest_expense=0.5,
+        )
+        goog_item = next(
+            i for i in goog.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(goog_item.value, 0.216605, places=6)
+
+        amzn = self._build(
+            net_margin=0.176, revenue=775680.0, ebit=94632.96,
+            free_cash_flow=80000.0, ocf_to_net_income=1.182,
+            adjusted_net_income_yoy=0.933, ebit_yoy=0.246,
+            interest_income=4660.0, interest_expense=3003.0,
+        )
+        amzn_item = next(
+            i for i in amzn.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(amzn_item.value, 0.054, places=5)
+
+        zm = self._build(
+            net_margin=0.652, ebit=237.0, free_cash_flow=150.0,
+            ocf_to_net_income=0.614,
+            adjusted_net_income_yoy=1.740, ebit_yoy=0.220,
+            interest_income=20.0, interest_expense=5.0,
+        )
+        zm_item = next(
+            i for i in zm.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(zm_item.value, 0.415, places=6)
+
+        ntnx = self._build(
+            net_margin=0.528, ebit=96.0, free_cash_flow=295.0,
+            ocf_to_net_income=0.608,
+            adjusted_net_income_yoy=7.0, ebit_yoy=0.588,
+            interest_income=5.0, interest_expense=1.0,
+        )
+        ntnx_item = next(
+            i for i in ntnx.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(ntnx_item.value, 0.432, places=6)
+
+        wdc = self._build(
+            net_margin=0.741, ebit=357.0, free_cash_flow=250.0,
+            ocf_to_net_income=0.410,
+            adjusted_net_income_yoy=4.329, ebit_yoy=1.054,
+            interest_income=51.0, interest_expense=403.0,
+        )
+        wdc_item = next(
+            i for i in wdc.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(wdc_item.value, 0.384, places=6)
+
+    def test_load_one_fundamental_extracts_ttm_interest_income(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sec = _FakeSecClient(
+                _interest_income_facts([8.0, 7.0, 6.0, 5.0]))
+            cfg = ScanConfig(
+                use_ttm_metrics=True,
+                nonrecurring_addback_revenue_cap=0.25,
+                cache_dir=tmp,
+            )
+            out = load_one_fundamental(sec, "TEST", "0000009099", cfg)
+            self.assertAlmostEqual(out["interest_income"], 26.0, places=6)
+            self.assertAlmostEqual(out["interest_expense"], 8.0, places=6)
+
+    def test_load_one_fundamental_clamps_negative_interest_income(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sec = _FakeSecClient(
+                _interest_income_facts([-3.0, -2.0, -2.0, -1.0]))
+            cfg = ScanConfig(
+                use_ttm_metrics=True,
+                nonrecurring_addback_revenue_cap=0.25,
+                cache_dir=tmp,
+            )
+            out = load_one_fundamental(sec, "NEGI", "0000009098", cfg)
+            self.assertEqual(out["interest_income"], 0.0)
+
+    def _pltr_frozen(self):
+        return _frozen_decision("PLTR", (
+            _ev("net_margin_strong", metric="net_margin", value=0.490),
+            _ev("operating_margin_strong", metric="operating_margin",
+                value=0.428),
+            _ev("ocf_to_net_income_strong", metric="ocf_to_net_income",
+                value=1.127),
+        ))
+
+    def _write_pltr_cache(self, base, *, include_payload_interest: bool,
+                          include_facts: bool) -> Path:
+        import json as _json
+
+        base.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "symbol": "PLTR",
+            "cik": "001321655",
+            "revenue": 5753.0,
+            "adjusted_net_income": 2819.0,
+            "adjusted_ebit": 2462.25,
+            "free_cash_flow": 1500.0,
+            "ocf_to_net_income": 1.127,
+            "nonrecurring_gain_subtraction": 0.0,
+        }
+        if include_payload_interest:
+            payload["interest_income"] = 266.4
+            payload["interest_expense"] = 3.5
+        (base / "parsed_fund_001321655.json").write_text(
+            _json.dumps(payload), encoding="utf-8")
+        if include_facts:
+            (base / "facts_001321655.json").write_text(
+                _json.dumps({
+                    "cik": "1321655",
+                    "facts": {"us-gaap": {
+                        "InvestmentIncomeInterest": {
+                            "units": {"USD": _pltr_interest_facts_rows()},
+                        },
+                    }},
+                }),
+                encoding="utf-8",
+            )
+        return base
+
+    def _recompute_pltr(self, cache):
+        import sys
+
+        sys.path.insert(0, "scripts")
+        try:
+            from render_snapshot_preview import recompute_v2_decisions
+        finally:
+            sys.path.pop(0)
+        return recompute_v2_decisions([self._pltr_frozen()], cache_dir=cache)
+
+    def test_recompute_pltr_exempt_via_facts_interest_income(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_pltr_cache(
+                Path(tmp) / "cache",
+                include_payload_interest=False,
+                include_facts=True,
+            )
+            (out,) = self._recompute_pltr(cache)
+            self.assertNotIn(
+                "nonoperating_gain_inflation",
+                {i.code for i in out.quality.risks})
+            self.assertAlmostEqual(
+                _evidence_value(out.quality, "net_margin"), 0.490,
+                places=6)
+            (twice,) = self._recompute_pltr(cache)
+            self.assertEqual(twice.quality.risks, out.quality.risks)
+
+    def test_recompute_pltr_exempt_via_payload_interest_income(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_pltr_cache(
+                Path(tmp) / "cache",
+                include_payload_interest=True,
+                include_facts=False,
+            )
+            (out,) = self._recompute_pltr(cache)
+            self.assertNotIn(
+                "nonoperating_gain_inflation",
+                {i.code for i in out.quality.risks})
+
+    def test_recompute_pltr_control_flagged_without_interest_data(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_pltr_cache(
+                Path(tmp) / "cache",
+                include_payload_interest=False,
+                include_facts=False,
+            )
+            (out,) = self._recompute_pltr(cache)
+            self.assertIn(
+                "nonoperating_gain_inflation",
+                {i.code for i in out.quality.risks})
+
+    def test_audit_pltr_exempt_via_facts_interest_income(self) -> None:
+        import tempfile
+
+        import sys
+
+        from pathlib import Path
+
+        sys.path.insert(0, "scripts")
+        try:
+            from audit_nonop_gain_screen import run_nonop_gain_audit
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_pltr_cache(
+                Path(tmp) / "cache",
+                include_payload_interest=False,
+                include_facts=True,
+            )
+            rows = run_nonop_gain_audit(cache)
+        pltr = next(row for row in rows if row["symbol"] == "PLTR")
+        self.assertFalse(pltr["ttm_margin_gap_hit"])
+        self.assertFalse(pltr["hit"])
+        self.assertAlmostEqual(
+            pltr["net_interest_margin"], 266.4 / 5753.0, places=9)
+
+    def test_audit_pltr_control_flagged_without_interest_data(self) -> None:
+        import tempfile
+
+        import sys
+
+        from pathlib import Path
+
+        sys.path.insert(0, "scripts")
+        try:
+            from audit_nonop_gain_screen import run_nonop_gain_audit
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_pltr_cache(
+                Path(tmp) / "cache",
+                include_payload_interest=False,
+                include_facts=False,
+            )
+            rows = run_nonop_gain_audit(cache)
+        pltr = next(row for row in rows if row["symbol"] == "PLTR")
+        self.assertTrue(pltr["ttm_margin_gap_hit"])
+        self.assertEqual(pltr["net_interest_margin"], 0.0)
 
 
 if __name__ == "__main__":

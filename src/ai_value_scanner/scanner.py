@@ -267,6 +267,17 @@ INTEREST_EXPENSE_TAGS = [
     "InterestExpense",
     "InterestAndDebtExpense",
 ]
+# Interest income series for the Layer-1 Case A net-interest-income exemption:
+# recurring Treasury/cash interest income on net-cash companies produces a
+# structural net-margin over operating-margin gap that is fully cash-backed
+# and must not be treated as non-operating gain pollution (PLTR / ALAB class).
+INTEREST_INCOME_TAGS = [
+    "InvestmentIncomeInterest",
+    "InterestAndDividendIncomeOperating",
+    "InvestmentIncomeInterestAndDividend",
+    "InterestIncomeOther",
+    "InvestmentIncomeNet",
+]
 DA_TAGS = [
     "DepreciationAndAmortization",
     "DepreciationDepletionAndAmortization",
@@ -3313,6 +3324,12 @@ def load_one_fundamental(
     capex_raw, _, _ = pick_flow_pair(CAPEX_TAGS, "USD")
     ebit, ebit_prev, ebit_form = pick_flow_pair(EBIT_TAGS, "USD")
     interest_expense, interest_expense_prev, _ = pick_flow_pair(INTEREST_EXPENSE_TAGS, "USD")
+    interest_income, _, _ = pick_flow_pair(INTEREST_INCOME_TAGS, "USD")
+    interest_income_pos = (
+        max(0.0, float(interest_income))
+        if interest_income is not None
+        else None
+    )
     da, da_prev, _ = pick_flow_pair(DA_TAGS, "USD")
 
     # M1 share-scope integrity: current shares and year-ago shares must come
@@ -3643,6 +3660,7 @@ def load_one_fundamental(
         "total_debt": total_debt,
         "net_debt": net_debt,
         "interest_expense": interest_expense_abs,
+        "interest_income": interest_income_pos,
         "depreciation_and_amortization": da,
         "current_assets": assets_current,
         "current_liabilities": liabilities_current,
@@ -3807,6 +3825,7 @@ def collect_fundamentals(df: pd.DataFrame, sec: SecClient, config: ScanConfig) -
                         "total_debt": None,
                         "net_debt": None,
                         "interest_expense": None,
+                        "interest_income": None,
                         "depreciation_and_amortization": None,
                         "current_assets": None,
                         "current_liabilities": None,
