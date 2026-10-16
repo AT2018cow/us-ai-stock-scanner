@@ -4,9 +4,9 @@
   "chunk_size": 200,
   "request_timeout_sec": 20,
   "alpaca_cache_enabled": true,
-  "alpaca_cache_ttl_assets_sec": 43200,
-  "alpaca_cache_ttl_snapshots_sec": 43200,
-  "alpaca_cache_ttl_bars_sec": 43200,
+  "alpaca_cache_ttl_assets_sec": 21600,
+  "alpaca_cache_ttl_snapshots_sec": 21600,
+  "alpaca_cache_ttl_bars_sec": 21600,
   "watchlist_csv_path": "data/ai_watchlist.csv",
   "watchlist_fetch_timeout_sec": 20,
   "ai_link_benchmark_etfs": [

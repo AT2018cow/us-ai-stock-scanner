@@ -288,9 +288,9 @@ class ScanConfig:
     alpaca_max_requests_per_sec: float = 2.5
     sec_max_requests_per_sec: float = 5.0
     alpaca_cache_enabled: bool = True
-    alpaca_cache_ttl_assets_sec: int = 43200
-    alpaca_cache_ttl_snapshots_sec: int = 43200
-    alpaca_cache_ttl_bars_sec: int = 43200
+    alpaca_cache_ttl_assets_sec: int = 21600
+    alpaca_cache_ttl_snapshots_sec: int = 21600
+    alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     # Opt-in, frozen multi-source discovery CSVs. None preserves exact legacy mode.
     # Example: {"us_core": "path.csv", "thematic": "path.csv", "manual": "path.csv"}

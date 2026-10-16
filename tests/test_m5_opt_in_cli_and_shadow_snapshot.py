@@ -170,9 +170,9 @@ class TestM5OptInCliAndShadowSnapshot(unittest.TestCase):
             cfg = load_config(path)
             self.assertEqual(cfg.decision_policy_version, "v2", path)
             self.assertEqual(cfg.report_layout_version, "v2", path)
-            self.assertEqual(cfg.alpaca_cache_ttl_snapshots_sec, 43200, path)
-            self.assertEqual(cfg.alpaca_cache_ttl_bars_sec, 43200, path)
-            self.assertEqual(cfg.alpaca_cache_ttl_assets_sec, 43200, path)
+            self.assertEqual(cfg.alpaca_cache_ttl_snapshots_sec, 21600, path)
+            self.assertEqual(cfg.alpaca_cache_ttl_bars_sec, 21600, path)
+            self.assertEqual(cfg.alpaca_cache_ttl_assets_sec, 21600, path)
 
     def test_edgartools_fallback_and_terminal_pending_persist_to_parsed_cache(self) -> None:
         from types import SimpleNamespace
