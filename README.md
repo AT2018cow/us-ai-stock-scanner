@@ -336,6 +336,7 @@ python scripts/tune_parameters.py \
 - watchlist 缺失或为空时会直接报错并终止
 - **ETF 只用于构建当前选股底单/watchlist，不是历史回测的数据依赖。** 不追踪、不重建历史 ETF 成分；walk-forward 的时间隔离针对参数选择和前向收益标签，不改变这一 universe 原则。
 - **watchlist 刷新采用安全增量合并**（`merge_refreshed_watchlist`）：刷新 ETF 持仓时只更新/新增 ETF 成分股，`SRC:*` 来源标记行、`ai_smallcap` 层与用户 `enabled=0` 覆盖永不丢失；默认保留已从 ETF 前 N 大持仓中掉出的历史 ETF 行（如需清理显式使用 `--prune-dropped-etf-rows`）。刷新成功后自动归档快照到 `data/watchlist_history/`（`--no-archive` 可跳过，`--dry-run` 只打印不落盘）。
+- **自动换码迁移与退市清理**（`reconcile_watchlist_corporate_actions`，基于 SEC CIK 终身编号）：刷新时自动把改名/换码公司迁移到新代码（如 `BITF → KEEL`、`EQR → VMRK`，保留 bucket/`etfs` 来源标记/`enabled`），并把已退市且无有效普通股替代代码的标的（如 `CYBR`、`WBD`）从 watchlist 与 `data/ai_smallcap_manual.csv` 中同步剔除；SEC 映射不可用或网络异常时打印警告并优雅跳过（绝不误删），`--no-reconcile-corporate-actions` 可显式关闭，`--manual-seed-csv` 指定手工种子文件。
 
 ### 4.2 CSV 字段规范
 
@@ -967,6 +968,9 @@ python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --d
 
 # 显式清理已掉出 ETF 前 N 大持仓的历史 ETF 行（SRC:*/ai_smallcap/手工行仍保留）
 python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --prune-dropped-etf-rows
+
+# 跳过 CIK 自动换码/退市清理（默认开启）
+python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --no-reconcile-corporate-actions
 ```
 
 从 ETF 持仓页面抓取标的并集，并通过 `merge_refreshed_watchlist` **安全增量合并**进现有
@@ -976,7 +980,16 @@ python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --p
 显式开启裁剪。若 ETF 抓取整体失败返回 0 行且现有文件非空，脚本打印警告并保持原文件不变。
 非 `--dry-run` 且输出为 `cfg.watchlist_csv_path` 时，写盘后自动调用
 `archive_watchlist_snapshot` 归档到 `data/watchlist_history/`（`--no-archive` 跳过）。
-建议每周运行一次；运行顺序：refresh watchlist → smallcap builder → scan。
+
+**CIK 自动换码迁移与退市清理（默认开启）**：合并后调用
+`reconcile_watchlist_corporate_actions`——凡在 SEC `company_tickers.json` 中消失（换名/换码）
+或 Alpaca 非 active 的标的，按其历史 CIK 查找新的有效普通股代码并自动迁移
+（`old -> new`，保留 bucket、`SRC:*`、`enabled`；迁移落点若已存在则折叠合并 `etfs`）；
+无有效替代代码的退市股剔除并打印 `reason`。同一报告的换码/退市会同步进
+`data/ai_smallcap_manual.csv`（`--manual-seed-csv` 可指定路径；`--dry-run` 下不写盘），
+避免未来的 smallcap 重建再次注入已退休代码。SEC 映射不可用（无 `SEC_USER_AGENT` 或网络
+异常）时打印警告并优雅跳过；Alpaca 凭证不可用时仅按 SEC + 本地 `cache/` 历史映射对账。
+运行顺序建议：refresh watchlist → smallcap builder → scan。
 
 ### 13.3 `scripts/build_smallcap_universe.py` —— 构建小盘研究层
 
