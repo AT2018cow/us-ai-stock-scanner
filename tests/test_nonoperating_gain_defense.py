@@ -30,6 +30,8 @@ from ai_value_scanner.decision.quality import (
     QUALITY_V2_NONOP_MARGIN_GAP_MIN,
     QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI,
     QUALITY_V2_NONOP_NET_MARGIN_FLOOR,
+    QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR,
+    QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN,
     QUALITY_V2_NONOP_YOY_GAP_MIN,
     build_company_quality_v1,
     build_company_quality_v2,
@@ -37,11 +39,15 @@ from ai_value_scanner.decision.quality import (
 from ai_value_scanner.decision.view_model import (
     _compact_label,
     _inline_fragment,
+    build_snapshot_view_model,
     build_stock_card_view_model,
 )
+from ai_value_scanner.reporting.decision import render_action_list_v2
 from ai_value_scanner.scanner import (
+    NONOPERATING_INCOME_TAGS,
     NONRECURRING_GAIN_TAGS,
     PARSED_FUND_CACHE_VERSION,
+    extract_latest_quarterly_nonop_metrics,
 )
 
 
@@ -148,7 +154,8 @@ def _evidence_value(decision, metric: str, side: str = "positives"):
     return None
 
 
-def _ev(code, *, polarity="positive", metric="x", value=1.0, threshold="t"):
+def _ev(code, *, polarity="positive", metric="x", value=1.0, threshold="t",
+        message=None):
     return EvidenceItem(
         code=code,
         label=f"label {code}",
@@ -156,7 +163,7 @@ def _ev(code, *, polarity="positive", metric="x", value=1.0, threshold="t"):
         metric=metric,
         value=value,  # type: ignore[arg-type]
         threshold=threshold,  # type: ignore[arg-type]
-        message=f"message {code}",
+        message=message if message is not None else f"message {code}",
     )
 
 
@@ -639,14 +646,23 @@ def _frozen_decision(symbol, positives, *, risks=(), grade=QualityGrade.A):
 
 
 class TestRecomputeV2NonOpOverlay(unittest.TestCase):
-    def _recompute(self, decisions):
+    def _recompute(self, decisions, cache_dir=None):
         import sys
+        import tempfile
+        from pathlib import Path
+
         sys.path.insert(0, "scripts")
         try:
             from render_snapshot_preview import recompute_v2_decisions
         finally:
             sys.path.pop(0)
-        return recompute_v2_decisions(decisions)
+        if cache_dir is not None:
+            return recompute_v2_decisions(decisions, cache_dir=cache_dir)
+        # Isolated empty cache: never read the developer's real cache/ dir.
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "empty-cache"
+            empty.mkdir()
+            return recompute_v2_decisions(decisions, cache_dir=empty)
 
     def test_goog_style_overlay_trigger_and_idempotence(self) -> None:
         goog = _frozen_decision("GOOG", (
@@ -774,6 +790,8 @@ class TestRecomputeV2NonOpOverlay(unittest.TestCase):
                 for name in ("decisions.jsonl", "run_manifest.json")
             }
             out_dir = Path(tmp) / "out"
+            render_snapshot_preview._DEFAULT_CACHE_DIR = Path(tmp) / "no-cache"
+            render_snapshot_preview._CACHE_INDEX_BY_DIR.clear()
             argv = ["render_snapshot_preview.py",
                     "--snapshot-dir", str(snap_dir),
                     "--output-dir", str(out_dir),
@@ -799,6 +817,719 @@ class TestRecomputeV2NonOpOverlay(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("/tmp/", text)
                 self.assertNotIn("/home/", text)
+
+
+# ---------------------------------------------------------------------------
+# PR #90 follow-up: P1-1 Case C quarterly spike, P2-3 traceable operating
+# growth basis, P2-1/P2-2 preview synchronization, P1-3 audit screen.
+# ---------------------------------------------------------------------------
+
+
+def _quarter_row(start, end, value, filed, accn="acc"):
+    return {
+        "start": start,
+        "end": end,
+        "val": value,
+        "form": "10-Q",
+        "filed": filed,
+        "accn": accn,
+    }
+
+
+def _facts_payload(cik, revenue_rows, nonop_rows):
+    return {
+        "cik": cik,
+        "facts": {
+            "us-gaap": {
+                "Revenues": {"units": {"USD": revenue_rows}},
+                "NonoperatingIncomeExpense": {"units": {"USD": nonop_rows}},
+            }
+        },
+    }
+
+
+class TestNonOpQuarterlyExtraction(unittest.TestCase):
+    def test_tag_registered(self) -> None:
+        self.assertEqual(NONOPERATING_INCOME_TAGS, ["NonoperatingIncomeExpense"])
+
+    def test_matches_latest_revenue_quarter(self) -> None:
+        companyfacts = _facts_payload(
+            "0001234567",
+            [
+                _quarter_row("2026-01-01", "2026-03-31", 3.0e9, "2026-05-01"),
+                _quarter_row("2026-04-01", "2026-06-30", 3.583e9, "2026-08-05"),
+            ],
+            [
+                _quarter_row("2026-01-01", "2026-03-31", -1.016e9, "2026-05-01"),
+                _quarter_row("2026-04-01", "2026-06-30", 1.287e9, "2026-08-05"),
+            ],
+        )
+        income, revenue, ratio, end = extract_latest_quarterly_nonop_metrics(
+            companyfacts)
+        self.assertAlmostEqual(income, 1.287e9, places=2)
+        self.assertAlmostEqual(revenue, 3.583e9, places=2)
+        self.assertAlmostEqual(ratio, 1.287e9 / 3.583e9, places=9)
+        self.assertEqual(end, "2026-06-30")
+
+    def test_stale_nonop_period_silent(self) -> None:
+        companyfacts = _facts_payload(
+            "0001234567",
+            [_quarter_row("2026-04-01", "2026-06-30", 3.583e9, "2026-08-05")],
+            [_quarter_row("2022-04-01", "2022-06-30", 1.287e9, "2022-08-05")],
+        )
+        income, revenue, ratio, end = extract_latest_quarterly_nonop_metrics(
+            companyfacts)
+        self.assertIsNone(income)
+        self.assertAlmostEqual(revenue, 3.583e9, places=2)
+        self.assertIsNone(ratio)
+        self.assertEqual(end, "2026-06-30")
+
+    def test_missing_series_returns_all_none(self) -> None:
+        self.assertEqual(
+            extract_latest_quarterly_nonop_metrics({"facts": {}}),
+            (None, None, None, None),
+        )
+
+    def test_zero_revenue_quarter_silent(self) -> None:
+        companyfacts = _facts_payload(
+            "0001234567",
+            [_quarter_row("2026-04-01", "2026-06-30", 0.0, "2026-08-05")],
+            [_quarter_row("2026-04-01", "2026-06-30", 1.0e9, "2026-08-05")],
+        )
+        income, revenue, ratio, end = extract_latest_quarterly_nonop_metrics(
+            companyfacts)
+        self.assertIsNone(income)
+        self.assertEqual(revenue, 0.0)
+        self.assertIsNone(ratio)
+        self.assertEqual(end, "2026-06-30")
+
+
+class TestQualityV2CaseC(unittest.TestCase):
+    def _case_c(self, *, nonop, revenue, net_margin=0.30, ebit=290.0,
+                fcf=200.0, ocf=1.2, **extra):
+        metrics = _metrics(
+            net_margin=net_margin, ebit=ebit, free_cash_flow=fcf,
+            ocf_to_net_income=ocf, **extra)
+        metrics["latest_quarterly_nonoperating_income"] = nonop
+        metrics["latest_quarterly_revenue"] = revenue
+        return build_company_quality_v2(
+            metrics, decision_date="2026-10-15", data_asof="2026-10-01")
+
+    def test_constants(self) -> None:
+        self.assertEqual(QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN, 0.25)
+        self.assertEqual(QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR, 200_000_000.0)
+
+    def test_shop_archetype_triggers(self) -> None:
+        decision = build_company_quality_v2(
+            _metrics(
+                net_margin=0.151, ebit=145.0, adjusted_net_income_yoy=-0.154,
+                ebit_yoy=0.513,
+                latest_quarterly_nonoperating_income=1.287e9,
+                latest_quarterly_revenue=3.583e9,
+            ),
+            decision_date="2026-10-15", data_asof="2026-10-01",
+        )
+        item = next(
+            i for i in decision.risks
+            if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(item.value, 0.359196, places=6)
+        self.assertIn("quarterly revenue", item.message)
+        self.assertIn("$1.29B", item.message)
+        self.assertAlmostEqual(
+            _evidence_value(decision, "net_margin"), 0.145, places=6)
+        self.assertAlmostEqual(
+            _evidence_value(decision, "adjusted_net_income_yoy"), 0.513,
+            places=6)
+        self.assertNotIn("adjusted_net_income_yoy_weak", _codes(decision))
+        self.assertNotIn(
+            "operating_growth_basis_substituted", _codes(decision))
+
+    def test_absolute_floor(self) -> None:
+        # 150M / 375M = 40% but below the $200M floor: stays silent.
+        silent = self._case_c(nonop=150e6, revenue=375e6)
+        self.assertNotIn("nonoperating_gain_inflation", _codes(silent))
+        fired = self._case_c(nonop=250e6, revenue=375e6)
+        self.assertIn("nonoperating_gain_inflation", _codes(fired))
+        item = next(
+            i for i in fired.risks if i.code == "nonoperating_gain_inflation")
+        self.assertAlmostEqual(item.value, 0.666667, places=6)
+
+    def test_ratio_floor(self) -> None:
+        silent = self._case_c(nonop=200e6, revenue=1000e6)
+        self.assertNotIn("nonoperating_gain_inflation", _codes(silent))
+
+    def test_income_without_matching_ratio_silent(self) -> None:
+        # Period-mismatch cache: income present, no ratio -> stays silent.
+        metrics = _metrics(
+            net_margin=0.30, ebit=290.0, free_cash_flow=200.0)
+        metrics["latest_quarterly_nonoperating_income"] = 1.0e9
+        decision = build_company_quality_v2(
+            metrics, decision_date="2026-10-15", data_asof="2026-10-01")
+        self.assertNotIn("nonoperating_gain_inflation", _codes(decision))
+
+    def test_msft_bill_case_c_controls(self) -> None:
+        msft = self._case_c(
+            nonop=3.44e9, revenue=90e9, net_margin=0.35, ebit=340.0,
+            fcf=300.0, ocf=1.3506)
+        self.assertNotIn("nonoperating_gain_inflation", _codes(msft))
+        bill = self._case_c(
+            nonop=30e6, revenue=1000e6, net_margin=0.30, ebit=100.0,
+            fcf=220.0, ocf=1.80)
+        self.assertNotIn("nonoperating_gain_inflation", _codes(bill))
+
+    def test_case_c_priority_penalty(self) -> None:
+        metrics = _metrics(
+            net_margin=0.151, ebit=145.0, adjusted_net_income_yoy=-0.154,
+            ebit_yoy=0.513,
+            latest_quarterly_nonoperating_income=1.287e9,
+            latest_quarterly_revenue=3.583e9,
+        )
+        qualified = build_company_quality_v2(
+            metrics, decision_date="2026-10-15", data_asof="2026-10-01")
+        clean = build_company_quality_v2(
+            _metrics(), decision_date="2026-10-15", data_asof="2026-10-01")
+        flagged = _decision(
+            symbol="SHOP", quality_risks=qualified.risks,
+            quality_positives=qualified.positives)
+        control = _decision(
+            symbol="CTRL", quality_risks=clean.risks,
+            quality_positives=clean.positives)
+        ranked = assign_action_priorities_v2([flagged, control])
+        self.assertEqual([d.symbol for d in ranked], ["CTRL", "SHOP"])
+        self.assertEqual(H3_NONOPERATING_GAIN_PRIORITY_PENALTY, 0.06)
+
+
+class TestCaseCBadgesAndFragments(unittest.TestCase):
+    def _shop_risk(self):
+        return _ev(
+            "nonoperating_gain_inflation", polarity="negative",
+            metric="net_margin", value=0.359196,
+            message=(
+                "Single-quarter non-operating income is $1.29B "
+                "(35.9% of quarterly revenue); quarterly mark-to-market "
+                "investment gains distort GAAP earnings."),
+        )
+
+    def test_badge_quarterly_variant(self) -> None:
+        decision = _decision(quality_risks=(self._shop_risk(),))
+        card = build_stock_card_view_model(decision)
+        self.assertEqual(card.warning_badges_inline,
+                         "⚠️NonOp-Gain(Qtr +36% rev)")
+
+    def test_fragment_quarterly_variant(self) -> None:
+        self.assertEqual(
+            _inline_fragment(self._shop_risk()),
+            "⚠️ Non-Op Gain (Qtr +35.9% of rev)")
+
+    def test_pp_variant_unchanged(self) -> None:
+        risk = _ev(
+            "nonoperating_gain_inflation", polarity="negative",
+            metric="net_margin", value=0.216605)
+        decision = _decision(quality_risks=(risk,))
+        card = build_stock_card_view_model(decision)
+        self.assertEqual(card.warning_badges_inline,
+                         "⚠️NonOp-Gain(+21.7pp)")
+        self.assertEqual(_inline_fragment(risk),
+                         "⚠️ Non-Op Gain (+21.7pp vs OpMargin)")
+
+
+class TestOperatingGrowthBasisTrace(unittest.TestCase):
+    def _standalone(self, **overrides):
+        return build_company_quality_v2(
+            _metrics(
+                net_margin=0.151, ebit=145.0,
+                adjusted_net_income_yoy=-0.154, ebit_yoy=0.513,
+                **overrides,
+            ),
+            decision_date="2026-10-15", data_asof="2026-10-01",
+        )
+
+    def test_trace_item_emitted_without_nonop_risk(self) -> None:
+        decision = self._standalone()
+        codes = _codes(decision)
+        self.assertNotIn("nonoperating_gain_inflation", codes)
+        self.assertIn("operating_growth_basis_substituted", codes)
+        item = next(
+            i for i in decision.risks
+            if i.code == "operating_growth_basis_substituted")
+        self.assertAlmostEqual(item.value, 0.513, places=6)
+        self.assertAlmostEqual(
+            _evidence_value(decision, "adjusted_net_income_yoy"), 0.513,
+            places=6)
+
+    def test_trace_renders_in_watchouts_and_fragment(self) -> None:
+        quality_decision = self._standalone()
+        item = next(
+            i for i in quality_decision.risks
+            if i.code == "operating_growth_basis_substituted")
+        decision = _decision(
+            quality_risks=tuple(quality_decision.risks),
+            quality_positives=tuple(quality_decision.positives),
+        )
+        card = build_stock_card_view_model(decision)
+        self.assertIn(
+            "Growth on OpInc basis", card.fundamental_watchouts_inline)
+        self.assertEqual(
+            _inline_fragment(item),
+            "Growth on OpInc basis (+51.3% vs distorted NI YoY)")
+        self.assertEqual(_compact_label(item), "OpInc YoY Basis")
+
+    def test_trace_item_has_no_priority_penalty(self) -> None:
+        trace_decision = _decision(
+            symbol="AAA",
+            quality_risks=(_ev(
+                "operating_growth_basis_substituted", polarity="negative",
+                metric="adjusted_net_income_yoy", value=0.513),),
+        )
+        clean = _decision(symbol="BBB")
+        ranked = assign_action_priorities_v2([trace_decision, clean])
+        # Alphabetical (no penalty): a penalty would push AAA behind BBB.
+        self.assertEqual([d.symbol for d in ranked], ["AAA", "BBB"])
+
+    def test_turnaround_guard_blocks_substitution(self) -> None:
+        # Near-zero EBIT turnaround: op margin 0.03 and EBIT YoY +700% must
+        # not be promoted as clean growth.
+        decision = build_company_quality_v2(
+            _metrics(
+                net_margin=0.10, ebit=30.0,
+                adjusted_net_income_yoy=-0.20, ebit_yoy=7.00,
+            ),
+            decision_date="2026-10-15", data_asof="2026-10-01",
+        )
+        codes = _codes(decision)
+        self.assertNotIn("operating_growth_basis_substituted", codes)
+        self.assertIn("adjusted_net_income_yoy_weak", codes)
+        self.assertIsNone(
+            _evidence_value(decision, "adjusted_net_income_yoy"))
+
+    def test_low_operating_margin_floor_blocks_substitution(self) -> None:
+        # op margin 0.05 < 0.10 -> no standalone substitution even with a
+        # large YoY gap (and no Case A/B/C trigger).
+        decision = build_company_quality_v2(
+            _metrics(
+                net_margin=0.09, ebit=50.0,
+                adjusted_net_income_yoy=-0.30, ebit_yoy=0.50,
+            ),
+            decision_date="2026-10-15", data_asof="2026-10-01",
+        )
+        self.assertNotIn(
+            "operating_growth_basis_substituted", _codes(decision))
+        self.assertIn("adjusted_net_income_yoy_weak", _codes(decision))
+        item = next(
+            i for i in decision.risks if i.code == "adjusted_net_income_yoy_weak")
+        self.assertAlmostEqual(item.value, -0.30, places=6)
+
+
+class TestQualityIntegrityDeprioritizedNotes(unittest.TestCase):
+    def _flagged(self, symbol, priority, action=ActionState.PRIORITY_REVIEW):
+        return _decision(
+            symbol=symbol, priority=priority, action=action,
+            quality_risks=(_ev(
+                "nonoperating_gain_inflation", polarity="negative",
+                metric="net_margin", value=0.2),),
+        )
+
+    def test_notes_surface_off_top15_flagged_only(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        flagged_in = self._flagged("A03", 3)  # already primary -> not noted
+        off_late = self._flagged("GOOG", 21)
+        off_early = self._flagged("ZM", 19)
+        non_priority = self._flagged("HOLD", 25, action=ActionState.AVOID)
+        pool = primaries + (flagged_in, off_late, off_early, non_priority)
+        view = build_snapshot_view_model(
+            primaries, pool, title="T", cadence="daily")
+        self.assertEqual(
+            view.deprioritized_quality_integrity_notes,
+            ("ZM (#19, Q:A 0.80)", "GOOG (#21, Q:A 0.80)"),
+        )
+
+    def test_notes_absent_without_pool(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        view = build_snapshot_view_model(
+            primaries, title="T", cadence="daily")
+        self.assertEqual(view.deprioritized_quality_integrity_notes, ())
+
+    def test_action_list_renders_disclosure_line(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        pool = primaries + (self._flagged("ZM", 19),)
+        md = render_action_list_v2(
+            primaries, title="T", cadence="daily", all_decisions=pool)
+        line = next(
+            ln for ln in md.splitlines() if "Quality-Integrity" in ln)
+        self.assertIn("Off Top-15 via Non-Op Gain Guard", line)
+        self.assertIn("ZM (#19, Q:A 0.80)", line)
+
+    def test_notes_capped_at_ten(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        flagged = tuple(
+            self._flagged(f"F{i:02d}", 20 + i) for i in range(12))
+        view = build_snapshot_view_model(
+            primaries, primaries + flagged, title="T", cadence="daily")
+        self.assertEqual(
+            len(view.deprioritized_quality_integrity_notes), 10)
+
+
+class TestRecomputeV2PositivesSync(unittest.TestCase):
+    def _recompute(self, decisions, cache_dir):
+        import sys
+        sys.path.insert(0, "scripts")
+        try:
+            from render_snapshot_preview import recompute_v2_decisions
+        finally:
+            sys.path.pop(0)
+        return recompute_v2_decisions(decisions, cache_dir=cache_dir)
+
+    def _write_cache(self, base, cik, payload, facts=None):
+        import json as _json
+
+        base.mkdir(parents=True, exist_ok=True)
+        (base / f"parsed_fund_{cik}.json").write_text(
+            _json.dumps({"cik": cik, **payload}), encoding="utf-8")
+        if facts is not None:
+            (base / f"facts_{cik}.json").write_text(
+                _json.dumps(facts), encoding="utf-8")
+        return base
+
+    def test_zm_margin_and_growth_synced(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        zm = _frozen_decision("ZM", (
+            _ev("net_margin_strong", metric="net_margin", value=0.652),
+            _ev("adjusted_net_income_yoy_strong",
+                metric="adjusted_net_income_yoy", value=1.740),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_cache(Path(tmp) / "cache", "0001616707", {
+                "symbol": "ZM",
+                "revenue": 1000.0,
+                "adjusted_net_income": 652.0,
+                "adjusted_ebit": 237.0,
+                "free_cash_flow": 300.0,
+                "ocf_to_net_income": 0.614,
+                "adjusted_net_income_yoy": 1.740,
+                "ebit_yoy": 0.220,
+            })
+            (out,) = self._recompute([zm], cache)
+            codes = {i.code for i in out.quality.risks}
+            self.assertIn("nonoperating_gain_inflation", codes)
+            positives = {i.code: i.value for i in out.quality.positives}
+            self.assertAlmostEqual(
+                positives["net_margin_strong"], 0.237, places=6)
+            self.assertAlmostEqual(
+                positives["adjusted_net_income_yoy_strong"], 0.220,
+                places=6)
+            (twice,) = self._recompute([out], cache)
+            self.assertEqual(twice.quality.risks, out.quality.risks)
+            self.assertEqual(twice.quality.positives, out.quality.positives)
+
+    def test_ntnx_margin_strong_removed_below_floor(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        ntnx = _frozen_decision("NTNX", (
+            _ev("net_margin_strong", metric="net_margin", value=0.528),
+            _ev("fcf_margin_strong", metric="fcf_margin", value=0.295),
+            _ev("adjusted_net_income_yoy_strong",
+                metric="adjusted_net_income_yoy", value=7.0),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_cache(Path(tmp) / "cache", "0001373715", {
+                "symbol": "NTNX",
+                "revenue": 1000.0,
+                "adjusted_net_income": 528.0,
+                "adjusted_ebit": 96.0,
+                "free_cash_flow": 295.0,
+                "ocf_to_net_income": 0.608,
+                "adjusted_net_income_yoy": 7.0,
+                "ebit_yoy": 0.588,
+            })
+            (out,) = self._recompute([ntnx], cache)
+            positives = {i.code: i.value for i in out.quality.positives}
+            self.assertNotIn("net_margin_strong", positives)
+            self.assertAlmostEqual(
+                positives["adjusted_net_income_yoy_strong"], 0.588,
+                places=6)
+            item = next(
+                i for i in out.quality.risks
+                if i.code == "nonoperating_gain_inflation")
+            self.assertAlmostEqual(item.value, 0.432, places=6)
+
+    def test_shop_case_c_with_facts_cache(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        shop = _frozen_decision("SHOP", (
+            _ev("net_margin_strong", metric="net_margin", value=0.151),
+        ), risks=(
+            _ev("adjusted_net_income_yoy_weak",
+                polarity="negative", metric="adjusted_net_income_yoy",
+                value=-0.154),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_cache(
+                Path(tmp) / "cache", "001594805", {
+                    "symbol": "SHOP",
+                    "revenue": 3.583e9,
+                    "adjusted_net_income": 0.541e9,
+                    "adjusted_ebit": 0.519535e9,
+                    "free_cash_flow": 0.30e9,
+                    "ocf_to_net_income": 1.183,
+                    "adjusted_net_income_yoy": -0.154,
+                    "ebit_yoy": 0.513,
+                },
+                facts=_facts_payload(
+                    "001594805",
+                    [_quarter_row(
+                        "2026-04-01", "2026-06-30", 3.583e9, "2026-08-05")],
+                    [_quarter_row(
+                        "2026-04-01", "2026-06-30", 1.287e9, "2026-08-05")],
+                ),
+            )
+            (out,) = self._recompute([shop], cache)
+            codes = {i.code for i in out.quality.risks}
+            self.assertIn("nonoperating_gain_inflation", codes)
+            self.assertNotIn("adjusted_net_income_yoy_weak", codes)
+            item = next(
+                i for i in out.quality.risks
+                if i.code == "nonoperating_gain_inflation")
+            self.assertAlmostEqual(item.value, 0.359196, places=6)
+            self.assertIn("quarterly revenue", item.message)
+            positives = {i.code: i.value for i in out.quality.positives}
+            self.assertAlmostEqual(
+                positives["net_margin_strong"], 0.145, places=6)
+            self.assertAlmostEqual(
+                positives["adjusted_net_income_yoy_strong"], 0.513,
+                places=6)
+            card = build_stock_card_view_model(out)
+            self.assertIn("⚠️NonOp-Gain(Qtr +36% rev)",
+                          card.warning_badges_inline)
+            (twice,) = self._recompute([out], cache)
+            self.assertEqual(twice.quality.risks, out.quality.risks)
+            self.assertEqual(twice.quality.positives, out.quality.positives)
+
+    def test_standalone_trace_without_nonop_in_cache(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        shop = _frozen_decision("SHOP2", (
+            _ev("net_margin_strong", metric="net_margin", value=0.151),
+            _ev("operating_margin_strong", metric="operating_margin",
+                value=0.145),
+        ), risks=(
+            _ev("adjusted_net_income_yoy_weak",
+                polarity="negative", metric="adjusted_net_income_yoy",
+                value=-0.154),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = self._write_cache(Path(tmp) / "cache", "0000000001", {
+                "symbol": "SHOP2",
+                "revenue": 1000.0,
+                "adjusted_net_income": 151.0,
+                "adjusted_ebit": 145.0,
+                "adjusted_net_income_yoy": -0.154,
+                "ebit_yoy": 0.513,
+            })
+            (out,) = self._recompute([shop], cache)
+            codes = {i.code for i in out.quality.risks}
+            self.assertNotIn("nonoperating_gain_inflation", codes)
+            self.assertIn("operating_growth_basis_substituted", codes)
+            self.assertNotIn("adjusted_net_income_yoy_weak", codes)
+            positives = {i.code: i.value for i in out.quality.positives}
+            self.assertAlmostEqual(
+                positives["adjusted_net_income_yoy_strong"], 0.513,
+                places=6)
+
+
+class TestNonopGainAuditScreen(unittest.TestCase):
+    def _write_fund(self, base, cik, payload):
+        import json as _json
+
+        base.mkdir(parents=True, exist_ok=True)
+        (base / f"parsed_fund_{cik}.json").write_text(
+            _json.dumps({"cik": cik, **payload}), encoding="utf-8")
+
+    def _write_facts(self, base, cik, revenue_rows, nonop_rows):
+        import json as _json
+
+        (base / f"facts_{cik}.json").write_text(
+            _json.dumps(_facts_payload(cik, revenue_rows, nonop_rows)),
+            encoding="utf-8")
+
+    def _import_audit(self):
+        import sys
+        sys.path.insert(0, "scripts")
+        try:
+            import audit_nonop_gain_screen
+        finally:
+            sys.path.pop(0)
+        return audit_nonop_gain_screen
+
+    def test_run_nonop_gain_audit_hits_and_guards(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        audit = self._import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "cache"
+            self._write_fund(base, "0001652044", {
+                "symbol": "GOOG",
+                "revenue": 119.8e9,
+                "adjusted_net_income": 66.7e9,
+                "adjusted_ebit": 40.77e9,
+                "free_cash_flow": 14.0e9,
+                "ocf_to_net_income": 0.748,
+                "nonrecurring_gain_subtraction": 0.0,
+            })
+            self._write_facts(
+                base, "0001652044",
+                [_quarter_row(
+                    "2026-04-01", "2026-06-30", 119.8e9, "2026-07-30")],
+                [_quarter_row(
+                    "2026-04-01", "2026-06-30", 98.0e9, "2026-07-30")],
+            )
+            self._write_fund(base, "0001373715", {
+                "symbol": "NTNX",
+                "revenue": 0.6e9,
+                "adjusted_net_income": 0.317e9,
+                "adjusted_ebit": 0.058e9,
+                "free_cash_flow": 0.177e9,
+                "ocf_to_net_income": 0.608,
+                "nonrecurring_gain_subtraction": 0.43e9,
+            })
+            self._write_facts(
+                base, "0001373715",
+                [_quarter_row(
+                    "2026-04-01", "2026-06-30", 0.6e9, "2026-08-01")],
+                [_quarter_row(
+                    "2022-04-01", "2022-06-30", 1.18e9, "2022-08-01")],
+            )
+            self._write_fund(base, "0000789019", {
+                "symbol": "MSFT",
+                "revenue": 90e9,
+                "adjusted_net_income": 31.5e9,
+                "adjusted_ebit": 30.6e9,
+                "free_cash_flow": 25e9,
+                "ocf_to_net_income": 1.3506,
+                "nonrecurring_gain_subtraction": 0.0,
+            })
+            rows = {row["symbol"]: row for row in audit.run_nonop_gain_audit(base)}
+        goog = rows["GOOG"]
+        self.assertTrue(goog["ttm_margin_gap_hit"])
+        self.assertTrue(goog["quarterly_spike_hit"])
+        self.assertTrue(goog["hit"])
+        self.assertAlmostEqual(
+            goog["quarterly_nonop_ratio"], 98.0 / 119.8, places=9)
+        self.assertEqual(goog["quarterly_period_end"], "2026-06-30")
+        ntnx = rows["NTNX"]
+        self.assertTrue(ntnx["ttm_margin_gap_hit"])
+        self.assertFalse(ntnx["quarterly_spike_hit"])  # stale 2022 period
+        self.assertTrue(ntnx["disposal_gain_stripped"])
+        self.assertTrue(ntnx["hit"])
+        msft = rows["MSFT"]
+        self.assertFalse(msft["hit"])
+        self.assertFalse(msft["ttm_margin_gap_hit"])
+        self.assertFalse(msft["quarterly_spike_hit"])
+
+    def test_threshold_parameters(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        audit = self._import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "cache"
+            self._write_fund(base, "0001018724", {
+                "symbol": "AMZN",
+                "revenue": 1000.0,
+                "adjusted_net_income": 176.0,
+                "adjusted_ebit": 122.0,
+                "free_cash_flow": 200.0,
+                "ocf_to_net_income": 1.182,
+                "nonrecurring_gain_subtraction": 0.0,
+            })
+            default_rows = {
+                row["symbol"]: row
+                for row in audit.run_nonop_gain_audit(base)
+            }
+            self.assertTrue(default_rows["AMZN"]["ttm_margin_gap_hit"])
+            strict_rows = {
+                row["symbol"]: row
+                for row in audit.run_nonop_gain_audit(base, min_ttm_gap=0.10)
+            }
+            self.assertFalse(strict_rows["AMZN"]["ttm_margin_gap_hit"])
+            # Quarterly sub-floor guard: 150M at 40% stays silent.
+            self._write_fund(base, "0000000002", {
+                "symbol": "SUBF",
+                "revenue": 375.0,
+                "adjusted_net_income": 112.5,
+                "adjusted_ebit": 108.75,
+                "free_cash_flow": 75.0,
+                "ocf_to_net_income": 1.2,
+                "nonrecurring_gain_subtraction": 0.0,
+            })
+            self._write_facts(
+                base, "0000000002",
+                [_quarter_row("2026-04-01", "2026-06-30", 375e6, "2026-08-01")],
+                [_quarter_row("2026-04-01", "2026-06-30", 150e6, "2026-08-01")],
+            )
+            sub_rows = {
+                row["symbol"]: row
+                for row in audit.run_nonop_gain_audit(base)
+            }
+            self.assertFalse(sub_rows["SUBF"]["quarterly_spike_hit"])
+
+    def test_cli_writes_markdown_and_json(self) -> None:
+        import json as _json
+        import sys
+        import tempfile
+        import unittest.mock as mock
+        from pathlib import Path
+
+        audit = self._import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "cache"
+            self._write_fund(base, "0001652044", {
+                "symbol": "GOOG",
+                "revenue": 119.8e9,
+                "adjusted_net_income": 66.7e9,
+                "adjusted_ebit": 40.77e9,
+                "free_cash_flow": 14.0e9,
+                "ocf_to_net_income": 0.748,
+                "nonrecurring_gain_subtraction": 0.0,
+            })
+            self._write_facts(
+                base, "0001652044",
+                [_quarter_row(
+                    "2026-04-01", "2026-06-30", 119.8e9, "2026-07-30")],
+                [_quarter_row(
+                    "2026-04-01", "2026-06-30", 98.0e9, "2026-07-30")],
+            )
+            out_json = Path(tmp) / "report.json"
+            argv = [
+                "audit_nonop_gain_screen.py",
+                "--cache-dir", str(base),
+                "--output-json", str(out_json),
+            ]
+            import contextlib
+            import io
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                with mock.patch.object(sys, "argv", argv):
+                    audit.main()
+            stdout = buffer.getvalue()
+            self.assertIn("| GOOG |", stdout)
+            self.assertIn("1 non-op hit(s)", stdout)
+            self.assertTrue(out_json.exists())
+            payload = _json.loads(out_json.read_text(encoding="utf-8"))
+            self.assertEqual([row["symbol"] for row in payload], ["GOOG"])
+            text = out_json.read_text(encoding="utf-8")
+            self.assertNotIn("/tmp/", text)
+            self.assertNotIn("/home/", text)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ import json
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from ai_value_scanner.decision.action import (
     assign_action_priorities_v2,
@@ -46,6 +47,9 @@ from ai_value_scanner.decision.quality import (
     QUALITY_V2_NONOP_MARGIN_GAP_MIN,
     QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI,
     QUALITY_V2_NONOP_NET_MARGIN_FLOOR,
+    QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR,
+    QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN,
+    QUALITY_V2_NONOP_YOY_GAP_MIN,
     QUALITY_V2_ORGANIC_SHARES_YOY_MAX,
     QUALITY_V2_ORGANIC_SHARES_YOY_MIN,
     QUALITY_V2_PRE_EARNINGS_WARN_DAYS,
@@ -56,6 +60,7 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
+from ai_value_scanner.scanner import extract_latest_quarterly_nonop_metrics
 
 
 def _parse_args() -> argparse.Namespace:
@@ -118,8 +123,121 @@ def _filing_age_days(decision: StockDecision) -> int | None:
         return None
 
 
-def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
-    """Overlay v2 quality guards (split/basis, pre-earnings, non-op gain) idempotently."""
+def _as_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or abs(number) == float("inf"):
+        return None
+    return number
+
+
+_CACHE_INDEX_BY_DIR: dict[str, dict[str, dict[str, Any]]] = {}
+_DEFAULT_CACHE_DIR = Path("cache")
+
+
+def _build_cache_index(cache_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read-only symbol -> parsed-fund payload index (one pass per cache dir)."""
+    index: dict[str, dict[str, Any]] = {}
+    try:
+        paths = sorted(cache_dir.glob("parsed_fund_*.json"))
+    except OSError:
+        return index
+    for path in paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        symbol = str(payload.get("symbol") or "").strip().upper()
+        if symbol:
+            index[symbol] = payload
+    return index
+
+
+def _load_local_cache_enrichment(
+    symbol: str, cache_dir: Path | None = None
+) -> dict[str, Any]:
+    """Read-only local `cache/` enrichment for --recompute-v2 (no network).
+
+    Supplies the clean operating-basis fields the frozen decisions.jsonl
+    evidence cannot expose (neutral scoring bands) and, when
+    ``facts_{cik}.json`` is present, the Layer-1 Case C quarterly spike
+    inputs via ``extract_latest_quarterly_nonop_metrics``.
+    """
+    base = Path(cache_dir) if cache_dir is not None else _DEFAULT_CACHE_DIR
+    key = str(base)
+    index = _CACHE_INDEX_BY_DIR.get(key)
+    if index is None:
+        index = _build_cache_index(base)
+        _CACHE_INDEX_BY_DIR[key] = index
+    payload = index.get(str(symbol or "").strip().upper())
+    if payload is None:
+        return {}
+    revenue = _as_number(payload.get("revenue"))
+    earnings = _as_number(payload.get("adjusted_net_income"))
+    if earnings is None:
+        earnings = _as_number(payload.get("net_income"))
+    ebit = _as_number(payload.get("adjusted_ebit"))
+    if ebit is None:
+        ebit = _as_number(payload.get("ebit"))
+    fcf = _as_number(payload.get("free_cash_flow"))
+    enrichment: dict[str, Any] = {
+        "net_margin": None,
+        "operating_margin": None,
+        "fcf_margin": None,
+        "ocf_to_net_income": _as_number(payload.get("ocf_to_net_income")),
+        "adjusted_net_income_yoy": _as_number(
+            payload.get("adjusted_net_income_yoy")
+        ),
+        "net_income_yoy": _as_number(payload.get("net_income_yoy")),
+        "adjusted_ebit_yoy": _as_number(payload.get("adjusted_ebit_yoy")),
+        "ebit_yoy": _as_number(payload.get("ebit_yoy")),
+    }
+    if revenue is not None and revenue > 0.0:
+        if earnings is not None:
+            enrichment["net_margin"] = earnings / revenue
+        if ebit is not None:
+            enrichment["operating_margin"] = ebit / revenue
+        if fcf is not None:
+            enrichment["fcf_margin"] = fcf / revenue
+    cik = str(payload.get("cik") or "").strip()
+    facts_path = base / f"facts_{cik}.json"
+    if cik and facts_path.exists():
+        try:
+            companyfacts = json.loads(facts_path.read_text(encoding="utf-8"))
+            (
+                q_nonop_income,
+                q_revenue,
+                q_ratio,
+                q_end,
+            ) = extract_latest_quarterly_nonop_metrics(companyfacts)
+            enrichment.update(
+                {
+                    "latest_quarterly_nonoperating_income": q_nonop_income,
+                    "latest_quarterly_revenue": q_revenue,
+                    "latest_quarterly_nonop_to_revenue": q_ratio,
+                    "latest_quarterly_period_end": q_end,
+                }
+            )
+        except (OSError, ValueError, TypeError):
+            pass
+    return enrichment
+
+
+def _with_quality_v2_adjustments(
+    decision: StockDecision, cache_dir: Path | None = None
+) -> StockDecision:
+    """Overlay v2 quality guards idempotently.
+
+    Covers split/basis, pre-earnings, non-operating gain margin gap, Case C
+    quarterly spike (with read-only local cache enrichment), and traceable
+    operating-basis growth substitution.
+    """
     quality = decision.quality
     codes = {item.code for item in quality.risks}
     positives = list(quality.positives)
@@ -127,6 +245,7 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
     components = dict(quality.component_scores or {})
     new_score = quality.score
     changed = False
+    enrichment = _load_local_cache_enrichment(decision.symbol, cache_dir)
     shares_yoy = _evidence_number(decision, "shares_yoy")
     if (
         shares_yoy is not None
@@ -183,17 +302,41 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
             )
         )
         changed = True
-    # Non-operating investment gain / tax distortion overlay. Frozen JSONL
-    # evidence only exposes values outside neutral scoring bands, so the
-    # fallback path below intentionally requires net_margin >= 0.40 when
-    # operating_margin is absent (NTNX-style silent bands).
+    # Non-operating investment gain / tax distortion overlay. Pulls clean
+    # operating-basis fields from evidence first, then from the read-only
+    # local `cache/` enrichment when the frozen JSONL bands were silent.
     positive_codes = {item.code for item in positives}
-    net_margin = _evidence_number(decision, "net_margin")
-    op_margin = _evidence_number(decision, "operating_margin")
-    fcf_margin = _evidence_number(decision, "fcf_margin")
-    ocf_ni = _evidence_number(decision, "ocf_to_net_income")
-    nonop_gap: float | None = None
+
+    def _evidence_or_enrichment(metric: str) -> float | None:
+        value = _evidence_number(decision, metric)
+        if value is None:
+            value = _as_number(enrichment.get(metric))
+        return value
+
+    net_margin = _evidence_or_enrichment("net_margin")
+    op_margin = _evidence_or_enrichment("operating_margin")
+    fcf_margin = _evidence_or_enrichment("fcf_margin")
+    ocf_ni = _evidence_or_enrichment("ocf_to_net_income")
+    ani_yoy = _evidence_or_enrichment("adjusted_net_income_yoy")
+    if ani_yoy is None:
+        ani_yoy = _evidence_or_enrichment("net_income_yoy")
+    ebit_yoy = _evidence_or_enrichment("adjusted_ebit_yoy")
+    if ebit_yoy is None:
+        ebit_yoy = _evidence_or_enrichment("ebit_yoy")
+    q_nonop_income = _evidence_or_enrichment(
+        "latest_quarterly_nonoperating_income"
+    )
+    q_nonop_ratio = _evidence_or_enrichment("latest_quarterly_nonop_to_revenue")
+    if q_nonop_ratio is None:
+        q_revenue = _evidence_or_enrichment("latest_quarterly_revenue")
+        if q_nonop_income is not None and q_revenue is not None and q_revenue > 0.0:
+            q_nonop_ratio = q_nonop_income / q_revenue
     if "nonoperating_gain_inflation" not in {item.code for item in risks}:
+        nonop_case: str | None = None
+        capped_margin: float | None = None
+        item_value: float | None = None
+        basis_text = ""
+        threshold_text = ""
         if (
             net_margin is not None
             and op_margin is not None
@@ -201,8 +344,14 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
             and (net_margin - op_margin) >= QUALITY_V2_NONOP_MARGIN_GAP_MIN
             and (ocf_ni is None or ocf_ni < QUALITY_V2_NONOP_MAX_CASH_BACKED_OCF_NI)
         ):
-            nonop_gap = round(net_margin - op_margin, 6)
+            nonop_case = "margin_gap"
+            capped_margin = op_margin
             basis_text = f"operating margin ({op_margin * 100:.1f}%)"
+            threshold_text = (
+                "net_margin - operating_margin "
+                f"< +{QUALITY_V2_NONOP_MARGIN_GAP_MIN * 100:.0f}pp"
+            )
+            item_value = round(net_margin - op_margin, 6)
         elif (
             net_margin is not None
             and op_margin is None
@@ -211,30 +360,78 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
             and fcf_margin is not None
             and (net_margin - fcf_margin) >= 0.15
         ):
-            nonop_gap = round(net_margin - fcf_margin, 6)
+            nonop_case = "fcf_gap"
+            capped_margin = max(0.0, fcf_margin)
             basis_text = f"FCF margin ({fcf_margin * 100:.1f}%)"
-        if nonop_gap is not None:
+            threshold_text = (
+                "net_margin - fcf_margin < +15pp (operating margin unavailable)"
+            )
+            item_value = round(net_margin - fcf_margin, 6)
+        elif (
+            q_nonop_income is not None
+            and q_nonop_income >= QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR
+            and q_nonop_ratio is not None
+            and q_nonop_ratio >= QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN
+        ):
+            nonop_case = "quarterly"
+            if (
+                net_margin is not None
+                and op_margin is not None
+                and net_margin > op_margin
+            ):
+                capped_margin = op_margin
+            threshold_text = (
+                "quarterly nonop / revenue "
+                f"< +{QUALITY_V2_NONOP_QUARTERLY_RATIO_MIN * 100:.0f}% "
+                f"(>=${QUALITY_V2_NONOP_QUARTERLY_ABS_FLOOR / 1e6:.0f}M)"
+            )
+            item_value = round(q_nonop_ratio, 6)
+        if nonop_case is not None:
+            if nonop_case == "quarterly":
+                message = (
+                    f"Single-quarter non-operating income is "
+                    f"${q_nonop_income / 1e9:.2f}B "
+                    f"({q_nonop_ratio * 100:.1f}% of quarterly revenue); "
+                    "quarterly mark-to-market investment gains distort GAAP "
+                    "earnings (recompute overlay)."
+                )
+            else:
+                message = (
+                    f"Reported net margin ({net_margin * 100:.1f}%) exceeds "
+                    f"{basis_text} by +{item_value * 100:.1f}pp; non-operating "
+                    "gains or tax items inflated GAAP earnings (recompute "
+                    "overlay); verify the adjusted basis manually."
+                )
             risks.append(
                 EvidenceItem(
                     code="nonoperating_gain_inflation",
                     label="Non-operating gain / tax distortion",
                     polarity="negative",  # type: ignore[arg-type]
                     metric="net_margin",
-                    value=nonop_gap,
-                    threshold=(
-                        "net_margin - operating_margin "
-                        f"< +{QUALITY_V2_NONOP_MARGIN_GAP_MIN * 100:.0f}pp"
-                    ),
-                    message=(
-                        f"Reported net margin ({net_margin * 100:.1f}%) exceeds "
-                        f"{basis_text} by +{nonop_gap * 100:.1f}pp; non-operating gains "
-                        "or tax items inflated GAAP earnings (recompute overlay); "
-                        "verify the adjusted basis manually."
-                    ),
+                    value=item_value,
+                    threshold=threshold_text,
+                    message=message,
                 )
             )
+            # Keep the preview Highlights consistent with the live clean
+            # operating basis (P2-2): update or drop net_margin_strong.
+            if capped_margin is not None:
+                if capped_margin >= QUALITY_V2_NONOP_NET_MARGIN_FLOOR:
+                    new_margin = round(capped_margin, 6)
+                    updated_positives = []
+                    for item in positives:
+                        if item.code == "net_margin_strong" and item.value != new_margin:
+                            item = replace(item, value=new_margin)
+                        updated_positives.append(item)
+                    positives = updated_positives
+                else:
+                    positives = [
+                        item for item in positives
+                        if item.code != "net_margin_strong"
+                    ]
             if (ocf_ni is not None and ocf_ni < QUALITY_V2_HEALTHY_OCF_MIN) or (
-                net_margin >= 0.20
+                net_margin is not None
+                and net_margin >= 0.20
                 and ocf_ni is not None
                 and "ocf_to_net_income_strong" not in positive_codes
             ):
@@ -258,6 +455,91 @@ def _with_quality_v2_adjustments(decision: StockDecision) -> StockDecision:
                         )
                     )
             changed = True
+
+        # Traceable operating-basis growth substitution (P2-3): covers both
+        # non-op-inflated cases and the standalone YoY divergence (SHOP).
+        nonop_inflated = nonop_case is not None
+        yoy_gap_triggered = (
+            not nonop_inflated
+            and op_margin is not None
+            and op_margin >= 0.10
+            and ebit_yoy is not None
+            and abs(ebit_yoy) <= 2.00
+            and ani_yoy is not None
+            and abs(ani_yoy - ebit_yoy) >= QUALITY_V2_NONOP_YOY_GAP_MIN
+        )
+        if (
+            ebit_yoy is not None
+            and ani_yoy is not None
+            and (nonop_inflated or yoy_gap_triggered)
+        ):
+            growth_key = (
+                "adjusted_net_income_yoy"
+                if _evidence_or_enrichment("adjusted_net_income_yoy") is not None
+                else "net_income_yoy"
+            )
+            weak_code = f"{growth_key}_weak"
+            filtered = [item for item in risks if item.code != weak_code]
+            if len(filtered) != len(risks):
+                risks = filtered
+                changed = True
+            if ebit_yoy >= 0.15:
+                strong_code = f"{growth_key}_strong"
+                new_value = round(ebit_yoy, 6)
+                updated_positives = []
+                found = False
+                touched = False
+                for item in positives:
+                    if item.code == strong_code:
+                        found = True
+                        if item.value != new_value:
+                            item = replace(item, value=new_value)
+                            touched = True
+                    updated_positives.append(item)
+                if not found:
+                    updated_positives.append(
+                        EvidenceItem(
+                            code=strong_code,
+                            label="Earnings growth supportive",
+                            polarity="positive",  # type: ignore[arg-type]
+                            metric=growth_key,
+                            value=new_value,
+                            threshold=">=15% strong; <-10% weak",
+                            message=(
+                                "Earnings growth supports the quality "
+                                "assessment (operating-income basis)."
+                            ),
+                        )
+                    )
+                    touched = True
+                if touched:
+                    positives = updated_positives
+                    changed = True
+            if yoy_gap_triggered and "operating_growth_basis_substituted" not in {
+                item.code for item in risks
+            }:
+                risks.append(
+                    EvidenceItem(
+                        code="operating_growth_basis_substituted",
+                        label="Growth scored on operating-income basis",
+                        polarity="negative",  # type: ignore[arg-type]
+                        metric=growth_key,
+                        value=round(ebit_yoy, 6),
+                        threshold=(
+                            "|NI YoY - EBIT YoY| < "
+                            f"{QUALITY_V2_NONOP_YOY_GAP_MIN * 100:.0f}pp"
+                        ),
+                        message=(
+                            f"Growth scored on operating-income basis "
+                            f"({ebit_yoy * 100:+.1f}%) because GAAP net-income "
+                            f"YoY ({ani_yoy * 100:+.1f}%) diverged by "
+                            f"{abs(ani_yoy - ebit_yoy) * 100:.1f}pp due to "
+                            "prior-period non-operating or tax base effects "
+                            "(recompute overlay)."
+                        ),
+                    )
+                )
+                changed = True
     if not changed:
         return decision
     return replace(
@@ -339,16 +621,20 @@ def _with_entry_v2_adjustments(decision: StockDecision) -> StockDecision:
 
 def recompute_v2_decisions(
     decisions: list[StockDecision],
+    cache_dir: Path | None = None,
 ) -> list[StockDecision]:
     """Apply v2 adjustments + mapping + ranking to loaded decisions.
 
     Pure and idempotent: re-running on its own output changes nothing.
-    Entry/quality states and grades are preserved; only v2 evidence items,
-    extension score deductions, action mapping, and priorities change.
+    Entry/quality states and grades are preserved; quality positives/risks
+    (clean operating margin and growth basis), v2 evidence items, extension
+    score deductions, action mapping, and priorities change.
     """
     remapped: list[StockDecision] = []
     for decision in decisions:
-        adjusted = _with_entry_v2_adjustments(_with_quality_v2_adjustments(decision))
+        adjusted = _with_entry_v2_adjustments(
+            _with_quality_v2_adjustments(decision, cache_dir=cache_dir)
+        )
         action, notes = map_action_state_v2(adjusted.quality, adjusted.entry)
         rationale = adjusted.rationale
         if notes and not any(item.code == "h3_b_ready_promotion" for item in rationale):

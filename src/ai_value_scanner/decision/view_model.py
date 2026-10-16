@@ -301,6 +301,7 @@ class SnapshotViewModel:
     cap_omitted_priority_cards: tuple[StockCardViewModel, ...]
     secondary_b_ready_cards: tuple[StockCardViewModel, ...]
     concentration_summary_line: str = ""
+    deprioritized_quality_integrity_notes: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +382,8 @@ def _compact_label(item: EvidenceItem) -> str:
         return "Non-Op Gain Margin Gap"
     if item.code == "ocf_conversion_lagging_high_margin":
         return "OCF/NI (Low vs Margin)"
+    if item.code == "operating_growth_basis_substituted":
+        return "OpInc YoY Basis"
     if item.metric and item.metric in _COMPACT_METRIC_LABELS:
         return _COMPACT_METRIC_LABELS[item.metric]
     return _short_label(item.label)
@@ -711,10 +714,17 @@ def _inline_fragment(item: EvidenceItem) -> str:
     if item.code == "nonoperating_gain_inflation":
         val_num = _as_float(item.value)
         if val_num is not None:
+            if "quarterly revenue" in (item.message or ""):
+                return f"⚠️ Non-Op Gain (Qtr +{val_num * 100:.1f}% of rev)"
             return f"⚠️ Non-Op Gain (+{val_num * 100:.1f}pp vs OpMargin)"
         return "⚠️ Non-Op Gain"
     if item.code == "ocf_conversion_lagging_high_margin":
         return f"OCF/NI {format_metric_value(item.metric, item.value)} (lagging margin)"
+    if item.code == "operating_growth_basis_substituted":
+        return (
+            "Growth on OpInc basis "
+            f"({format_metric_value(item.metric, item.value)} vs distorted NI YoY)"
+        )
     formatted = format_metric_value(item.metric, item.value)
     short = _compact_label(item)
     if formatted == "n/a":
@@ -1017,7 +1027,10 @@ def _build_warning_badges_inline(
         if item.code == "nonoperating_gain_inflation":
             val_num = _as_float(item.value)
             if val_num is not None:
-                badges.append(f"⚠️NonOp-Gain(+{val_num * 100:.1f}pp)")
+                if "quarterly revenue" in (item.message or ""):
+                    badges.append(f"⚠️NonOp-Gain(Qtr +{val_num * 100:.0f}% rev)")
+                else:
+                    badges.append(f"⚠️NonOp-Gain(+{val_num * 100:.1f}pp)")
             else:
                 badges.append("⚠️NonOp-Gain")
             break
@@ -1198,6 +1211,16 @@ def _build_concentration_summary_line(
     return " · ".join(parts) + " — diversify across sectors manually"
 
 
+def _deprioritized_quality_note(decision: StockDecision) -> str:
+    """One compact `SYMBOL (#rank, Q:grade score)` disclosure fragment."""
+    score = decision.quality.score
+    score_text = "n/a" if score is None else f"{float(score):.2f}"
+    return (
+        f"{decision.symbol} (#{decision.priority}, "
+        f"Q:{decision.quality.grade.value} {score_text})"
+    )
+
+
 def build_snapshot_view_model(
     primary_decisions: Iterable[StockDecision],
     all_decisions: Iterable[StockDecision] | None = None,
@@ -1223,6 +1246,7 @@ def build_snapshot_view_model(
     cap_omitted: tuple[StockCardViewModel, ...] = ()
     secondary_b: tuple[StockCardViewModel, ...] = ()
     pool_size: int | None = None
+    deprioritized_notes: tuple[str, ...] = ()
     if all_decisions is not None:
         ordered = sorted(tuple(all_decisions), key=_priority_order_key)
         pool_size = len(ordered)
@@ -1241,6 +1265,16 @@ def build_snapshot_view_model(
             and decision.symbol not in primary_symbols
             and decision.symbol not in cap_omitted_symbols
         )[:5]
+        deprioritized_notes = tuple(
+            _deprioritized_quality_note(decision)
+            for decision in ordered
+            if decision.action_state is ActionState.PRIORITY_REVIEW
+            and decision.symbol not in primary_symbols
+            and any(
+                item.code == "nonoperating_gain_inflation"
+                for item in decision.quality.risks
+            )
+        )[:10]
     return SnapshotViewModel(
         title=title,
         cadence=cadence,
@@ -1251,4 +1285,5 @@ def build_snapshot_view_model(
         concentration_summary_line=_build_concentration_summary_line(
             primary_cards, pool_size
         ),
+        deprioritized_quality_integrity_notes=deprioritized_notes,
     )

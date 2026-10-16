@@ -588,6 +588,13 @@ def render_action_list_v2(
         lines.insert(
             4, f"- **Pool & Concentration**: {snapshot.concentration_summary_line}"
         )
+    if snapshot.deprioritized_quality_integrity_notes:
+        insert_at = 5 if snapshot.concentration_summary_line else 4
+        lines.insert(
+            insert_at,
+            "- **Quality-Integrity Deprioritized (Off Top-15 via Non-Op Gain "
+            "Guard)**: " + ", ".join(snapshot.deprioritized_quality_integrity_notes),
+        )
     if stock_jump_links:
         lines.append(f"- **Quick Jump**: {stock_jump_links}")
     lines.extend(
