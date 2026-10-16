@@ -165,7 +165,12 @@ Package code lives under `src/ai_value_scanner/`. Root `run_scan.py` and
 Common commands:
 
 - Install: `.venv/bin/pip install -e .`
-- Scan: `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]`
+- Scan (production configs default to MVP v2 policy & Report Layout v2):
+  `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]`
+- Daily cron pipeline (Stage 1 SEC prewarm + Stage 2 MVP v2 scan):
+  `python scripts/run_daily_cron.py --config configs/config.risk_off.json`
+- Pure SEC parsed-cache prewarm (no scan / no report side effects):
+  `python scripts/refresh_sec_cache.py --config configs/config.risk_off.json`
 - Refresh ETF-derived watchlist:
   `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
 - Historical replay:
