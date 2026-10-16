@@ -2,9 +2,10 @@
 
 Covers ``merge_refreshed_watchlist`` (SRC:MANUAL / ai_smallcap / enabled=0
 preservation, overlap merge, additive vs prune), the refresh CLI
-network-failure guard and ``--dry-run``, LF-only CSV output, and
-``build_smallcap_universe.py`` SRC:MANUAL preservation. Pure offline mocks;
-no network calls.
+network-failure guard and ``--dry-run``, LF-only CSV output,
+``build_smallcap_universe.py`` SRC:MANUAL preservation, and CIK-based
+corporate-action reconciliation (rename migration + delisting hygiene).
+Pure offline mocks; no network calls.
 """
 
 from __future__ import annotations
@@ -17,8 +18,12 @@ import pandas as pd
 
 from ai_value_scanner.scanner import (
     WATCHLIST_CSV_COLUMNS,
+    build_sec_ticker_cik_maps,
     fetch_stockanalysis_etf_symbols,
+    load_cached_symbol_to_cik,
     merge_refreshed_watchlist,
+    reconcile_manual_seed_csv,
+    reconcile_watchlist_corporate_actions,
     write_csv_atomic,
 )
 
@@ -303,6 +308,9 @@ class TestRefreshCliSafety(unittest.TestCase):
             buffer = io.StringIO()
             with mock.patch.object(
                 cli, "refresh_watchlist_from_etfs", return_value=refreshed,
+            ), mock.patch.object(
+                cli, "_load_corporate_action_references",
+                return_value=({}, {}, None),
             ):
                 with contextlib.redirect_stdout(buffer):
                     self._run_cli(cli, argv)
@@ -330,6 +338,9 @@ class TestRefreshCliSafety(unittest.TestCase):
             argv = ["refresh_ai_watchlist.py", "--output", str(out)]
             with mock.patch.object(
                 cli, "refresh_watchlist_from_etfs", return_value=refreshed,
+            ), mock.patch.object(
+                cli, "_load_corporate_action_references",
+                return_value=({}, {}, None),
             ):
                 with mock.patch.object(
                     cli, "archive_watchlist_snapshot",
@@ -357,6 +368,9 @@ class TestRefreshCliSafety(unittest.TestCase):
             with mock.patch.object(cli, "load_config", return_value=fake_cfg):
                 with mock.patch.object(
                     cli, "refresh_watchlist_from_etfs", return_value=refreshed,
+                ), mock.patch.object(
+                    cli, "_load_corporate_action_references",
+                    return_value=({}, {}, None),
                 ):
                     with mock.patch.object(
                         cli, "archive_watchlist_snapshot",
@@ -438,6 +452,348 @@ class TestSmallcapManualPreservation(unittest.TestCase):
             self.assertEqual(len(smallcap), 1)
             self.assertEqual(smallcap.iloc[0]["symbol"], "MANC")
             self.assertIn("SRC:MANUAL", smallcap.iloc[0]["etfs"])
+
+
+class TestCorporateActionReconciliation(unittest.TestCase):
+    """CIK-based ticker rename migration and delisting hygiene (offline)."""
+
+    def test_build_sec_ticker_cik_maps_order_and_zfill(self) -> None:
+        ticker_to_cik, cik_to_tickers = build_sec_ticker_cik_maps([
+            {"symbol": "VIP", "cik_str": 1652044},
+            {"ticker": "GREEL", "cik_str": 1652044},
+            {"symbol": "vmrk", "cik": "906831"},
+            {"symbol": "", "cik": "1"},
+        ])
+        self.assertEqual(ticker_to_cik["VIP"], "0001652044")
+        self.assertEqual(ticker_to_cik["GREEL"], "0001652044")
+        self.assertEqual(ticker_to_cik["VMRK"], "0000906831")
+        self.assertEqual(cik_to_tickers["0001652044"], ["VIP", "GREEL"])
+        self.assertEqual(cik_to_tickers["0000906831"], ["VMRK"])
+
+    def test_load_cached_symbol_to_cik_reads_cache_fixtures(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "parsed_fund_0001812477.json").write_text(
+                json.dumps({"symbol": "bitf", "cik": "0001812477"}),
+                encoding="utf-8",
+            )
+            (base / "submissions_0001812477.json").write_text(
+                json.dumps({"tickers": ["KEEL"]}), encoding="utf-8")
+            (base / "parsed_fund_0000000002.json").write_text(
+                json.dumps({"symbol": "ZZZ"}), encoding="utf-8")
+            (base / "parsed_fund_broken.json").write_text(
+                "{not json", encoding="utf-8")
+            mapping = load_cached_symbol_to_cik(base)
+        self.assertEqual(mapping["BITF"], "0001812477")
+        self.assertEqual(mapping["KEEL"], "0001812477")
+        self.assertEqual(mapping["ZZZ"], "0000000002")
+
+    def test_bitf_renames_to_keel_via_cik(self) -> None:
+        watchlist = _frame([_wl("BITF", "ai_smallcap", "SRC:MANUAL")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"KEEP": "0000000001"},
+            sec_cik_to_tickers={
+                "0001812477": ["KEEL"],
+                "0000000001": ["KEEP"],
+            },
+            historical_symbol_to_cik={"BITF": "0001812477"},
+        )
+        row = reconciled.iloc[0]
+        self.assertEqual(row["symbol"], "KEEL")
+        self.assertEqual(row["bucket"], "ai_smallcap")
+        self.assertEqual(row["etfs"], "SRC:MANUAL")
+        self.assertEqual(int(row["etf_count"]), 0)
+        self.assertEqual(int(row["enabled"]), 1)
+        self.assertEqual(report["renamed_count"], 1)
+        self.assertEqual(report["removed_count"], 0)
+        self.assertEqual(
+            report["renamed"][0],
+            {
+                "old_symbol": "BITF",
+                "new_symbol": "KEEL",
+                "cik": "0001812477",
+                "bucket": "ai_smallcap",
+            },
+        )
+
+    def test_sats_renames_to_echo(self) -> None:
+        watchlist = _frame([_wl("SATS", "ai_enabler", "SRC:MANUAL")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"ECHO": "0001493594"},
+            sec_cik_to_tickers={"0001493594": ["ECHO"]},
+            historical_symbol_to_cik={"SATS": "0001493594"},
+        )
+        self.assertEqual(reconciled.iloc[0]["symbol"], "ECHO")
+        self.assertEqual(report["renamed_count"], 1)
+
+    def test_eqr_rename_folds_into_existing_vmrk_row(self) -> None:
+        watchlist = _frame([
+            _wl("EQR", "ai_peripheral", "VNQ,SRC:MANUAL"),
+            _wl("VMRK", "ai_peripheral", "VNQ,XLRE"),
+        ])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"VMRK": "0000906831"},
+            sec_cik_to_tickers={"0000906831": ["VMRK"]},
+            historical_symbol_to_cik={"EQR": "0000906831"},
+        )
+        self.assertEqual(len(reconciled), 1)
+        row = reconciled.iloc[0]
+        self.assertEqual((row["symbol"], row["bucket"]),
+                         ("VMRK", "ai_peripheral"))
+        self.assertEqual(row["etfs"], "VNQ,XLRE,SRC:MANUAL")
+        self.assertEqual(int(row["etf_count"]), 2)
+        self.assertEqual(report["renamed_count"], 1)
+
+    def test_cybr_missing_in_sec_removed(self) -> None:
+        watchlist = _frame([_wl("CYBR", "core_ai", "IGV")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"OTHER": "0000000002"},
+            sec_cik_to_tickers={"0001598110": []},
+            historical_symbol_to_cik={"CYBR": "0001598110"},
+        )
+        self.assertTrue(reconciled.empty)
+        self.assertEqual(report["removed_count"], 1)
+        self.assertEqual(
+            report["removed_delisted"][0],
+            {
+                "symbol": "CYBR",
+                "cik": "0001598110",
+                "bucket": "core_ai",
+                "reason": "missing_in_sec",
+            },
+        )
+
+    def test_wbd_inactive_in_alpaca_removed(self) -> None:
+        watchlist = _frame([_wl("WBD", "ai_peripheral", "XLC")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"WBD": "0001437107"},
+            sec_cik_to_tickers={"0001437107": ["WBD"]},
+            historical_symbol_to_cik={"WBD": "0001437107"},
+            active_alpaca_symbols={"AAPL", "MSFT"},
+        )
+        self.assertTrue(reconciled.empty)
+        self.assertEqual(report["removed_count"], 1)
+        self.assertEqual(
+            report["removed_delisted"][0]["reason"], "inactive_in_alpaca")
+
+    def test_dbrg_preferred_only_tickers_not_migrated(self) -> None:
+        watchlist = _frame([_wl("DBRG", "ai_peripheral", "VNQ")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"DBRG": "0001679688"},
+            sec_cik_to_tickers={"0001679688": ["DBRG-PH", "DBRHP"]},
+            historical_symbol_to_cik={"DBRG": "0001679688"},
+            active_alpaca_symbols={"DBRG-PH", "DBRHP"},
+        )
+        self.assertTrue(reconciled.empty)
+        self.assertEqual(report["renamed_count"], 0)
+        self.assertEqual(report["removed_count"], 1)
+        self.assertEqual(report["removed_delisted"][0]["symbol"], "DBRG")
+
+    def test_gree_migrates_to_vip_not_greel(self) -> None:
+        watchlist = _frame([_wl("GREE", "ai_smallcap", "SRC:MANUAL")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"VIP": "0000009999"},
+            sec_cik_to_tickers={"0000009999": ["VIP", "GREEL"]},
+            historical_symbol_to_cik={"GREE": "0000009999"},
+            active_alpaca_symbols={"VIP", "GREEL"},
+        )
+        self.assertEqual(reconciled.iloc[0]["symbol"], "VIP")
+        self.assertEqual(report["renamed"][0]["new_symbol"], "VIP")
+
+    def test_empty_sec_mapping_leaves_watchlist_untouched(self) -> None:
+        watchlist = _frame([
+            _wl("BITF", "ai_smallcap", "SRC:MANUAL"),
+            _wl("WBD", "ai_peripheral", "XLC"),
+        ])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={},
+            sec_cik_to_tickers={},
+            historical_symbol_to_cik={"BITF": "0001812477"},
+        )
+        pd.testing.assert_frame_equal(reconciled, watchlist)
+        self.assertEqual(report["renamed"], [])
+        self.assertEqual(report["removed_delisted"], [])
+
+    def test_empty_active_alpaca_set_treated_as_none(self) -> None:
+        # A transient Alpaca outage (empty set) must not mass-prune: the
+        # rename still resolves and no Alpaca-driven removal happens.
+        watchlist = _frame([_wl("BITF", "ai_smallcap", "SRC:MANUAL")])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"KEEP": "0000000001"},
+            sec_cik_to_tickers={
+                "0001812477": ["KEEL"],
+                "0000000001": ["KEEP"],
+            },
+            historical_symbol_to_cik={"BITF": "0001812477"},
+            active_alpaca_symbols=set(),
+        )
+        self.assertEqual(reconciled.iloc[0]["symbol"], "KEEL")
+        self.assertEqual(report["renamed_count"], 1)
+        self.assertEqual(report["removed_count"], 0)
+
+    def test_unchanged_rows_keep_protected_flags(self) -> None:
+        watchlist = _frame([
+            _wl("KEEP", "core_ai", "IGV", enabled=0),
+            _wl("MANA", "core_ai", "SRC:MANUAL"),
+        ])
+        reconciled, report = reconcile_watchlist_corporate_actions(
+            watchlist,
+            sec_ticker_to_cik={"KEEP": "0000000001", "MANA": "0000000003"},
+            sec_cik_to_tickers={
+                "0000000001": ["KEEP"],
+                "0000000003": ["MANA"],
+            },
+            active_alpaca_symbols={"KEEP", "MANA"},
+        )
+        rows = {row["symbol"]: row for row in reconciled.to_dict("records")}
+        self.assertEqual(int(rows["KEEP"]["enabled"]), 0)
+        self.assertEqual(rows["MANA"]["etfs"], "SRC:MANUAL")
+        self.assertEqual(report["renamed_count"], 0)
+        self.assertEqual(report["removed_count"], 0)
+
+    def test_reconcile_manual_seed_csv_and_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manual = Path(tmp) / "ai_smallcap_manual.csv"
+            original = "symbol,note\nBITF,seed\nCYBR,delisted\nHOOD,keep\n"
+            manual.write_text(original, encoding="utf-8")
+            report = {
+                "renamed": [
+                    {"old_symbol": "BITF", "new_symbol": "KEEL"},
+                ],
+                "removed_delisted": [{"symbol": "CYBR"}],
+            }
+            dry_stats = reconcile_manual_seed_csv(manual, report, dry_run=True)
+            self.assertEqual(dry_stats, {"renamed": 1, "removed": 1})
+            self.assertEqual(manual.read_text(encoding="utf-8"), original)
+            stats = reconcile_manual_seed_csv(manual, report)
+            self.assertEqual(stats, {"renamed": 1, "removed": 1})
+            text = manual.read_text(encoding="utf-8")
+            self.assertEqual(text, "symbol,note\nKEEL,seed\nHOOD,keep\n")
+            self.assertNotIn(b"\r\n", manual.read_bytes())
+
+    def test_reconcile_manual_seed_csv_absent_file_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = reconcile_manual_seed_csv(
+                Path(tmp) / "missing.csv",
+                {"renamed": [{"old_symbol": "BITF", "new_symbol": "KEEL"}]},
+            )
+        self.assertEqual(stats, {"renamed": 0, "removed": 0})
+
+    def _import_cli(self):
+        import sys
+        sys.path.insert(0, "scripts")
+        try:
+            import refresh_ai_watchlist
+        finally:
+            sys.path.pop(0)
+        return refresh_ai_watchlist
+
+    def test_cli_applies_corporate_actions_and_syncs_manual_seed(self) -> None:
+        import contextlib
+        import io
+        import sys
+        import unittest.mock as mock
+
+        cli = self._import_cli()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "ai_watchlist.csv"
+            manual = Path(tmp) / "ai_smallcap_manual.csv"
+            manual.write_text(
+                "symbol,note\nBITF,seed\nCYBR,gone\nHOOD,keep\n",
+                encoding="utf-8",
+            )
+            write_csv_atomic(
+                _frame([
+                    _wl("BITF", "ai_smallcap", "SRC:MANUAL"),
+                    _wl("CYBR", "core_ai", "IGV"),
+                ]),
+                out,
+            )
+            refreshed = _frame([_wl("NEW", "core_ai", "IGV")])
+            argv = [
+                "refresh_ai_watchlist.py",
+                "--output", str(out),
+                "--manual-seed-csv", str(manual),
+            ]
+            buffer = io.StringIO()
+            with mock.patch.object(
+                cli, "refresh_watchlist_from_etfs", return_value=refreshed,
+            ), mock.patch.object(
+                cli, "_load_corporate_action_references",
+                return_value=(
+                    {"NEW": "0000000002"},
+                    {
+                        "0001812477": ["KEEL"],
+                        "0000000002": ["NEW"],
+                    },
+                    None,
+                ),
+            ), mock.patch.object(
+                cli, "load_cached_symbol_to_cik",
+                return_value={"BITF": "0001812477", "CYBR": "0001598110"},
+            ):
+                with contextlib.redirect_stdout(buffer):
+                    with mock.patch.object(sys, "argv", argv):
+                        cli.main()
+            output = buffer.getvalue()
+            self.assertIn(
+                "corporate_actions renamed=1 removed_delisted=1", output)
+            self.assertIn(
+                "~ BITF -> KEEL (ai_smallcap, cik=0001812477)", output)
+            self.assertIn(
+                "- CYBR (core_ai, cik=0001598110, reason=missing_in_sec)",
+                output,
+            )
+            self.assertIn("manual_seed renamed=1 removed=1", output)
+            merged = pd.read_csv(out)
+            symbols = set(merged["symbol"])
+            self.assertIn("KEEL", symbols)
+            self.assertIn("NEW", symbols)
+            self.assertNotIn("BITF", symbols)
+            self.assertNotIn("CYBR", symbols)
+            keel = merged[merged["symbol"] == "KEEL"].iloc[0]
+            self.assertEqual(keel["etfs"], "SRC:MANUAL")
+            manual_text = manual.read_text(encoding="utf-8")
+            self.assertEqual(
+                manual_text, "symbol,note\nKEEL,seed\nHOOD,keep\n")
+
+    def test_cli_no_reconcile_flag_skips_reconciliation(self) -> None:
+        import sys
+        import unittest.mock as mock
+
+        cli = self._import_cli()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "ai_watchlist.csv"
+            write_csv_atomic(
+                _frame([_wl("BITF", "ai_smallcap", "SRC:MANUAL")]), out)
+            refreshed = _frame([_wl("NEW", "core_ai", "IGV")])
+            argv = [
+                "refresh_ai_watchlist.py",
+                "--output", str(out),
+                "--no-reconcile-corporate-actions",
+            ]
+            with mock.patch.object(
+                cli, "refresh_watchlist_from_etfs", return_value=refreshed,
+            ), mock.patch.object(
+                cli, "_load_corporate_action_references",
+                side_effect=AssertionError("must not be called"),
+            ):
+                with mock.patch.object(sys, "argv", argv):
+                    cli.main()
+            symbols = set(pd.read_csv(out)["symbol"])
+            self.assertIn("BITF", symbols)
+            self.assertIn("NEW", symbols)
 
 
 if __name__ == "__main__":

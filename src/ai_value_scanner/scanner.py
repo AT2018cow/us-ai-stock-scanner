@@ -15,7 +15,7 @@ from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -2477,6 +2477,299 @@ def merge_refreshed_watchlist(
         int(merged["symbol"].nunique()) if not merged.empty else 0
     )
     return merged[WATCHLIST_CSV_COLUMNS], stats
+
+
+def _cache_cik_from_path(path: Path) -> str:
+    """10-digit CIK from a ``parsed_fund_/submissions_`` cache file stem."""
+    token = path.stem.rsplit("_", 1)[-1].strip()
+    return token.zfill(10) if token.isdigit() else token
+
+
+def load_cached_symbol_to_cik(cache_dir: str | Path = "cache") -> dict[str, str]:
+    """Read-only historical ``symbol -> 10-digit CIK`` map from the local cache.
+
+    SEC CIKs are lifetime identifiers: even after a ticker rename the cached
+    ``parsed_fund_{cik}.json`` / ``submissions_{cik}.json`` files still bind
+    the old symbol to the same CIK, which is what makes rename migration
+    possible. Parsed-fund entries take precedence over submissions entries.
+    """
+    base = Path(cache_dir)
+    mapping: dict[str, str] = {}
+    try:
+        submissions_paths = sorted(base.glob("submissions_*.json"))
+        parsed_paths = sorted(base.glob("parsed_fund_*.json"))
+    except OSError:
+        return mapping
+    for path in submissions_paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        cik = str(payload.get("cik") or _cache_cik_from_path(path)).strip()
+        if cik.isdigit():
+            cik = cik.zfill(10)
+        if not cik:
+            continue
+        tickers = payload.get("tickers") or []
+        if not isinstance(tickers, list):
+            tickers = [tickers]
+        for ticker in tickers:
+            symbol = normalize_equity_symbol(ticker)
+            if symbol:
+                mapping[symbol] = cik
+    for path in parsed_paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        symbol = normalize_equity_symbol(payload.get("symbol"))
+        if not symbol:
+            continue
+        cik = str(payload.get("cik") or _cache_cik_from_path(path)).strip()
+        if cik.isdigit():
+            cik = cik.zfill(10)
+        if cik:
+            mapping[symbol] = cik
+    return mapping
+
+
+def build_sec_ticker_cik_maps(
+    sec_rows: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Build SEC ticker maps from ``company_tickers.json``-shaped rows.
+
+    Returns ``(sec_ticker_to_cik, sec_cik_to_tickers)`` where the CIK->tickers
+    lists stay in SEC table order (primary common stock first, preferred /
+    warrants / notes after), deduplicated.
+    """
+    sec_ticker_to_cik: dict[str, str] = {}
+    sec_cik_to_tickers: dict[str, list[str]] = {}
+    for row in sec_rows:
+        symbol = normalize_equity_symbol(row.get("symbol") or row.get("ticker"))
+        if not symbol:
+            continue
+        cik = str(row.get("cik") or row.get("cik_str") or "").strip()
+        if not cik:
+            continue
+        if cik.isdigit():
+            cik = cik.zfill(10)
+        sec_ticker_to_cik[symbol] = cik
+        tickers = sec_cik_to_tickers.setdefault(cik, [])
+        if symbol not in tickers:
+            tickers.append(symbol)
+    return sec_ticker_to_cik, sec_cik_to_tickers
+
+
+def _is_replacement_candidate(symbol: str) -> bool:
+    """Exclude preferred series and 5-letter senior-note/OTC suffixes."""
+    if "-" in symbol or "." in symbol:
+        return False
+    if len(symbol) == 5 and symbol.endswith(("L", "P", "W", "Z", "F")):
+        return False
+    return True
+
+
+def reconcile_watchlist_corporate_actions(
+    watchlist: pd.DataFrame,
+    *,
+    sec_ticker_to_cik: Mapping[str, str],
+    sec_cik_to_tickers: Mapping[str, Sequence[str]],
+    historical_symbol_to_cik: Mapping[str, str] | None = None,
+    active_alpaca_symbols: set[str] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Reconcile ticker renames (via CIK continuity) and prune delisted symbols.
+
+    Safety contract:
+    - If ``sec_ticker_to_cik`` is empty, returns ``(watchlist, empty_report)``
+      unchanged (never prunes when the SEC reference mapping is unavailable).
+    - Returns ``(reconciled_df, report)`` where ``report`` contains:
+      - ``"renamed"``: list of ``{"old_symbol", "new_symbol", "cik", "bucket"}``
+      - ``"removed_delisted"``: list of ``{"symbol", "cik", "bucket", "reason"}``
+      - ``"renamed_count"`` / ``"removed_count"``: ints (row counts)
+    """
+    report: dict[str, Any] = {
+        "renamed": [],
+        "removed_delisted": [],
+        "renamed_count": 0,
+        "removed_count": 0,
+    }
+    if watchlist is None or watchlist.empty or not sec_ticker_to_cik:
+        return (
+            watchlist
+            if watchlist is not None
+            else pd.DataFrame(columns=WATCHLIST_CSV_COLUMNS),
+            report,
+        )
+    if "symbol" not in watchlist.columns or "bucket" not in watchlist.columns:
+        return watchlist, report
+
+    active_alpaca_norm: set[str] | None = None
+    if active_alpaca_symbols is not None and len(active_alpaca_symbols) > 0:
+        active_alpaca_norm = {
+            symbol
+            for symbol in (
+                normalize_equity_symbol(s) for s in active_alpaca_symbols
+            )
+            if symbol
+        }
+
+    def _in_sec(sym: str) -> bool:
+        return sym in sec_ticker_to_cik or sym.replace(".", "-") in sec_ticker_to_cik
+
+    def _in_alpaca(sym: str) -> bool:
+        return (
+            active_alpaca_norm is None
+            or sym in active_alpaca_norm
+            or sym.replace(".", "-") in active_alpaca_norm
+        )
+
+    out_rows: list[dict[str, Any]] = []
+    for record in watchlist.to_dict(orient="records"):
+        norm_sym = normalize_equity_symbol(record.get("symbol"))
+        bucket = _watchlist_cell_text(record.get("bucket")).strip().lower()
+        if not norm_sym or not bucket:
+            out_rows.append(record)
+            continue
+        if _in_sec(norm_sym) and _in_alpaca(norm_sym):
+            out_rows.append(record)
+            continue
+        cik = (
+            (historical_symbol_to_cik or {}).get(norm_sym)
+            or sec_ticker_to_cik.get(norm_sym)
+            or sec_ticker_to_cik.get(norm_sym.replace(".", "-"))
+        )
+        new_sym: str | None = None
+        if cik:
+            for raw_candidate in sec_cik_to_tickers.get(cik, ()) or ():
+                candidate = str(raw_candidate)
+                if candidate == norm_sym:
+                    continue
+                if not _is_replacement_candidate(candidate):
+                    continue
+                if not _in_alpaca(candidate):
+                    continue
+                new_sym = candidate
+                break
+        if new_sym is not None:
+            updated = dict(record)
+            updated["symbol"] = new_sym
+            out_rows.append(updated)
+            report["renamed"].append(
+                {
+                    "old_symbol": norm_sym,
+                    "new_symbol": new_sym,
+                    "cik": cik,
+                    "bucket": bucket,
+                }
+            )
+        else:
+            report["removed_delisted"].append(
+                {
+                    "symbol": norm_sym,
+                    "cik": cik,
+                    "bucket": bucket,
+                    "reason": (
+                        "missing_in_sec"
+                        if not _in_sec(norm_sym)
+                        else "inactive_in_alpaca"
+                    ),
+                }
+            )
+
+    # Renames can land on an already-present (symbol, bucket): collapse so
+    # etfs / SRC:* tokens union and etf_count is recomputed.
+    collapsed = _collapse_watchlist_rows(
+        pd.DataFrame(out_rows, columns=WATCHLIST_CSV_COLUMNS)
+    )
+    rebuilt: list[dict[str, Any]] = []
+    for record in collapsed.values():
+        rebuilt.append(
+            {
+                "symbol": record["symbol"],
+                "bucket": record["bucket"],
+                "etf_count": len(record["etf_tokens"]),
+                "etfs": (
+                    record["raw_etfs"]
+                    if record["raw_etfs"] is not None
+                    else _canonical_watchlist_etfs(
+                        record["etf_tokens"], record["src_tokens"]
+                    )
+                ),
+                "enabled": record["enabled"],
+                "updated_utc": record.get("updated_utc"),
+            }
+        )
+    reconciled = pd.DataFrame(rebuilt, columns=WATCHLIST_CSV_COLUMNS)
+    report["renamed_count"] = len(report["renamed"])
+    report["removed_count"] = len(report["removed_delisted"])
+    return reconciled, report
+
+
+def reconcile_manual_seed_csv(
+    manual_csv_path: Path,
+    report: Mapping[str, Any],
+    *,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Apply rename/delist reconciliation to the smallcap manual seed CSV.
+
+    Keeps ``data/ai_smallcap_manual.csv`` in sync so retired tickers are never
+    re-injected by future smallcap rebuilds. Writes Unix LF line endings.
+    """
+    path = Path(manual_csv_path)
+    stats = {"renamed": 0, "removed": 0}
+    if not path.exists():
+        return stats
+    rename_map = {
+        str(item.get("old_symbol")): str(item.get("new_symbol"))
+        for item in report.get("renamed", [])
+        if item.get("old_symbol") and item.get("new_symbol")
+    }
+    remove_set = {
+        str(item.get("symbol"))
+        for item in report.get("removed_delisted", [])
+        if item.get("symbol")
+    }
+    if not rename_map and not remove_set:
+        return stats
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, ValueError):
+        return stats
+    if "symbol" not in frame.columns:
+        return stats
+    columns = list(frame.columns)
+    out_rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    changed = False
+    for record in frame.to_dict(orient="records"):
+        norm_sym = normalize_equity_symbol(record.get("symbol"))
+        if not norm_sym:
+            out_rows.append(record)
+            continue
+        if norm_sym in remove_set:
+            stats["removed"] += 1
+            changed = True
+            continue
+        new_symbol = rename_map.get(norm_sym)
+        if new_symbol is not None and new_symbol != norm_sym:
+            record = dict(record)
+            record["symbol"] = new_symbol
+            norm_sym = new_symbol
+            stats["renamed"] += 1
+            changed = True
+        if norm_sym in seen:
+            changed = True
+            continue
+        seen.add(norm_sym)
+        out_rows.append(record)
+    if changed and not dry_run:
+        write_csv_atomic(pd.DataFrame(out_rows, columns=columns), path)
+    return stats
 
 
 def archive_watchlist_snapshot(config: ScanConfig, started_at: datetime) -> Path | None:
