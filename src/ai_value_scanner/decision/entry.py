@@ -793,6 +793,13 @@ ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-10-15"
 ENTRY_V2_MA_ALIGNMENT_MIN = 0.98
 ENTRY_V2_LAGGING_SCORE_PENALTY = 0.10
 
+ENTRY_V2_SMA200_EXTENDED_WARN = 1.35
+ENTRY_V2_SMA200_EXTENDED_SEVERE = 1.45
+ENTRY_V2_RET60_EXTENDED_WARN = 0.35
+ENTRY_V2_RET60_EXTENDED_SEVERE = 0.45
+ENTRY_V2_EXTENSION_MILD_PENALTY = 0.06
+ENTRY_V2_EXTENSION_SEVERE_PENALTY = 0.10
+
 
 def _sma50_to_sma200_ratio(
     price_to_sma200: float | None, price_to_sma50: float | None
@@ -972,6 +979,53 @@ def build_entry_quality_v2(
                     ),
                 )
             )
+
+    # Medium-term extension deductions (v2 only): a multi-month vertical rally
+    # thins the margin of safety even when every readiness gate passes. State
+    # is unchanged; only score and risks are updated.
+    if sma200 is not None and sma200 > ENTRY_V2_SMA200_EXTENDED_WARN:
+        penalty = (
+            ENTRY_V2_EXTENSION_SEVERE_PENALTY
+            if sma200 > ENTRY_V2_SMA200_EXTENDED_SEVERE
+            else ENTRY_V2_EXTENSION_MILD_PENALTY
+        )
+        score = max(0.0, round(score - penalty, 6))
+        risks.append(
+            _item(
+                code="price_extended_above_sma200",
+                label="Extended above SMA200",
+                polarity="negative",
+                metric="price_to_sma200",
+                value=round(sma200, 6),
+                threshold=f"<={ENTRY_V2_SMA200_EXTENDED_WARN:.2f}x preferred",
+                message=(
+                    f"Price is {sma200:.2f}x 200d SMA (>{ENTRY_V2_SMA200_EXTENDED_WARN:.2f}x medium-term extension); "
+                    "entry score reduced to reflect thinner margin of safety vs long-term trend."
+                ),
+            )
+        )
+    return_60d_ext = _finite_value(metrics, "return_60d")
+    if return_60d_ext is not None and return_60d_ext > ENTRY_V2_RET60_EXTENDED_WARN:
+        penalty = (
+            ENTRY_V2_EXTENSION_SEVERE_PENALTY
+            if return_60d_ext > ENTRY_V2_RET60_EXTENDED_SEVERE
+            else ENTRY_V2_EXTENSION_MILD_PENALTY
+        )
+        score = max(0.0, round(score - penalty, 6))
+        risks.append(
+            _item(
+                code="return_60d_extended",
+                label="60d rally extended",
+                polarity="negative",
+                metric="return_60d",
+                value=round(return_60d_ext, 6),
+                threshold=f"<={ENTRY_V2_RET60_EXTENDED_WARN:.0%} preferred",
+                message=(
+                    f"60d return is {return_60d_ext * 100:+.1f}% (>{ENTRY_V2_RET60_EXTENDED_WARN:.0%} quarterly surge); "
+                    "entry score reduced to penalize medium-term momentum chasing."
+                ),
+            )
+        )
 
     return EntryDecision(
         state=state,

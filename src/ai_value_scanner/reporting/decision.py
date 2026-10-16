@@ -513,9 +513,11 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
         f"<summary><b>#{card.rank} {card.symbol}</b> · "
         f"Q:<b>{card.quality_grade}</b> {card.quality_score_display} · "
         f"E:<b>{_short_entry(card.entry_state)}</b> {card.entry_score_display} "
-        f"— {_plain(card.accordion_Tagline)}</summary>",
+        f"— {_plain(card.accordion_Tagline)}"
+        f"{(' · ' + card.warning_badges_inline) if card.warning_badges_inline else ''}</summary>",
         "",
-        f"- **Company**: {_plain(card.company_name)} · **Action**: `{card.action_state}`",
+        f"- **Company**: {_plain(card.company_name)} · **Action**: `{card.action_state}`"
+        f"{(' · **Pool**: ' + card.pool_display) if card.pool_display else ''}",
         f"- **Why Own (Quality {card.quality_grade}, {card.quality_score_display})**: "
         f"{_plain(card.quality_highlights_inline)}",
         f"- **Entry Structure ({_short_entry(card.entry_state)}, {card.entry_score_display})**: "
@@ -582,6 +584,10 @@ def render_action_list_v2(
         "· [Watch Breakout](#watch-breakout) "
         "· [Secondary Radar](#secondary-radar)",
     ]
+    if snapshot.concentration_summary_line:
+        lines.insert(
+            4, f"- **Pool & Concentration**: {snapshot.concentration_summary_line}"
+        )
     if stock_jump_links:
         lines.append(f"- **Quick Jump**: {stock_jump_links}")
     lines.extend(

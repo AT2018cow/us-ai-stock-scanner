@@ -288,6 +288,8 @@ class StockCardViewModel:
     entry_checklist: tuple[EntryGateCheckRow, ...]
     all_counter_evidence: tuple[FormattedEvidenceRow, ...]
     all_missing_evidence: tuple[FormattedEvidenceRow, ...]
+    warning_badges_inline: str = ""
+    pool_display: str = ""
 
 
 @dataclass(frozen=True)
@@ -298,6 +300,7 @@ class SnapshotViewModel:
     primary_cards: tuple[StockCardViewModel, ...]
     cap_omitted_priority_cards: tuple[StockCardViewModel, ...]
     secondary_b_ready_cards: tuple[StockCardViewModel, ...]
+    concentration_summary_line: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +373,10 @@ def _short_label(label: str) -> str:
 
 
 def _compact_label(item: EvidenceItem) -> str:
+    if item.code == "pre_earnings_window_risk":
+        return "Pre-Earnings Filing Age"
+    if item.code == "shares_yoy_split_or_basis_discontinuity":
+        return "Shares YoY (Split/Basis)"
     if item.metric and item.metric in _COMPACT_METRIC_LABELS:
         return _COMPACT_METRIC_LABELS[item.metric]
     return _short_label(item.label)
@@ -559,6 +566,14 @@ def _gate_matches(
     return matched
 
 
+# Medium-term extension warnings are non-blocking: they ride on metrics of
+# passing gates (sma200_trend, ret60_trend) and must never flip those gates
+# to FAIL_BLOCKER. They surface via badges + the blockers-inline note.
+_NON_BLOCKING_ENTRY_WARN_CODES = frozenset(
+    {"price_extended_above_sma200", "return_60d_extended"}
+)
+
+
 def _human_gate_blocker_phrase(
     gate_key: str, item: EvidenceItem, formatted: str
 ) -> tuple[str, str, str]:
@@ -614,11 +629,15 @@ def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, 
             codes=gate["positive_codes"],
             metrics=metrics,
         )
-        neg = _gate_matches(
-            decision.entry.risks,
-            codes=gate["negative_codes"],
-            metrics=metrics,
-        )
+        neg = [
+            item
+            for item in _gate_matches(
+                decision.entry.risks,
+                codes=gate["negative_codes"],
+                metrics=metrics,
+            )
+            if item.code not in _NON_BLOCKING_ENTRY_WARN_CODES
+        ]
         if neg:
             item = neg[0]
             formatted = format_metric_value(item.metric, item.value)
@@ -681,6 +700,10 @@ _FRESHNESS_POSITIVE_CODES = frozenset(
 
 
 def _inline_fragment(item: EvidenceItem) -> str:
+    if item.code == "pre_earnings_window_risk":
+        return f"⚠️ Pre-Earnings ({format_metric_value(item.metric, item.value)} filing)"
+    if item.code == "shares_yoy_split_or_basis_discontinuity":
+        return f"⚠️ Share Split/Basis ({format_metric_value(item.metric, item.value)})"
     formatted = format_metric_value(item.metric, item.value)
     short = _compact_label(item)
     if formatted == "n/a":
@@ -746,7 +769,21 @@ def _build_entry_blockers_inline(
     checklist: tuple[EntryGateCheckRow, ...],
 ) -> str:
     if decision.entry.state is EntryState.ENTRY_READY:
-        return "All 7 readiness gates passed"
+        extensions = [
+            item
+            for item in decision.entry.risks
+            if item.code in _NON_BLOCKING_ENTRY_WARN_CODES
+        ]
+        if not extensions:
+            return "All 7 readiness gates passed"
+        parts: list[str] = []
+        for item in extensions:
+            if item.code == "price_extended_above_sma200":
+                parts.append(f"SMA200 {format_metric_value(item.metric, item.value)}")
+            elif item.code == "return_60d_extended":
+                parts.append(f"60d Ret {format_metric_value(item.metric, item.value)}")
+        note = " · ".join(parts) if parts else "extended medium-term setup"
+        return f"All 7 readiness gates passed (⚠️ Extended: {note})"
     blockers = [row.human_summary for row in checklist if row.status != "PASS"]
     return "; ".join(blockers) if blockers else "See full report"
 
@@ -952,6 +989,48 @@ def _score_display(score: float | None) -> str:
     return "n/a" if score is None else f"{float(score):.2f}"
 
 
+def _build_warning_badges_inline(
+    decision: StockDecision, data_trust: DataTrustBadge
+) -> str:
+    """Ultra-compact warning badges for <summary> headers."""
+    badges: list[str] = []
+    for item in decision.quality.risks:
+        if item.code == "pre_earnings_window_risk":
+            try:
+                age = int(item.value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            badges.append(f"⚠️Pre-Earnings({age}d)")
+            break
+    parts: list[str] = []
+    for item in decision.entry.risks:
+        if item.code == "price_extended_above_sma200":
+            parts.append(f"SMA200 {format_metric_value(item.metric, item.value)}")
+        elif item.code == "return_60d_extended":
+            parts.append(f"60d {format_metric_value(item.metric, item.value)}")
+    if parts:
+        badges.append(f"⚠️Extended({', '.join(parts)})")
+    quality_codes = {item.code for item in decision.quality.risks}
+    if "shares_yoy_split_or_basis_discontinuity" in quality_codes or (
+        "weighted-average fallback" in " ".join(data_trust.warnings)
+    ):
+        badges.append("⚠️Share-Basis/Split")
+    return " · ".join(badges)
+
+
+def _build_pool_display(decision: StockDecision) -> str:
+    """Compact pool provenance (`bucket` + ETFs) for card headers."""
+    bucket = str(decision.provenance.get("watchlist_bucket") or "").strip()
+    etfs = str(decision.provenance.get("watchlist_etfs") or "").strip()
+    if bucket and etfs:
+        return f"`{bucket}` ({etfs})"
+    if bucket:
+        return f"`{bucket}`"
+    if etfs:
+        return f"({etfs})"
+    return ""
+
+
 def build_stock_card_view_model(
     decision: StockDecision,
     rank: int | None = None,
@@ -981,6 +1060,7 @@ def build_stock_card_view_model(
         )
     )
     trigger = (decision.review_trigger or "n/a").replace("\n", " ").strip() or "n/a"
+    data_trust = _build_data_trust_badge(decision)
     return StockCardViewModel(
         decision=decision,
         rank=decision.priority if rank is None else int(rank),
@@ -1001,7 +1081,9 @@ def build_stock_card_view_model(
         top_positives_inline=_build_top_positives_inline(decision),
         top_risks_or_blockers_inline=_build_top_risks_inline(decision, checklist),
         next_trigger_inline=trigger,
-        data_trust=_build_data_trust_badge(decision),
+        warning_badges_inline=_build_warning_badges_inline(decision, data_trust),
+        pool_display=_build_pool_display(decision),
+        data_trust=data_trust,
         quality_pillars=_build_quality_pillars(decision),
         entry_checklist=checklist,
         all_counter_evidence=counter,
@@ -1011,6 +1093,47 @@ def build_stock_card_view_model(
 
 def _priority_order_key(decision: StockDecision) -> tuple[Any, ...]:
     return (decision.priority, decision.symbol)
+
+
+def _build_concentration_summary_line(
+    primary_cards: tuple[StockCardViewModel, ...],
+    pool_size: int | None,
+) -> str:
+    """One-line pool/bucket/ETF concentration disclosure for the shortlist."""
+    bucketed = [
+        card
+        for card in primary_cards
+        if str(card.decision.provenance.get("watchlist_bucket") or "").strip()
+        or str(card.decision.provenance.get("watchlist_etfs") or "").strip()
+    ]
+    if not bucketed:
+        return ""
+    total = len(primary_cards)
+    bucket_counts: dict[str, int] = {}
+    etf_counts: dict[str, int] = {}
+    for card in primary_cards:
+        bucket = str(card.decision.provenance.get("watchlist_bucket") or "").strip()
+        if bucket:
+            bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        etfs = str(card.decision.provenance.get("watchlist_etfs") or "").strip()
+        for token in etfs.split(","):
+            name = token.strip()
+            if name:
+                etf_counts[name] = etf_counts.get(name, 0) + 1
+    parts: list[str] = []
+    if pool_size is not None:
+        parts.append(f"Pool ({pool_size} names)")
+    if bucket_counts:
+        ordered_buckets = sorted(bucket_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        buckets_text = ", ".join(f"{name} {count}/{total}" for name, count in ordered_buckets)
+        parts.append(f"Shortlist buckets: {buckets_text}")
+    if etf_counts:
+        ordered_etfs = sorted(etf_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
+        etfs_text = ", ".join(f"{name} ({count})" for name, count in ordered_etfs)
+        parts.append(f"Top ETFs: {etfs_text}")
+    if not parts:
+        return ""
+    return " · ".join(parts) + " — diversify across sectors manually"
 
 
 def build_snapshot_view_model(
@@ -1037,8 +1160,10 @@ def build_snapshot_view_model(
         decision_day = "n/a"
     cap_omitted: tuple[StockCardViewModel, ...] = ()
     secondary_b: tuple[StockCardViewModel, ...] = ()
+    pool_size: int | None = None
     if all_decisions is not None:
         ordered = sorted(tuple(all_decisions), key=_priority_order_key)
+        pool_size = len(ordered)
         cap_omitted = tuple(
             build_stock_card_view_model(decision)
             for decision in ordered
@@ -1059,4 +1184,7 @@ def build_snapshot_view_model(
         primary_cards=primary_cards,
         cap_omitted_priority_cards=cap_omitted,
         secondary_b_ready_cards=secondary_b,
+        concentration_summary_line=_build_concentration_summary_line(
+            primary_cards, pool_size
+        ),
     )
