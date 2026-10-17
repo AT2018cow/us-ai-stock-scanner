@@ -27,6 +27,7 @@
 - `evaluate_company_quality.py` — Evaluate Company Quality v1 cohorts across historical decision snapshots.
 - `evaluate_entry_quality.py` — Evaluate Entry Quality v1 states and transitions conditional on Quality.
 - `evaluate_action_states.py` — Evaluate integrated Action states and attention-cap cohorts.
+- `run_extended_replay_evaluation.py` — Offline forward-drawdown attribution and 2022 bear-market replay evaluator (`FULL` vs `ETF_SLICE` scopes, cohort economics, paired deltas, rank tiers, and severe-loss rates).
 - `research_generalized_selection.py` — Generalized-v0 multi-dimension research harness.
 - `audit_liquidity_gate_bias.py` — Audit IEX dollar-volume gate coverage and proxy agreement.
 - `repair_equity_discontinuity.py` — Repair split/corporate-action label discontinuities on historical datasets.
