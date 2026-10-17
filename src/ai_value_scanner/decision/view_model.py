@@ -302,6 +302,7 @@ class SnapshotViewModel:
     secondary_b_ready_cards: tuple[StockCardViewModel, ...]
     concentration_summary_line: str = ""
     deprioritized_quality_integrity_notes: tuple[str, ...] = ()
+    growth_compounder_offense_cards: tuple[StockCardViewModel, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1222,101 @@ def _deprioritized_quality_note(decision: StockDecision) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Growth Compounder Leaders (Bull Offense Track)
+# ---------------------------------------------------------------------------
+
+OFFENSE_COMPOUNDER_MIN_QUALITY_SCORE: float = 0.68
+OFFENSE_COMPOUNDER_MIN_REV_YOY: float = 0.15
+OFFENSE_COMPOUNDER_MIN_OCF_NI: float = 0.80
+OFFENSE_COMPOUNDER_MIN_SMA200: float = 1.00
+OFFENSE_COMPOUNDER_MAX_SMA200: float = 1.60
+OFFENSE_COMPOUNDER_MIN_RS60: float = 0.0
+OFFENSE_COMPOUNDER_PRE_EARNINGS_PENALTY: float = 0.06
+
+
+def _decision_metric_value(
+    decision: StockDecision, metric: str
+) -> float | None:
+    """First finite numeric evidence value for a metric across quality/entry."""
+    for item in (
+        *decision.quality.positives,
+        *decision.quality.risks,
+        *decision.entry.positives,
+        *decision.entry.risks,
+    ):
+        if item.metric == metric:
+            value = _as_float(item.value)
+            if value is not None:
+                return value
+    return None
+
+
+def is_growth_compounder_offense_eligible(decision: StockDecision) -> bool:
+    """Frozen 6-condition growth-compounder offense eligibility gate."""
+    if decision.quality.grade not in {QualityGrade.A, QualityGrade.B}:
+        return False
+    if (
+        decision.quality.score is None
+        or float(decision.quality.score) < OFFENSE_COMPOUNDER_MIN_QUALITY_SCORE
+    ):
+        return False
+    if any(
+        item.code == "nonoperating_gain_inflation"
+        for item in decision.quality.risks
+    ):
+        return False
+    rev_yoy = _decision_metric_value(decision, "revenue_yoy")
+    if rev_yoy is None or rev_yoy < OFFENSE_COMPOUNDER_MIN_REV_YOY:
+        return False
+    ocf_ni = _decision_metric_value(decision, "ocf_to_net_income")
+    if ocf_ni is None or ocf_ni < OFFENSE_COMPOUNDER_MIN_OCF_NI:
+        return False
+    if decision.entry.state not in {
+        EntryState.ENTRY_READY, EntryState.WATCH_PULLBACK,
+    }:
+        return False
+    sma200 = _decision_metric_value(decision, "price_to_sma200")
+    if sma200 is None or not (
+        OFFENSE_COMPOUNDER_MIN_SMA200 <= sma200 <= OFFENSE_COMPOUNDER_MAX_SMA200
+    ):
+        return False
+    rs60 = _decision_metric_value(decision, "relative_strength_60d_qqq")
+    if rs60 is None or rs60 < OFFENSE_COMPOUNDER_MIN_RS60:
+        return False
+    return True
+
+
+def growth_compounder_offense_order_key(
+    decision: StockDecision,
+) -> tuple[float, float, float, str]:
+    """Descending offense score: quality + growth + RS60 minus pre-earnings."""
+    q_score = float(decision.quality.score or 0.0)
+    rev_yoy = _decision_metric_value(decision, "revenue_yoy") or 0.0
+    rs60 = _decision_metric_value(decision, "relative_strength_60d_qqq") or 0.0
+    penalty = (
+        OFFENSE_COMPOUNDER_PRE_EARNINGS_PENALTY
+        if any(
+            item.code == "pre_earnings_window_risk"
+            for item in decision.quality.risks
+        )
+        else 0.0
+    )
+    offense_score = (
+        q_score
+        + 0.50 * min(max(rev_yoy, 0.0), 1.0)
+        + 0.50 * min(max(rs60, 0.0), 1.0)
+        - penalty
+    )
+    e_score = float(decision.entry.score or 0.0)
+    return (
+        -round(offense_score, 6),
+        -round(q_score, 6),
+        -round(e_score, 6),
+        decision.symbol,
+    )
+
+
 def build_snapshot_view_model(
     primary_decisions: Iterable[StockDecision],
     all_decisions: Iterable[StockDecision] | None = None,
@@ -1245,6 +1341,7 @@ def build_snapshot_view_model(
         decision_day = "n/a"
     cap_omitted: tuple[StockCardViewModel, ...] = ()
     secondary_b: tuple[StockCardViewModel, ...] = ()
+    offense_cards: tuple[StockCardViewModel, ...] = ()
     pool_size: int | None = None
     deprioritized_notes: tuple[str, ...] = ()
     if all_decisions is not None:
@@ -1275,6 +1372,17 @@ def build_snapshot_view_model(
                 for item in decision.quality.risks
             )
         )[:10]
+        eligible_offense = (
+            decision for decision in ordered
+            if decision.symbol not in primary_symbols
+            and is_growth_compounder_offense_eligible(decision)
+        )
+        offense_cards = tuple(
+            build_stock_card_view_model(decision)
+            for decision in sorted(
+                eligible_offense, key=growth_compounder_offense_order_key
+            )[:10]
+        )
     return SnapshotViewModel(
         title=title,
         cadence=cadence,
@@ -1286,4 +1394,5 @@ def build_snapshot_view_model(
             primary_cards, pool_size
         ),
         deprioritized_quality_integrity_notes=deprioritized_notes,
+        growth_compounder_offense_cards=offense_cards,
     )

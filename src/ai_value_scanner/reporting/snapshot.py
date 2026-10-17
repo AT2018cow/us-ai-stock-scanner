@@ -303,6 +303,7 @@ def write_decision_snapshot(
                 for card in (
                     *view.cap_omitted_priority_cards,
                     *view.secondary_b_ready_cards,
+                    *view.growth_compounder_offense_cards,
                 ):
                     if card.symbol in by_symbol_all:
                         detailed_symbols.setdefault(card.symbol, by_symbol_all[card.symbol])

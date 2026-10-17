@@ -572,6 +572,29 @@ def _with_quality_v2_adjustments(
                     )
                 )
                 changed = True
+    # v2 OCF/NI band backfill: frozen v1 JSONL emitted the strong conversion
+    # positive only at >= 1.0; v2 recognizes >= 0.80, so the offense-track
+    # eligibility (>= 0.80) must see the same evidence in recomputed previews.
+    if (
+        ocf_ni is not None
+        and ocf_ni >= QUALITY_V2_HEALTHY_OCF_MIN
+        and "ocf_to_net_income_strong"
+        not in {item.code for item in positives}
+    ):
+        positives.append(
+            EvidenceItem(
+                code="ocf_to_net_income_strong",
+                label="Operating cash-flow conversion supportive",
+                polarity="positive",  # type: ignore[arg-type]
+                metric="ocf_to_net_income",
+                value=round(ocf_ni, 6),
+                threshold=">=0.8 supportive; <0.5 weak",
+                message=(
+                    "Operating cash flow converts a healthy share of earnings."
+                ),
+            )
+        )
+        changed = True
     if not changed:
         return decision
     return replace(
@@ -750,6 +773,8 @@ def main() -> None:
         | {card.symbol for card in weekly_view.cap_omitted_priority_cards}
         | {card.symbol for card in daily_view.secondary_b_ready_cards}
         | {card.symbol for card in weekly_view.secondary_b_ready_cards}
+        | {card.symbol for card in daily_view.growth_compounder_offense_cards}
+        | {card.symbol for card in weekly_view.growth_compounder_offense_cards}
     )
     detailed_dir = output_dir / "detailed_v2"
     detailed_dir.mkdir(parents=True, exist_ok=True)
@@ -812,6 +837,8 @@ def _write_recompute_preview(
         | {card.symbol for card in weekly_view.cap_omitted_priority_cards}
         | {card.symbol for card in daily_view.secondary_b_ready_cards}
         | {card.symbol for card in weekly_view.secondary_b_ready_cards}
+        | {card.symbol for card in daily_view.growth_compounder_offense_cards}
+        | {card.symbol for card in weekly_view.growth_compounder_offense_cards}
     )
     detailed_dir = output_dir / "detailed_v2"
     detailed_dir.mkdir(parents=True, exist_ok=True)
