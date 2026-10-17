@@ -28,6 +28,7 @@
 - `evaluate_entry_quality.py` — Evaluate Entry Quality v1 states and transitions conditional on Quality.
 - `evaluate_action_states.py` — Evaluate integrated Action states and attention-cap cohorts.
 - `run_extended_replay_evaluation.py` — Offline forward-drawdown attribution and 2022 bear-market replay evaluator (`FULL` vs `ETF_SLICE` scopes, cohort economics, paired deltas, rank tiers, and severe-loss rates).
+- `validate_growth_compounder_offense.py` — Offline Gate G1–G4 validator for slow-growth de-crowding (`C1`), growth-compounder offense track (`C2`), and barbell (`C3`) candidates across the 51-date historical dataset and live snapshot.
 - `research_generalized_selection.py` — Generalized-v0 multi-dimension research harness.
 - `audit_liquidity_gate_bias.py` — Audit IEX dollar-volume gate coverage and proxy agreement.
 - `repair_equity_discontinuity.py` — Repair split/corporate-action label discontinuities on historical datasets.
