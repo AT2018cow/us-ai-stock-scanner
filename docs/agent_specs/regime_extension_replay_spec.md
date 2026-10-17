@@ -194,4 +194,38 @@ Create `tests/test_run_extended_replay_evaluation.py` (`unittest`, zero network 
 4. **Reproduction check tolerance**:
    - Verifies reproduction check passes when `v1_current` matches reference values within tolerance and raises/reports clearly on mismatch.
 5. **End-to-end CLI into a `tempfile.TemporaryDirectory()`**:
-   - Verifies all 5 files + `SHA256SUMS` are written, `contains_absolute_path` is `False` across all outputs, and repo `cache/` is untouched.
+   - Verifies all output files + `SHA256SUMS` are written, `contains_absolute_path` is `False` across all outputs, and repo `cache/` is untouched.
+
+---
+
+## 6. Frozen-Grade Provenance & Window-Overlap Hardening (Follow-Up)
+
+To promote `docs/drawdown_and_bear_replay_20261017/` from "trusted working evidence" to **frozen-grade review evidence** (per `AGENTS.md` §8 & §12), extend `scripts/run_extended_replay_evaluation.py` and `tests/test_run_extended_replay_evaluation.py` with the following three enhancements:
+
+### 6.1 Runner Script Hash, Exact Reproduction Command & Input Dataset SHA256s in `report.md`
+In the `## Provenance` section of `report.md`, deterministically record:
+- **Runner script**: `scripts/run_extended_replay_evaluation.py` + its SHA256 hex digest;
+- **Reproduction CLI command**: exact relative-path command (`python scripts/run_extended_replay_evaluation.py --base-dataset ... --bear-2022-dataset ... --base-reference-dir ... --output-dir ...`);
+- **Base dataset (`2023-01..2026-03`)**: filename `company_quality_dataset_risk_off.v3.csv`, row count (`25025`), signal-date count (`39`), and full SHA256 hex digest of the CSV file;
+- **2022 bear-market dataset (`2022-01..2022-12`)** (when `--bear-2022-dataset` is provided): filename `company_quality_dataset_risk_off.repaired.csv`, row count (`8251`), signal-date count (`12`), full SHA256 hex digest of the repaired CSV, plus the Modal extraction provenance (`run_id`, `code_sha`, `generated_utc`, `raw_csv_sha256`, `splits_json_sha256`, `discontinuities_flagged`, `discontinuities_rows`).
+
+### 6.2 Commit-Safe 2022 Provenance & Split-Repair Audit Files in `--output-dir`
+When `--bear-2022-dataset` is provided (e.g. `outputs/historical_selection_bear2022_20261017_01/repaired/company_quality_dataset_risk_off.repaired.csv`), automatically discover sibling Modal/repair artifacts (or accept optional `--bear-2022-meta-json`, `--bear-2022-success-json`, `--bear-2022-discontinuities-csv`; default to looking in `<bear_dataset_dir>/company_quality_discontinuities.csv` and `<bear_dataset_dir>/../modal_download/datasets/company_quality_dataset_risk_off.{meta,SUCCESS,splits}.json` and `<bear_dataset_dir>/../frozen_inputs/`) and emit two additional commit-safe files in `--output-dir` (and include them in `SHA256SUMS`; raise `MAX_DIR_BYTES` to `160 * 1024`):
+1. **`bear_2022_provenance.json`**:
+   - Sanitized JSON (with any container `/root/` prefixes normalized to relative repo paths so `contains_absolute_path` remains `False`!) containing:
+     - `run_id`, `code_sha`, `generated_utc`, `start_date`, `end_date`, `style`, `dataset_kind`, `pre_snapshot_universe`, `allow_latest_watchlist_fallback`;
+     - `n_dates`, `n_rows`, `n_unique_symbols`;
+     - `sha256`: `{ "raw_extract_csv": ..., "splits_json": ..., "repaired_csv": ..., "discontinuities_csv": ..., "frozen_watchlist_csv": ..., "frozen_config_json": ... }`;
+     - `meta_summary`: sanitized fields from `company_quality_dataset_risk_off.meta.json`.
+2. **`bear_2022_discontinuities.csv`**:
+   - Exact copy of `company_quality_discontinuities.csv` from the 2022 split-repair step (`13` rows, `5` flagged with `null_labels=True`).
+
+### 6.3 Explicit Drawdown Date Manifest, Window-Overlap Disclosure & Episode-Cluster Aggregation in `report.md`
+Because monthly signal dates have overlapping 60-trading-day (~3-month) forward windows (`AGENTS.md` §8: *"do not treat overlapping 60d/120d rows as independent samples"*):
+1. Add a section in `report.md` titled **`## 2b. Forward-Drawdown & 2022 Bear Signal-Date Manifest (with 60d Window Overlap)`**:
+   - Render a Markdown table listing all **8 `FWD_DRAWDOWN_60D` dates** (`2023-06-30`, `2023-07-31`, `2024-11-29`, `2024-12-31`, `2025-01-31`, `2025-10-31`, `2025-11-28`, `2025-12-31`) and all **12 `BEAR_2022` dates** (`2022-01-31` .. `2022-12-30`), showing for each date:
+     `signal_date`, `segment_tag` (`FWD_DRAWDOWN_60D` or `BEAR_2022`), `episode_cluster` (contiguous dates whose 60d windows overlap, e.g., `EP1_2023Q3` for `2023-06-30..07-31`, `EP2_2024Q4_2025Q1` for `2024-11-29..2025-01-31`, `EP3_2025Q4` for `2025-10-31..12-31`, and `EP0_BEAR_2022` for the 9 negative-60d dates of 2022), `trailing_regime`, `qqq_ret20`, `qqq_ret60`, `qqq_label_end_60`, `qqq_ret120`, and `overlaps_prev_60d_window` (`yes`/`no`, where `yes` if `signal_date < prev_qqq_label_end_60`).
+2. Add an **Episode-Cluster Equal-Weight Summary table** in `report.md` (and/or helper function `compute_episode_cluster_summary`):
+   - Group the 8 `FWD_DRAWDOWN_60D` dates into their **3 non-overlapping contiguous drawdown episodes** (`EP1_2023Q3` [2 dates], `EP2_2024Q4_2025Q1` [3 dates], `EP3_2025Q4` [3 dates]) plus `EP0_BEAR_2022_DRAWDOWN` (the 9 negative-60d dates of 2022 as a 4th episode);
+   - Compute the within-episode mean `excess_60` and `severe_loss_rate_60` for `v1_current` and `v2_current` (`TOP15`, `PRIORITY_REVIEW`, `QUALITY_A`, `UNIVERSE`) in both `FULL` and `ETF_SLICE`, and report both per-episode values and the **3-episode (`FWD_DRAWDOWN_60D`) / 4-episode (`ALL_DRAWDOWN_EPISODES`) cluster-equal mean** alongside the date-equal mean.
+

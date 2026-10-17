@@ -6,6 +6,12 @@ Route A: forward-drawdown attribution on the frozen 39-date dataset (production 
 
 - Base dataset: `company_quality_dataset_risk_off.v3.csv` (25025 rows, 39 signal dates).
 - 2022 bear market dataset: `company_quality_dataset_risk_off.repaired.csv` (8251 rows, 12 signal dates).
+- Runner: `scripts/run_extended_replay_evaluation.py` SHA256 `62e38f206e43e31b06636510cc0647ed8d2f6f3f186ecac78b3739720d843c90`.
+- Reproduction command: `python scripts/run_extended_replay_evaluation.py --base-dataset outputs/historical_selection_v1_20261011_03/repaired/company_quality_dataset_risk_off.v3.csv --bear-2022-dataset outputs/historical_selection_bear2022_20261017_01/repaired/company_quality_dataset_risk_off.repaired.csv --base-reference-dir outputs/m4_revalidation_current_20261016 --output-dir docs/drawdown_and_bear_replay_20261017`.
+- Base dataset SHA256: `2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e`.
+- 2022 bear dataset `company_quality_dataset_risk_off.repaired.csv` (8251 rows, 12 signal dates) SHA256 `43e5cd4a440c92857c11106016db0b827202c279e2acfbdc7cb0281ff2f007d6`.
+- 2022 Modal extraction: run_id `historical_selection_bear2022_20261017_01`, code_sha `5b0b0657e21adcd5ec0f7d6426b4831906e4323a`, generated_utc `2026-10-17T07:17:06.196933+00:00`, raw_csv_sha256 `3fbd9db3b7a1525223e22f34bac10494ecf2ca83e619f4255007490239eda13e`, splits_json_sha256 `2d7949cca42dddc8fb20910b0b9d3cfc30a6fcec4f8770e44a936254152eb9cf`.
+- 2022 split-repair audit: discontinuities rows 13, flagged 1; artifacts `bear_2022_provenance.json` + `bear_2022_discontinuities.csv`.
 - Securities addressed by CIK/ticker rename hygiene at refresh time; universe snapshots are the documented `union_superset_approx` approximation (AGENTS.md §4): the current watchlist applied to all historical dates, not true PIT ETF-constituent history; the ETF-slice (etf_count>=1) cut is the bias-reduced read.
 - Retrospective replay only; no threshold/weight/policy promotion implied (AGENTS.md §8).
 
@@ -19,6 +25,75 @@ Status: **PASS** (15 cohort rows checked vs `e0_current_cohorts.csv` v1_current,
 
 - FWD_DRAWDOWN_60D: 8 dates, next-60d QQQ range -10.3%..-0.9%.
 - TRAILING_DOWN: 10 dates, next-60d QQQ range +1.6%..+21.6% (post-dip rebound measure).
+
+## 2b. Forward-Drawdown & 2022 Bear Signal-Date Manifest (with 60d Window Overlap)
+
+| signal_date | segment_tag | episode_cluster | trailing_regime | qqq_ret20 | qqq_ret60 | qqq_label_end_60 | qqq_ret120 | overlaps_prev_60d_window |
+|---|---|---|---|---|---|---|---|---|
+| 2023-06-30 | FWD_DRAWDOWN_60D | EP1_2023Q3 | up | +3.4% | -4.6% | 2023-09-26 | +8.6% | no |
+| 2023-07-31 | FWD_DRAWDOWN_60D | EP1_2023Q3 | up | -4.4% | -6.4% | 2023-10-24 | +10.0% | yes |
+| 2024-11-29 | FWD_DRAWDOWN_60D | EP2_2024Q4_2025Q1 | up | +0.6% | -0.9% | 2025-02-28 | +1.7% | no |
+| 2024-12-31 | FWD_DRAWDOWN_60D | EP2_2024Q4_2025Q1 | up | +1.3% | -9.1% | 2025-03-31 | +5.9% | yes |
+| 2025-01-31 | FWD_DRAWDOWN_60D | EP2_2024Q4_2025Q1 | up | -3.4% | -7.7% | 2025-04-29 | +10.1% | yes |
+| 2025-10-31 | FWD_DRAWDOWN_60D | EP3_2025Q4 | up | -3.1% | -1.2% | 2026-01-29 | +4.3% | no |
+| 2025-11-28 | FWD_DRAWDOWN_60D | EP3_2025Q4 | up | +0.9% | -1.0% | 2026-02-26 | +16.6% | yes |
+| 2025-12-31 | FWD_DRAWDOWN_60D | EP3_2025Q4 | up | -0.0% | -10.3% | 2026-03-30 | +15.2% | yes |
+| 2022-01-31 | BEAR_2022 | EP0_BEAR_2022 | down | -6.6% | -13.4% | 2022-04-27 | -17.9% | no |
+| 2022-02-28 | BEAR_2022 | EP0_BEAR_2022 | down | +5.3% | -17.2% | 2022-05-24 | -6.9% | yes |
+| 2022-03-31 | BEAR_2022 | EP0_BEAR_2022 | down | -13.9% | -22.2% | 2022-06-28 | -23.1% | yes |
+| 2022-04-29 | BEAR_2022 | EP0_BEAR_2022 | down | -1.5% | -2.3% | 2022-07-27 | -14.3% | yes |
+| 2022-05-31 | BEAR_2022 | - | down | -8.9% | +2.9% | 2022-08-25 | -8.6% | yes |
+| 2022-06-30 | BEAR_2022 | EP0_BEAR_2022 | down | +12.7% | -2.1% | 2022-09-26 | -3.7% | yes |
+| 2022-07-29 | BEAR_2022 | EP0_BEAR_2022 | down | -2.3% | -11.5% | 2022-10-24 | -10.1% | yes |
+| 2022-08-31 | BEAR_2022 | EP0_BEAR_2022 | down | -8.6% | -3.6% | 2022-11-25 | -0.2% | yes |
+| 2022-09-30 | BEAR_2022 | EP0_BEAR_2022 | down | +4.2% | -2.4% | 2022-12-27 | +15.3% | yes |
+| 2022-10-31 | BEAR_2022 | - | down | -0.7% | +4.8% | 2023-01-27 | +9.7% | yes |
+| 2022-11-30 | BEAR_2022 | EP0_BEAR_2022 | up | -9.6% | -0.3% | 2023-02-28 | +12.6% | yes |
+| 2022-12-30 | BEAR_2022 | - | down | +9.4% | +16.1% | 2023-03-29 | +32.9% | yes |
+
+`overlaps_prev_60d_window` = `signal_date < previous listed date's qqq_label_end_60`: monthly signal dates inside one drawdown episode share overlapping 60-trading-day (~3-month) forward windows and are therefore NOT independent samples (AGENTS.md §8); the episode-cluster equal-weight table below gives each contiguous drawdown episode one vote.
+
+Episode-cluster equal-weight summary - mean 60d net-QQQ excess:
+
+| scope | cohort | variant | EP1_2023Q3 | EP2_2024Q4_2025Q1 | EP3_2025Q4 | EP0_BEAR_2022 | FWD_EQ(3) | ALL_EQ(4) | DATE_EQUAL |
+|---|---|---|---|---|---|---|---|---|---|
+| FULL | TOP15 | v1_current | +0.2% | -7.4% | +4.5% | +3.3% | -0.9% | +0.2% | -1.0% |
+| FULL | PRIORITY_REVIEW | v1_current | +2.3% | -6.1% | +7.0% | +8.0% | +1.1% | +2.8% | +0.9% |
+| FULL | QUALITY_A | v1_current | -2.8% | -2.6% | +4.8% | +3.9% | -0.2% | +0.8% | +0.1% |
+| FULL | UNIVERSE | v1_current | -5.4% | -2.2% | +5.4% | +1.9% | -0.7% | -0.1% | -0.1% |
+| FULL | TOP15 | v2_current | +0.6% | -7.0% | +3.3% | +4.1% | -1.0% | +0.2% | -1.2% |
+| FULL | PRIORITY_REVIEW | v2_current | +1.4% | -3.0% | +8.0% | +4.7% | +2.1% | +2.8% | +2.2% |
+| FULL | QUALITY_A | v2_current | -2.9% | -2.2% | +5.1% | +3.4% | +0.0% | +0.9% | +0.4% |
+| FULL | UNIVERSE | v2_current | -5.4% | -2.2% | +5.4% | +1.9% | -0.7% | -0.1% | -0.1% |
+| ETF_SLICE | TOP15 | v1_current | +0.8% | -6.8% | +7.3% | +4.8% | +0.4% | +1.5% | +0.4% |
+| ETF_SLICE | PRIORITY_REVIEW | v1_current | +4.7% | -6.6% | +9.2% | +8.0% | +2.5% | +3.9% | +2.2% |
+| ETF_SLICE | QUALITY_A | v1_current | -1.0% | -1.9% | +7.1% | +4.2% | +1.4% | +2.1% | +1.7% |
+| ETF_SLICE | UNIVERSE | v1_current | -2.8% | -0.4% | +7.6% | +3.0% | +1.5% | +1.9% | +2.0% |
+| ETF_SLICE | TOP15 | v2_current | +1.7% | -5.6% | +8.5% | +5.4% | +1.5% | +2.5% | +1.5% |
+| ETF_SLICE | PRIORITY_REVIEW | v2_current | +2.6% | -3.3% | +10.1% | +6.0% | +3.2% | +3.9% | +3.2% |
+| ETF_SLICE | QUALITY_A | v2_current | -0.9% | -1.6% | +7.8% | +3.8% | +1.8% | +2.3% | +2.1% |
+| ETF_SLICE | UNIVERSE | v2_current | -2.8% | -0.4% | +7.6% | +3.0% | +1.5% | +1.9% | +2.0% |
+
+Episode-cluster equal-weight summary - severe loss rate (fwd_ret_60 <= -20%):
+
+| scope | cohort | variant | EP1_2023Q3 | EP2_2024Q4_2025Q1 | EP3_2025Q4 | EP0_BEAR_2022 | FWD_EQ(3) | ALL_EQ(4) | DATE_EQUAL |
+|---|---|---|---|---|---|---|---|---|---|
+| FULL | TOP15 | v1_current | +3.3% | +31.1% | +13.3% | +14.8% | +15.9% | +15.6% | +17.5% |
+| FULL | PRIORITY_REVIEW | v1_current | +6.2% | +25.8% | +10.6% | +6.0% | +14.2% | +12.2% | +15.2% |
+| FULL | QUALITY_A | v1_current | +14.5% | +20.4% | +20.0% | +13.8% | +18.3% | +17.2% | +18.8% |
+| FULL | UNIVERSE | v1_current | +24.1% | +24.7% | +23.9% | +23.2% | +24.2% | +24.0% | +24.3% |
+| FULL | TOP15 | v2_current | +6.7% | +26.7% | +17.8% | +9.6% | +17.0% | +15.2% | +18.3% |
+| FULL | PRIORITY_REVIEW | v2_current | +8.3% | +18.5% | +11.3% | +10.2% | +12.7% | +12.1% | +13.3% |
+| FULL | QUALITY_A | v2_current | +14.2% | +19.3% | +20.1% | +15.4% | +17.9% | +17.3% | +18.3% |
+| FULL | UNIVERSE | v2_current | +24.1% | +24.7% | +23.9% | +23.2% | +24.2% | +24.0% | +24.3% |
+| ETF_SLICE | TOP15 | v1_current | +10.0% | +26.7% | +8.9% | +11.1% | +15.2% | +14.2% | +15.8% |
+| ETF_SLICE | PRIORITY_REVIEW | v1_current | +4.5% | +24.2% | +6.6% | +6.1% | +11.8% | +10.4% | +12.7% |
+| ETF_SLICE | QUALITY_A | v1_current | +8.7% | +18.0% | +15.6% | +12.3% | +14.1% | +13.6% | +14.7% |
+| ETF_SLICE | UNIVERSE | v1_current | +16.5% | +18.7% | +17.9% | +18.0% | +17.7% | +17.8% | +17.8% |
+| ETF_SLICE | TOP15 | v2_current | +10.0% | +24.4% | +11.1% | +6.7% | +15.2% | +13.1% | +15.8% |
+| ETF_SLICE | PRIORITY_REVIEW | v2_current | +9.4% | +17.9% | +7.6% | +5.8% | +11.6% | +10.1% | +11.9% |
+| ETF_SLICE | QUALITY_A | v2_current | +7.7% | +16.7% | +14.8% | +13.2% | +13.1% | +13.1% | +13.7% |
+| ETF_SLICE | UNIVERSE | v2_current | +16.5% | +18.7% | +17.9% | +18.0% | +17.7% | +17.8% | +17.8% |
 
 ## 3. Rank tiers: FWD_BULL_60D vs FWD_DRAWDOWN_60D (v2_current)
 

@@ -10,6 +10,7 @@ tolerance checker, and an end-to-end CLI run into a temporary directory
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -472,6 +473,264 @@ class TestEndToEndCli(unittest.TestCase):
             self.assertIn("COMBINED_DRAWDOWN_60D", cohort_text)
             self.assertIn("BEAR_2022", (out_dir / "report.md").read_text(
                 encoding="utf-8"))
+
+
+class TestWindowOverlapAndEpisodes(unittest.TestCase):
+    """§6.3: 60d window-overlap disclosure and episode-cluster aggregation."""
+
+    _META = {
+        "2023-06-30": {"qqq_label_end_60": "2023-09-26", "regime": "up"},
+        "2023-07-31": {"qqq_label_end_60": "2023-10-24", "regime": "up"},
+        "2024-11-29": {"qqq_label_end_60": "2025-02-28", "regime": "up"},
+        "2024-12-31": {"qqq_label_end_60": "2025-03-31", "regime": "up"},
+        "2025-01-31": {"qqq_label_end_60": "2025-04-29", "regime": "up"},
+        "2025-10-31": {"qqq_label_end_60": "2026-01-29", "regime": "up"},
+        "2025-11-28": {"qqq_label_end_60": "2026-02-26", "regime": "up"},
+        "2025-12-31": {"qqq_label_end_60": "2026-03-30", "regime": "up"},
+    }
+
+    def test_forward_window_overlap_flags(self) -> None:
+        dates = sorted(self._META)
+        flags = rex.forward_window_overlaps(dates, self._META)
+        self.assertFalse(flags["2023-06-30"])
+        self.assertTrue(flags["2023-07-31"])
+        self.assertFalse(flags["2024-11-29"])
+        self.assertTrue(flags["2024-12-31"])
+        self.assertTrue(flags["2025-01-31"])
+        self.assertFalse(flags["2025-10-31"])
+        self.assertTrue(flags["2025-11-28"])
+        self.assertTrue(flags["2025-12-31"])
+
+    def test_missing_label_end_cannot_overlap(self) -> None:
+        flags = rex.forward_window_overlaps(
+            ["2023-01-31", "2023-02-28"], {"2023-01-31": {}})
+        self.assertEqual(
+            flags, {"2023-01-31": False, "2023-02-28": False})
+
+    def test_episode_cluster_assignment_canonical_names(self) -> None:
+        clusters, episodes = rex.assign_episode_clusters(
+            sorted(self._META), self._META)
+        self.assertEqual(clusters["2023-06-30"], "EP1_2023Q3")
+        self.assertEqual(clusters["2023-07-31"], "EP1_2023Q3")
+        self.assertEqual(clusters["2024-11-29"], "EP2_2024Q4_2025Q1")
+        self.assertEqual(clusters["2024-12-31"], "EP2_2024Q4_2025Q1")
+        self.assertEqual(clusters["2025-01-31"], "EP2_2024Q4_2025Q1")
+        self.assertEqual(clusters["2025-10-31"], "EP3_2025Q4")
+        self.assertEqual(clusters["2025-12-31"], "EP3_2025Q4")
+        self.assertEqual(
+            [name for name, _ in episodes],
+            ["EP1_2023Q3", "EP2_2024Q4_2025Q1", "EP3_2025Q4"],
+        )
+        self.assertEqual([len(dates) for _, dates in episodes], [2, 3, 3])
+
+    def test_bear_episode_single_cluster(self) -> None:
+        dates = ["2022-01-31", "2022-02-28", "2022-06-30"]
+        clusters, episodes = rex.assign_episode_clusters(
+            dates, {}, bear=True)
+        self.assertEqual(set(clusters.values()), {"EP0_BEAR_2022"})
+        self.assertEqual(episodes, [("EP0_BEAR_2022", dates)])
+
+    def _episode_records(self):
+        def rec(symbol, exc60, fwd60):
+            return {
+                "symbol": symbol,
+                "priority": 1,
+                "action_state": "PRIORITY_REVIEW",
+                "grade": "A",
+                "entry_state": "ENTRY_READY",
+                "price_to_sma200": 1.0,
+                "fwd_ret_20": None,
+                "excess_20": None,
+                "fwd_ret_60": fwd60,
+                "excess_60": exc60,
+                "fwd_ret_120": None,
+                "excess_120": None,
+            }
+
+        return {
+            "FULL": {
+                "v1_current": {
+                    "d1": [rec("A", 0.2, -0.3), rec("B", -0.2, 0.1)],
+                    "d2": [rec("C", 0.4, 0.2), rec("D", 0.2, 0.1)],
+                    "d3": [rec("E", 0.6, 0.3), rec("F", 0.4, 0.2)],
+                    "b1": [rec("G", -0.1, -0.25), rec("H", -0.3, -0.4)],
+                },
+                "v2_current": {},
+            },
+            "ETF_SLICE": {"v1_current": {}, "v2_current": {}},
+        }
+
+    def test_episode_equal_weight_math(self) -> None:
+        summary = rex.compute_episode_cluster_summary(
+            self._episode_records(),
+            [("EPA", ["d1"]), ("EPB", ["d2", "d3"]),
+             ("EP0_BEAR_2022", ["b1"])],
+            fwd_episode_names=["EPA", "EPB"],
+            all_episode_names=["EPA", "EPB", "EP0_BEAR_2022"],
+        )
+        row = next(
+            row for row in summary["rows"]
+            if row["universe_scope"] == "FULL"
+            and row["variant"] == "v1_current"
+            and row["cohort"] == "UNIVERSE"
+        )
+        values = row["episode_values"]
+        # d1 mean = (0.2 + -0.2)/2 = 0.0; d2 mean = 0.3; d3 mean = 0.5
+        self.assertAlmostEqual(values["EPA"]["mean_excess_60"], 0.0)
+        self.assertAlmostEqual(values["EPB"]["mean_excess_60"], 0.4)
+        self.assertAlmostEqual(
+            values["EP0_BEAR_2022"]["mean_excess_60"], -0.2)
+        # cluster-equal means: equal weight per episode, not per date
+        self.assertAlmostEqual(
+            row["fwd_drawdown_episode_equal_mean_excess_60"], 0.2)
+        self.assertAlmostEqual(
+            row["all_drawdown_episode_equal_mean_excess_60"],
+            (0.0 + 0.4 - 0.2) / 3.0,
+        )
+        # severe loss: d1 = 1/2, b1 = 2/2 (both members <= -0.20)
+        self.assertAlmostEqual(values["EPA"]["severe_loss_rate_60"], 0.5)
+        self.assertAlmostEqual(values["EPB"]["severe_loss_rate_60"], 0.0)
+        self.assertAlmostEqual(
+            values["EP0_BEAR_2022"]["severe_loss_rate_60"], 1.0)
+        self.assertAlmostEqual(
+            row["fwd_drawdown_episode_equal_severe_loss_60"], 0.25)
+        # date-equal over d1+d2+d3: means 0.0, 0.3, 0.5 -> 0.2667
+        date_equal = summary["date_equal"][
+            "FULL|v1_current|UNIVERSE"]["mean_excess_60"]
+        self.assertAlmostEqual(date_equal, (0.0 + 0.3 + 0.5) / 3.0)
+
+
+class TestBear2022Provenance(unittest.TestCase):
+    """§6.1/§6.2: commit-safe 2022 provenance + split-repair audit artifacts."""
+
+    def _write_bear_bundle(self, tmp: Path):
+        run = tmp / "run"
+        repaired = run / "repaired"
+        modal = run / "modal_download" / "datasets"
+        frozen = run / "frozen_inputs"
+        for directory in (repaired, modal, frozen):
+            directory.mkdir(parents=True, exist_ok=True)
+        base_csv = tmp / "base.csv"
+        _synthetic_dataset().to_csv(base_csv, index=False)
+        bear = pd.concat([
+            _synthetic_group(
+                "2022-06-30", qqq60=-0.12, qqq20=-0.04, regime="down"),
+            _synthetic_group(
+                "2022-09-30", qqq60=0.05, qqq20=0.02, regime="down"),
+        ], ignore_index=True)
+        bear_csv = repaired / "company_quality_dataset_risk_off.repaired.csv"
+        bear.to_csv(bear_csv, index=False)
+        (repaired / "company_quality_discontinuities.csv").write_text(
+            "symbol,prev_date,date,null_labels\n"
+            "ABTC,2022-07-29,2022-08-31,True\n"
+            "XYZ,2022-01-31,2022-02-28,False\n",
+            encoding="utf-8",
+        )
+        (modal / "company_quality_dataset_risk_off.csv").write_text(
+            "symbol\nAAA\n", encoding="utf-8")
+        (modal / "company_quality_dataset_risk_off.meta.json").write_text(
+            json.dumps({
+                "scan_config": "/root/configs/config.risk_off.json",
+                "watchlist_csv_path": "/root/data/ai_watchlist.csv",
+                "generated_utc": "2026-10-17T07:17:06+00:00",
+                "pre_snapshot_universe": "union",
+                "allow_latest_watchlist_fallback": False,
+            }),
+            encoding="utf-8",
+        )
+        (modal / "company_quality_dataset_risk_off.SUCCESS.json").write_text(
+            json.dumps({
+                "output": (
+                    "/root/research/run_x/datasets/"
+                    "company_quality_dataset_risk_off.csv"
+                ),
+                "spec": {
+                    "run_id": "run_x",
+                    "code_sha": "abc123",
+                    "start_date": "2022-01-01",
+                    "end_date": "2022-12-31",
+                    "style": "risk_off",
+                    "dataset_kind": "company_quality",
+                },
+                "status": "success",
+            }),
+            encoding="utf-8",
+        )
+        (modal / "company_quality_dataset_risk_off.splits.json").write_text(
+            '{"events": {}}', encoding="utf-8")
+        (frozen / "ai_watchlist.csv").write_text(
+            "symbol,bucket\nAAA,core_ai\n", encoding="utf-8")
+        (frozen / "config.risk_off.json").write_text("{}", encoding="utf-8")
+        return base_csv, bear_csv, modal, repaired
+
+    def test_bear_provenance_files_generated_and_sanitized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_csv, bear_csv, modal, repaired = self._write_bear_bundle(
+                tmp_path)
+            out_dir = tmp_path / "out"
+            exit_code = rex.main([
+                "--base-dataset", str(base_csv),
+                "--bear-2022-dataset", str(bear_csv),
+                "--base-reference-dir", str(tmp_path / "no_reference"),
+                "--output-dir", str(out_dir),
+            ])
+            self.assertEqual(exit_code, 0)
+            prov_text = (
+                out_dir / "bear_2022_provenance.json"
+            ).read_text(encoding="utf-8")
+            self.assertNotIn("/root/", prov_text)
+            self.assertFalse(rex.contains_absolute_path(prov_text))
+            provenance = json.loads(prov_text)
+            self.assertEqual(provenance["run_id"], "run_x")
+            self.assertEqual(provenance["code_sha"], "abc123")
+            self.assertEqual(
+                provenance["generated_utc"], "2026-10-17T07:17:06+00:00")
+            self.assertEqual(provenance["n_dates"], 2)
+            self.assertEqual(provenance["n_rows"], 8)
+            self.assertEqual(provenance["n_unique_symbols"], 4)
+            self.assertEqual(
+                provenance["meta_summary"]["scan_config"],
+                "configs/config.risk_off.json",
+            )
+            self.assertEqual(
+                provenance["sha256"]["repaired_csv"],
+                hashlib.sha256(bear_csv.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                provenance["sha256"]["splits_json"],
+                hashlib.sha256(
+                    (modal / "company_quality_dataset_risk_off.splits.json")
+                    .read_bytes()
+                ).hexdigest(),
+            )
+            self.assertEqual(provenance["discontinuities_rows"], 2)
+            self.assertEqual(provenance["discontinuities_flagged"], 1)
+            # discontinuities CSV is an exact copy
+            self.assertEqual(
+                (out_dir / "bear_2022_discontinuities.csv").read_bytes(),
+                (repaired / "company_quality_discontinuities.csv")
+                .read_bytes(),
+            )
+            # SHA256SUMS covers both new files and all digests verify
+            sums = (out_dir / "SHA256SUMS").read_text(encoding="utf-8")
+            self.assertIn("bear_2022_provenance.json", sums)
+            self.assertIn("bear_2022_discontinuities.csv", sums)
+            for line in sums.splitlines():
+                digest, name = line.split("  ", 1)
+                actual = hashlib.sha256(
+                    (out_dir / name).read_bytes()).hexdigest()
+                self.assertEqual(actual, digest, name)
+            # all outputs commit-safe
+            for path in out_dir.iterdir():
+                text = path.read_text(encoding="utf-8")
+                self.assertFalse(rex.contains_absolute_path(text), path.name)
+                self.assertNotIn("/root/", text, path.name)
+            report = (out_dir / "report.md").read_text(encoding="utf-8")
+            self.assertIn("## 2b.", report)
+            self.assertIn("EP0_BEAR_2022", report)
+            self.assertIn("run_id `run_x`", report)
+            self.assertIn("bear_2022_provenance.json", report)
 
 
 if __name__ == "__main__":
