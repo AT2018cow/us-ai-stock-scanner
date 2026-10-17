@@ -649,7 +649,11 @@ def render_action_list_v2(
                 "Rev YoY >= 15%, OCF/NI >= 0.80x, SMA200 1.00–1.60x, "
                 "60d RS vs QQQ >= 0%) outside the Top-15 defensive shortlist "
                 "— suited for bull-market trend offense or "
-                "pullback-to-SMA20/50 entries.*",
+                "pullback-to-SMA20/50 entries. In weakening or drawdown "
+                "regimes this offense track carries higher pullback risk "
+                "(historically 22.5% vs 15.8% severe-loss rate); defer to "
+                "the Priority Review defensive shortlist when market "
+                "breadth deteriorates.*",
                 "",
             ]
         )
