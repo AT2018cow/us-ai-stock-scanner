@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -290,13 +292,64 @@ class _FakeSecClient:
         return self._facts
 
 
+def _build_bidu_stale_shares_sec_client() -> _FakeSecClient:
+    """BIDU-like fixture: share counts stop being reported (2010) while
+    revenue and net income continue to 2026."""
+    return _FakeSecClient(
+        submissions={"sic": "7370", "sicDescription": "Services-Computer Programming, Data Processing, Etc."},
+        companyfacts={
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {
+                        "units": {
+                            "USD": [
+                                _entry("2026-06-30", 7_358_500_000.0, "20-F", "2026-07-30"),
+                            ]
+                        }
+                    },
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                _entry("2026-06-30", 799_000_000.0, "20-F", "2026-07-30"),
+                            ]
+                        }
+                    },
+                    "WeightedAverageNumberOfSharesOutstandingBasic": {
+                        "units": {
+                            "shares": [
+                                _entry("2010-12-31", 34_805_362.0, "20-F", "2011-03-15"),
+                            ]
+                        }
+                    },
+                    "EarningsPerShareBasic": {
+                        "units": {
+                            "USD/shares": [
+                                _entry("2010-12-31", 15.35, "20-F", "2011-03-15"),
+                            ]
+                        }
+                    },
+                }
+            }
+        },
+    )
+
+
 class Gap12MetricTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._cache_dir = str(Path(self._tmp.name) / "cache")
+
     def test_load_one_fundamental_computes_new_metrics(self) -> None:
         sec = _FakeSecClient(
             submissions={"sic": "3571", "sicDescription": "Electronic Computers"},
             companyfacts=_build_companyfacts_ttm_full(),
         )
-        cfg = ScanConfig(use_ttm_metrics=True, nonrecurring_addback_revenue_cap=0.25)
+        cfg = ScanConfig(
+            use_ttm_metrics=True,
+            nonrecurring_addback_revenue_cap=0.25,
+            cache_dir=self._cache_dir,
+        )
         out = load_one_fundamental(sec, "TEST", "0000000001", cfg)
 
         self.assertEqual(out["revenue_form"], "ttm")
@@ -331,7 +384,11 @@ class Gap12MetricTests(unittest.TestCase):
             submissions={"sic": "7372", "sicDescription": "Prepackaged Software"},
             companyfacts=_build_companyfacts_annual_for_fallback(),
         )
-        cfg = ScanConfig(use_ttm_metrics=True, nonrecurring_addback_revenue_cap=0.25)
+        cfg = ScanConfig(
+            use_ttm_metrics=True,
+            nonrecurring_addback_revenue_cap=0.25,
+            cache_dir=self._cache_dir,
+        )
         out = load_one_fundamental(sec, "CAP", "0000000002", cfg)
 
         # Revenue=100 => each non-recurring bucket capped at 25.
@@ -344,7 +401,7 @@ class Gap12MetricTests(unittest.TestCase):
             submissions={"sic": "3674", "sicDescription": "Semiconductors"},
             companyfacts=_build_companyfacts_annual_for_fallback(),
         )
-        cfg = ScanConfig(use_ttm_metrics=True)
+        cfg = ScanConfig(use_ttm_metrics=True, cache_dir=self._cache_dir)
         out = load_one_fundamental(sec, "ANNUAL", "0000000003", cfg)
         self.assertEqual(out["revenue_form"], "annual")
         self.assertEqual(out["net_income_form"], "annual")
@@ -395,7 +452,7 @@ class Gap12MetricTests(unittest.TestCase):
             submissions={"sic": "7372", "sicDescription": "Prepackaged Software"},
             companyfacts=_build_companyfacts_for_low_coverage_inference(),
         )
-        cfg = ScanConfig(use_ttm_metrics=True)
+        cfg = ScanConfig(use_ttm_metrics=True, cache_dir=self._cache_dir)
         out = load_one_fundamental(sec, "INF", "0000000004", cfg)
         self.assertEqual(out["current_debt_ratio_source"], "inferred_total_debt_capped_by_current_liabilities")
         self.assertAlmostEqual(float(out["current_debt_ratio"]), 0.4, places=6)
@@ -679,44 +736,8 @@ class Gap12MetricTests(unittest.TestCase):
         # BIDU-like: share counts stop being reported (2010) while revenue and
         # net income continue to 2026. load_one_fundamental must flag the
         # share count as stale so peer medians exclude it.
-        sec = _FakeSecClient(
-            submissions={"sic": "7370", "sicDescription": "Services-Computer Programming, Data Processing, Etc."},
-            companyfacts={
-                "facts": {
-                    "us-gaap": {
-                        "Revenues": {
-                            "units": {
-                                "USD": [
-                                    _entry("2026-06-30", 7_358_500_000.0, "20-F", "2026-07-30"),
-                                ]
-                            }
-                        },
-                        "NetIncomeLoss": {
-                            "units": {
-                                "USD": [
-                                    _entry("2026-06-30", 799_000_000.0, "20-F", "2026-07-30"),
-                                ]
-                            }
-                        },
-                        "WeightedAverageNumberOfSharesOutstandingBasic": {
-                            "units": {
-                                "shares": [
-                                    _entry("2010-12-31", 34_805_362.0, "20-F", "2011-03-15"),
-                                ]
-                            }
-                        },
-                        "EarningsPerShareBasic": {
-                            "units": {
-                                "USD/shares": [
-                                    _entry("2010-12-31", 15.35, "20-F", "2011-03-15"),
-                                ]
-                            }
-                        },
-                    }
-                }
-            },
-        )
-        cfg = ScanConfig(use_ttm_metrics=True)
+        sec = _build_bidu_stale_shares_sec_client()
+        cfg = ScanConfig(use_ttm_metrics=True, cache_dir=self._cache_dir)
         out = load_one_fundamental(sec, "BIDU", "0001329099", cfg)
         self.assertTrue(out["shares_stale"])
         self.assertEqual(out["shares_asof_end"], "2010-12-31")
@@ -724,6 +745,20 @@ class Gap12MetricTests(unittest.TestCase):
         # derived signal (ps/pe/fcf/discount) can be fabricated from it.
         self.assertIsNone(out["shares_outstanding"])
         self.assertIsNone(out["shares_yoy"])
+
+    def test_real_cache_untouched_by_bidu_fixture(self) -> None:
+        # The BIDU fixture uses a real CIK (0001329099) whose submissions
+        # cache exists in the repo: the isolated cache_dir must prevent
+        # load_one_fundamental from rewriting the shared production cache.
+        sec = _build_bidu_stale_shares_sec_client()
+        repo_file = Path("cache") / "parsed_fund_0001329099.json"
+        existed_before = repo_file.exists()
+        mtime_before = repo_file.stat().st_mtime_ns if existed_before else None
+        cfg = ScanConfig(use_ttm_metrics=True, cache_dir=self._cache_dir)
+        load_one_fundamental(sec, "BIDU", "0001329099", cfg)
+        self.assertEqual(repo_file.exists(), existed_before)
+        if existed_before:
+            self.assertEqual(repo_file.stat().st_mtime_ns, mtime_before)
 
     def test_fresh_share_count_not_flagged(self) -> None:
         sec = _FakeSecClient(
@@ -763,7 +798,7 @@ class Gap12MetricTests(unittest.TestCase):
                 }
             },
         )
-        cfg = ScanConfig(use_ttm_metrics=True)
+        cfg = ScanConfig(use_ttm_metrics=True, cache_dir=self._cache_dir)
         out = load_one_fundamental(sec, "FRESH", "0000000001", cfg)
         self.assertFalse(out["shares_stale"])
         self.assertEqual(out["shares_asof_end"], "2026-06-30")

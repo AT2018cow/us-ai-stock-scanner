@@ -277,6 +277,11 @@ class Stage2ScanTests(unittest.TestCase):
 class RefreshPurityTests(unittest.TestCase):
     """`refresh_sec_cache.py` is 100% pure SEC prewarm: no scan wiring."""
 
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._cache_dir = str(Path(self._tmp.name) / "cache")
+
     def test_no_scan_references_in_module(self) -> None:
         self.assertFalse(hasattr(rsc, "run_scan"))
         self.assertFalse(hasattr(rsc, "run_daily_scan_after_prewarm"))
@@ -319,11 +324,18 @@ class RefreshPurityTests(unittest.TestCase):
         return stack, captured, sec_cls_mock
 
     def _run_main(self, argv, extra_env):
+        from ai_value_scanner.scanner import ScanConfig
+
         env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": ""}
         env.update(extra_env)
-        with patch.object(sys, "argv", ["refresh_sec_cache.py", *argv]):
-            with patch.dict(os.environ, env, clear=False):
-                rsc.main()
+        with patch.object(
+            rsc,
+            "load_config",
+            return_value=ScanConfig(cache_dir=self._cache_dir),
+        ):
+            with patch.object(sys, "argv", ["refresh_sec_cache.py", *argv]):
+                with patch.dict(os.environ, env, clear=False):
+                    rsc.main()
 
     def test_default_max_age_hours_is_4h(self) -> None:
         stack, captured, sec_cls_mock = self._patch_prewarm_stack(_clean_summary())
@@ -340,6 +352,22 @@ class RefreshPurityTests(unittest.TestCase):
         with stack:
             self._run_main([], {"ALPACA_API_KEY": "test-key"})
 
+    def test_main_pending_streaks_isolated_from_repo_cache(self) -> None:
+        # The full-prewarm diagnostics path writes sec_pending_streaks.json;
+        # it must land in the isolated temp cache dir, never the repo cache.
+        stack, _, _ = self._patch_prewarm_stack(_clean_summary())
+        repo_file = Path("cache") / "sec_pending_streaks.json"
+        existed_before = repo_file.exists()
+        mtime_before = repo_file.stat().st_mtime_ns if existed_before else None
+        with stack:
+            self._run_main([], {"ALPACA_API_KEY": "test-key"})
+        self.assertTrue(
+            (Path(self._cache_dir) / "sec_pending_streaks.json").exists()
+        )
+        self.assertEqual(repo_file.exists(), existed_before)
+        if existed_before:
+            self.assertEqual(repo_file.stat().st_mtime_ns, mtime_before)
+
     def test_main_exits_1_on_failed_summary(self) -> None:
         stack, _, _ = self._patch_prewarm_stack(_clean_summary(failed=2))
         with stack:
@@ -353,7 +381,7 @@ class RefreshPurityTests(unittest.TestCase):
         param = inspect.signature(rsc.run_sec_prewarm).parameters["max_age_hours"]
         self.assertEqual(param.default, 4.0)
         stack, captured, _ = self._patch_prewarm_stack(_clean_summary())
-        cfg = ScanConfig()
+        cfg = ScanConfig(cache_dir=self._cache_dir)
         with stack:
             summary = rsc.run_sec_prewarm(
                 cfg,
@@ -370,7 +398,9 @@ class RefreshPurityTests(unittest.TestCase):
         with patch.object(rsc, "collect_symbols", return_value=([], [])):
             with self.assertRaises(SystemExit) as ctx:
                 rsc.run_sec_prewarm(
-                    ScanConfig(), repo=Path("."), user_agent="unittest-agent"
+                    ScanConfig(cache_dir=self._cache_dir),
+                    repo=Path("."),
+                    user_agent="unittest-agent",
                 )
         self.assertEqual(ctx.exception.code, 1)
 
