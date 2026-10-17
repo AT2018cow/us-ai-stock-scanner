@@ -24,12 +24,15 @@ from ai_value_scanner.decision.model import (
     stock_decisions_to_jsonl,
 )
 from ai_value_scanner.decision.view_model import (
+    is_growth_compounder_offense_eligible,
+    growth_compounder_offense_order_key,
     build_snapshot_view_model,
     build_stock_card_view_model,
     format_metric_value,
 )
 from ai_value_scanner.reporting.decision import (
     render_action_list,
+    render_action_list_v2,
     render_detailed_report,
 )
 
@@ -473,6 +476,237 @@ class PreviewCliSmokeTests(unittest.TestCase):
             self.assertIn("../action_list_v2.md", detail_body)
             # Snapshot input directory is untouched (no v2 files written there).
             self.assertFalse((snap / "action_list_v2.md").exists())
+
+
+def _offense_quality_positives(
+    rev=0.40, ocf=1.10, *, include_rev=True, include_ocf=True
+):
+    items = (
+        _ev("net_margin_strong", metric="net_margin", value=0.25,
+            threshold=">=10% supportive; <0% weak",
+            label="Net margin supportive"),
+    )
+    if include_rev:
+        items += (
+            _ev("revenue_yoy_strong", metric="revenue_yoy", value=rev,
+                threshold=">=8% supportive; <-10% weak",
+                label="Revenue growth supportive"),
+        )
+    if include_ocf:
+        items += (
+            _ev("ocf_to_net_income_strong", metric="ocf_to_net_income",
+                value=ocf, threshold=">=0.8 supportive; <0.5 weak",
+                label="Operating cash-flow conversion supportive"),
+        )
+    return items
+
+
+def _offense_entry_positives(
+    sma=1.18, rs=0.15, *, include_sma=True, include_rs=True
+):
+    items = tuple(
+        item for item in _ready_entry_positives()
+        if item.metric not in {"price_to_sma200", "relative_strength_60d_qqq"}
+    )
+    if include_sma:
+        items += (
+            _ev("price_above_sma200", metric="price_to_sma200", value=sma,
+                threshold=">=1.00 healthy; <0.95 damaged",
+                label="Price above SMA200"),
+        )
+    if include_rs:
+        items += (
+            _ev("relative_strength_60d_qqq_ready",
+                metric="relative_strength_60d_qqq", value=rs,
+                threshold=">=-3%", label="60d relative strength acceptable"),
+        )
+    return items
+
+
+def _offense_decision(
+    symbol: str = "PLTR",
+    *,
+    rev=0.40,
+    ocf=1.10,
+    sma=1.18,
+    rs=0.15,
+    q=0.85,
+    grade: QualityGrade = QualityGrade.A,
+    entry_state: EntryState = EntryState.WATCH_PULLBACK,
+    action: ActionState = ActionState.WATCH_PULLBACK,
+    priority: int = 22,
+    pre_earnings: bool = False,
+    nonop: bool = False,
+    include_rev: bool = True,
+    include_ocf: bool = True,
+    include_sma: bool = True,
+    include_rs: bool = True,
+) -> StockDecision:
+    quality_risks: list[EvidenceItem] = []
+    if pre_earnings:
+        quality_risks.append(_ev(
+            "pre_earnings_window_risk", polarity="negative",
+            metric="fundamental_data_age_days", value=80))
+    if nonop:
+        quality_risks.append(_ev(
+            "nonoperating_gain_inflation", polarity="negative",
+            metric="net_margin", value=0.2))
+    entry = EntryDecision(
+        state=entry_state, score=0.9, confidence=1.0,
+        positives=_offense_entry_positives(
+            sma, rs, include_sma=include_sma, include_rs=include_rs),
+        risks=(), market_asof="2026-10-12",
+    )
+    quality = QualityDecision(
+        grade=grade, score=q, confidence=0.9,
+        component_scores={"profitability_cash": 0.9},
+        positives=_offense_quality_positives(
+            rev, ocf, include_rev=include_rev, include_ocf=include_ocf),
+        risks=tuple(quality_risks), missing=(),
+        data_asof="2026-08-27",
+    )
+    return StockDecision(
+        schema_version="1", symbol=symbol, company_name=f"{symbol} Inc.",
+        decision_date="2026-10-12",
+        generated_at_utc="2026-10-13T00:00:00+00:00",
+        quality=quality, entry=entry, action_state=action, priority=priority,
+        rationale=(), review_trigger="Review now.",
+        source_lists=("research_pool",),
+        provenance={"cik": "0001108524"},
+    )
+
+
+class TestGrowthCompounderOffenseTrack(unittest.TestCase):
+    """Report Layout v2: Growth Compounder Leaders (Bull Offense Track)."""
+
+    def test_eligibility_six_gate_matrix(self) -> None:
+        self.assertTrue(
+            is_growth_compounder_offense_eligible(_offense_decision("PLTR")))
+        self.assertTrue(is_growth_compounder_offense_eligible(
+            _offense_decision("E", entry_state=EntryState.ENTRY_READY)))
+        # WATCH_PULLBACK is the default fixture state (offense-track class).
+        self.assertTrue(is_growth_compounder_offense_eligible(
+            _offense_decision("W", entry_state=EntryState.WATCH_PULLBACK)))
+        cases = {
+            "grade C": _offense_decision("X", grade=QualityGrade.C),
+            "score floor": _offense_decision("X", q=0.67),
+            "nonoperating gain": _offense_decision("X", nonop=True),
+            "revenue low": _offense_decision("X", rev=0.14),
+            "revenue missing": _offense_decision("X", include_rev=False),
+            "ocf low": _offense_decision("X", ocf=0.79),
+            "ocf missing": _offense_decision("X", include_ocf=False),
+            "state damaged": _offense_decision(
+                "X", entry_state=EntryState.TREND_DAMAGED),
+            "sma low": _offense_decision("X", sma=0.99),
+            "sma high": _offense_decision("X", sma=1.61),
+            "sma missing": _offense_decision("X", include_sma=False),
+            "rs negative": _offense_decision("X", rs=-0.01),
+            "rs missing": _offense_decision("X", include_rs=False),
+        }
+        for label, decision in cases.items():
+            with self.subTest(label=label):
+                self.assertFalse(
+                    is_growth_compounder_offense_eligible(decision))
+
+    def test_order_key_formula_and_pre_earnings_penalty(self) -> None:
+        decision = _offense_decision("PLTR", q=0.80, rev=0.50, rs=0.20)
+        # offense_score = 0.80 + 0.5*0.5 + 0.5*0.2 = 1.15
+        self.assertEqual(
+            growth_compounder_offense_order_key(decision),
+            (-1.15, -0.80, -0.90, "PLTR"),
+        )
+        penalized = _offense_decision(
+            "PLTR", q=0.80, rev=0.50, rs=0.20, pre_earnings=True)
+        self.assertEqual(
+            growth_compounder_offense_order_key(penalized)[0], -1.09)
+
+    def _pool(self):
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        # A03 is offense-eligible yet already primary -> must be deduplicated
+        offense_primary = _offense_decision("A03", priority=3)
+        primaries = tuple(
+            offense_primary if decision.symbol == "A03" else decision
+            for decision in primaries
+        )
+        off_list = tuple(
+            _offense_decision(f"P{i:02d}", priority=20 + i)
+            for i in range(1, 13)
+        )
+        return primaries, primaries + off_list
+
+    def test_view_model_selects_top10_and_dedupes_primaries(self) -> None:
+        primaries, pool = self._pool()
+        view = build_snapshot_view_model(primaries, pool)
+        symbols = [card.symbol for card in view.growth_compounder_offense_cards]
+        self.assertEqual(len(symbols), 10)
+        self.assertNotIn("A03", symbols)
+        # identical profiles -> tie broken by symbol; first 10 off-list names
+        self.assertEqual(symbols, [f"P{i:02d}" for i in range(1, 11)])
+        keys = [
+            growth_compounder_offense_order_key(
+                next(d for d in pool if d.symbol == symbol))
+            for symbol in symbols
+        ]
+        self.assertEqual(keys, sorted(keys))
+
+    def test_view_model_empty_without_all_decisions(self) -> None:
+        primaries, _ = self._pool()
+        view = build_snapshot_view_model(primaries)
+        self.assertEqual(view.growth_compounder_offense_cards, ())
+
+    def test_render_action_list_section_and_links(self) -> None:
+        primaries, pool = self._pool()
+        md = render_action_list_v2(
+            primaries, title="T", cadence="daily", all_decisions=pool)
+        self.assertIn(
+            "[Growth Leaders (Offense)](#growth-leaders-offense)", md)
+        self.assertIn(
+            "## Growth Compounder Leaders — Bull Offense Track (10)", md)
+        self.assertIn("**Offense #1 P01**", md)
+        self.assertIn("[Full Report →](./detailed/P01.md)", md)
+        self.assertIn("  - **Highlights**:", md)
+        self.assertIn("  - **Entry**:", md)
+        self.assertIn("  - **Watchouts**:", md)
+        self.assertLess(
+            md.index("## Growth Compounder Leaders"),
+            md.index("## Secondary Radar"),
+        )
+
+    def test_render_offense_empty_state(self) -> None:
+        primaries, _ = self._pool()
+        md = render_action_list_v2(
+            primaries, title="T", cadence="daily",
+            all_decisions=primaries)
+        self.assertIn(
+            "## Growth Compounder Leaders — Bull Offense Track (0)", md)
+        self.assertIn(
+            "No additional off-list growth compounder leaders", md)
+
+    def test_v1_renderer_has_no_offense_section(self) -> None:
+        primaries, pool = self._pool()
+        md = render_action_list(
+            primaries, title="T", cadence="daily", layout_version="v1")
+        self.assertNotIn("Growth Compounder Leaders", md)
+
+    def test_snapshot_v2_writes_detailed_reports_for_offense_cards(self) -> None:
+        from ai_value_scanner.reporting.snapshot import write_decision_snapshot
+
+        primaries, pool = self._pool()
+        with tempfile.TemporaryDirectory() as tmp:
+            write_decision_snapshot(
+                output_root=tmp, strategy_style="risk_off",
+                decisions=pool, daily_attention=primaries,
+                weekly_attention=primaries, generated_at_utc="x",
+                decision_date="2026-10-15", config_fingerprint="fp",
+                layout_version="v2",
+            )
+            root = Path(tmp) / "2026-10-15" / "risk_off"
+            self.assertTrue((root / "detailed" / "P01.md").exists())
+            self.assertTrue((root / "detailed" / "P10.md").exists())
+            action_md = (root / "action_list.md").read_text(encoding="utf-8")
+            self.assertIn("Growth Compounder Leaders", action_md)
+            self.assertIn("[Full Report →](./detailed/P01.md)", action_md)
 
 
 if __name__ == "__main__":

@@ -274,6 +274,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 - **卡片警告徽标**：每只股票 `<summary>` 行尾直接追加徽标——`⚠️Pre-Earnings(78d)`（财报临近窗口）、`⚠️Extended(SMA200 1.47x, 60d +51.4%)`（中期过热）、`⚠️Share-Basis/Split`（拆股/股本口径断裂或加权平均股本兜底）。
 - **池归属显示**：`- **Company**: ...` 行在有来源元数据时追加 `· **Pool**: \`ai_core\` (XLK, IGV)`。
 - **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
+- **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。
 - 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
 
 ### 3.5 官方配置

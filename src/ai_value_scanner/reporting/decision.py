@@ -582,6 +582,7 @@ def render_action_list_v2(
         "- **Sections**: [Priority Review](#priority-review) "
         "· [Watch Pullback](#watch-pullback) "
         "· [Watch Breakout](#watch-breakout) "
+        "· [Growth Leaders (Offense)](#growth-leaders-offense) "
         "· [Secondary Radar](#secondary-radar)",
     ]
     if snapshot.concentration_summary_line:
@@ -623,6 +624,54 @@ def render_action_list_v2(
             )
             for card in group_cards:
                 lines.extend(_v2_stock_card_block(card, detailed_subdir))
+
+    lines.extend(
+        [
+            '<a id="growth-leaders-offense"></a>',
+            f"## Growth Compounder Leaders — Bull Offense Track "
+            f"({len(snapshot.growth_compounder_offense_cards)})",
+            "",
+        ]
+    )
+    if not snapshot.growth_compounder_offense_cards:
+        lines.extend(
+            [
+                "- No additional off-list growth compounder leaders "
+                "(Quality A/B, Rev YoY >= 15%, OCF/NI >= 0.80x, "
+                "SMA200 1.00–1.60x, RS60 >= 0%).",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "- *High-growth cash-flow compounders (Quality A/B, "
+                "Rev YoY >= 15%, OCF/NI >= 0.80x, SMA200 1.00–1.60x, "
+                "60d RS vs QQQ >= 0%) outside the Top-15 defensive shortlist "
+                "— suited for bull-market trend offense or "
+                "pullback-to-SMA20/50 entries.*",
+                "",
+            ]
+        )
+        for idx, card in enumerate(
+            snapshot.growth_compounder_offense_cards, start=1
+        ):
+            rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
+            lines.extend(
+                [
+                    f"- **Offense #{idx} {card.symbol}** "
+                    f"({_plain(card.company_name)}, Rank #{card.rank}) — "
+                    f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
+                    f"E:**{_short_entry(card.entry_state)}** "
+                    f"({card.entry_score_display})"
+                    f"{(' · ' + card.warning_badges_inline) if card.warning_badges_inline else ''} · "
+                    f"[Full Report →]({rel_report})",
+                    f"  - **Highlights**: {_plain(card.quality_highlights_inline)}",
+                    f"  - **Entry**: {_plain(card.entry_Snapshot_inline)}",
+                    f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
+                ]
+            )
+        lines.extend(["", "[↑ Top](#top)", ""])
 
     lines.extend(['<a id="secondary-radar"></a>', "## Secondary Radar (Off-List Watch)", ""])
     if (
