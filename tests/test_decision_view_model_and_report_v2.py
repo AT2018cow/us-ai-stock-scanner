@@ -655,6 +655,39 @@ class TestGrowthCompounderOffenseTrack(unittest.TestCase):
         view = build_snapshot_view_model(primaries)
         self.assertEqual(view.growth_compounder_offense_cards, ())
 
+    def test_offense_cards_deduped_from_radar_sections(self) -> None:
+        primaries = tuple(
+            _decision(symbol=f"A{i:02d}", priority=i) for i in range(1, 16))
+        pool = primaries + (
+            # offense-eligible PRIORITY_REVIEW name (would be cap-omitted)
+            _offense_decision(
+                "OPR", action=ActionState.PRIORITY_REVIEW,
+                entry_state=EntryState.WATCH_PULLBACK, priority=20),
+            # offense-eligible Grade-B ENTRY_READY name (would be radar B)
+            _offense_decision(
+                "OBR", grade=QualityGrade.B, q=0.75,
+                entry_state=EntryState.ENTRY_READY,
+                action=ActionState.HOLD_MONITOR, priority=30),
+            # non-offense radar controls
+            _decision(symbol="CPL", priority=21),
+            _decision(symbol="BPL", priority=22,
+                      grade=QualityGrade.B,
+                      entry_state=EntryState.ENTRY_READY,
+                      action=ActionState.HOLD_MONITOR),
+        )
+        view = build_snapshot_view_model(primaries, pool)
+        offense_symbols = {
+            card.symbol for card in view.growth_compounder_offense_cards}
+        self.assertEqual(offense_symbols, {"OPR", "OBR"})
+        cap_omitted_symbols = {
+            card.symbol for card in view.cap_omitted_priority_cards}
+        secondary_b_symbols = {
+            card.symbol for card in view.secondary_b_ready_cards}
+        self.assertIn("CPL", cap_omitted_symbols)
+        self.assertNotIn("OPR", cap_omitted_symbols)
+        self.assertIn("BPL", secondary_b_symbols)
+        self.assertNotIn("OBR", secondary_b_symbols)
+
     def test_render_action_list_section_and_links(self) -> None:
         primaries, pool = self._pool()
         md = render_action_list_v2(
@@ -665,6 +698,10 @@ class TestGrowthCompounderOffenseTrack(unittest.TestCase):
             "## Growth Compounder Leaders — Bull Offense Track (10)", md)
         self.assertIn("**Offense #1 P01**", md)
         self.assertIn("[Full Report →](./detailed/P01.md)", md)
+        self.assertIn(
+            "historically 22.5% vs 15.8% severe-loss rate", md)
+        self.assertIn(
+            "defer to the Priority Review defensive shortlist", md)
         self.assertIn("  - **Highlights**:", md)
         self.assertIn("  - **Entry**:", md)
         self.assertIn("  - **Watchouts**:", md)

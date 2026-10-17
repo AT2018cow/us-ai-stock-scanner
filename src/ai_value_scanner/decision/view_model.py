@@ -1347,31 +1347,6 @@ def build_snapshot_view_model(
     if all_decisions is not None:
         ordered = sorted(tuple(all_decisions), key=_priority_order_key)
         pool_size = len(ordered)
-        cap_omitted = tuple(
-            build_stock_card_view_model(decision)
-            for decision in ordered
-            if decision.action_state is ActionState.PRIORITY_REVIEW
-            and decision.symbol not in primary_symbols
-        )[:15]
-        cap_omitted_symbols = {card.symbol for card in cap_omitted}
-        secondary_b = tuple(
-            build_stock_card_view_model(decision)
-            for decision in ordered
-            if decision.quality.grade is QualityGrade.B
-            and decision.entry.state is EntryState.ENTRY_READY
-            and decision.symbol not in primary_symbols
-            and decision.symbol not in cap_omitted_symbols
-        )[:5]
-        deprioritized_notes = tuple(
-            _deprioritized_quality_note(decision)
-            for decision in ordered
-            if decision.action_state is ActionState.PRIORITY_REVIEW
-            and decision.symbol not in primary_symbols
-            and any(
-                item.code == "nonoperating_gain_inflation"
-                for item in decision.quality.risks
-            )
-        )[:10]
         eligible_offense = (
             decision for decision in ordered
             if decision.symbol not in primary_symbols
@@ -1383,6 +1358,34 @@ def build_snapshot_view_model(
                 eligible_offense, key=growth_compounder_offense_order_key
             )[:10]
         )
+        offense_symbols = {card.symbol for card in offense_cards}
+        cap_omitted = tuple(
+            build_stock_card_view_model(decision)
+            for decision in ordered
+            if decision.action_state is ActionState.PRIORITY_REVIEW
+            and decision.symbol not in primary_symbols
+            and decision.symbol not in offense_symbols
+        )[:15]
+        cap_omitted_symbols = {card.symbol for card in cap_omitted}
+        secondary_b = tuple(
+            build_stock_card_view_model(decision)
+            for decision in ordered
+            if decision.quality.grade is QualityGrade.B
+            and decision.entry.state is EntryState.ENTRY_READY
+            and decision.symbol not in primary_symbols
+            and decision.symbol not in cap_omitted_symbols
+            and decision.symbol not in offense_symbols
+        )[:5]
+        deprioritized_notes = tuple(
+            _deprioritized_quality_note(decision)
+            for decision in ordered
+            if decision.action_state is ActionState.PRIORITY_REVIEW
+            and decision.symbol not in primary_symbols
+            and any(
+                item.code == "nonoperating_gain_inflation"
+                for item in decision.quality.risks
+            )
+        )[:10]
     return SnapshotViewModel(
         title=title,
         cadence=cadence,
