@@ -1,0 +1,69 @@
+{
+  "allow_latest_watchlist_fallback": false,
+  "code_sha": "5b0b0657e21adcd5ec0f7d6426b4831906e4323a",
+  "dataset_kind": "company_quality",
+  "discontinuities_flagged": 1,
+  "discontinuities_rows": 13,
+  "end_date": "2022-12-31",
+  "generated_utc": "2026-10-17T07:17:06.196933+00:00",
+  "meta_summary": {
+    "allow_latest_watchlist_fallback": false,
+    "channels": [
+      "ai_enabler",
+      "ai_peripheral",
+      "core_ai"
+    ],
+    "dataset_kind": "company_quality",
+    "delist_return_assumption": -0.55,
+    "disclosure_lookback_days": 720,
+    "end_date": "2022-12-31",
+    "entry_price_mode": "next_open",
+    "exit_price_mode": "close",
+    "generated_utc": "2026-10-17T07:17:06.196933+00:00",
+    "horizons": [
+      20,
+      60,
+      120
+    ],
+    "list_types": [
+      "low_value",
+      "momentum"
+    ],
+    "n_dates": 12,
+    "n_rows": 8251,
+    "pre_snapshot_universe": "union",
+    "pre_strategy_cross_section": true,
+    "rebalance_frequency": "monthly",
+    "replay_asset_status": "all",
+    "replay_max_symbols": 800,
+    "research_expanded_survivor_dataset": false,
+    "research_skipped_low_value_hard_steps": [],
+    "roundtrip_cost": 0.003,
+    "scan_config": "configs/config.risk_off.json",
+    "split_query_end": "2023-06-27",
+    "split_query_end_rule": "signal-window end + longest-horizon envelope (split_query_end_iso); every forward label end is covered by construction",
+    "split_query_start": "2020-11-07",
+    "start_date": "2022-01-01",
+    "style": "risk_off",
+    "theme_source": "rules_proxy",
+    "trading_cost_bps": 15.0,
+    "watchlist_csv_path": "data/ai_watchlist.csv",
+    "watchlist_history_dir": "data/watchlist_history",
+    "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)"
+  },
+  "n_dates": 12,
+  "n_rows": 8251,
+  "n_unique_symbols": 691,
+  "pre_snapshot_universe": "union",
+  "run_id": "historical_selection_bear2022_20261017_01",
+  "sha256": {
+    "discontinuities_csv": "ce05fa1c67e2c4521526611774f6f77bb0652ac3d1dd985b19aa017dcb46c461",
+    "frozen_config_json": "cf7f190b3e20c6d091ab92951d64b85af5b6a23adbd8fe681c7f2456642fcb55",
+    "frozen_watchlist_csv": "01d195cf16cde4cb0b268eb4114e0dbab2b0b3401075695f86a673bbf1aaccf3",
+    "raw_extract_csv": "3fbd9db3b7a1525223e22f34bac10494ecf2ca83e619f4255007490239eda13e",
+    "repaired_csv": "43e5cd4a440c92857c11106016db0b827202c279e2acfbdc7cb0281ff2f007d6",
+    "splits_json": "2d7949cca42dddc8fb20910b0b9d3cfc30a6fcec4f8770e44a936254152eb9cf"
+  },
+  "start_date": "2022-01-01",
+  "style": "risk_off"
+}

@@ -34,7 +34,9 @@ import argparse
 import csv
 import hashlib
 import io
+import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -51,8 +53,10 @@ from ai_value_scanner.research.m4_paired_validation import (
     paired_delta_stats,
 )
 
-MAX_DIR_BYTES = 140 * 1024
+MAX_DIR_BYTES = 160 * 1024
 REPRODUCTION_TOLERANCE = 1e-5
+RUNNER_SCRIPT_REL = "scripts/run_extended_replay_evaluation.py"
+CONTAINER_PATH_PREFIX_RE = re.compile(r"/(?:root|home|tmp)/")
 HORIZONS: tuple[int, ...] = (20, 60, 120)
 UNIVERSE_SCOPES: tuple[str, ...] = ("FULL", "ETF_SLICE")
 VARIANTS: tuple[str, ...] = ("v1_current", "v2_current")
@@ -166,25 +170,35 @@ def summarize_date_means(values: Iterable[Any]) -> dict[str, Any]:
 
 
 def dataset_date_meta(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    """Per-date market context: forward QQQ returns and trailing regime."""
+    """Per-date market context: forward QQQ returns, label ends, trailing regime."""
     meta: dict[str, dict[str, Any]] = {}
     if frame is None or frame.empty:
         return meta
     for date, group in frame.groupby("signal_date", sort=True):
         qqq60 = None
         qqq20 = None
+        qqq120 = None
+        label_end_60 = None
         regime = ""
         for record in group.to_dict(orient="records"):
             if qqq60 is None:
                 qqq60 = _num(record.get("qqq_return_60"))
             if qqq20 is None:
                 qqq20 = _num(record.get("qqq_return_20"))
+            if qqq120 is None:
+                qqq120 = _num(record.get("qqq_return_120"))
+            if label_end_60 is None:
+                token = str(record.get("qqq_label_end_60") or "").strip()
+                if token and token.lower() != "nan":
+                    label_end_60 = token[:10]
             token = str(record.get("regime") or "").strip().lower()
             if token and not regime:
                 regime = token
         meta[str(date)] = {
             "qqq_return_60": qqq60,
             "qqq_return_20": qqq20,
+            "qqq_return_120": qqq120,
+            "qqq_label_end_60": label_end_60,
             "regime": regime,
         }
     return meta
@@ -269,6 +283,361 @@ def build_segments(
             d for d in ext_dates if d == "2026-09-30"
         ]
     return segments
+
+
+# ---------------------------------------------------------------------------
+# Frozen-grade provenance helpers (spec section 6)
+# ---------------------------------------------------------------------------
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sanitize_path_strings(value: Any) -> Any:
+    """Recursively strip container prefixes (/root/, /home/, /tmp/) from strings."""
+    if isinstance(value, str):
+        return CONTAINER_PATH_PREFIX_RE.sub("", value)
+    if isinstance(value, Mapping):
+        return {
+            key: _sanitize_path_strings(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_path_strings(item) for item in value]
+    return value
+
+
+def _portable_path(raw: str | Path | None) -> str:
+    """Repo-relative path when inside the repo, else basename (commit-safe)."""
+    if raw is None:
+        return ""
+    path = Path(raw)
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return path.name
+
+
+def _reproduction_command(args: argparse.Namespace) -> str:
+    parts = [
+        "python", RUNNER_SCRIPT_REL,
+        "--base-dataset", _portable_path(args.base_dataset),
+    ]
+    if args.bear_2022_dataset:
+        parts += ["--bear-2022-dataset", _portable_path(args.bear_2022_dataset)]
+    if args.extension_dataset:
+        parts += ["--extension-dataset", _portable_path(args.extension_dataset)]
+    parts += [
+        "--base-reference-dir", _portable_path(args.base_reference_dir),
+        "--output-dir", _portable_path(args.output_dir),
+    ]
+    return " ".join(parts)
+
+
+def forward_window_overlaps(
+    dates: Sequence[str],
+    meta: Mapping[str, Mapping[str, Any]],
+) -> dict[str, bool]:
+    """Per-date flag: signal_date < previous date's 60d label end (in this list)."""
+    ordered = sorted(str(date) for date in dates)
+    overlaps: dict[str, bool] = {}
+    previous_label_end: str | None = None
+    for date in ordered:
+        overlaps[date] = bool(previous_label_end and date < previous_label_end)
+        label_end = meta.get(date, {}).get("qqq_label_end_60")
+        if label_end:
+            previous_label_end = str(label_end)[:10]
+    return overlaps
+
+
+_CANONICAL_EPISODE_NAMES: dict[str, str] = {
+    "2023-06-30": "EP1_2023Q3",
+    "2024-11-29": "EP2_2024Q4_2025Q1",
+    "2025-10-31": "EP3_2025Q4",
+}
+
+
+def _episode_cluster_name(index: int, start_date: str) -> str:
+    canonical = _CANONICAL_EPISODE_NAMES.get(start_date)
+    if canonical:
+        return canonical
+    try:
+        year, month = start_date[:4], int(start_date[5:7])
+        quarter = (month - 1) // 3 + 1
+        return f"EP{index}_{year}Q{quarter}"
+    except (TypeError, ValueError):
+        return f"EP{index}"
+
+
+def assign_episode_clusters(
+    dates: Sequence[str],
+    meta: Mapping[str, Mapping[str, Any]],
+    *,
+    bear: bool = False,
+) -> tuple[dict[str, str], list[tuple[str, list[str]]]]:
+    """Assign overlap-contiguous 60d-window episode clusters to drawdown dates.
+
+    Returns (date -> cluster name, ordered [(cluster name, dates)]). Bear-2022
+    negative-60d dates form a single ``EP0_BEAR_2022`` episode regardless of
+    overlap contiguity (they are one bear market).
+    """
+    ordered = sorted(str(date) for date in dates)
+    if bear:
+        return (
+            {date: "EP0_BEAR_2022" for date in ordered},
+            [("EP0_BEAR_2022", ordered)] if ordered else [],
+        )
+    clusters: list[list[str]] = []
+    current: list[str] = []
+    previous_label_end: str | None = None
+    for date in ordered:
+        overlaps = bool(
+            current and previous_label_end and date < previous_label_end
+        )
+        if overlaps:
+            current.append(date)
+        else:
+            if current:
+                clusters.append(current)
+            current = [date]
+        label_end = meta.get(date, {}).get("qqq_label_end_60")
+        if label_end:
+            previous_label_end = str(label_end)[:10]
+    if current:
+        clusters.append(current)
+    mapping: dict[str, str] = {}
+    episode_list: list[tuple[str, list[str]]] = []
+    for index, cluster in enumerate(clusters, start=1):
+        name = _episode_cluster_name(index, cluster[0])
+        for date in cluster:
+            mapping[date] = name
+        episode_list.append((name, cluster))
+    return mapping, episode_list
+
+
+EPISODE_COHORTS: tuple[str, ...] = (
+    "TOP15", "PRIORITY_REVIEW", "QUALITY_A", "UNIVERSE",
+)
+
+
+def compute_episode_cluster_summary(
+    records: Mapping[str, Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]]],
+    episodes: Sequence[tuple[str, Sequence[str]]],
+    *,
+    fwd_episode_names: Sequence[str],
+    all_episode_names: Sequence[str],
+    date_equal_segment: str = "FWD_DRAWDOWN_60D",
+) -> dict[str, Any]:
+    """Per-episode and cluster-equal metrics for the drawdown episode table.
+
+    Cluster-equal mean = equal weight over episode means (not over dates), so
+    overlapping 60d windows inside an episode cannot dominate the aggregate.
+    """
+    rows: list[dict[str, Any]] = []
+    for scope in UNIVERSE_SCOPES:
+        for variant in VARIANTS:
+            for cohort in EPISODE_COHORTS:
+                member_fn = (
+                    lambda record, c=cohort: cohort_member(record, c)
+                )
+                episode_values: dict[str, dict[str, Any]] = {}
+                for name, dates in episodes:
+                    summary = segment_cohort_summary(
+                        records[scope][variant], dates, member_fn)
+                    episode_values[name] = {
+                        "mean_excess_60": summary["mean_excess_60"],
+                        "severe_loss_rate_60": summary[
+                            "severe_loss_rate_60"],
+                        "n_dates_60": summary["n_dates_60"],
+                    }
+                fwd_mean = _mean([
+                    episode_values[name]["mean_excess_60"]
+                    for name in fwd_episode_names
+                    if episode_values.get(name, {}).get("mean_excess_60")
+                    is not None
+                ])
+                all_mean = _mean([
+                    episode_values[name]["mean_excess_60"]
+                    for name in all_episode_names
+                    if episode_values.get(name, {}).get("mean_excess_60")
+                    is not None
+                ])
+                fwd_severe = _mean([
+                    episode_values[name]["severe_loss_rate_60"]
+                    for name in fwd_episode_names
+                    if episode_values.get(name, {}).get(
+                        "severe_loss_rate_60") is not None
+                ])
+                all_severe = _mean([
+                    episode_values[name]["severe_loss_rate_60"]
+                    for name in all_episode_names
+                    if episode_values.get(name, {}).get(
+                        "severe_loss_rate_60") is not None
+                ])
+                rows.append({
+                    "universe_scope": scope,
+                    "cohort": cohort,
+                    "variant": variant,
+                    "episode_values": episode_values,
+                    "fwd_drawdown_episode_equal_mean_excess_60": fwd_mean,
+                    "all_drawdown_episode_equal_mean_excess_60": all_mean,
+                    "fwd_drawdown_episode_equal_severe_loss_60": fwd_severe,
+                    "all_drawdown_episode_equal_severe_loss_60": all_severe,
+                })
+    date_equal: dict[str, Any] = {}
+    fwd_dates = [
+        date for name, dates in episodes
+        if name in fwd_episode_names for date in dates
+    ]
+    for scope in UNIVERSE_SCOPES:
+        for variant in VARIANTS:
+            for cohort in EPISODE_COHORTS:
+                member_fn = (
+                    lambda record, c=cohort: cohort_member(record, c)
+                )
+                summary = segment_cohort_summary(
+                    records[scope][variant], fwd_dates, member_fn)
+                date_equal[f"{scope}|{variant}|{cohort}"] = {
+                    "mean_excess_60": summary["mean_excess_60"],
+                    "severe_loss_rate_60": summary["severe_loss_rate_60"],
+                }
+    return {
+        "episodes": [
+            {"name": name, "dates": list(dates)} for name, dates in episodes
+        ],
+        "fwd_episode_names": list(fwd_episode_names),
+        "all_episode_names": list(all_episode_names),
+        "rows": rows,
+        "date_equal": date_equal,
+    }
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def discover_bear_artifacts(
+    bear_dataset_path: str | Path,
+    *,
+    meta_json: str | None = None,
+    success_json: str | None = None,
+    discontinuities_csv: str | None = None,
+) -> dict[str, Path | None]:
+    """Locate sibling/parent Modal & repair artifacts for the 2022 dataset."""
+    bear_path = Path(bear_dataset_path)
+    bear_dir = bear_path.parent
+    run_root = bear_dir.parent
+
+    def _first(candidates: Sequence[Path]) -> Path | None:
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    modal_names = {
+        "meta": "company_quality_dataset_risk_off.meta.json",
+        "success": "company_quality_dataset_risk_off.SUCCESS.json",
+        "splits": "company_quality_dataset_risk_off.splits.json",
+        "raw_csv": "company_quality_dataset_risk_off.csv",
+    }
+    artifacts: dict[str, Path | None] = {}
+    for key, name in modal_names.items():
+        artifacts[key] = _first([
+            run_root / "modal_download" / "datasets" / name,
+            bear_dir / "modal_download" / "datasets" / name,
+            bear_dir / name,
+        ])
+    artifacts["meta"] = Path(meta_json) if meta_json else artifacts["meta"]
+    artifacts["success"] = (
+        Path(success_json) if success_json else artifacts["success"]
+    )
+    artifacts["discontinuities"] = (
+        Path(discontinuities_csv) if discontinuities_csv
+        else _first([
+            bear_dir / "company_quality_discontinuities.csv",
+            run_root / "repaired" / "company_quality_discontinuities.csv",
+        ])
+    )
+    artifacts["frozen_watchlist"] = _first([
+        run_root / "frozen_inputs" / "ai_watchlist.csv",
+        bear_dir / "frozen_inputs" / "ai_watchlist.csv",
+    ])
+    artifacts["frozen_config"] = _first([
+        run_root / "frozen_inputs" / "config.risk_off.json",
+        bear_dir / "frozen_inputs" / "config.risk_off.json",
+    ])
+    return artifacts
+
+
+def build_bear_2022_provenance(
+    bear_frame: pd.DataFrame,
+    bear_dataset_path: str | Path,
+    artifacts: Mapping[str, Path | None],
+) -> dict[str, Any]:
+    """Commit-safe 2022 Modal extraction + split-repair provenance payload."""
+    success = _read_json(artifacts["success"]) if artifacts.get("success") else None
+    meta = _read_json(artifacts["meta"]) if artifacts.get("meta") else None
+    spec = (success or {}).get("spec") or {}
+    meta = meta or {}
+    discontinuities_rows: int | None = None
+    discontinuities_flagged: int | None = None
+    discontinuities_path = artifacts.get("discontinuities")
+    if discontinuities_path and discontinuities_path.exists():
+        try:
+            disc_frame = pd.read_csv(discontinuities_path)
+            discontinuities_rows = int(len(disc_frame))
+            if "null_labels" in disc_frame.columns:
+                flagged = (
+                    disc_frame["null_labels"].astype(str).str.lower()
+                    .isin({"true", "1", "yes"})
+                )
+                discontinuities_flagged = int(flagged.sum())
+        except (OSError, ValueError):
+            pass
+    provenance = {
+        "run_id": spec.get("run_id"),
+        "code_sha": spec.get("code_sha"),
+        "generated_utc": meta.get("generated_utc"),
+        "start_date": spec.get("start_date") or meta.get("start_date"),
+        "end_date": spec.get("end_date") or meta.get("end_date"),
+        "style": spec.get("style") or meta.get("style"),
+        "dataset_kind": spec.get("dataset_kind") or meta.get("dataset_kind"),
+        "pre_snapshot_universe": meta.get("pre_snapshot_universe"),
+        "allow_latest_watchlist_fallback": meta.get(
+            "allow_latest_watchlist_fallback"),
+        "n_dates": int(bear_frame["signal_date"].nunique()),
+        "n_rows": int(len(bear_frame)),
+        "n_unique_symbols": int(bear_frame["symbol"].nunique()),
+        "discontinuities_rows": discontinuities_rows,
+        "discontinuities_flagged": discontinuities_flagged,
+        "sha256": {
+            "raw_extract_csv": _sha256_file(artifacts["raw_csv"])
+            if artifacts.get("raw_csv") else None,
+            "splits_json": _sha256_file(artifacts["splits"])
+            if artifacts.get("splits") else None,
+            "repaired_csv": _sha256_file(Path(bear_dataset_path)),
+            "discontinuities_csv": _sha256_file(discontinuities_path)
+            if discontinuities_path else None,
+            "frozen_watchlist_csv": _sha256_file(artifacts["frozen_watchlist"])
+            if artifacts.get("frozen_watchlist") else None,
+            "frozen_config_json": _sha256_file(artifacts["frozen_config"])
+            if artifacts.get("frozen_config") else None,
+        },
+        "meta_summary": meta,
+    }
+    return _sanitize_path_strings(provenance)
 
 
 # ---------------------------------------------------------------------------
@@ -796,6 +1165,11 @@ def _select(
     return selected
 
 
+def _pct(value: Any) -> str:
+    number = _num(value)
+    return "n/a" if number is None else f"{number * 100:+.1f}%"
+
+
 def render_report(
     *,
     base_dataset_name: str,
@@ -808,7 +1182,9 @@ def render_report(
     reproduction: Mapping[str, Any],
     base_meta: Mapping[str, Mapping[str, Any]],
     extra_datasets: Sequence[tuple[str, str, int, int]],
+    frozen: Mapping[str, Any] | None = None,
 ) -> str:
+    frozen = frozen or {}
     lines: list[str] = []
     lines.append("# Drawdown Protection & Bear-Market Replay Evaluation")
     lines.append("")
@@ -825,6 +1201,38 @@ def render_report(
     for name, label, n_rows, n_dates in extra_datasets:
         lines.append(f"- {label} dataset: `{name}` ({n_rows} rows, "
                      f"{n_dates} signal dates).")
+    if frozen.get("runner_sha256"):
+        lines.append(
+            f"- Runner: `{RUNNER_SCRIPT_REL}` "
+            f"SHA256 `{frozen['runner_sha256']}`."
+        )
+    if frozen.get("command"):
+        lines.append(f"- Reproduction command: `{frozen['command']}`.")
+    if frozen.get("base_sha256"):
+        lines.append(
+            f"- Base dataset SHA256: `{frozen['base_sha256']}`."
+        )
+    bear_frozen = frozen.get("bear") or {}
+    if bear_frozen:
+        lines.append(
+            f"- 2022 bear dataset `{bear_frozen.get('filename', '')}` "
+            f"({bear_frozen.get('n_rows', 'n/a')} rows, "
+            f"{bear_frozen.get('n_dates', 'n/a')} signal dates) "
+            f"SHA256 `{bear_frozen.get('sha256', 'n/a')}`."
+        )
+        lines.append(
+            f"- 2022 Modal extraction: run_id `{bear_frozen.get('run_id')}`, "
+            f"code_sha `{bear_frozen.get('code_sha')}`, generated_utc "
+            f"`{bear_frozen.get('generated_utc')}`, raw_csv_sha256 "
+            f"`{bear_frozen.get('raw_csv_sha256')}`, splits_json_sha256 "
+            f"`{bear_frozen.get('splits_json_sha256')}`."
+        )
+        lines.append(
+            f"- 2022 split-repair audit: discontinuities rows "
+            f"{bear_frozen.get('discontinuities_rows')}, flagged "
+            f"{bear_frozen.get('discontinuities_flagged')}; artifacts "
+            "`bear_2022_provenance.json` + `bear_2022_discontinuities.csv`."
+        )
     lines.append("- Securities addressed by CIK/ticker rename hygiene at "
                  "refresh time; universe snapshots are the documented "
                  "`union_superset_approx` approximation (AGENTS.md §4): the "
@@ -881,6 +1289,94 @@ def render_report(
             "(post-dip rebound measure)."
         )
     lines.append("")
+    lines.append("## 2b. Forward-Drawdown & 2022 Bear Signal-Date Manifest "
+                 "(with 60d Window Overlap)")
+    lines.append("")
+    manifest_rows = frozen.get("manifest_rows") or []
+    if manifest_rows:
+        lines.append(_md_table(
+            ["signal_date", "segment_tag", "episode_cluster",
+             "trailing_regime", "qqq_ret20", "qqq_ret60", "qqq_label_end_60",
+             "qqq_ret120", "overlaps_prev_60d_window"],
+            [
+                [
+                    row["signal_date"], row["segment_tag"],
+                    row["episode_cluster"] or "-", row["trailing_regime"],
+                    _pct(row["qqq_ret20"]), _pct(row["qqq_ret60"]),
+                    row["qqq_label_end_60"] or "-", _pct(row["qqq_ret120"]),
+                    row["overlaps_prev_60d_window"],
+                ]
+                for row in manifest_rows
+            ],
+        ))
+        lines.append("")
+        lines.append(
+            "`overlaps_prev_60d_window` = `signal_date < previous listed "
+            "date's qqq_label_end_60`: monthly signal dates inside one "
+            "drawdown episode share overlapping 60-trading-day (~3-month) "
+            "forward windows and are therefore NOT independent samples "
+            "(AGENTS.md §8); the episode-cluster equal-weight table below "
+            "gives each contiguous drawdown episode one vote."
+        )
+        lines.append("")
+    episode_summary = frozen.get("episode_summary") or {}
+    episode_rows = episode_summary.get("rows") or []
+    if episode_rows:
+        episode_names = [
+            episode["name"]
+            for episode in episode_summary.get("episodes", [])
+        ]
+        fwd_names = episode_summary.get("fwd_episode_names") or []
+        all_names = episode_summary.get("all_episode_names") or []
+        has_bear_episode = any(
+            name not in fwd_names for name in all_names)
+        fwd_label = f"FWD_EQ({len(fwd_names)})"
+        all_label = f"ALL_EQ({len(all_names)})"
+        for metric, title in (
+            ("mean_excess_60", "mean 60d net-QQQ excess"),
+            ("severe_loss_rate_60", "severe loss rate (fwd_ret_60 <= -20%)"),
+        ):
+            lines.append(f"Episode-cluster equal-weight summary - {title}:")
+            lines.append("")
+            headers = ["scope", "cohort", "variant"] + episode_names + [
+                fwd_label, "DATE_EQUAL",
+            ]
+            if has_bear_episode:
+                headers.insert(
+                    len(headers) - 1, all_label)
+            table_rows = []
+            for row in episode_rows:
+                values = [
+                    _pct(
+                        row["episode_values"].get(name, {}).get(metric)
+                    )
+                    for name in episode_names
+                ]
+                if metric == "mean_excess_60":
+                    fwd_value = row[
+                        "fwd_drawdown_episode_equal_mean_excess_60"]
+                    all_value = row[
+                        "all_drawdown_episode_equal_mean_excess_60"]
+                else:
+                    fwd_value = row[
+                        "fwd_drawdown_episode_equal_severe_loss_60"]
+                    all_value = row[
+                        "all_drawdown_episode_equal_severe_loss_60"]
+                date_equal = (episode_summary.get("date_equal") or {}).get(
+                    f"{row['universe_scope']}|{row['variant']}|"
+                    f"{row['cohort']}",
+                    {},
+                ).get(metric)
+                cells = [
+                    row["universe_scope"], row["cohort"], row["variant"],
+                    *values, _pct(fwd_value),
+                ]
+                if has_bear_episode:
+                    cells.append(_pct(all_value))
+                cells.append(_pct(date_equal))
+                table_rows.append(cells)
+            lines.append(_md_table(headers, table_rows))
+            lines.append("")
     lines.append("## 3. Rank tiers: FWD_BULL_60D vs FWD_DRAWDOWN_60D (v2_current)")
     lines.append("")
     headers = ["scope", "segment", "tier", "n", "mean_ex60", "diff_vs_univ",
@@ -1059,6 +1555,60 @@ def evaluate_datasets(
     return records, metas
 
 
+def build_manifest_rows(
+    segments: Mapping[str, Sequence[str]],
+    metas: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Manifest rows for FWD_DRAWDOWN_60D + BEAR_2022 signal dates."""
+    rows: list[dict[str, Any]] = []
+    base_meta = metas.get("base", {})
+    fwd_dates = list(segments.get("FWD_DRAWDOWN_60D", []))
+    if fwd_dates:
+        clusters, _ = assign_episode_clusters(fwd_dates, base_meta)
+        overlaps = forward_window_overlaps(fwd_dates, base_meta)
+        for date in fwd_dates:
+            meta = base_meta.get(date, {})
+            rows.append({
+                "signal_date": date,
+                "segment_tag": "FWD_DRAWDOWN_60D",
+                "episode_cluster": clusters.get(date, ""),
+                "trailing_regime": meta.get("regime") or "",
+                "qqq_ret20": meta.get("qqq_return_20"),
+                "qqq_ret60": meta.get("qqq_return_60"),
+                "qqq_label_end_60": meta.get("qqq_label_end_60") or "",
+                "qqq_ret120": meta.get("qqq_return_120"),
+                "overlaps_prev_60d_window": (
+                    "yes" if overlaps.get(date) else "no"
+                ),
+            })
+    bear_meta = metas.get("bear", {})
+    bear_dates = list(segments.get("BEAR_2022", []))
+    bear_negative = set(segments.get("BEAR_2022_FWD_DRAWDOWN_60D", []))
+    if bear_dates:
+        bear_clusters, _ = assign_episode_clusters(
+            sorted(bear_negative), bear_meta, bear=True)
+        overlaps = forward_window_overlaps(bear_dates, bear_meta)
+        for date in bear_dates:
+            meta = bear_meta.get(date, {})
+            rows.append({
+                "signal_date": date,
+                "segment_tag": "BEAR_2022",
+                "episode_cluster": (
+                    bear_clusters.get(date, "") if date in bear_negative
+                    else ""
+                ),
+                "trailing_regime": meta.get("regime") or "",
+                "qqq_ret20": meta.get("qqq_return_20"),
+                "qqq_ret60": meta.get("qqq_return_60"),
+                "qqq_label_end_60": meta.get("qqq_label_end_60") or "",
+                "qqq_ret120": meta.get("qqq_return_120"),
+                "overlaps_prev_60d_window": (
+                    "yes" if overlaps.get(date) else "no"
+                ),
+            })
+    return rows
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     base_frame = _load_dataset(args.base_dataset)
     datasets: dict[str, pd.DataFrame] = {"base": base_frame}
@@ -1107,6 +1657,71 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         flush=True,
     )
 
+    # §6.3 manifest + episode-cluster equal-weight summary
+    manifest_rows = build_manifest_rows(segments, metas)
+    fwd_clusters, fwd_episodes = assign_episode_clusters(
+        segments.get("FWD_DRAWDOWN_60D", []), metas.get("base", {}))
+    all_episodes = list(fwd_episodes)
+    bear_negative = segments.get("BEAR_2022_FWD_DRAWDOWN_60D", [])
+    if bear_negative:
+        _, bear_episodes = assign_episode_clusters(
+            bear_negative, metas.get("bear", {}), bear=True)
+        all_episodes += bear_episodes
+    episode_summary = compute_episode_cluster_summary(
+        records,
+        all_episodes,
+        fwd_episode_names=[name for name, _ in fwd_episodes],
+        all_episode_names=[name for name, _ in all_episodes],
+    )
+    print(
+        "[replay] episode clusters: "
+        + ", ".join(
+            f"{name}={len(dates)}dates" for name, dates in all_episodes
+        ),
+        flush=True,
+    )
+
+    # §6.1/§6.2 frozen-grade provenance
+    frozen: dict[str, Any] = {
+        "runner_sha256": _sha256_file(REPO_ROOT / RUNNER_SCRIPT_REL) or "",
+        "command": _reproduction_command(args),
+        "base_sha256": _sha256_file(Path(args.base_dataset)) or "",
+        "manifest_rows": manifest_rows,
+        "episode_summary": episode_summary,
+    }
+    extra_files: dict[str, str] = {}
+    if args.bear_2022_dataset:
+        bear_artifacts = discover_bear_artifacts(
+            args.bear_2022_dataset,
+            meta_json=args.bear_2022_meta_json,
+            success_json=args.bear_2022_success_json,
+            discontinuities_csv=args.bear_2022_discontinuities_csv,
+        )
+        bear_provenance = build_bear_2022_provenance(
+            datasets["bear"], args.bear_2022_dataset, bear_artifacts)
+        extra_files["bear_2022_provenance.json"] = (
+            json.dumps(bear_provenance, indent=2, sort_keys=True) + "\n"
+        )
+        discontinuities_path = bear_artifacts.get("discontinuities")
+        if discontinuities_path and discontinuities_path.exists():
+            extra_files["bear_2022_discontinuities.csv"] = (
+                discontinuities_path.read_text(encoding="utf-8")
+            )
+        frozen["bear"] = {
+            "filename": Path(args.bear_2022_dataset).name,
+            "n_rows": bear_provenance["n_rows"],
+            "n_dates": bear_provenance["n_dates"],
+            "sha256": bear_provenance["sha256"]["repaired_csv"],
+            "run_id": bear_provenance["run_id"],
+            "code_sha": bear_provenance["code_sha"],
+            "generated_utc": bear_provenance["generated_utc"],
+            "raw_csv_sha256": bear_provenance["sha256"]["raw_extract_csv"],
+            "splits_json_sha256": bear_provenance["sha256"]["splits_json"],
+            "discontinuities_rows": bear_provenance["discontinuities_rows"],
+            "discontinuities_flagged": bear_provenance[
+                "discontinuities_flagged"],
+        }
+
     extra_datasets = [
         (
             Path(path).name,
@@ -1131,6 +1746,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         reproduction=reproduction,
         base_meta=metas["base"],
         extra_datasets=extra_datasets,
+        frozen=frozen,
     )
     files = {
         "cohort_economics_by_regime.csv": _csv_text(
@@ -1141,6 +1757,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "entry_and_extension_crosscut.csv": _csv_text(
             crosscut_rows, CROSSCUT_COLUMNS),
         "report.md": report,
+        **extra_files,
     }
     out_dir = write_outputs(Path(args.output_dir), files)
     total = sum(path.stat().st_size for path in out_dir.iterdir())
@@ -1152,6 +1769,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "segments": {name: len(dates) for name, dates in segments.items()},
         "reproduction": reproduction,
+        "episode_clusters": [
+            {"name": name, "n_dates": len(dates)}
+            for name, dates in all_episodes
+        ],
         "output_dir": str(out_dir),
     }
 
@@ -1167,6 +1788,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-dataset", required=True)
     parser.add_argument("--bear-2022-dataset", default=None)
     parser.add_argument("--extension-dataset", default=None)
+    parser.add_argument(
+        "--bear-2022-meta-json", default=None,
+        help="Optional explicit 2022 Modal meta.json path.",
+    )
+    parser.add_argument(
+        "--bear-2022-success-json", default=None,
+        help="Optional explicit 2022 Modal SUCCESS.json path.",
+    )
+    parser.add_argument(
+        "--bear-2022-discontinuities-csv", default=None,
+        help="Optional explicit 2022 split-repair discontinuities CSV path.",
+    )
     parser.add_argument(
         "--base-reference-dir",
         default="outputs/m4_revalidation_current_20261016",
