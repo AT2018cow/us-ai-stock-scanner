@@ -583,7 +583,8 @@ def render_action_list_v2(
         "· [Watch Pullback](#watch-pullback) "
         "· [Watch Breakout](#watch-breakout) "
         "· [Growth Leaders (Offense)](#growth-leaders-offense) "
-        "· [Secondary Radar](#secondary-radar)",
+        "· [Secondary Radar](#secondary-radar) "
+        "· [Attention Changes](#attention-changes)",
     ]
     if snapshot.concentration_summary_line:
         lines.insert(
@@ -732,6 +733,55 @@ def render_action_list_v2(
                     ]
                 )
             lines.extend(["", "[↑ Top](#top)", "</details>", ""])
+
+    alert_cards = snapshot.state_change_alert_cards
+    lines.extend(
+        [
+            '<a id="attention-changes"></a>',
+            "## Attention Changes — Off-List Downgrades",
+            "",
+        ]
+    )
+    if not alert_cards:
+        lines.extend(
+            [
+                "- No material downgrades outside the compressed lists above.",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "- *Previously visible names whose Action state worsened and whose "
+                "current priority no longer reaches the lists above. They are shown "
+                "here separately so a real downgrade never disappears silently.*",
+                "",
+            ]
+        )
+        for card in alert_cards:
+            decision = card.decision
+            previous = (
+                decision.previous_action_state.value
+                if decision.previous_action_state
+                else "n/a"
+            )
+            rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
+            lines.append(
+                f"- **{card.symbol}** ({_plain(card.company_name)}) — "
+                f"{_short_action(previous)} → **{_short_action(card.action_state)}** · "
+                f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
+                f"E:**{_short_entry(card.entry_state)}** ({card.entry_score_display}) · "
+                f"[Full Report →]({rel_report})"
+            )
+            if decision.state_change_reason:
+                lines.append(f"  - **Change**: {_plain(decision.state_change_reason)}")
+        if snapshot.state_change_alerts_total > len(alert_cards):
+            lines.append(
+                f"  - *Showing {len(alert_cards)} of "
+                f"{snapshot.state_change_alerts_total} alerts; the complete list is "
+                "recorded in `state_change_alerts.jsonl` in this snapshot.*"
+            )
+        lines.extend(["", "[↑ Top](#top)", ""])
     return "\n".join(lines)
 
 
@@ -751,7 +801,7 @@ def render_detailed_report_v2(
         f"- **Navigation**: [← Back to Action List]({rel_back}) "
         "· [Overview](#executive-decision) "
         "· [Quality 6-Pillar](#company-quality--6-pillar-scorecard) "
-        "· [Entry 7-Gate](#entry-quality--readiness-gate-checklist) "
+        "· [Entry Gates](#entry-quality--readiness-gate-checklist) "
         "· [Audit](#quality-applicability-decision-history--provenance)",
         "",
         '<a id="executive-decision"></a>',
@@ -803,7 +853,7 @@ def render_detailed_report_v2(
         [
             "",
             '<a id="entry-quality--readiness-gate-checklist"></a>',
-            "## Entry Quality — 7-Gate Readiness Checklist",
+            f"## Entry Quality — Readiness Gate Checklist ({len(card.entry_checklist)})",
             "",
             "| Gate | Check | Actual vs Target |",
             "| --- | --- | --- |",

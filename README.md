@@ -1215,6 +1215,7 @@ python scripts/audit_universe_coverage.py \
 
 ## 14. 说明与限制
 
+- 当前代码审查与修复记录：[问题、修复建议与验收条件](docs/code_review_and_repair_handoff_20261018.md)（交接基线）及 [修复结果与复验记录](docs/code_review_repair_results_20261018.md)（R03–R05 已复验通过；完整测试 1188 项通过）。
 - 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。
 - 模块重构方案：[2026-10-03 拆分边界与渐进迁移计划](docs/modular_refactoring_plan_20261003.md)（含公共计算契约、依赖方向、兼容迁移和验收标准；方案尚未实施）。
 - 本项目用于研究与筛选，不构成投资建议。

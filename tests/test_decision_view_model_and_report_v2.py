@@ -167,66 +167,99 @@ class FormatMetricValueTests(unittest.TestCase):
         self.assertEqual(format_metric_value(None, None), "n/a")
 
 
+def _entry_metrics(**overrides):
+    metrics = {
+        "price_to_sma200": 1.08,
+        "price_to_sma50": 1.00,
+        "days_below_sma200": 0,
+        "return_20d": 0.05,
+        "return_60d": 0.06,
+        "drawdown_from_52w_high": 0.08,
+        "range_position_52w": 0.80,
+        "relative_strength_60d_qqq": 0.01,
+        "volatility_60d": 0.30,
+        "regime": "up",
+        "benchmark_trend_ok": True,
+    }
+    metrics.update(overrides)
+    return metrics
+
+
+def _decision_with_entry(entry, *, symbol="CANON", priority=10, action=None):
+    from ai_value_scanner.decision.action import map_action_state
+
+    template = _decision(symbol=symbol, priority=priority)
+    resolved_action = action or map_action_state(
+        template.quality.grade, entry.state
+    )
+    return StockDecision(
+        schema_version="1",
+        symbol=symbol,
+        company_name=f"{symbol} Inc.",
+        decision_date="2026-10-12",
+        generated_at_utc="2026-10-13T00:00:00+00:00",
+        quality=template.quality,
+        entry=entry,
+        action_state=resolved_action,
+        priority=priority,
+        rationale=(),
+        review_trigger="Review now.",
+        source_lists=(),
+        provenance={},
+    )
+
+
 class SilentGateTests(unittest.TestCase):
-    def test_watch_breakout_silent_gate_never_shows_none_risk(self) -> None:
-        decision = _crm_like_breakout()
-        self.assertEqual(decision.entry.risks, ())
+    def test_missing_20d_metric_is_unknown_gate_not_silent_pass(self) -> None:
+        from ai_value_scanner.decision.entry import build_entry_quality_v2
+
+        entry = build_entry_quality_v2(
+            _entry_metrics(return_20d=None),
+            decision_date="2026-10-12",
+            market_asof="2026-10-12",
+        )
+        decision = _decision_with_entry(entry)
         card = build_stock_card_view_model(decision)
         by_key = {row.gate_key: row for row in card.entry_checklist}
-        self.assertEqual(len(card.entry_checklist), 7)
         ret20 = by_key["ret20_band"]
-        self.assertEqual(ret20.status, "SILENT_OR_UNOBSERVED")
-        self.assertIn("silent", ret20.observed_display.lower())
+        self.assertEqual(ret20.status, "UNKNOWN")
+        self.assertIn("not available", ret20.observed_display)
         self.assertNotEqual(card.top_risks_or_blockers_inline, "none")
         self.assertIn("ret20_band", card.top_risks_or_blockers_inline)
 
-    def test_missing_rs_gate_is_silent(self) -> None:
-        positives = tuple(
-            item for item in _ready_entry_positives()
-            if item.code != "relative_strength_60d_qqq_ready"
+    def test_missing_rs_metric_is_unknown_gate_not_silent_pass(self) -> None:
+        from ai_value_scanner.decision.entry import build_entry_quality_v2
+
+        entry = build_entry_quality_v2(
+            _entry_metrics(relative_strength_60d_qqq=None),
+            decision_date="2026-10-12",
+            market_asof="2026-10-12",
         )
-        decision = _decision(
-            symbol="PG", entry_state=EntryState.WATCH_BREAKOUT,
-            action=ActionState.WATCH_BREAKOUT, entry_positives=positives,
-            entry_risks=(),
-        )
+        decision = _decision_with_entry(entry, symbol="PG")
         card = build_stock_card_view_model(decision)
         by_key = {row.gate_key: row for row in card.entry_checklist}
-        self.assertEqual(by_key["rs60_qqq"].status, "SILENT_OR_UNOBSERVED")
+        self.assertEqual(by_key["rs60_qqq"].status, "UNKNOWN")
         self.assertIn("rs60_qqq", card.top_risks_or_blockers_inline)
 
 
 class M1ForwardCompatTests(unittest.TestCase):
-    def test_m1_risk_codes_upgrade_gates_to_fail_blocker(self) -> None:
-        positives = tuple(
-            item for item in _ready_entry_positives()
-            if item.code
-            not in {
-                "price_above_sma200",
-                "price_near_sma50_ready_band",
-                "relative_strength_60d_qqq_ready",
-            }
+    def test_blocking_metrics_flow_into_canonical_gates(self) -> None:
+        from ai_value_scanner.decision.entry import build_entry_quality_v2
+
+        entry = build_entry_quality_v2(
+            _entry_metrics(
+                days_below_sma200=20,
+                price_to_sma50=1.15,
+                relative_strength_60d_qqq=-0.047,
+            ),
+            decision_date="2026-10-12",
+            market_asof="2026-10-12",
         )
-        risks = (
-            _ev("days_below_sma200_elevated", polarity="negative",
-                metric="days_below_sma200", value=20,
-                threshold="<=5", label="Days below SMA200 elevated"),
-            _ev("price_to_sma50_outside_ready_band", polarity="negative",
-                metric="price_to_sma50", value=1.15,
-                threshold="0.98-1.08", label="Price outside SMA50 band"),
-            _ev("relative_strength_60d_qqq_below_ready", polarity="negative",
-                metric="relative_strength_60d_qqq", value=-0.047,
-                threshold=">=-3%", label="60d relative strength below gate"),
-        )
-        decision = _decision(
-            symbol="M1", entry_state=EntryState.WATCH_BREAKOUT,
-            action=ActionState.WATCH_BREAKOUT,
-            entry_positives=positives, entry_risks=risks,
-        )
-        card = build_stock_card_view_model(decision)
+        self.assertEqual(entry.state.value, "TREND_DAMAGED")
+        card = build_stock_card_view_model(_decision_with_entry(entry, symbol="M1"))
         by_key = {row.gate_key: row for row in card.entry_checklist}
-        self.assertEqual(by_key["sma200_trend"].status, "FAIL_BLOCKER")
-        self.assertEqual(by_key["sma200_trend"].observed_display, "20d")
+        self.assertEqual(by_key["trend_damage"].status, "FAIL_BLOCKER")
+        self.assertIn("20d below SMA200", by_key["trend_damage"].observed_display)
         self.assertEqual(by_key["sma50_band"].status, "FAIL_BLOCKER")
         self.assertEqual(by_key["sma50_band"].observed_display, "1.15x")
         self.assertEqual(by_key["rs60_qqq"].status, "FAIL_BLOCKER")

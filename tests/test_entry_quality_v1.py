@@ -92,7 +92,7 @@ class TestEntryQualityV1(unittest.TestCase):
             _ready_entry_metrics(),
             decision_date="2026-10-10",
         )
-        self.assertEqual(ENTRY_POLICY_VERSION, "entry_quality_v1_2026-10-10")
+        self.assertEqual(ENTRY_POLICY_VERSION, "entry_quality_v1_2026-10-18")
         self.assertIs(decision.state, EntryState.ENTRY_READY)
         self.assertGreater(float(decision.score or 0.0), 0.70)
         self.assertGreater(float(decision.confidence), 0.90)
@@ -241,7 +241,7 @@ class TestEntryQualityV1(unittest.TestCase):
         self.assertEqual(out.iloc[0]["entry_state"], "ENTRY_READY")
         self.assertEqual(
             out.iloc[0]["entry_policy_version"],
-            "entry_quality_v1_2026-10-10",
+            "entry_quality_v1_2026-10-18",
         )
         self.assertIn(
             "price_above_sma200",

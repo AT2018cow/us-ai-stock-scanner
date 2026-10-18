@@ -32,7 +32,7 @@ from refresh_sec_cache import (  # noqa: E402
     log,
     run_sec_prewarm,
 )
-from ai_value_scanner.scanner import run_scan  # noqa: E402
+from ai_value_scanner.scanner import run_scan_with_status  # noqa: E402
 
 
 def run_daily_scan_after_prewarm(
@@ -51,7 +51,12 @@ def run_daily_scan_after_prewarm(
     always fetches fresh post-close market data even if a manual scan ran the
     night before, while 100% reusing the SEC parsed caches just written by
     Stage 1 (they are minutes old). Pure decision logic; all network I/O
-    stays inside ``scan_fn``/``run_scan``.
+    stays inside ``scan_fn``/``run_scan_with_status``.
+
+    R04: when the scan callable returns a structured ``ScanRunStatus``, the
+    cron treats a missing/failed canonical decision snapshot or latest
+    pointer as failure even though the legacy CSV was written. Injected
+    legacy callables that only return a Path keep their old contract.
     """
     if skip_scan or (limit and limit > 0):
         return {
@@ -72,7 +77,7 @@ def run_daily_scan_after_prewarm(
         alpaca_cache_ttl_bars_sec=min(cfg.alpaca_cache_ttl_bars_sec, alpaca_ttl_sec),
     )
     try:
-        out_path = (scan_fn or run_scan)(
+        result = (scan_fn or run_scan_with_status)(
             scan_cfg,
             scan_config_path=config_path,
             allow_existing_decision_snapshot=True,
@@ -80,7 +85,33 @@ def run_daily_scan_after_prewarm(
     except Exception as exc:  # noqa: BLE001 - cron must report, not crash
         log(f"ERROR: daily MVP scan failed: {type(exc).__name__}: {exc}")
         return {"scan_executed": False, "scan_failed": True, "error": str(exc)}
-    return {"scan_executed": True, "scan_failed": False, "output_path": str(out_path)}
+
+    if hasattr(result, "core_failed"):
+        outcome = {
+            "scan_executed": True,
+            "scan_failed": bool(result.core_failed),
+            "output_path": str(result.output_path),
+            "decision_snapshot_root": (
+                None
+                if result.decision_snapshot_root is None
+                else str(result.decision_snapshot_root)
+            ),
+            "decision_output_status": str(result.decision_output_status),
+            "latest_pointer_status": str(result.latest_pointer_status),
+            "shadow_status": result.shadow_status,
+        }
+        if result.core_failed:
+            outcome["error"] = (
+                result.decision_output_error
+                or result.latest_pointer_error
+                or "core decision output missing or failed"
+            )
+        return outcome
+    return {
+        "scan_executed": True,
+        "scan_failed": False,
+        "output_path": str(result),
+    }
 
 
 def main() -> None:
@@ -138,11 +169,23 @@ def main() -> None:
                 skip_scan=args.skip_scan,
                 alpaca_ttl_sec=args.alpaca_ttl_sec,
             )
-            if scan_res.get("scan_executed"):
-                log(f"daily MVP scan finished: {scan_res.get('output_path')}")
-            elif scan_res.get("scan_failed"):
+            if scan_res.get("scan_failed"):
+                # R04: core-artifact failure wins even when the legacy CSV was
+                # produced (scan_executed is True for those runs).
                 log(f"ERROR: daily MVP scan failed: {scan_res.get('error')}")
                 sys.exit(1)
+            elif scan_res.get("scan_executed"):
+                log(
+                    "daily MVP scan finished: "
+                    f"{scan_res.get('output_path')} "
+                    f"(decision={scan_res.get('decision_output_status', 'legacy')} "
+                    f"pointer={scan_res.get('latest_pointer_status', 'n/a')})"
+                )
+                if scan_res.get("shadow_status") == "failed":
+                    log(
+                        "WARNING: v2 shadow snapshot failed while the main "
+                        "snapshot was published (partial outcome)"
+                    )
             else:
                 log(f"daily MVP scan not executed: {scan_res.get('reason')}")
         else:

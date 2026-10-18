@@ -112,13 +112,14 @@ class TestAccountingGoldenValues(unittest.TestCase):
         self.assertAlmostEqual(out["ocf_to_net_income"], 36.0 / 35.0, places=12)
         self.assertEqual(out["accrual_ratio"], -0.02)
         self.assertAlmostEqual(out["receivables_growth_gap"], 0.0, places=12)
-        self.assertEqual(out["inventory_growth_gap"], 0.0)
+        # R01: two missing inventory fields are unknown, not "not applicable".
+        self.assertIsNone(out["inventory_growth_gap"])
         self.assertIsNone(out["inventory_growth_gap_reported"])
-        self.assertEqual(out["inventory_growth_gap_inferred"], 0.0)
-        self.assertEqual(
-            out["inventory_growth_gap_source"],
-            "inferred_inventory_not_applicable",
-        )
+        self.assertIsNone(out["inventory_growth_gap_inferred"])
+        self.assertEqual(out["inventory_growth_gap_source"], "missing")
+        self.assertEqual(out["total_debt_source"], "reported")
+        self.assertEqual(out["net_debt_source"], "reported")
+        self.assertEqual(out["net_debt_to_ebitda_source"], "reported")
         self.assertEqual(out["fundamental_quality_score"], 0.960762)
 
     def test_current_debt_inference_contract(self) -> None:

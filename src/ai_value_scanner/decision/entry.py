@@ -5,10 +5,10 @@ from datetime import date
 import math
 from typing import Any
 
-from .model import EntryDecision, EntryState, EvidenceItem
+from .model import EntryDecision, EntryGateResult, EntryState, EvidenceItem
 
 
-ENTRY_POLICY_VERSION = "entry_quality_v1_2026-10-10"
+ENTRY_POLICY_VERSION = "entry_quality_v1_2026-10-18"
 
 ENTRY_V1_COMPONENT_WEIGHTS: dict[str, float] = {
     "trend": 0.35,
@@ -98,6 +98,571 @@ def _component(
     if not observed:
         return None, coverage
     return sum(observed) / len(observed), coverage
+
+
+def _gate(
+    *,
+    gate_key: str,
+    gate_label: str,
+    status: str,
+    blocking: bool,
+    metric: str | None,
+    observed: float | str | None,
+    target: str,
+    reason: str,
+    policy_version: str,
+) -> EntryGateResult:
+    return EntryGateResult(
+        gate_key=gate_key,
+        gate_label=gate_label,
+        status=status,
+        blocking=blocking,
+        metric=metric,
+        observed=observed,
+        target=target,
+        reason=reason,
+        policy_version=policy_version,
+    )
+
+
+def _fmt_ratio(value: float) -> str:
+    return f"{value:.2f}x"
+
+
+def _fmt_pct(value: float) -> str:
+    return f"{value * 100:+.1f}%"
+
+
+def _build_v1_gate_results(
+    *,
+    policy_version: str,
+    market_dt: date | None,
+    runtime_dt: date | None,
+    age_days: int | None,
+    market_ahead_days: int | None,
+    benchmark_lag_days: int | None,
+    observed_critical: int,
+    sma200: float | None,
+    sma50: float | None,
+    return_20d: float | None,
+    return_60d: float | None,
+    drawdown: float | None,
+    relative_strength: float | None,
+    volatility: float | None,
+    damage_reasons: list[str],
+    overextension_reasons: list[str],
+    defensive_regime: bool,
+    defensive_ready: bool,
+    regime_supportive: bool,
+    ready_rs60_min: float,
+) -> tuple[EntryGateResult, ...]:
+    """Canonical v1 gate outcomes (R06).
+
+    One evaluation, consumed by both the state logic and the renderers. The
+    thresholds here must mirror the state computation exactly; the invariant
+    "ENTRY_READY <=> no blocking gate" is asserted by tests.
+    """
+    gates: list[EntryGateResult] = []
+
+    data_ok = (
+        observed_critical >= ENTRY_V1_MIN_CRITICAL_OBSERVED
+        and sma200 is not None
+        and sma50 is not None
+    )
+    gates.append(
+        _gate(
+            gate_key="data_completeness",
+            gate_label="Data Completeness",
+            status="PASS" if data_ok else "UNKNOWN",
+            blocking=not data_ok,
+            metric=None,
+            observed=f"{observed_critical}/{len(ENTRY_V1_CRITICAL_METRICS)} critical metrics",
+            target=f">={ENTRY_V1_MIN_CRITICAL_OBSERVED} of "
+            f"{len(ENTRY_V1_CRITICAL_METRICS)} + SMA structure",
+            reason=(
+                "Required market metrics are present."
+                if data_ok
+                else "Critical market metrics are incomplete; no Entry state can be confirmed."
+            ),
+            policy_version=policy_version,
+        )
+    )
+
+    if market_dt is None:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="UNKNOWN",
+                blocking=True,
+                metric="market_asof",
+                observed=None,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason="Market-data as-of is missing; freshness cannot be verified.",
+                policy_version=policy_version,
+            )
+        )
+    elif market_ahead_days is not None:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="BLOCK",
+                blocking=True,
+                metric="market_asof",
+                observed=market_ahead_days,
+                target="<= latest completed session",
+                reason=(
+                    f"Market data is {market_ahead_days}d after the latest "
+                    "completed session; mixed or future timestamps cannot "
+                    "confirm a live Entry state."
+                ),
+                policy_version=policy_version,
+            )
+        )
+    elif age_days is None:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="NOT_APPLICABLE",
+                blocking=False,
+                metric="market_data_age_days",
+                observed=None,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason="No freshness reference clock is available for this path.",
+                policy_version=policy_version,
+            )
+        )
+    elif age_days > ENTRY_V1_MARKET_STALE_MAX_DAYS:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="BLOCK",
+                blocking=True,
+                metric="market_data_age_days",
+                observed=age_days,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason=(
+                    f"Market data is {age_days}d old; >{ENTRY_V1_MARKET_STALE_MAX_DAYS}d "
+                    "is too stale for an Entry state."
+                ),
+                policy_version=policy_version,
+            )
+        )
+    elif age_days > ENTRY_V1_MARKET_FRESH_DAYS:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="WARN",
+                blocking=False,
+                metric="market_data_age_days",
+                observed=age_days,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason=(
+                    f"Market data is {age_days}d old; within the allowed "
+                    f"{ENTRY_V1_MARKET_FRESH_DAYS + 1}-{ENTRY_V1_MARKET_STALE_MAX_DAYS}d "
+                    "window but confidence is reduced."
+                ),
+                policy_version=policy_version,
+            )
+        )
+    else:
+        gates.append(
+            _gate(
+                gate_key="freshness",
+                gate_label="Data Age",
+                status="PASS",
+                blocking=False,
+                metric="market_data_age_days",
+                observed=age_days,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason=f"Market data is {age_days}d old (within the freshness window).",
+                policy_version=policy_version,
+            )
+        )
+
+    if runtime_dt is not None and benchmark_lag_days is not None:
+        if benchmark_lag_days < 0:
+            bench_status, bench_blocking = "BLOCK", True
+            bench_reason = (
+                f"Benchmark session is {abs(benchmark_lag_days)}d after the "
+                "latest completed session; benchmark-relative metrics cannot "
+                "be trusted."
+            )
+        elif benchmark_lag_days > ENTRY_V1_MARKET_STALE_MAX_DAYS:
+            bench_status, bench_blocking = "BLOCK", True
+            bench_reason = (
+                f"Benchmark session is {benchmark_lag_days}d behind the live clock; "
+                "benchmark-relative metrics cannot be trusted."
+            )
+        elif benchmark_lag_days > ENTRY_V1_MARKET_FRESH_DAYS:
+            bench_status, bench_blocking = "WARN", False
+            bench_reason = (
+                f"Benchmark session is {benchmark_lag_days}d behind the live clock; "
+                "benchmark-relative metrics are stale."
+            )
+        else:
+            bench_status, bench_blocking = "PASS", False
+            bench_reason = (
+                f"Benchmark session is {benchmark_lag_days}d behind the live clock."
+            )
+        gates.append(
+            _gate(
+                gate_key="benchmark_freshness",
+                gate_label="Benchmark Age",
+                status=bench_status,
+                blocking=bench_blocking,
+                metric="benchmark_market_data_age_days",
+                observed=benchmark_lag_days,
+                target=f"<= {ENTRY_V1_MARKET_FRESH_DAYS}d",
+                reason=bench_reason,
+                policy_version=policy_version,
+            )
+        )
+
+    if sma200 is None:
+        gates.append(
+            _gate(
+                gate_key="sma200_trend",
+                gate_label="SMA200 Trend",
+                status="UNKNOWN",
+                blocking=True,
+                metric="price_to_sma200",
+                observed=None,
+                target=">= 1.00x",
+                reason="Price/SMA200 is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        sma200_ok = sma200 >= 1.00
+        gates.append(
+            _gate(
+                gate_key="sma200_trend",
+                gate_label="SMA200 Trend",
+                status="PASS" if sma200_ok else "BLOCK",
+                blocking=not sma200_ok,
+                metric="price_to_sma200",
+                observed=round(sma200, 6),
+                target=">= 1.00x",
+                reason=(
+                    f"Price at {_fmt_ratio(sma200)} of SMA200."
+                    if sma200_ok
+                    else f"Below SMA200 at {_fmt_ratio(sma200)} (need >= 1.00x)."
+                ),
+                policy_version=policy_version,
+            )
+        )
+
+    if sma50 is None:
+        gates.append(
+            _gate(
+                gate_key="sma50_band",
+                gate_label="SMA50 Band",
+                status="UNKNOWN",
+                blocking=True,
+                metric="price_to_sma50",
+                observed=None,
+                target="0.98x-1.08x",
+                reason="Price/SMA50 is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        sma50_ok = 0.98 <= sma50 <= 1.08
+        if sma50_ok:
+            sma50_reason = f"Price at {_fmt_ratio(sma50)} of SMA50 (inside band)."
+        elif sma50 > 1.08:
+            sma50_reason = (
+                f"Extended above SMA50 at {_fmt_ratio(sma50)} "
+                "(need 0.98x-1.08x; wait for normalization)."
+            )
+        else:
+            sma50_reason = (
+                f"Below SMA50 at {_fmt_ratio(sma50)} (need 0.98x-1.08x)."
+            )
+        gates.append(
+            _gate(
+                gate_key="sma50_band",
+                gate_label="SMA50 Band",
+                status="PASS" if sma50_ok else "BLOCK",
+                blocking=not sma50_ok,
+                metric="price_to_sma50",
+                observed=round(sma50, 6),
+                target="0.98x-1.08x",
+                reason=sma50_reason,
+                policy_version=policy_version,
+            )
+        )
+
+    if return_20d is None:
+        gates.append(
+            _gate(
+                gate_key="ret20_band",
+                gate_label="20d Momentum",
+                status="UNKNOWN",
+                blocking=True,
+                metric="return_20d",
+                observed=None,
+                target="-3% to +12%",
+                reason="20d return is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        ret20_ok = -0.03 <= return_20d <= 0.12
+        if ret20_ok:
+            ret20_reason = f"20d return at {_fmt_pct(return_20d)} (inside band)."
+        elif return_20d > 0.12:
+            ret20_reason = (
+                f"20d return at {_fmt_pct(return_20d)} "
+                "(above +12% readiness band)."
+            )
+        else:
+            ret20_reason = (
+                f"20d return at {_fmt_pct(return_20d)} (below -3% edge)."
+            )
+        gates.append(
+            _gate(
+                gate_key="ret20_band",
+                gate_label="20d Momentum",
+                status="PASS" if ret20_ok else "BLOCK",
+                blocking=not ret20_ok,
+                metric="return_20d",
+                observed=round(return_20d, 6),
+                target="-3% to +12%",
+                reason=ret20_reason,
+                policy_version=policy_version,
+            )
+        )
+
+    if return_60d is None:
+        gates.append(
+            _gate(
+                gate_key="ret60_trend",
+                gate_label="60d Momentum",
+                status="UNKNOWN",
+                blocking=True,
+                metric="return_60d",
+                observed=None,
+                target=">= 0%",
+                reason="60d return is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        ret60_ok = return_60d >= 0.0
+        gates.append(
+            _gate(
+                gate_key="ret60_trend",
+                gate_label="60d Momentum",
+                status="PASS" if ret60_ok else "BLOCK",
+                blocking=not ret60_ok,
+                metric="return_60d",
+                observed=round(return_60d, 6),
+                target=">= 0%",
+                reason=(
+                    f"60d return at {_fmt_pct(return_60d)}."
+                    if ret60_ok
+                    else f"60d return weak at {_fmt_pct(return_60d)} (need >= 0%)."
+                ),
+                policy_version=policy_version,
+            )
+        )
+
+    if relative_strength is None:
+        gates.append(
+            _gate(
+                gate_key="rs60_qqq",
+                gate_label="60d RS vs QQQ",
+                status="UNKNOWN",
+                blocking=True,
+                metric="relative_strength_60d_qqq",
+                observed=None,
+                target=f">= {ready_rs60_min:.1%}",
+                reason="60d relative strength vs QQQ is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        rs_ok = relative_strength >= ready_rs60_min
+        gates.append(
+            _gate(
+                gate_key="rs60_qqq",
+                gate_label="60d RS vs QQQ",
+                status="PASS" if rs_ok else "BLOCK",
+                blocking=not rs_ok,
+                metric="relative_strength_60d_qqq",
+                observed=round(relative_strength, 6),
+                target=f">= {ready_rs60_min:.1%}",
+                reason=(
+                    f"60d RS vs QQQ at {_fmt_pct(relative_strength)}."
+                    if rs_ok
+                    else f"60d RS vs QQQ at {_fmt_pct(relative_strength)} "
+                    f"(need >= {ready_rs60_min:.1%})."
+                ),
+                policy_version=policy_version,
+            )
+        )
+
+    if drawdown is None:
+        gates.append(
+            _gate(
+                gate_key="drawdown_cap",
+                gate_label="52w Drawdown",
+                status="UNKNOWN",
+                blocking=True,
+                metric="drawdown_from_52w_high",
+                observed=None,
+                target="<= 22%",
+                reason="52w drawdown is unavailable.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        dd_ok = drawdown <= 0.22
+        gates.append(
+            _gate(
+                gate_key="drawdown_cap",
+                gate_label="52w Drawdown",
+                status="PASS" if dd_ok else "BLOCK",
+                blocking=not dd_ok,
+                metric="drawdown_from_52w_high",
+                observed=round(drawdown, 6),
+                target="<= 22%",
+                reason=(
+                    f"Drawdown at {drawdown * 100:.1f}%."
+                    if dd_ok
+                    else f"Drawdown at {drawdown * 100:.1f}% (cap 22%)."
+                ),
+                policy_version=policy_version,
+            )
+        )
+
+    if volatility is None:
+        gates.append(
+            _gate(
+                gate_key="volatility_cap",
+                gate_label="Volatility",
+                status="NOT_APPLICABLE",
+                blocking=False,
+                metric="volatility_60d",
+                observed=None,
+                target="<= 80% annualized",
+                reason="Volatility is unavailable; treated as non-blocking.",
+                policy_version=policy_version,
+            )
+        )
+    else:
+        vol_ok = volatility <= 0.80
+        gates.append(
+            _gate(
+                gate_key="volatility_cap",
+                gate_label="Volatility",
+                status="PASS" if vol_ok else "BLOCK",
+                blocking=not vol_ok,
+                metric="volatility_60d",
+                observed=round(volatility, 6),
+                target="<= 80% annualized",
+                reason=(
+                    f"60d volatility at {volatility * 100:.1f}%."
+                    if vol_ok
+                    else f"60d volatility at {volatility * 100:.1f}% "
+                    "(above the 80% ENTRY_READY cap)."
+                ),
+                policy_version=policy_version,
+            )
+        )
+
+    if damage_reasons:
+        gates.append(
+            _gate(
+                gate_key="trend_damage",
+                gate_label="Trend Damage",
+                status="BLOCK",
+                blocking=True,
+                metric=None,
+                observed="; ".join(damage_reasons),
+                target="no damage trigger",
+                reason="Trend damage: " + "; ".join(damage_reasons),
+                policy_version=policy_version,
+            )
+        )
+    else:
+        gates.append(
+            _gate(
+                gate_key="trend_damage",
+                gate_label="Trend Damage",
+                status="PASS",
+                blocking=False,
+                metric=None,
+                observed=None,
+                target="no damage trigger",
+                reason="No trend-damage trigger fired.",
+                policy_version=policy_version,
+            )
+        )
+
+    if overextension_reasons:
+        gates.append(
+            _gate(
+                gate_key="overextension",
+                gate_label="Overextension",
+                status="BLOCK",
+                blocking=True,
+                metric=None,
+                observed="; ".join(overextension_reasons),
+                target="no overextension trigger",
+                reason="Overextended: " + "; ".join(overextension_reasons),
+                policy_version=policy_version,
+            )
+        )
+    else:
+        gates.append(
+            _gate(
+                gate_key="overextension",
+                gate_label="Overextension",
+                status="PASS",
+                blocking=False,
+                metric=None,
+                observed=None,
+                target="no overextension trigger",
+                reason="No overextension trigger fired.",
+                policy_version=policy_version,
+            )
+        )
+
+    if defensive_regime:
+        regime_status = "PASS" if defensive_ready else "BLOCK"
+        regime_reason = (
+            "Defensive regime: extra RS/20d confirmation met."
+            if defensive_ready
+            else "Defensive regime requires RS60 >= +5% and 20d >= 0% "
+            "for ENTRY_READY."
+        )
+    elif regime_supportive:
+        regime_status = "PASS"
+        regime_reason = "Benchmark regime does not impose the defensive gate."
+    else:
+        regime_status = "NOT_APPLICABLE"
+        regime_reason = "Market regime is unknown; no defensive gate applied."
+    gates.append(
+        _gate(
+            gate_key="market_regime",
+            gate_label="Market Regime",
+            status=regime_status,
+            blocking=regime_status == "BLOCK",
+            metric="regime",
+            observed=None,
+            target="Supportive, or RS>=+5% & 20d>=0% when defensive",
+            reason=regime_reason,
+            policy_version=policy_version,
+        )
+    )
+    return tuple(gates)
 
 
 def _score_sma200(value: float) -> float:
@@ -245,11 +810,13 @@ def build_entry_quality_v1(
     *,
     decision_date: str | date | None = None,
     market_asof: str | date | None = None,
+    runtime_reference_date: str | date | None = None,
 ) -> EntryDecision:
     """Canonical v1 stays fixed; thresholds are NOT changed by research."""
     return _build_entry_with_thresholds(
         metrics, decision_date=decision_date, market_asof=market_asof,
         ready_rs60_min=-0.03, overextended_return20_gt=0.15,
+        runtime_reference_date=runtime_reference_date,
     )
 
 
@@ -282,8 +849,16 @@ def _build_entry_with_thresholds(
     market_asof: str | date | None,
     ready_rs60_min: float,
     overextended_return20_gt: float,
+    runtime_reference_date: str | date | None = None,
 ) -> EntryDecision:
-    """Shared canonical Entry algorithm: score fixed, state thresholds versioned."""
+    """Shared canonical Entry algorithm: score fixed, state thresholds versioned.
+
+    ``runtime_reference_date`` is the most recent expected completed US
+    session (see ``ai_value_scanner.market_calendar``). Live scans pass it so
+    freshness is judged against the real run clock as well as the benchmark
+    decision date; historical replay omits it and keeps the frozen
+    decision-date-relative semantics with no wall-clock dependency.
+    """
     positives: list[EvidenceItem] = []
     risks: list[EvidenceItem] = []
 
@@ -296,9 +871,22 @@ def _build_entry_with_thresholds(
 
     decision_dt = _parse_iso_date(decision_date)
     market_dt = _parse_iso_date(market_asof_value)
+    runtime_dt = _parse_iso_date(runtime_reference_date)
     normalized_market_asof = market_dt.isoformat() if market_dt is not None else None
 
+    # Live runtime reference (R03): the newest session the data should cover
+    # by run time. Replay passes nothing and keeps decision-date-relative
+    # semantics, so historical judgements never depend on the wall clock.
+    reference_dt = decision_dt
+    if runtime_dt is not None and (
+        reference_dt is None or runtime_dt > reference_dt
+    ):
+        reference_dt = runtime_dt
+
     insufficient_reason = False
+    age_days: int | None = None
+    benchmark_lag_days: int | None = None
+    market_ahead_days: int | None = None
     if market_dt is None:
         insufficient_reason = True
         confidence = min(confidence, 0.49)
@@ -313,50 +901,138 @@ def _build_entry_with_thresholds(
                 message="Market-data freshness cannot be verified.",
             )
         )
-    elif decision_dt is not None:
-        if market_dt > decision_dt:
+    elif reference_dt is not None:
+        if (
+            decision_dt is not None
+            and market_dt > decision_dt
+            and runtime_dt is None
+        ):
             raise ValueError(
                 f"market_asof {market_dt.isoformat()} is after "
                 f"decision_date {decision_dt.isoformat()}"
             )
-        age_days = (decision_dt - market_dt).days
-        if age_days > ENTRY_V1_MARKET_STALE_MAX_DAYS:
+        if runtime_dt is not None and market_dt > runtime_dt:
+            # R03 fail-closed: a symbol bar dated after the latest completed
+            # session cannot confirm a live Entry state (in-progress or
+            # future timestamps are mixed-timing evidence, never "fresh 0d").
+            market_ahead_days = (market_dt - runtime_dt).days
             insufficient_reason = True
             confidence = min(confidence, 0.49)
             risks.append(
                 _item(
-                    code="market_data_severely_stale",
-                    label="Market data severely stale",
+                    code="market_data_ahead_of_reference",
+                    label="Market data ahead of reference session",
                     polarity="negative",
-                    metric="market_data_age_days",
-                    value=age_days,
-                    threshold=f"<={ENTRY_V1_MARKET_STALE_MAX_DAYS}",
-                    message="Market data is too stale for an Entry state.",
-                )
-            )
-        elif age_days > ENTRY_V1_MARKET_FRESH_DAYS:
-            confidence *= 0.90
-            risks.append(
-                _item(
-                    code="market_data_stale",
-                    label="Market data stale",
-                    polarity="negative",
-                    metric="market_data_age_days",
-                    value=age_days,
-                    threshold=f"<={ENTRY_V1_MARKET_FRESH_DAYS}",
-                    message="Market data is older than the preferred freshness window.",
+                    metric="market_asof",
+                    value=market_ahead_days,
+                    threshold="<= latest completed session",
+                    message=(
+                        f"Market data is dated {market_ahead_days}d after the "
+                        "latest completed session; mixed or future timestamps "
+                        "cannot confirm a live Entry decision."
+                    ),
                 )
             )
         else:
-            positives.append(
+            effective_reference = (
+                runtime_dt if runtime_dt is not None else decision_dt
+            )
+            age_days = (effective_reference - market_dt).days
+            if age_days > ENTRY_V1_MARKET_STALE_MAX_DAYS:
+                insufficient_reason = True
+                confidence = min(confidence, 0.49)
+                risks.append(
+                    _item(
+                        code="market_data_severely_stale",
+                        label="Market data severely stale",
+                        polarity="negative",
+                        metric="market_data_age_days",
+                        value=age_days,
+                        threshold=f"<={ENTRY_V1_MARKET_STALE_MAX_DAYS}",
+                        message="Market data is too stale for an Entry state.",
+                    )
+                )
+            elif age_days > ENTRY_V1_MARKET_FRESH_DAYS:
+                confidence *= 0.90
+                risks.append(
+                    _item(
+                        code="market_data_stale",
+                        label="Market data stale",
+                        polarity="negative",
+                        metric="market_data_age_days",
+                        value=age_days,
+                        threshold=f"<={ENTRY_V1_MARKET_FRESH_DAYS}",
+                        message="Market data is older than the preferred freshness window.",
+                    )
+                )
+            else:
+                positives.append(
+                    _item(
+                        code="market_data_fresh",
+                        label="Market data fresh",
+                        polarity="positive",
+                        metric="market_data_age_days",
+                        value=age_days,
+                        threshold=f"<={ENTRY_V1_MARKET_FRESH_DAYS}",
+                        message="Market data is within the preferred freshness window.",
+                    )
+                )
+
+    # Benchmark (QQQ) runtime clock: the decision_date is the benchmark
+    # session, so a stale benchmark silently weakens every benchmark-relative
+    # metric even when individual symbol bars are fresh, and a benchmark dated
+    # after the live reference is a mixed-timing anomaly. Both are explicit.
+    if runtime_dt is not None and decision_dt is not None:
+        benchmark_lag_days = (runtime_dt - decision_dt).days
+        if benchmark_lag_days < 0:
+            insufficient_reason = True
+            confidence = min(confidence, 0.49)
+            risks.append(
                 _item(
-                    code="market_data_fresh",
-                    label="Market data fresh",
-                    polarity="positive",
-                    metric="market_data_age_days",
-                    value=age_days,
+                    code="benchmark_market_data_ahead_of_reference",
+                    label="Benchmark data ahead of reference session",
+                    polarity="negative",
+                    metric="benchmark_market_data_age_days",
+                    value=benchmark_lag_days,
+                    threshold="<= latest completed session",
+                    message=(
+                        "The benchmark session behind decision_date is dated "
+                        "after the latest completed session; benchmark-relative "
+                        "metrics cannot be trusted for a live Entry decision."
+                    ),
+                )
+            )
+        elif benchmark_lag_days > ENTRY_V1_MARKET_STALE_MAX_DAYS:
+            insufficient_reason = True
+            confidence = min(confidence, 0.49)
+            risks.append(
+                _item(
+                    code="benchmark_market_data_severely_stale",
+                    label="Benchmark market data severely stale",
+                    polarity="negative",
+                    metric="benchmark_market_data_age_days",
+                    value=benchmark_lag_days,
+                    threshold=f"<={ENTRY_V1_MARKET_STALE_MAX_DAYS}",
+                    message=(
+                        "The benchmark session behind decision_date is too "
+                        "stale relative to the live run clock for an Entry state."
+                    ),
+                )
+            )
+        elif benchmark_lag_days > ENTRY_V1_MARKET_FRESH_DAYS:
+            confidence *= 0.90
+            risks.append(
+                _item(
+                    code="benchmark_market_data_stale",
+                    label="Benchmark market data stale",
+                    polarity="negative",
+                    metric="benchmark_market_data_age_days",
+                    value=benchmark_lag_days,
                     threshold=f"<={ENTRY_V1_MARKET_FRESH_DAYS}",
-                    message="Market data is within the preferred freshness window.",
+                    message=(
+                        "The benchmark session behind decision_date lags the "
+                        "live run clock; benchmark-relative metrics are stale."
+                    ),
                 )
             )
 
@@ -712,71 +1388,109 @@ def _build_entry_with_thresholds(
 
     confidence = round(max(0.0, min(1.0, confidence)), 6)
 
+    regime_supportive = regime == "up" or benchmark_trend_ok is True
+
+    damage_reasons: list[str] = []
+    if sma200 is not None and sma200 < 0.95:
+        damage_reasons.append(f"SMA200 {_fmt_ratio(sma200)} (damaged < 0.95x)")
+    if days_below is not None and days_below >= 15:
+        damage_reasons.append(f"{int(days_below)}d below SMA200 (need < 15d)")
+    if (
+        sma50 is not None
+        and return_60d is not None
+        and sma50 < 0.97
+        and return_60d <= -0.08
+    ):
+        damage_reasons.append(
+            f"SMA50 {_fmt_ratio(sma50)} with 60d {_fmt_pct(return_60d)}"
+        )
+    if (
+        return_60d is not None
+        and relative_strength is not None
+        and return_60d <= -0.15
+        and relative_strength <= -0.10
+    ):
+        damage_reasons.append(
+            f"60d {_fmt_pct(return_60d)} with RS {_fmt_pct(relative_strength)}"
+        )
+    damaged = bool(damage_reasons)
+
+    overextension_reasons: list[str] = []
+    if sma50 is not None and sma50 > 1.10:
+        overextension_reasons.append(f"extended above SMA50 ({_fmt_ratio(sma50)})")
+    if return_20d is not None and return_20d > overextended_return20_gt:
+        overextension_reasons.append(f"20d return {_fmt_pct(return_20d)}")
+    if (
+        range_position is not None
+        and return_20d is not None
+        and range_position >= 0.95
+        and return_20d > 0.08
+    ):
+        overextension_reasons.append(
+            f"52w range position {range_position * 100:.0f}% with 20d "
+            f"return {_fmt_pct(return_20d)}"
+        )
+    overextended = bool(overextension_reasons)
+
+    volatility_ready = volatility is None or volatility <= 0.80
+    base_ready = bool(
+        sma200 is not None
+        and sma200 >= 1.00
+        and sma50 is not None
+        and 0.98 <= sma50 <= 1.08
+        and return_20d is not None
+        and -0.03 <= return_20d <= 0.12
+        and return_60d is not None
+        and return_60d >= 0.0
+        and relative_strength is not None
+        and relative_strength >= ready_rs60_min
+        and drawdown is not None
+        and drawdown <= 0.22
+        and volatility_ready
+    )
+    defensive_ready = bool(
+        not defensive_regime
+        or (
+            relative_strength is not None
+            and relative_strength >= 0.05
+            and return_20d is not None
+            and return_20d >= 0.0
+        )
+    )
+
     if insufficient_reason:
         state = EntryState.INSUFFICIENT_DATA
+    elif damaged:
+        state = EntryState.TREND_DAMAGED
+    elif overextended:
+        state = EntryState.WATCH_PULLBACK
+    elif base_ready and defensive_ready:
+        state = EntryState.ENTRY_READY
     else:
-        damaged = bool(
-            (sma200 is not None and sma200 < 0.95)
-            or (days_below is not None and days_below >= 15)
-            or (
-                sma50 is not None
-                and return_60d is not None
-                and sma50 < 0.97
-                and return_60d <= -0.08
-            )
-            or (
-                return_60d is not None
-                and relative_strength is not None
-                and return_60d <= -0.15
-                and relative_strength <= -0.10
-            )
-        )
+        state = EntryState.WATCH_BREAKOUT
 
-        overextended = bool(
-            (sma50 is not None and sma50 > 1.10)
-            or (return_20d is not None and return_20d > overextended_return20_gt)
-            or (
-                range_position is not None
-                and return_20d is not None
-                and range_position >= 0.95
-                and return_20d > 0.08
-            )
-        )
-
-        volatility_ready = volatility is None or volatility <= 0.80
-        base_ready = bool(
-            sma200 is not None
-            and sma200 >= 1.00
-            and sma50 is not None
-            and 0.98 <= sma50 <= 1.08
-            and return_20d is not None
-            and -0.03 <= return_20d <= 0.12
-            and return_60d is not None
-            and return_60d >= 0.0
-            and relative_strength is not None
-            and relative_strength >= ready_rs60_min
-            and drawdown is not None
-            and drawdown <= 0.22
-            and volatility_ready
-        )
-        defensive_ready = bool(
-            not defensive_regime
-            or (
-                relative_strength is not None
-                and relative_strength >= 0.05
-                and return_20d is not None
-                and return_20d >= 0.0
-            )
-        )
-
-        if damaged:
-            state = EntryState.TREND_DAMAGED
-        elif overextended:
-            state = EntryState.WATCH_PULLBACK
-        elif base_ready and defensive_ready:
-            state = EntryState.ENTRY_READY
-        else:
-            state = EntryState.WATCH_BREAKOUT
+    gate_results = _build_v1_gate_results(
+        policy_version=ENTRY_POLICY_VERSION,
+        market_dt=market_dt,
+        runtime_dt=runtime_dt,
+        age_days=age_days,
+        market_ahead_days=market_ahead_days,
+        benchmark_lag_days=benchmark_lag_days,
+        observed_critical=observed_critical,
+        sma200=sma200,
+        sma50=sma50,
+        return_20d=return_20d,
+        return_60d=return_60d,
+        drawdown=drawdown,
+        relative_strength=relative_strength,
+        volatility=volatility,
+        damage_reasons=damage_reasons,
+        overextension_reasons=overextension_reasons,
+        defensive_regime=defensive_regime,
+        defensive_ready=defensive_ready,
+        regime_supportive=regime_supportive,
+        ready_rs60_min=ready_rs60_min,
+    )
 
     return EntryDecision(
         state=state,
@@ -785,10 +1499,11 @@ def _build_entry_with_thresholds(
         positives=tuple(positives),
         risks=tuple(risks),
         market_asof=normalized_market_asof,
+        gate_results=gate_results,
     )
 
 
-ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-10-15"
+ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-10-18"
 
 ENTRY_V2_MA_ALIGNMENT_MIN = 0.98
 ENTRY_V2_LAGGING_SCORE_PENALTY = 0.10
@@ -868,6 +1583,7 @@ def build_entry_quality_v2(
     *,
     decision_date: str | date | None = None,
     market_asof: str | date | None = None,
+    runtime_reference_date: str | date | None = None,
 ) -> EntryDecision:
     """Pre-registered H2 Entry candidate: v1 evidence plus 3 structure fixes.
 
@@ -885,6 +1601,7 @@ def build_entry_quality_v2(
         market_asof=market_asof,
         ready_rs60_min=ready_rs60_min,
         overextended_return20_gt=overextended_return20_gt,
+        runtime_reference_date=runtime_reference_date,
     )
     positives: list[EvidenceItem] = list(base.positives)
     risks: list[EvidenceItem] = list(base.risks)
@@ -1027,6 +1744,67 @@ def build_entry_quality_v2(
             )
         )
 
+    return_60d_ext = _finite_value(metrics, "return_60d")
+    extension_warn_reasons: list[str] = []
+    if sma200 is not None and sma200 > ENTRY_V2_SMA200_EXTENDED_WARN:
+        extension_warn_reasons.append(f"SMA200 {sma200:.2f}x")
+    if return_60d_ext is not None and return_60d_ext > ENTRY_V2_RET60_EXTENDED_WARN:
+        extension_warn_reasons.append(f"60d Ret {return_60d_ext * 100:+.1f}%")
+
+    gate_results = list(base.gate_results)
+    if ratio is None:
+        gate_results.append(
+            _gate(
+                gate_key="ma_alignment",
+                gate_label="SMA50/SMA200 Alignment",
+                status="NOT_APPLICABLE",
+                blocking=False,
+                metric="sma50_to_sma200",
+                observed=None,
+                target=f">= {ENTRY_V2_MA_ALIGNMENT_MIN:.2f}x",
+                reason="SMA50/SMA200 ratio is unavailable.",
+                policy_version=ENTRY_V2_POLICY_VERSION,
+            )
+        )
+    else:
+        gate_results.append(
+            _gate(
+                gate_key="ma_alignment",
+                gate_label="SMA50/SMA200 Alignment",
+                status="PASS" if ma_alignment_ok else "BLOCK",
+                blocking=not ma_alignment_ok,
+                metric="sma50_to_sma200",
+                observed=round(ratio, 6),
+                target=f">= {ENTRY_V2_MA_ALIGNMENT_MIN:.2f}x",
+                reason=(
+                    f"SMA50 is {ratio:.2f}x SMA200."
+                    if ma_alignment_ok
+                    else f"SMA50 is {ratio:.2f}x SMA200 "
+                    f"(need >= {ENTRY_V2_MA_ALIGNMENT_MIN:.2f}x for ENTRY_READY)."
+                ),
+                policy_version=ENTRY_V2_POLICY_VERSION,
+            )
+        )
+    gate_results.append(
+        _gate(
+            gate_key="extension_watch",
+            gate_label="Medium-Term Extension",
+            status="WARN" if extension_warn_reasons else "PASS",
+            blocking=False,
+            metric=None,
+            observed=(
+                "; ".join(extension_warn_reasons) if extension_warn_reasons else None
+            ),
+            target="not extended",
+            reason=(
+                "Medium-term extension warning: " + "; ".join(extension_warn_reasons)
+                if extension_warn_reasons
+                else "No medium-term extension warning."
+            ),
+            policy_version=ENTRY_V2_POLICY_VERSION,
+        )
+    )
+
     return EntryDecision(
         state=state,
         score=score,
@@ -1034,4 +1812,5 @@ def build_entry_quality_v2(
         positives=tuple(positives),
         risks=tuple(risks),
         market_asof=base.market_asof,
+        gate_results=tuple(gate_results),
     )

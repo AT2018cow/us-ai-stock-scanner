@@ -61,6 +61,37 @@ class QualityDecision:
 
 
 @dataclass(frozen=True)
+class EntryGateResult:
+    """Canonical readiness-gate outcome produced by the entry decision layer.
+
+    R06: the decision layer owns threshold evaluation; renderers only format
+    these results. ``status`` is one of PASS / BLOCK / WARN / UNKNOWN /
+    NOT_APPLICABLE, and ``blocking`` marks whether the outcome blocks the
+    ENTRY_READY state (WARN and NOT_APPLICABLE never do).
+    """
+
+    gate_key: str
+    gate_label: str
+    status: str
+    blocking: bool
+    metric: str | None
+    observed: float | str | None
+    target: str
+    reason: str
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "PASS",
+            "BLOCK",
+            "WARN",
+            "UNKNOWN",
+            "NOT_APPLICABLE",
+        }:
+            raise ValueError(f"unsupported gate status: {self.status!r}")
+
+
+@dataclass(frozen=True)
 class EntryDecision:
     state: EntryState
     score: float | None
@@ -68,6 +99,7 @@ class EntryDecision:
     positives: tuple[EvidenceItem, ...]
     risks: tuple[EvidenceItem, ...]
     market_asof: str | None
+    gate_results: tuple[EntryGateResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -101,6 +133,34 @@ def _evidence_to_dict(item: EvidenceItem) -> dict[str, Any]:
     }
 
 
+def _gate_result_to_dict(item: EntryGateResult) -> dict[str, Any]:
+    return {
+        "gate_key": item.gate_key,
+        "gate_label": item.gate_label,
+        "status": item.status,
+        "blocking": item.blocking,
+        "metric": item.metric,
+        "observed": item.observed,
+        "target": item.target,
+        "reason": item.reason,
+        "policy_version": item.policy_version,
+    }
+
+
+def _gate_result_from_dict(payload: Mapping[str, Any]) -> EntryGateResult:
+    return EntryGateResult(
+        gate_key=str(payload["gate_key"]),
+        gate_label=str(payload["gate_label"]),
+        status=str(payload["status"]),
+        blocking=bool(payload.get("blocking", False)),
+        metric=None if payload.get("metric") is None else str(payload["metric"]),
+        observed=payload.get("observed"),
+        target=str(payload.get("target") or ""),
+        reason=str(payload.get("reason") or ""),
+        policy_version=str(payload.get("policy_version") or ""),
+    )
+
+
 def _evidence_from_dict(payload: Mapping[str, Any]) -> EvidenceItem:
     return EvidenceItem(
         code=str(payload["code"]),
@@ -114,6 +174,18 @@ def _evidence_from_dict(payload: Mapping[str, Any]) -> EvidenceItem:
 
 
 def stock_decision_to_dict(decision: StockDecision) -> dict[str, Any]:
+    entry_payload: dict[str, Any] = {
+        "state": decision.entry.state.value,
+        "score": decision.entry.score,
+        "confidence": decision.entry.confidence,
+        "positives": [_evidence_to_dict(item) for item in decision.entry.positives],
+        "risks": [_evidence_to_dict(item) for item in decision.entry.risks],
+        "market_asof": decision.entry.market_asof,
+    }
+    if decision.entry.gate_results:
+        entry_payload["gate_results"] = [
+            _gate_result_to_dict(item) for item in decision.entry.gate_results
+        ]
     return {
         "schema_version": decision.schema_version,
         "symbol": decision.symbol,
@@ -130,14 +202,7 @@ def stock_decision_to_dict(decision: StockDecision) -> dict[str, Any]:
             "missing": [_evidence_to_dict(item) for item in decision.quality.missing],
             "data_asof": decision.quality.data_asof,
         },
-        "entry": {
-            "state": decision.entry.state.value,
-            "score": decision.entry.score,
-            "confidence": decision.entry.confidence,
-            "positives": [_evidence_to_dict(item) for item in decision.entry.positives],
-            "risks": [_evidence_to_dict(item) for item in decision.entry.risks],
-            "market_asof": decision.entry.market_asof,
-        },
+        "entry": entry_payload,
         "action_state": decision.action_state.value,
         "priority": decision.priority,
         "rationale": [_evidence_to_dict(item) for item in decision.rationale],
@@ -212,6 +277,10 @@ def stock_decision_from_dict(payload: Mapping[str, Any]) -> StockDecision:
                 None
                 if entry_payload.get("market_asof") is None
                 else str(entry_payload["market_asof"])
+            ),
+            gate_results=tuple(
+                _gate_result_from_dict(item)
+                for item in entry_payload.get("gate_results", [])
             ),
         ),
         action_state=ActionState(payload["action_state"]),

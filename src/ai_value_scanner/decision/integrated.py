@@ -8,10 +8,14 @@ from typing import Any
 import pandas as pd
 
 from .action import (
+    H3_B_MIN_QUALITY_CONFIDENCE,
+    H3_B_MIN_QUALITY_SCORE,
+    H3_READY_MIN_ENTRY_SCORE,
     assign_action_priorities_v2,
     map_action_state,
     map_action_state_v2,
 )
+from .attention import DEFAULT_ATTENTION_CAP
 from .entry import (
     ENTRY_POLICY_VERSION,
     ENTRY_V2_POLICY_VERSION,
@@ -33,8 +37,6 @@ from .quality import (
     build_company_quality_v2,
 )
 
-
-DEFAULT_ATTENTION_CAP = 15
 
 _ACTION_ORDER = {
     ActionState.PRIORITY_REVIEW: 0,
@@ -132,8 +134,27 @@ def _rationale(
     return _dedupe_evidence((*positives, *risks))
 
 
-def _review_trigger(action: ActionState) -> str:
+def _review_trigger(
+    action: ActionState,
+    *,
+    quality: Any = None,
+    action_version: str = "v1",
+) -> str:
     if action is ActionState.PRIORITY_REVIEW:
+        if (
+            action_version == "v2"
+            and quality is not None
+            and getattr(quality, "grade", None) is QualityGrade.B
+        ):
+            # R06: the promotion path (B+READY) must not be told to downgrade
+            # because Quality is "below A"; state the actual exit conditions
+            # shared with map_action_state_v2.
+            return (
+                "Review now; promotion holds while Company Quality B stays "
+                f">= {H3_B_MIN_QUALITY_SCORE:.2f} (confidence "
+                f">= {H3_B_MIN_QUALITY_CONFIDENCE:.2f}) and Entry stays "
+                f"ENTRY_READY (score >= {H3_READY_MIN_ENTRY_SCORE:.2f})."
+            )
         return (
             "Review now; downgrade if Company Quality falls below A or "
             "Entry Quality leaves ENTRY_READY."
@@ -245,8 +266,14 @@ def build_stock_decisions(
     quality_version: str | None = None,
     entry_version: str | None = None,
     action_version: str | None = None,
+    runtime_reference_date: str | date | None = None,
 ) -> tuple[StockDecision, ...]:
-    """Build one canonical StockDecision per enriched scanner row."""
+    """Build one canonical StockDecision per enriched scanner row.
+
+    ``runtime_reference_date`` is only supplied by live scans (R03); it is
+    threaded to the Entry freshness logic and never used by historical
+    replay, so replay results stay wall-clock independent.
+    """
     previous_map = previous_by_symbol or {}
     source_map = source_lists_by_symbol or {}
     base_provenance = dict(run_provenance or {})
@@ -284,12 +311,14 @@ def build_stock_decisions(
             row,
             decision_date=decision_day,
             market_asof=_text(row.get("market_asof")),
+            runtime_reference_date=runtime_reference_date,
         )
         if resolved_entry == "v2":
             entry = build_entry_quality_v2(
                 row,
                 decision_date=decision_day,
                 market_asof=_text(row.get("market_asof")),
+                runtime_reference_date=runtime_reference_date,
             )
         action = map_action_state(quality.grade, entry.state)
         action_rationale: tuple[EvidenceItem, ...] = ()
@@ -398,7 +427,11 @@ def build_stock_decisions(
                         *action_rationale,
                     )
                 ),
-                review_trigger=_review_trigger(action),
+                review_trigger=_review_trigger(
+                    action,
+                    quality=quality,
+                    action_version=resolved_action,
+                ),
                 source_lists=tuple(source_map.get(symbol, ())),
                 provenance=provenance,
                 previous_action_state=(

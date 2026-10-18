@@ -157,7 +157,7 @@ class TestM5OptInCliAndShadowSnapshot(unittest.TestCase):
             self.assertIn("#1 MU", action_md_v2)
             detailed_mu_v2 = (paths_v2.detailed_dir / "MU.md").read_text(encoding="utf-8")
             self.assertIn("Company Quality — 6-Pillar Scorecard", detailed_mu_v2)
-            self.assertIn("Entry Quality — 7-Gate Readiness Checklist", detailed_mu_v2)
+            self.assertIn("Entry Quality — Readiness Gate Checklist", detailed_mu_v2)
 
     def test_production_configs_default_to_v2_and_12h_alpaca_ttl(self) -> None:
         from ai_value_scanner.scanner import load_config

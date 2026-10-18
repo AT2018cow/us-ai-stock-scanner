@@ -12,6 +12,11 @@ import shutil
 import subprocess
 from typing import Any
 
+from ai_value_scanner.decision.attention import (
+    DEFAULT_ATTENTION_CAP,
+    STATE_CHANGE_ALERTS_POLICY_VERSION,
+    select_state_change_alerts,
+)
 from ai_value_scanner.decision.model import (
     DECISION_SCHEMA_VERSION,
     StockDecision,
@@ -41,6 +46,13 @@ class DecisionSnapshotPaths:
     discovery_source_rejections_jsonl: Path
     discovery_source_inputs_dir: Path
     run_manifest_json: Path
+
+
+# Writer revision marker (R05): snapshots written from this revision onward can
+# be byte-verified by the validator; older snapshots are validated structurally
+# with an explicit warning instead of pretending their stored files match the
+# current renderer.
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-10-18"
 
 
 def _safe_style(style: str | None) -> str:
@@ -133,12 +145,23 @@ def build_run_manifest(
     input_provenance: Mapping[str, Any] | None = None,
     candidate_universe_summary: Mapping[str, Any] | None = None,
     discovery_source_summary: Mapping[str, Any] | None = None,
+    state_change_alerts_summary: Mapping[str, Any] | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
 ) -> dict[str, Any]:
     materialized = tuple(decisions)
     daily = tuple(daily_attention)
     weekly = tuple(weekly_attention)
+    stage_quality_versions = {
+        str(decision.provenance["quality_policy_version"])
+        for decision in materialized
+        if decision.provenance.get("quality_policy_version")
+    }
+    stage_entry_versions = {
+        str(decision.provenance["entry_policy_version"])
+        for decision in materialized
+        if decision.provenance.get("entry_policy_version")
+    }
     return {
         "schema_version": DECISION_SCHEMA_VERSION,
         "generated_at_utc": str(generated_at_utc),
@@ -146,12 +169,23 @@ def build_run_manifest(
         "strategy_style": strategy_style,
         "code_sha": code_sha,
         "config_fingerprint": str(config_fingerprint),
+        "report_renderer_revision": REPORT_RENDERER_REVISION,
         **(
             {
                 "decision_policy_version": str(policy_version),
                 "report_layout_version": str(layout_version),
             }
             if (policy_version != "v1" or layout_version != "v1")
+            else {}
+        ),
+        **(
+            {"quality_policy_version": next(iter(stage_quality_versions))}
+            if len(stage_quality_versions) == 1
+            else {}
+        ),
+        **(
+            {"entry_policy_version": next(iter(stage_entry_versions))}
+            if len(stage_entry_versions) == 1
             else {}
         ),
         "counts": {
@@ -173,6 +207,11 @@ def build_run_manifest(
         **(
             {"discovery_sources": dict(discovery_source_summary)}
             if discovery_source_summary is not None
+            else {}
+        ),
+        **(
+            {"state_change_alerts": dict(state_change_alerts_summary)}
+            if state_change_alerts_summary is not None
             else {}
         ),
     }
@@ -268,6 +307,16 @@ def write_decision_snapshot(
             encoding="utf-8",
         )
 
+        alert_rows, alert_summary = build_state_change_alert_records(
+            daily=daily_tuple,
+            weekly=weekly_tuple,
+            decisions=decisions_tuple,
+        )
+        (tmp_root / "state_change_alerts.jsonl").write_text(
+            _mappings_to_jsonl(alert_rows),
+            encoding="utf-8",
+        )
+
         if discovery_source_summary is not None:
             frozen_inputs = tmp_root / "discovery_source_inputs"
             frozen_inputs.mkdir()
@@ -291,22 +340,16 @@ def write_decision_snapshot(
             for decision in (*weekly_tuple, *daily_tuple)
         }
         if layout_version == "v2":
-            # Secondary Radar links need their detailed reports generated too.
+            # Radar / offense / alert cards link detailed reports too.
             by_symbol_all = {decision.symbol: decision for decision in decisions_tuple}
-            for view_decisions, cadence in ((daily_tuple, "daily"), (weekly_tuple, "weekly")):
-                view = build_snapshot_view_model(
-                    view_decisions,
-                    decisions_tuple,
-                    title="Daily Action List" if cadence == "daily" else "Weekly Review List",
-                    cadence=cadence,
-                )
-                for card in (
-                    *view.cap_omitted_priority_cards,
-                    *view.secondary_b_ready_cards,
-                    *view.growth_compounder_offense_cards,
-                ):
-                    if card.symbol in by_symbol_all:
-                        detailed_symbols.setdefault(card.symbol, by_symbol_all[card.symbol])
+            for symbol in collect_detailed_report_symbols(
+                daily=daily_tuple,
+                weekly=weekly_tuple,
+                decisions=decisions_tuple,
+                layout_version=layout_version,
+            ):
+                if symbol in by_symbol_all:
+                    detailed_symbols.setdefault(symbol, by_symbol_all[symbol])
         for symbol in sorted(detailed_symbols):
             (detailed_dir / f"{symbol}.md").write_text(
                 render_detailed_report(
@@ -348,6 +391,7 @@ def write_decision_snapshot(
             },
             candidate_universe_summary=candidate_universe_summary,
             discovery_source_summary=discovery_source_summary,
+            state_change_alerts_summary=alert_summary,
             policy_version=policy_version,
             layout_version=layout_version,
         )
@@ -368,6 +412,150 @@ def write_decision_snapshot(
         raise
 
     return paths
+
+
+def load_snapshot_manifest(root: str | Path) -> dict[str, Any]:
+    """Load and validate the manifest of an existing snapshot (R08).
+
+    Raises ``FileNotFoundError`` when absent and ``ValueError`` when the
+    manifest is unreadable or not a JSON object.
+    """
+    manifest_path = Path(root) / "run_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"snapshot manifest is missing: {manifest_path}")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"snapshot manifest is unreadable: {type(exc).__name__}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("snapshot manifest must be a JSON object")
+    return payload
+
+
+REQUIRED_SNAPSHOT_FILES = (
+    "decisions.jsonl",
+    "action_list.md",
+    "weekly_review.md",
+    "run_manifest.json",
+)
+
+
+def snapshot_missing_files(root: str | Path) -> list[str]:
+    root_path = Path(root)
+    return [
+        name for name in REQUIRED_SNAPSHOT_FILES if not (root_path / name).is_file()
+    ]
+
+
+def snapshot_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Identity recorded by the writer, with explicit v1 defaults (R05/R08)."""
+    return {
+        "decision_date": str(manifest.get("decision_date") or ""),
+        "strategy_style": manifest.get("strategy_style"),
+        "policy_version": str(manifest.get("decision_policy_version", "v1")),
+        "layout_version": str(manifest.get("report_layout_version", "v1")),
+        "quality_policy_version": manifest.get("quality_policy_version"),
+        "entry_policy_version": manifest.get("entry_policy_version"),
+    }
+
+
+def collect_detailed_report_symbols(
+    *,
+    daily: Iterable[StockDecision],
+    weekly: Iterable[StockDecision],
+    decisions: Iterable[StockDecision],
+    layout_version: str,
+) -> set[str]:
+    """All symbols whose detailed page is linked from the snapshot reports.
+
+    Shared by the writer and the validator so the report link surface can
+    never drift: primary daily/weekly names plus (v2 layouts) the Secondary
+    Radar, Offense Track, and state-change alert cards.
+    """
+    daily_tuple = tuple(daily)
+    weekly_tuple = tuple(weekly)
+    decisions_tuple = tuple(decisions)
+    symbols = {decision.symbol for decision in (*weekly_tuple, *daily_tuple)}
+    if layout_version != "v2":
+        return symbols
+    by_symbol = {decision.symbol: decision for decision in decisions_tuple}
+    for view_decisions, cadence in ((daily_tuple, "daily"), (weekly_tuple, "weekly")):
+        view = build_snapshot_view_model(
+            view_decisions,
+            decisions_tuple,
+            title="Daily Action List" if cadence == "daily" else "Weekly Review List",
+            cadence=cadence,
+        )
+        for card in (
+            *view.cap_omitted_priority_cards,
+            *view.secondary_b_ready_cards,
+            *view.growth_compounder_offense_cards,
+            *view.state_change_alert_cards,
+        ):
+            if card.symbol in by_symbol:
+                symbols.add(card.symbol)
+    return symbols
+
+
+def build_state_change_alert_records(
+    *,
+    daily: Iterable[StockDecision],
+    weekly: Iterable[StockDecision],
+    decisions: Iterable[StockDecision],
+    cap: int = DEFAULT_ATTENTION_CAP,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Canonical downgrade-alert selection shared by writer and validator (R07).
+
+    Returns ``(rows, manifest_summary)``: one JSONL-ready record per alert
+    symbol (with the scopes where it is shown) and the manifest summary with
+    per-scope totals/truncation for auditability.
+    """
+    daily_tuple = tuple(daily)
+    weekly_tuple = tuple(weekly)
+    decisions_tuple = tuple(decisions)
+    daily_selection = select_state_change_alerts(
+        decisions_tuple,
+        exclude_symbols={decision.symbol for decision in daily_tuple},
+        cap=cap,
+    )
+    weekly_selection = select_state_change_alerts(
+        decisions_tuple,
+        exclude_symbols={decision.symbol for decision in weekly_tuple},
+        cap=cap,
+    )
+    rows_by_symbol: dict[str, dict[str, Any]] = {}
+    for scope, selection in (("daily", daily_selection), ("weekly", weekly_selection)):
+        for decision in selection.alerts:
+            row = rows_by_symbol.setdefault(
+                decision.symbol,
+                {
+                    "symbol": decision.symbol,
+                    "previous_action_state": (
+                        None
+                        if decision.previous_action_state is None
+                        else decision.previous_action_state.value
+                    ),
+                    "action_state": decision.action_state.value,
+                    "state_change_reason": decision.state_change_reason,
+                    "display_scopes": [],
+                },
+            )
+            row["display_scopes"].append(scope)
+    rows = sorted(rows_by_symbol.values(), key=lambda row: str(row["symbol"]))
+    summary = {
+        "policy": STATE_CHANGE_ALERTS_POLICY_VERSION,
+        "daily": {
+            "total": daily_selection.total,
+            "shown_symbols": [d.symbol for d in daily_selection.alerts],
+            "truncated": daily_selection.truncated,
+        },
+        "weekly": {
+            "total": weekly_selection.total,
+            "shown_symbols": [d.symbol for d in weekly_selection.alerts],
+            "truncated": weekly_selection.truncated,
+        },
+    }
+    return rows, summary
 
 
 def load_snapshot_decisions(path: str | Path) -> tuple[StockDecision, ...]:

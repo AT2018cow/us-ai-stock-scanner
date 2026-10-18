@@ -342,14 +342,30 @@ class TestActionV2PreEarningsPenalty(unittest.TestCase):
 
 class TestViewModelNonBlockingWarns(unittest.TestCase):
     def _extended_ready(self):
-        return _decision(
+        from ai_value_scanner.decision.entry import build_entry_quality_v2
+
+        entry = build_entry_quality_v2(
+            _entry_metrics(price_to_sma200=1.47, return_60d=0.514),
+            decision_date="2026-10-15",
+            market_asof="2026-10-15",
+        )
+        template = _decision(
             symbol="EXT",
-            entry_risks=(
-                _ev("price_extended_above_sma200", metric="price_to_sma200",
-                    value=1.47, polarity="negative"),
-                _ev("return_60d_extended", metric="return_60d",
-                    value=0.514, polarity="negative"),
-            ),
+            provenance={"watchlist_bucket": "ai_core", "watchlist_etfs": "XLK, IGV"},
+        )
+        return StockDecision(
+            schema_version="1",
+            symbol="EXT",
+            company_name="EXT",
+            decision_date="2026-10-15",
+            generated_at_utc="x",
+            quality=template.quality,
+            entry=entry,
+            action_state=ActionState.PRIORITY_REVIEW,
+            priority=1,
+            rationale=(),
+            review_trigger="r",
+            source_lists=(),
             provenance={"watchlist_bucket": "ai_core", "watchlist_etfs": "XLK, IGV"},
         )
 
@@ -367,9 +383,14 @@ class TestViewModelNonBlockingWarns(unittest.TestCase):
         extended = build_stock_card_view_model(self._extended_ready())
         self.assertEqual(
             extended.entry_blockers_inline,
-            "All 7 readiness gates passed (⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)")
+            "All 14 readiness gates passed "
+            "(⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)")
         clean = build_stock_card_view_model(_decision())
-        self.assertEqual(clean.entry_blockers_inline, "All 7 readiness gates passed")
+        self.assertEqual(
+            clean.entry_blockers_inline,
+            "Gate results not recorded in this snapshot; readiness cannot be "
+            "fully verified",
+        )
 
     def test_inline_fragments(self) -> None:
         from ai_value_scanner.decision.view_model import _inline_fragment

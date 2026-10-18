@@ -8,7 +8,7 @@ from typing import Any
 from .model import EvidenceItem, QualityDecision, QualityGrade
 
 
-QUALITY_POLICY_VERSION = "company_quality_v1_2026-10-10"
+QUALITY_POLICY_VERSION = "company_quality_v1_2026-10-18"
 
 QUALITY_V1_COMPONENT_WEIGHTS: dict[str, float] = {
     "profitability_cash": 0.30,
@@ -86,6 +86,8 @@ def _assess_numeric_metric(
     positives: list[EvidenceItem],
     risks: list[EvidenceItem],
     missing: list[EvidenceItem],
+    source_key: str | None = None,
+    complete_sources: tuple[str, ...] = ("reported",),
 ) -> float | None:
     value = _finite_value(metrics, key)
     if value is None:
@@ -100,6 +102,51 @@ def _assess_numeric_metric(
                 message=f"{label} is unavailable, so it cannot support Company Quality.",
             )
         )
+        return None
+
+    source = None
+    if source_key is not None:
+        raw_source = metrics.get(source_key)
+        source = None if raw_source is None else str(raw_source)
+    if (
+        source_key is not None
+        and source is not None
+        and source not in complete_sources
+    ):
+        # R01: incomplete disclosure may still raise a risk when the known
+        # component is already weak, but it can never become positive
+        # evidence or count toward coverage.
+        score = max(0.0, min(1.0, float(score_fn(value))))
+        if score <= weak_score:
+            risks.append(
+                _metric_item(
+                    code=f"{key}_weak_incomplete",
+                    label=f"{label} weak (incomplete disclosure)",
+                    polarity="negative",
+                    metric=key,
+                    value=round(value, 6),
+                    threshold=threshold_text,
+                    message=(
+                        f"{label} is a material counter-signal; the underlying "
+                        f"disclosure is incomplete ({source})."
+                    ),
+                )
+            )
+        else:
+            missing.append(
+                _metric_item(
+                    code=f"{key}_incomplete",
+                    label=f"{label} incomplete",
+                    polarity="missing",
+                    metric=key,
+                    value=round(value, 6),
+                    threshold=threshold_text,
+                    message=(
+                        f"{label} is based on incomplete disclosure ({source}) "
+                        "and cannot support Company Quality."
+                    ),
+                )
+            )
         return None
 
     score = max(0.0, min(1.0, float(score_fn(value))))
@@ -125,6 +172,173 @@ def _assess_numeric_metric(
                 value=round(value, 6),
                 threshold=threshold_text,
                 message=f"{label} is a material counter-signal for Company Quality.",
+            )
+        )
+    return score
+
+
+def _assess_growth_metric(
+    metrics: Mapping[str, Any],
+    *,
+    key: str,
+    label: str,
+    rate_key: str,
+    direction_key: str,
+    score_fn: Callable[[float], float],
+    strong_score: float,
+    weak_score: float,
+    threshold_text: str,
+    positives: list[EvidenceItem],
+    risks: list[EvidenceItem],
+    missing: list[EvidenceItem],
+) -> float | None:
+    """Score a growth series with sign-aware semantics (R02).
+
+    When the sign-aware ``rate_key``/``direction_key`` fields are present
+    (live scanner + backtest accounting path) the normalized change is used:
+    a widening loss can never be "strong growth", a narrowing loss is
+    recognized as improvement, and a turnaround never scores as strong
+    growth. Partial metric dicts without those fields keep the legacy
+    positive-base YoY interpretation.
+    """
+    rate = _finite_value(metrics, rate_key)
+    raw_direction = metrics.get(direction_key)
+    direction = None if raw_direction is None else str(raw_direction)
+    if rate is None and direction is None:
+        return _assess_numeric_metric(
+            metrics,
+            key=key,
+            label=label,
+            score_fn=score_fn,
+            strong_score=strong_score,
+            weak_score=weak_score,
+            threshold_text=threshold_text,
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        )
+
+    if direction == "incomparable":
+        missing.append(
+            _metric_item(
+                code=f"{key}_incomparable_base",
+                label=f"{label} incomparable (zero prior base)",
+                polarity="missing",
+                metric=key,
+                value=None,
+                threshold=threshold_text,
+                message=(
+                    f"{label} has a zero prior-period base; no growth rate is "
+                    "economically meaningful for this comparison."
+                ),
+            )
+        )
+        return None
+
+    if rate is None:
+        return _assess_numeric_metric(
+            metrics,
+            key=key,
+            label=label,
+            score_fn=score_fn,
+            strong_score=strong_score,
+            weak_score=weak_score,
+            threshold_text=threshold_text,
+            positives=positives,
+            risks=risks,
+            missing=missing,
+        )
+
+    if direction == "reversal":
+        risks.append(
+            _metric_item(
+                code=f"{key}_reversal",
+                label=f"{label} reversed to a loss",
+                polarity="negative",
+                metric=key,
+                value=round(rate, 6),
+                threshold=threshold_text,
+                message=(
+                    f"{label} swung from profit to loss "
+                    f"({rate * 100:+.1f}% change vs the prior-period base)."
+                ),
+            )
+        )
+        return 0.0
+
+    if direction == "turnaround":
+        positives.append(
+            _metric_item(
+                code=f"{key}_turnaround",
+                label=f"{label} turnaround to profit",
+                polarity="positive",
+                metric=key,
+                value=round(rate, 6),
+                threshold=threshold_text,
+                message=(
+                    f"{label} turned profitable ({rate * 100:+.1f}% change vs "
+                    "the prior-period loss base); scored as a recovery, not as "
+                    "sustained strong growth."
+                ),
+            )
+        )
+        return 0.65
+
+    score = max(0.0, min(1.0, float(score_fn(rate))))
+    if direction == "both_negative" and rate >= 0.0:
+        positives.append(
+            _metric_item(
+                code=f"{key}_loss_narrowed",
+                label=f"{label} loss narrowed",
+                polarity="positive",
+                metric=key,
+                value=round(rate, 6),
+                threshold=threshold_text,
+                message=(
+                    f"{label} loss narrowed by {rate * 100:.1f}% of the prior-period "
+                    "loss base; the improvement is real but is scored as a "
+                    "recovery, not as profitable growth."
+                ),
+            )
+        )
+        return 0.65
+
+    note = ""
+    if direction == "both_negative":
+        note = " (both periods negative; change measured against the loss base)"
+    if score >= strong_score:
+        positives.append(
+            _metric_item(
+                code=f"{key}_strong",
+                label=f"{label} supportive",
+                polarity="positive",
+                metric=key,
+                value=round(rate, 6),
+                threshold=threshold_text,
+                message=f"{label} supports the quality assessment.{note}",
+            )
+        )
+    elif score <= weak_score:
+        risks.append(
+            _metric_item(
+                code=(
+                    f"{key}_loss_widened"
+                    if direction == "both_negative"
+                    else f"{key}_weak"
+                ),
+                label=(
+                    f"{label} loss widened"
+                    if direction == "both_negative"
+                    else f"{label} weak"
+                ),
+                polarity="negative",
+                metric=key,
+                value=round(rate, 6),
+                threshold=threshold_text,
+                message=(
+                    f"{label} is a material counter-signal for Company Quality."
+                    f"{note}"
+                ),
             )
         )
     return score
@@ -373,9 +587,13 @@ def build_company_quality_v1(
 
     earnings_growth_key = (
         "adjusted_net_income_yoy"
-        if _finite_value(metrics, "adjusted_net_income_yoy") is not None
+        if (
+            _finite_value(metrics, "adjusted_net_income_yoy") is not None
+            or metrics.get("adjusted_net_income_growth_direction") is not None
+        )
         else "net_income_yoy"
     )
+    earnings_uses_adjusted = earnings_growth_key == "adjusted_net_income_yoy"
     growth_scores = [
         _assess_numeric_metric(
             metrics,
@@ -389,10 +607,20 @@ def build_company_quality_v1(
             risks=risks,
             missing=missing,
         ),
-        _assess_numeric_metric(
+        _assess_growth_metric(
             metrics,
             key=earnings_growth_key,
             label="Earnings growth",
+            rate_key=(
+                "adjusted_net_income_growth"
+                if earnings_uses_adjusted
+                else "net_income_growth"
+            ),
+            direction_key=(
+                "adjusted_net_income_growth_direction"
+                if earnings_uses_adjusted
+                else "net_income_growth_direction"
+            ),
             score_fn=_score_earnings_growth,
             strong_score=0.80,
             weak_score=0.25,
@@ -401,10 +629,12 @@ def build_company_quality_v1(
             risks=risks,
             missing=missing,
         ),
-        _assess_numeric_metric(
+        _assess_growth_metric(
             metrics,
             key="operating_cash_flow_yoy",
             label="Operating cash-flow growth",
+            rate_key="operating_cash_flow_growth",
+            direction_key="operating_cash_flow_growth_direction",
             score_fn=_score_ocf_growth,
             strong_score=0.80,
             weak_score=0.25,
@@ -427,6 +657,7 @@ def build_company_quality_v1(
             positives=positives,
             risks=risks,
             missing=missing,
+            source_key="net_debt_to_ebitda_source",
         ),
         _assess_numeric_metric(
             metrics,
@@ -758,7 +989,7 @@ def build_company_quality_v1(
     )
 
 
-QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-10-15"
+QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-10-18"
 
 QUALITY_V2_PRE_EARNINGS_WARN_DAYS = 70
 QUALITY_V2_ORGANIC_SHARES_YOY_MIN = -0.30
@@ -1033,27 +1264,58 @@ def build_company_quality_v2(
 
     earnings_growth_key = (
         "adjusted_net_income_yoy"
-        if _finite_value(work, "adjusted_net_income_yoy") is not None
+        if (
+            _finite_value(work, "adjusted_net_income_yoy") is not None
+            or work.get("adjusted_net_income_growth_direction") is not None
+        )
         else "net_income_yoy"
     )
+    if earnings_growth_key == "adjusted_net_income_yoy":
+        earnings_rate_key = "adjusted_net_income_growth"
+        earnings_direction_key = "adjusted_net_income_growth_direction"
+    else:
+        earnings_rate_key = "net_income_growth"
+        earnings_direction_key = "net_income_growth_direction"
+
+    # R02: compare sign-normalized changes when available so a negative prior
+    # base cannot invert the direction of earnings vs operating income.
+    ani_growth_val = _finite_value(work, "adjusted_net_income_growth")
+    if ani_growth_val is None:
+        ani_growth_val = _finite_value(work, "net_income_growth")
+    ebit_growth_val = _finite_value(work, "adjusted_ebit_growth")
+    ebit_growth_direction = work.get("adjusted_ebit_growth_direction")
+    if ebit_growth_val is None:
+        ebit_growth_val = _finite_value(work, "ebit_growth")
+        ebit_growth_direction = work.get("ebit_growth_direction")
+    ani_cmp_val = ani_growth_val if ani_growth_val is not None else ani_yoy_val
+    ebit_cmp_val = ebit_growth_val if ebit_growth_val is not None else ebit_yoy_val
+
     yoy_gap_triggered = (
         not nonop_inflated
         and operating_margin_val is not None
         and operating_margin_val >= 0.10
-        and ebit_yoy_val is not None
-        and abs(ebit_yoy_val) <= 2.00
-        and ani_yoy_val is not None
-        and abs(ani_yoy_val - ebit_yoy_val) >= QUALITY_V2_NONOP_YOY_GAP_MIN
+        and ebit_cmp_val is not None
+        and abs(ebit_cmp_val) <= 2.00
+        and ani_cmp_val is not None
+        and abs(ani_cmp_val - ebit_cmp_val) >= QUALITY_V2_NONOP_YOY_GAP_MIN
     )
     if (
-        ebit_yoy_val is not None
-        and ani_yoy_val is not None
+        ebit_cmp_val is not None
+        and ani_cmp_val is not None
         and (nonop_inflated or yoy_gap_triggered)
     ):
         # Score clean operating income growth instead of the investment-gain
-        # distorted net-income YoY (fixes both upward inflation and
-        # base-effect drag distortions).
-        work[earnings_growth_key] = ebit_yoy_val
+        # distorted net-income growth (fixes both upward inflation and
+        # base-effect drag distortions). Positive-base inputs stay byte-for-
+        # byte on the legacy raw-YoY path (growth == YoY for positive bases).
+        if ebit_growth_val is not None:
+            substitute_val = ebit_growth_val
+            work[earnings_rate_key] = ebit_growth_val
+            if ebit_growth_direction is not None:
+                work[earnings_direction_key] = ebit_growth_direction
+        else:
+            substitute_val = ebit_yoy_val
+            work[earnings_growth_key] = ebit_yoy_val
         if yoy_gap_triggered:
             # Trace/watchout only (no priority penalty): explain why the
             # report shows operating-income growth instead of GAAP NI YoY.
@@ -1063,16 +1325,16 @@ def build_company_quality_v2(
                     label="Growth scored on operating-income basis",
                     polarity="negative",
                     metric=earnings_growth_key,
-                    value=round(ebit_yoy_val, 6),
+                    value=round(substitute_val, 6),
                     threshold=(
-                        "|NI YoY - EBIT YoY| < "
+                        "|NI growth - EBIT growth| < "
                         f"{QUALITY_V2_NONOP_YOY_GAP_MIN * 100:.0f}pp"
                     ),
                     message=(
                         f"Growth scored on operating-income basis "
-                        f"({ebit_yoy_val * 100:+.1f}%) because GAAP net-income YoY "
-                        f"({ani_yoy_val * 100:+.1f}%) diverged by "
-                        f"{abs(ani_yoy_val - ebit_yoy_val) * 100:.1f}pp due to "
+                        f"({ebit_cmp_val * 100:+.1f}%) because the GAAP net-income "
+                        f"change ({ani_cmp_val * 100:+.1f}%) diverged by "
+                        f"{abs(ani_cmp_val - ebit_cmp_val) * 100:.1f}pp due to "
                         "prior-period non-operating or tax base effects."
                     ),
                 )
@@ -1198,10 +1460,12 @@ def build_company_quality_v2(
             risks=risks,
             missing=missing,
         ),
-        _assess_numeric_metric(
+        _assess_growth_metric(
             work,
             key=earnings_growth_key,
             label="Earnings growth",
+            rate_key=earnings_rate_key,
+            direction_key=earnings_direction_key,
             score_fn=_score_earnings_growth,
             strong_score=0.80,
             weak_score=0.25,
@@ -1210,10 +1474,12 @@ def build_company_quality_v2(
             risks=risks,
             missing=missing,
         ),
-        _assess_numeric_metric(
+        _assess_growth_metric(
             work,
             key="operating_cash_flow_yoy",
             label="Operating cash-flow growth",
+            rate_key="operating_cash_flow_growth",
+            direction_key="operating_cash_flow_growth_direction",
             score_fn=_score_ocf_growth,
             strong_score=0.80,
             weak_score=0.25,
@@ -1236,6 +1502,7 @@ def build_company_quality_v2(
             positives=positives,
             risks=risks,
             missing=missing,
+            source_key="net_debt_to_ebitda_source",
         ),
         _assess_numeric_metric(
             work,

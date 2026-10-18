@@ -17,6 +17,48 @@ def safe_yoy(latest: float | None, previous: float | None) -> float | None:
         return None
 
 
+GROWTH_DIRECTION_POSITIVE_BASE = "positive_base"
+GROWTH_DIRECTION_BOTH_NEGATIVE = "both_negative"
+GROWTH_DIRECTION_TURNAROUND = "turnaround"
+GROWTH_DIRECTION_REVERSAL = "reversal"
+GROWTH_DIRECTION_INCOMPARABLE = "incomparable"
+
+
+def growth_direction(
+    latest: float | None,
+    previous: float | None,
+) -> tuple[str | None, float | None]:
+    """Return (direction, normalized change) for a signed earnings series.
+
+    The plain ratio ``latest/previous - 1`` is only economically meaningful
+    when the prior-period base is positive. For series that are allowed to be
+    negative (net income, EBIT, operating cash flow) the raw ratio inverts the
+    sign of the change. This helper normalizes the change by the absolute
+    prior base so that positive means "improved" for every sign combination,
+    and tags the case so callers can score turnaround/reversal separately.
+
+    Returns ``(None, None)`` when either input is missing, and
+    ``("incomparable", None)`` when the prior base is exactly zero.
+    """
+    if latest is None or previous is None:
+        return None, None
+    try:
+        latest_v = float(latest)
+        previous_v = float(previous)
+    except (TypeError, ValueError):
+        return None, None
+    if previous_v == 0:
+        return GROWTH_DIRECTION_INCOMPARABLE, None
+    change = (latest_v - previous_v) / abs(previous_v)
+    if previous_v > 0.0:
+        if latest_v >= 0.0:
+            return GROWTH_DIRECTION_POSITIVE_BASE, change
+        return GROWTH_DIRECTION_REVERSAL, change
+    if latest_v >= 0.0:
+        return GROWTH_DIRECTION_TURNAROUND, change
+    return GROWTH_DIRECTION_BOTH_NEGATIVE, change
+
+
 def clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
@@ -169,13 +211,30 @@ def derive_accounting_metrics(
         else None
     )
 
+    # Debt completeness (R01): a missing debt field must never silently
+    # become zero. ``reported`` requires both components; ``partial`` keeps
+    # the known component but is flagged so quality cannot score it as a
+    # clean balance sheet; ``missing`` leaves total_debt unknown.
     total_debt = None
-    if debt_long_term is not None or debt_current is not None:
-        total_debt = float(debt_long_term or 0.0) + float(debt_current or 0.0)
+    total_debt_source = "missing"
+    if debt_long_term is not None and debt_current is not None:
+        total_debt = float(debt_long_term) + float(debt_current)
+        total_debt_source = "reported"
+    elif debt_long_term is not None:
+        total_debt = float(debt_long_term)
+        total_debt_source = "partial"
+    elif debt_current is not None:
+        total_debt = float(debt_current)
+        total_debt_source = "partial"
 
+    # Net debt additionally requires cash. Missing cash is unknown, not zero.
     net_debt = None
-    if total_debt is not None or cash_and_equivalents is not None:
-        net_debt = float(total_debt or 0.0) - float(cash_and_equivalents or 0.0)
+    net_debt_source = "missing"
+    if total_debt is not None and cash_and_equivalents is not None:
+        net_debt = float(total_debt) - float(cash_and_equivalents)
+        net_debt_source = (
+            "partial" if total_debt_source == "partial" else "reported"
+        )
 
     revenue_yoy = safe_yoy(revenue, revenue_prev)
     net_income_yoy = safe_yoy(net_income, net_income_prev)
@@ -197,6 +256,31 @@ def derive_accounting_metrics(
         depreciation_and_amortization_prev,
     )
 
+    # Sign-aware growth (R02): the raw YoY ratio is inverted whenever the
+    # prior base is negative. These fields normalize the change by the
+    # absolute prior base (positive = improved) and tag the case so the
+    # quality layer never reads a widening loss as "strong growth".
+    (
+        net_income_growth_direction,
+        net_income_growth,
+    ) = growth_direction(net_income, net_income_prev)
+    (
+        adjusted_net_income_growth_direction,
+        adjusted_net_income_growth,
+    ) = growth_direction(adjusted_net_income, adjusted_net_income_prev)
+    (
+        ebit_growth_direction,
+        ebit_growth,
+    ) = growth_direction(ebit, ebit_prev)
+    (
+        adjusted_ebit_growth_direction,
+        adjusted_ebit_growth,
+    ) = growth_direction(adjusted_ebit, adjusted_ebit_prev)
+    (
+        operating_cash_flow_growth_direction,
+        operating_cash_flow_growth,
+    ) = growth_direction(operating_cash_flow, operating_cash_flow_prev)
+
     interest_expense_abs = (
         abs(float(interest_expense)) if interest_expense is not None else None
     )
@@ -209,12 +293,14 @@ def derive_accounting_metrics(
         interest_coverage = float(adjusted_ebit) / interest_expense_abs
 
     net_debt_to_ebitda = None
+    net_debt_to_ebitda_source = "missing"
     if (
         net_debt is not None
         and adjusted_ebitda is not None
         and adjusted_ebitda != 0
     ):
         net_debt_to_ebitda = float(net_debt) / float(adjusted_ebitda)
+        net_debt_to_ebitda_source = net_debt_source
 
     current_ratio = None
     if current_assets is not None and current_liabilities not in (None, 0):
@@ -266,26 +352,26 @@ def derive_accounting_metrics(
     if receivables_yoy is not None and revenue_yoy is not None:
         receivables_growth_gap = float(receivables_yoy) - float(revenue_yoy)
 
+    # Inventory (R01): only reported inventory data can produce evidence.
+    # Two explicit zeros mean "reported zero inventory, unchanged" (a real
+    # observation); two missing fields are unknown and must NOT be inferred
+    # as "not applicable" (that manufactured a supportive 0.0 gap).
     inventory_growth_gap_reported = None
     inventory_growth_gap_inferred = None
     inventory_growth_gap = None
     inventory_growth_gap_source = "missing"
+    if (
+        inventory_yoy is None
+        and inventory_current is not None
+        and inventory_prev is not None
+        and float(inventory_current) == 0.0
+        and float(inventory_prev) == 0.0
+    ):
+        inventory_yoy = 0.0
     if inventory_yoy is not None and revenue_yoy is not None:
         inventory_growth_gap_reported = float(inventory_yoy) - float(revenue_yoy)
         inventory_growth_gap = inventory_growth_gap_reported
         inventory_growth_gap_source = "reported"
-    elif revenue_yoy is not None:
-        inventory_not_applicable = (
-            (inventory_current is None and inventory_prev is None)
-            or (
-                inventory_current in (0, 0.0)
-                and inventory_prev in (0, 0.0)
-            )
-        )
-        if inventory_not_applicable:
-            inventory_growth_gap_inferred = 0.0
-            inventory_growth_gap = inventory_growth_gap_inferred
-            inventory_growth_gap_source = "inferred_inventory_not_applicable"
 
     quality_score = fundamental_quality_score_from_metrics(
         net_debt_to_ebitda=net_debt_to_ebitda,
@@ -299,13 +385,25 @@ def derive_accounting_metrics(
         "capex": capex,
         "free_cash_flow": free_cash_flow,
         "total_debt": total_debt,
+        "total_debt_source": total_debt_source,
         "net_debt": net_debt,
+        "net_debt_source": net_debt_source,
         "revenue_yoy": revenue_yoy,
         "net_income_yoy": net_income_yoy,
         "adjusted_net_income_yoy": adjusted_net_income_yoy,
         "ebit_yoy": ebit_yoy,
         "adjusted_ebit_yoy": adjusted_ebit_yoy,
         "operating_cash_flow_yoy": operating_cash_flow_yoy,
+        "net_income_growth": net_income_growth,
+        "net_income_growth_direction": net_income_growth_direction,
+        "adjusted_net_income_growth": adjusted_net_income_growth,
+        "adjusted_net_income_growth_direction": adjusted_net_income_growth_direction,
+        "ebit_growth": ebit_growth,
+        "ebit_growth_direction": ebit_growth_direction,
+        "adjusted_ebit_growth": adjusted_ebit_growth,
+        "adjusted_ebit_growth_direction": adjusted_ebit_growth_direction,
+        "operating_cash_flow_growth": operating_cash_flow_growth,
+        "operating_cash_flow_growth_direction": operating_cash_flow_growth_direction,
         "shares_yoy": shares_yoy,
         "receivables_yoy": receivables_yoy,
         "inventory_yoy": inventory_yoy,
@@ -313,6 +411,7 @@ def derive_accounting_metrics(
         "interest_expense": interest_expense_abs,
         "interest_coverage": interest_coverage,
         "net_debt_to_ebitda": net_debt_to_ebitda,
+        "net_debt_to_ebitda_source": net_debt_to_ebitda_source,
         "current_ratio": current_ratio,
         "current_debt_ratio_reported": current_debt_ratio_reported,
         "current_debt_ratio_inferred": current_debt_ratio_inferred,

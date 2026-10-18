@@ -2334,13 +2334,29 @@ def build_cross_section_asof(
         capex = accounting["capex"]
         free_cash_flow = accounting["free_cash_flow"]
         total_debt = accounting["total_debt"]
+        total_debt_source = accounting["total_debt_source"]
         net_debt = accounting["net_debt"]
+        net_debt_source = accounting["net_debt_source"]
         revenue_yoy = accounting["revenue_yoy"]
         net_income_yoy = accounting["net_income_yoy"]
         adjusted_net_income_yoy = accounting["adjusted_net_income_yoy"]
         ebit_yoy = accounting["ebit_yoy"]
         adjusted_ebit_yoy = accounting["adjusted_ebit_yoy"]
         operating_cash_flow_yoy = accounting["operating_cash_flow_yoy"]
+        net_income_growth = accounting["net_income_growth"]
+        net_income_growth_direction = accounting["net_income_growth_direction"]
+        adjusted_net_income_growth = accounting["adjusted_net_income_growth"]
+        adjusted_net_income_growth_direction = accounting[
+            "adjusted_net_income_growth_direction"
+        ]
+        ebit_growth = accounting["ebit_growth"]
+        ebit_growth_direction = accounting["ebit_growth_direction"]
+        adjusted_ebit_growth = accounting["adjusted_ebit_growth"]
+        adjusted_ebit_growth_direction = accounting["adjusted_ebit_growth_direction"]
+        operating_cash_flow_growth = accounting["operating_cash_flow_growth"]
+        operating_cash_flow_growth_direction = accounting[
+            "operating_cash_flow_growth_direction"
+        ]
         shares_yoy = accounting["shares_yoy"]
         receivables_yoy = accounting["receivables_yoy"]
         inventory_yoy = accounting["inventory_yoy"]
@@ -2348,6 +2364,7 @@ def build_cross_section_asof(
         interest_expense_abs = accounting["interest_expense"]
         interest_coverage = accounting["interest_coverage"]
         net_debt_to_ebitda = accounting["net_debt_to_ebitda"]
+        net_debt_to_ebitda_source = accounting["net_debt_to_ebitda_source"]
         current_ratio = accounting["current_ratio"]
         current_debt_ratio_reported = accounting["current_debt_ratio_reported"]
         current_debt_ratio_inferred = accounting["current_debt_ratio_inferred"]
@@ -2496,7 +2513,9 @@ def build_cross_section_asof(
                 "nonrecurring_gain_subtraction": gain,
                 "cash_and_equivalents": cash_and_equivalents,
                 "total_debt": total_debt,
+                "total_debt_source": total_debt_source,
                 "net_debt": net_debt,
+                "net_debt_source": net_debt_source,
                 "interest_expense": interest_expense_abs,
                 "depreciation_and_amortization": depreciation_and_amortization,
                 "current_assets": current_assets,
@@ -2505,11 +2524,21 @@ def build_cross_section_asof(
                 "inventory_current": inventory_current,
                 "revenue_yoy": revenue_yoy,
                 "net_income_yoy": net_income_yoy,
+                "net_income_growth": net_income_growth,
+                "net_income_growth_direction": net_income_growth_direction,
                 "adjusted_net_income_yoy": adjusted_net_income_yoy,
+                "adjusted_net_income_growth": adjusted_net_income_growth,
+                "adjusted_net_income_growth_direction": adjusted_net_income_growth_direction,
                 "ebit_yoy": ebit_yoy,
+                "ebit_growth": ebit_growth,
+                "ebit_growth_direction": ebit_growth_direction,
                 "adjusted_ebit_yoy": adjusted_ebit_yoy,
+                "adjusted_ebit_growth": adjusted_ebit_growth,
+                "adjusted_ebit_growth_direction": adjusted_ebit_growth_direction,
                 "da_yoy": da_yoy,
                 "operating_cash_flow_yoy": operating_cash_flow_yoy,
+                "operating_cash_flow_growth": operating_cash_flow_growth,
+                "operating_cash_flow_growth_direction": operating_cash_flow_growth_direction,
                 "shares_yoy": shares_yoy,
                 "receivables_yoy": receivables_yoy,
                 "inventory_yoy": inventory_yoy,
@@ -2521,6 +2550,7 @@ def build_cross_section_asof(
                 "fundamental_quality_score": quality_score,
                 "interest_coverage": interest_coverage,
                 "net_debt_to_ebitda": net_debt_to_ebitda,
+                "net_debt_to_ebitda_source": net_debt_to_ebitda_source,
                 "current_ratio": current_ratio,
                 "current_debt_ratio_reported": current_debt_ratio_reported,
                 "current_debt_ratio_inferred": current_debt_ratio_inferred,

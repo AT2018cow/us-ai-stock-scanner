@@ -504,6 +504,26 @@ class DailyCronMainTests(unittest.TestCase):
                             rdc.main()
         self.assertEqual(ctx.exception.code, 1)
 
+    def test_main_exits_1_when_stage2_core_failed_despite_execution(self) -> None:
+        env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": "test-key"}
+        with patch.object(sys, "argv", ["run_daily_cron.py"]):
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(
+                    rdc, "run_sec_prewarm", return_value=_clean_summary()
+                ):
+                    with patch.object(
+                        rdc,
+                        "run_daily_scan_after_prewarm",
+                        return_value={
+                            "scan_executed": True,
+                            "scan_failed": True,
+                            "error": "snapshot boom",
+                        },
+                    ):
+                        with self.assertRaises(SystemExit) as ctx:
+                            rdc.main()
+        self.assertEqual(ctx.exception.code, 1)
+
     def test_main_exits_1_on_failed_prewarm(self) -> None:
         env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": ""}
         with patch.object(sys, "argv", ["run_daily_cron.py", "--limit", "1"]):
@@ -557,6 +577,31 @@ class SnapshotPreservationTests(unittest.TestCase):
 
 
 class LatestPointerTests(unittest.TestCase):
+    def _write_snapshot(
+        self,
+        root: Path,
+        *,
+        decision_date: str = "2026-10-15",
+        strategy_style: str = "risk_off",
+        policy_version: str = "v1",
+        layout_version: str = "v1",
+    ):
+        from ai_value_scanner.reporting.snapshot import write_decision_snapshot
+
+        return write_decision_snapshot(
+            output_root=root,
+            strategy_style=strategy_style,
+            decisions=(),
+            daily_attention=(),
+            weekly_attention=(),
+            generated_at_utc=f"{decision_date}T12:00:00+00:00",
+            decision_date=decision_date,
+            config_fingerprint="cfg",
+            code_sha=None,
+            policy_version=policy_version,
+            layout_version=layout_version,
+        )
+
     def _assert_no_absolute_paths(self, payload: dict, raw: str) -> None:
         self.assertNotIn("/home/", raw)
         self.assertNotIn("/tmp/", raw)
@@ -564,37 +609,157 @@ class LatestPointerTests(unittest.TestCase):
             if isinstance(value, str) and "/" in value:
                 self.assertFalse(os.path.isabs(value), value)
 
-    def test_pointer_under_absolute_tmp_root_has_relative_paths(self) -> None:
+    def test_pointer_identity_comes_from_target_manifest(self) -> None:
         from ai_value_scanner.scanner import write_latest_decision_pointer
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "decisions"
-            (root / "2026-10-15" / "risk_off").mkdir(parents=True)
+            self._write_snapshot(root, policy_version="v2", layout_version="v2")
             pointer_path = write_latest_decision_pointer(
                 root,
                 decision_date="2026-10-15",
                 strategy_style="risk_off",
-                policy_version="v2",
-                layout_version="v2",
             )
-            self.assertEqual(pointer_path, root / "latest_risk_off.json")
             payload = json.loads(pointer_path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                payload,
-                {
-                    "decision_date": "2026-10-15",
-                    "strategy_style": "risk_off",
-                    "decision_policy_version": "v2",
-                    "report_layout_version": "v2",
-                    "snapshot_dir": "2026-10-15/risk_off",
-                    "action_list_md": "2026-10-15/risk_off/action_list.md",
-                    "weekly_review_md": "2026-10-15/risk_off/weekly_review.md",
-                    "run_manifest_json": "2026-10-15/risk_off/run_manifest.json",
-                },
-            )
+            self.assertEqual(payload["decision_policy_version"], "v2")
+            self.assertEqual(payload["report_layout_version"], "v2")
+            self.assertEqual(payload["snapshot_dir"], "2026-10-15/risk_off")
             self._assert_no_absolute_paths(
                 payload, pointer_path.read_text(encoding="utf-8")
             )
+
+    def test_v2_snapshot_with_v1_caller_expectation_is_rejected(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            self._write_snapshot(root, policy_version="v2", layout_version="v2")
+            with self.assertRaisesRegex(ValueError, "policy_version"):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-15",
+                    strategy_style="risk_off",
+                    policy_version="v1",
+                    layout_version="v1",
+                )
+            self.assertFalse((root / "latest_risk_off.json").exists())
+
+    def test_missing_target_is_rejected(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            root.mkdir(parents=True)
+            with self.assertRaises(FileNotFoundError):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-15",
+                    strategy_style="risk_off",
+                )
+
+    def test_incomplete_and_corrupt_targets_are_rejected(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            paths = self._write_snapshot(root)
+            paths.decisions_jsonl.unlink()
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-15",
+                    strategy_style="risk_off",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            paths = self._write_snapshot(root)
+            paths.run_manifest_json.write_text("{not json", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unreadable|manifest"):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-15",
+                    strategy_style="risk_off",
+                )
+
+    def test_pointer_refuses_to_move_backwards(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            self._write_snapshot(root, decision_date="2026-10-15")
+            self._write_snapshot(root, decision_date="2026-10-14")
+            pointer_path = write_latest_decision_pointer(
+                root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+            )
+            before = pointer_path.read_text(encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "backwards"):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-14",
+                    strategy_style="risk_off",
+                )
+            self.assertEqual(pointer_path.read_text(encoding="utf-8"), before)
+
+    def test_corrupt_existing_pointer_fails_closed(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            self._write_snapshot(root)
+            pointer_path = write_latest_decision_pointer(
+                root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+            )
+            pointer_path.write_text("{broken", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="2026-10-15",
+                    strategy_style="risk_off",
+                )
+
+    def test_write_failure_leaves_old_pointer_intact(self) -> None:
+        from unittest import mock
+
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            self._write_snapshot(root)
+            pointer_path = write_latest_decision_pointer(
+                root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+            )
+            before = pointer_path.read_text(encoding="utf-8")
+            with mock.patch("os.replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    write_latest_decision_pointer(
+                        root,
+                        decision_date="2026-10-15",
+                        strategy_style="risk_off",
+                    )
+            self.assertEqual(pointer_path.read_text(encoding="utf-8"), before)
+            self.assertEqual(
+                [p.name for p in root.glob(".latest_*.tmp")], []
+            )
+
+    def test_unsafe_decision_date_is_rejected(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            root.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                write_latest_decision_pointer(
+                    root,
+                    decision_date="../evil",
+                    strategy_style="risk_off",
+                )
 
     def test_pointer_under_relative_root(self) -> None:
         from ai_value_scanner.scanner import write_latest_decision_pointer
@@ -603,7 +768,7 @@ class LatestPointerTests(unittest.TestCase):
             old_cwd = os.getcwd()
             os.chdir(tmp)
             try:
-                Path("decisions/2026-10-15/risk_on").mkdir(parents=True)
+                self._write_snapshot(Path("decisions"), strategy_style="risk_on")
                 pointer_path = write_latest_decision_pointer(
                     "decisions",
                     decision_date="2026-10-15",
@@ -623,7 +788,7 @@ class LatestPointerTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "decisions"
-            (root / "2026-10-15" / "risk_off").mkdir(parents=True)
+            self._write_snapshot(root)
             first = write_latest_decision_pointer(
                 root, decision_date="2026-10-15", strategy_style="risk_off"
             )
@@ -632,6 +797,171 @@ class LatestPointerTests(unittest.TestCase):
             )
             self.assertEqual(first, second)
             self.assertEqual(first.read_text(encoding="utf-8"), second.read_text(encoding="utf-8"))
+
+
+class StructuredScanStatusTests(unittest.TestCase):
+    def test_run_scan_keeps_legacy_path_contract(self) -> None:
+        from ai_value_scanner import scanner as scanner_module
+
+        self.assertTrue(hasattr(scanner_module, "run_scan_with_status"))
+        self.assertTrue(hasattr(scanner_module, "ScanRunStatus"))
+
+    def test_cron_default_callable_is_status_aware(self) -> None:
+        import run_daily_cron as rdc_module
+        from ai_value_scanner.scanner import run_scan_with_status
+
+        self.assertIs(rdc_module.run_scan_with_status, run_scan_with_status)
+
+    def test_core_failure_marks_cron_failed(self) -> None:
+        from ai_value_scanner.scanner import ScanRunStatus
+
+        def failing_scan(scan_cfg, **kwargs):
+            return ScanRunStatus(
+                output_path=Path("out.csv"),
+                report_path=Path("report.md"),
+                decision_snapshot_root=None,
+                decision_output_status="failed",
+                decision_output_error="snapshot boom",
+                latest_pointer_status="not_attempted",
+                latest_pointer_error=None,
+                shadow_status=None,
+            )
+
+        res = run_daily_scan_after_prewarm(
+            self._cfg(),
+            config_path="configs/config.risk_off.json",
+            summary=_clean_summary(),
+            scan_fn=failing_scan,
+        )
+        self.assertTrue(res["scan_executed"])
+        self.assertTrue(res["scan_failed"])
+        self.assertEqual(res["decision_output_status"], "failed")
+        self.assertIn("snapshot boom", res["error"])
+
+    def test_version_mismatch_reuse_marks_cron_failed(self) -> None:
+        from ai_value_scanner.scanner import ScanRunStatus
+
+        def mismatch_scan(scan_cfg, **kwargs):
+            return ScanRunStatus(
+                output_path=Path("out.csv"),
+                report_path=Path("report.md"),
+                decision_snapshot_root=Path("decisions/2026-10-15/risk_off"),
+                decision_output_status="reused_version_mismatch",
+                decision_output_error="identity mismatch",
+                latest_pointer_status="not_attempted",
+                latest_pointer_error=None,
+                shadow_status=None,
+            )
+
+        res = run_daily_scan_after_prewarm(
+            self._cfg(),
+            config_path="configs/config.risk_off.json",
+            summary=_clean_summary(),
+            scan_fn=mismatch_scan,
+        )
+        self.assertTrue(res["scan_failed"])
+        self.assertEqual(res["decision_output_status"], "reused_version_mismatch")
+
+    def test_success_and_partial_shadow_reporting(self) -> None:
+        from ai_value_scanner.scanner import ScanRunStatus
+
+        def ok_scan(scan_cfg, **kwargs):
+            return ScanRunStatus(
+                output_path=Path("out.csv"),
+                report_path=Path("report.md"),
+                decision_snapshot_root=Path("decisions/2026-10-15/risk_off"),
+                decision_output_status="written",
+                decision_output_error=None,
+                latest_pointer_status="written",
+                latest_pointer_error=None,
+                shadow_status="failed",
+            )
+
+        res = run_daily_scan_after_prewarm(
+            self._cfg(),
+            config_path="configs/config.risk_off.json",
+            summary=_clean_summary(),
+            scan_fn=ok_scan,
+        )
+        self.assertTrue(res["scan_executed"])
+        self.assertFalse(res["scan_failed"])
+        self.assertEqual(res["shadow_status"], "failed")
+
+    def _cfg(self, ttl: int = 21600):
+        from ai_value_scanner.scanner import ScanConfig
+
+        return ScanConfig(
+            alpaca_cache_ttl_assets_sec=ttl,
+            alpaca_cache_ttl_snapshots_sec=ttl,
+            alpaca_cache_ttl_bars_sec=ttl,
+        )
+
+
+class ExistingSnapshotReuseTests(unittest.TestCase):
+    def _write_snapshot(self, root: Path, *, policy="v2", layout="v2"):
+        from ai_value_scanner.reporting.snapshot import write_decision_snapshot
+
+        return write_decision_snapshot(
+            output_root=root,
+            strategy_style="risk_off",
+            decisions=(),
+            daily_attention=(),
+            weekly_attention=(),
+            generated_at_utc="2026-10-15T12:00:00+00:00",
+            decision_date="2026-10-15",
+            config_fingerprint="cfg",
+            policy_version=policy,
+            layout_version=layout,
+        )
+
+    def test_complete_matching_snapshot_is_reused(self) -> None:
+        from ai_value_scanner.scanner import _evaluate_existing_snapshot_reuse
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            paths = self._write_snapshot(root)
+            status, error = _evaluate_existing_snapshot_reuse(
+                paths.root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+                policy_version="v2",
+                layout_version="v2",
+            )
+            self.assertEqual(status, "reused")
+            self.assertIsNone(error)
+
+    def test_version_mismatch_is_explicit(self) -> None:
+        from ai_value_scanner.scanner import _evaluate_existing_snapshot_reuse
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            paths = self._write_snapshot(root)
+            status, error = _evaluate_existing_snapshot_reuse(
+                paths.root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+                policy_version="v1",
+                layout_version="v1",
+            )
+            self.assertEqual(status, "reused_version_mismatch")
+            self.assertIn("would not reflect", error or "")
+
+    def test_incomplete_snapshot_is_failure(self) -> None:
+        from ai_value_scanner.scanner import _evaluate_existing_snapshot_reuse
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            paths = self._write_snapshot(root)
+            paths.action_list_md.unlink()
+            status, error = _evaluate_existing_snapshot_reuse(
+                paths.root,
+                decision_date="2026-10-15",
+                strategy_style="risk_off",
+                policy_version="v2",
+                layout_version="v2",
+            )
+            self.assertEqual(status, "failed")
+            self.assertIn("incomplete", error or "")
 
 
 if __name__ == "__main__":

@@ -7,8 +7,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ai_value_scanner.decision.action import map_action_state
+from ai_value_scanner.decision.action import map_action_state, map_action_state_v2
 from ai_value_scanner.decision.discovery import validate_discovery_snapshot
+from ai_value_scanner.decision.entry import (
+    ENTRY_POLICY_VERSION,
+    ENTRY_V2_POLICY_VERSION,
+)
+from ai_value_scanner.decision.quality import (
+    QUALITY_POLICY_VERSION,
+    QUALITY_V2_POLICY_VERSION,
+)
 from ai_value_scanner.decision.model import ActionState, EntryState, QualityGrade
 from ai_value_scanner.decision.universe import (
     ACTIVE_ASSET_MISSING,
@@ -48,7 +56,68 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
-from ai_value_scanner.reporting.snapshot import load_snapshot_decisions
+from ai_value_scanner.reporting.snapshot import (
+    REPORT_RENDERER_REVISION,
+    build_state_change_alert_records,
+    collect_detailed_report_symbols,
+    load_snapshot_decisions,
+)
+
+SUPPORTED_POLICY_VERSIONS = {"v1", "v2"}
+SUPPORTED_LAYOUT_VERSIONS = {"v1", "v2"}
+KNOWN_QUALITY_POLICY_VERSIONS = {
+    QUALITY_POLICY_VERSION,
+    QUALITY_V2_POLICY_VERSION,
+}
+KNOWN_ENTRY_POLICY_VERSIONS = {
+    ENTRY_POLICY_VERSION,
+    ENTRY_V2_POLICY_VERSION,
+}
+
+
+def _parse_stage_versions(token: str) -> tuple[str, str, str] | None:
+    """Parse the integrated-builder token ``q=v2,e=v2,a=v2``."""
+    parts: dict[str, str] = {}
+    for chunk in str(token).split(","):
+        if "=" not in chunk:
+            return None
+        key, value = chunk.split("=", 1)
+        parts[key.strip()] = value.strip()
+    if set(parts) != {"q", "e", "a"}:
+        return None
+    if any(value not in SUPPORTED_POLICY_VERSIONS for value in parts.values()):
+        return None
+    return parts["q"], parts["e"], parts["a"]
+
+
+def _decision_stage_versions(
+    decision,
+    *,
+    manifest_policy: str,
+) -> tuple[str, str, str] | None:
+    """Resolve per-decision stage versions, validating manifest consistency."""
+    provenance = decision.provenance or {}
+    token = provenance.get("decision_policy_version")
+    if token is None:
+        if manifest_policy == "v2":
+            raise ValueError(
+                f"{decision.symbol}: manifest declares policy v2 but the "
+                "decision provenance has no stage versions"
+            )
+        return ("v1", "v1", "v1")
+    stages = _parse_stage_versions(str(token))
+    if stages is None:
+        raise ValueError(
+            f"{decision.symbol}: malformed decision_policy_version provenance "
+            f"{token!r}"
+        )
+    expected = (manifest_policy, manifest_policy, manifest_policy)
+    if stages != expected:
+        raise ValueError(
+            f"{decision.symbol}: stage versions {stages} do not match manifest "
+            f"policy {manifest_policy!r}"
+        )
+    return stages
 
 
 def check_ticker_map_rows(root_path: str | Path, manifest: dict[str, Any]) -> list[str]:
@@ -134,6 +203,14 @@ def validate_snapshot(
             "errors": errors,
             "warnings": warnings,
         }
+    if not isinstance(manifest, dict):
+        errors.append("run_manifest.json must decode to a JSON object")
+        return {
+            "ok": False,
+            "root": str(root_path),
+            "errors": errors,
+            "warnings": warnings,
+        }
 
     try:
         decisions = load_snapshot_decisions(root_path)
@@ -158,6 +235,52 @@ def validate_snapshot(
         errors.append("decision priorities are not contiguous from 1..N")
 
     manifest_date = str(manifest.get("decision_date", ""))
+    policy_version = str(manifest.get("decision_policy_version", "v1"))
+    layout_version = str(manifest.get("report_layout_version", "v1"))
+    if policy_version not in SUPPORTED_POLICY_VERSIONS:
+        errors.append(
+            f"unsupported decision_policy_version {policy_version!r} "
+            "(no silent v1 fallback)"
+        )
+    if layout_version not in SUPPORTED_LAYOUT_VERSIONS:
+        errors.append(
+            f"unsupported report_layout_version {layout_version!r} "
+            "(no silent v1 fallback)"
+        )
+    versions_supported = (
+        policy_version in SUPPORTED_POLICY_VERSIONS
+        and layout_version in SUPPORTED_LAYOUT_VERSIONS
+    )
+    renderer_revision = manifest.get("report_renderer_revision")
+    if renderer_revision is None:
+        render_mode = "legacy"
+        warnings.append(
+            "legacy snapshot (no report_renderer_revision): byte-level render "
+            "comparison is skipped; structural checks still run"
+        )
+    elif str(renderer_revision) != REPORT_RENDERER_REVISION:
+        errors.append(
+            f"unsupported report_renderer_revision {renderer_revision!r}"
+        )
+        render_mode = "unsupported"
+    else:
+        render_mode = "exact"
+
+    manifest_quality_version = manifest.get("quality_policy_version")
+    manifest_entry_version = manifest.get("entry_policy_version")
+    if (
+        manifest_quality_version is not None
+        and str(manifest_quality_version) not in KNOWN_QUALITY_POLICY_VERSIONS
+    ):
+        errors.append(
+            f"unsupported quality_policy_version {manifest_quality_version!r}"
+        )
+    if (
+        manifest_entry_version is not None
+        and str(manifest_entry_version) not in KNOWN_ENTRY_POLICY_VERSIONS
+    ):
+        errors.append(f"unsupported entry_policy_version {manifest_entry_version!r}")
+
     errors.extend(check_ticker_map_rows(root_path, manifest))
     for decision in decisions:
         if decision.decision_date != manifest_date:
@@ -165,14 +288,51 @@ def validate_snapshot(
                 f"{decision.symbol}: decision_date {decision.decision_date} "
                 f"!= manifest {manifest_date}"
             )
-        expected_action = map_action_state(
-            decision.quality.grade,
-            decision.entry.state,
-        )
+        provenance = decision.provenance or {}
+        if manifest_quality_version is not None:
+            provenance_quality = provenance.get("quality_policy_version")
+            if provenance_quality is None:
+                errors.append(
+                    f"{decision.symbol}: manifest records quality_policy_version "
+                    "but the decision provenance is missing it"
+                )
+            elif str(provenance_quality) != str(manifest_quality_version):
+                errors.append(
+                    f"{decision.symbol}: quality_policy_version "
+                    f"{provenance_quality!r} != manifest {manifest_quality_version!r}"
+                )
+        if manifest_entry_version is not None:
+            provenance_entry = provenance.get("entry_policy_version")
+            if provenance_entry is None:
+                errors.append(
+                    f"{decision.symbol}: manifest records entry_policy_version "
+                    "but the decision provenance is missing it"
+                )
+            elif str(provenance_entry) != str(manifest_entry_version):
+                errors.append(
+                    f"{decision.symbol}: entry_policy_version "
+                    f"{provenance_entry!r} != manifest {manifest_entry_version!r}"
+                )
+        if not versions_supported:
+            continue
+        try:
+            stages = _decision_stage_versions(decision, manifest_policy=policy_version)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        action_version = "v1" if stages is None else stages[2]
+        if action_version == "v2":
+            expected_action, _ = map_action_state_v2(decision.quality, decision.entry)
+        else:
+            expected_action = map_action_state(
+                decision.quality.grade,
+                decision.entry.state,
+            )
         if decision.action_state is not expected_action:
             errors.append(
                 f"{decision.symbol}: action {decision.action_state.value} "
-                f"!= canonical mapping {expected_action.value}"
+                f"!= canonical mapping {expected_action.value} "
+                f"(action_version={action_version})"
             )
 
     candidate_universe = manifest.get("candidate_universe")
@@ -463,35 +623,134 @@ def validate_snapshot(
         if symbol in decision_by_symbol
     )
 
-    expected_daily = render_action_list(
-        daily,
-        title="Daily Action List",
-        cadence="daily",
-    )
-    actual_daily = required["daily"].read_text(encoding="utf-8")
-    if actual_daily != expected_daily:
-        errors.append("action_list.md does not match canonical StockDecision rendering")
+    if versions_supported and render_mode == "exact":
+        expected_daily = render_action_list(
+            daily,
+            title="Daily Action List",
+            cadence="daily",
+            layout_version=layout_version,
+            all_decisions=decisions,
+        )
+        actual_daily = required["daily"].read_text(encoding="utf-8")
+        if actual_daily != expected_daily:
+            errors.append("action_list.md does not match canonical StockDecision rendering")
 
-    expected_weekly = render_action_list(
-        weekly,
-        title="Weekly Review List",
-        cadence="weekly",
-    )
-    actual_weekly = required["weekly"].read_text(encoding="utf-8")
-    if actual_weekly != expected_weekly:
-        errors.append("weekly_review.md does not match canonical StockDecision rendering")
+        expected_weekly = render_action_list(
+            weekly,
+            title="Weekly Review List",
+            cadence="weekly",
+            layout_version=layout_version,
+            all_decisions=decisions,
+        )
+        actual_weekly = required["weekly"].read_text(encoding="utf-8")
+        if actual_weekly != expected_weekly:
+            errors.append("weekly_review.md does not match canonical StockDecision rendering")
 
-    for symbol in sorted(set(daily_symbols + weekly_symbols)):
-        path = required["detailed"] / f"{symbol}.md"
-        if not path.exists():
-            errors.append(f"missing detailed report for {symbol}: {path}")
-            continue
-        expected = render_detailed_report(decision_by_symbol[symbol])
-        actual = path.read_text(encoding="utf-8")
-        if actual != expected:
+        detail_symbols = collect_detailed_report_symbols(
+            daily=daily,
+            weekly=weekly,
+            decisions=decisions,
+            layout_version=layout_version,
+        )
+        for symbol in sorted(detail_symbols):
+            path = required["detailed"] / f"{symbol}.md"
+            if not path.exists():
+                errors.append(f"missing detailed report for {symbol}: {path}")
+                continue
+            decision = decision_by_symbol.get(symbol)
+            if decision is None:
+                errors.append(f"detailed report for unknown symbol: {symbol}")
+                continue
+            expected = render_detailed_report(decision, layout_version=layout_version)
+            actual = path.read_text(encoding="utf-8")
+            if actual != expected:
+                errors.append(
+                    f"detailed/{symbol}.md does not match canonical StockDecision rendering"
+                )
+    elif versions_supported and render_mode == "legacy":
+        # Legacy snapshots were written by an earlier renderer revision;
+        # byte-exact comparison is impossible by construction. Run structural
+        # membership checks instead and keep the explicit warning recorded
+        # above. Current-format snapshots never take this path.
+        daily_text = required["daily"].read_text(encoding="utf-8")
+        missing_daily = [
+            symbol for symbol in daily_symbols if symbol not in daily_text
+        ]
+        if missing_daily:
             errors.append(
-                f"detailed/{symbol}.md does not match canonical StockDecision rendering"
+                "legacy action_list.md does not mention daily symbols: "
+                f"{missing_daily[:10]}"
             )
+        weekly_text = required["weekly"].read_text(encoding="utf-8")
+        missing_weekly = [
+            symbol for symbol in weekly_symbols if symbol not in weekly_text
+        ]
+        if missing_weekly:
+            errors.append(
+                "legacy weekly_review.md does not mention weekly symbols: "
+                f"{missing_weekly[:10]}"
+            )
+        legacy_detail_symbols = set(daily_symbols) | set(weekly_symbols)
+        for symbol in sorted(legacy_detail_symbols):
+            path = required["detailed"] / f"{symbol}.md"
+            if not path.exists():
+                errors.append(f"missing detailed report for {symbol}: {path}")
+
+    # State-change alerts (R07): manifest, JSONL, and report membership must
+    # describe the same canonical selection.
+    manifest_alerts = manifest.get("state_change_alerts")
+    if manifest_alerts is None:
+        warnings.append("run manifest has no state_change_alerts summary")
+    elif not isinstance(manifest_alerts, dict):
+        errors.append("state_change_alerts manifest section must be an object")
+    else:
+        alert_rows, expected_alert_summary = build_state_change_alert_records(
+            daily=daily,
+            weekly=weekly,
+            decisions=decisions,
+        )
+        if manifest_alerts.get("policy") != expected_alert_summary["policy"]:
+            errors.append("state_change_alerts policy version mismatch")
+        for scope in ("daily", "weekly"):
+            expected_scope = expected_alert_summary[scope]
+            actual_scope = manifest_alerts.get(scope)
+            if not isinstance(actual_scope, dict):
+                errors.append(f"state_change_alerts.{scope} must be an object")
+                continue
+            if actual_scope.get("total") != expected_scope["total"]:
+                errors.append(
+                    f"state_change_alerts.{scope}.total "
+                    f"{actual_scope.get('total')} != {expected_scope['total']}"
+                )
+            if list(actual_scope.get("shown_symbols") or []) != expected_scope[
+                "shown_symbols"
+            ]:
+                errors.append(
+                    f"state_change_alerts.{scope}.shown_symbols do not match "
+                    "the canonical downgrade selection"
+                )
+            if bool(actual_scope.get("truncated")) != expected_scope["truncated"]:
+                errors.append(f"state_change_alerts.{scope}.truncated mismatch")
+        alerts_path = root_path / "state_change_alerts.jsonl"
+        if not alerts_path.exists():
+            errors.append("manifest declares state_change_alerts but JSONL is missing")
+        else:
+            try:
+                actual_rows = [
+                    json.loads(line)
+                    for line in alerts_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            except (ValueError, TypeError) as exc:
+                errors.append(
+                    f"invalid state_change_alerts.jsonl: {type(exc).__name__}: {exc}"
+                )
+                actual_rows = []
+            if actual_rows != alert_rows:
+                errors.append(
+                    "state_change_alerts.jsonl does not match the canonical "
+                    "downgrade selection"
+                )
 
     quality_counts = {
         grade.value: sum(decision.quality.grade is grade for decision in decisions)

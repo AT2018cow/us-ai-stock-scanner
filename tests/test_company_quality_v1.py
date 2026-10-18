@@ -73,7 +73,7 @@ class TestCompanyQualityV1(unittest.TestCase):
             decision_date="2026-10-10",
             data_asof="2026-08-01",
         )
-        self.assertEqual(QUALITY_POLICY_VERSION, "company_quality_v1_2026-10-10")
+        self.assertEqual(QUALITY_POLICY_VERSION, "company_quality_v1_2026-10-18")
         self.assertIs(decision.grade, QualityGrade.A)
         self.assertEqual(decision.score, 1.0)
         self.assertEqual(decision.confidence, 1.0)

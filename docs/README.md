@@ -34,6 +34,8 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 3. Current Baseline Reviews & Decisions
 
+- [2026-10-18 代码审查与修复交接](code_review_and_repair_handoff_20261018.md) — 8 项缺陷、2 项结构建议、离线复现、DeepSeek 实施边界及 Codex 逐项验收契约（历史基线）。
+- [2026-10-18 代码审查修复结果](code_review_repair_results_20261018.md) — R01–R08/A01/A02 实施记录；R03–R05 已完成 Codex 复验，完整测试 1188 项通过。
 - `m0_baseline_review_20261014/` — **Phase M0 deliverable set**: `baseline_inventory.md`, `human_review_worksheet.csv` (18 stratified cases), `attention_failure_cases.md` (3 failure families + M1 correctness contract), and `review_gate.json`.
 - `m2_v1_failure_attribution_20261015/` — **Phase M2 deliverable set**: 8-axis quantitative failure attribution across `snap62`, `snap510`, and 25,025 historical rows (`attention_failure_attribution.md`, `component_and_routing_diagnostics.csv`, `metric_and_routing_diagnostics.csv`, `v1_failure_casebook.csv`, `case_registry_frozen.json`, `report_evidence_parity_checks.json`, `hypothesis_backlog.md`, `SHA256SUMS`).
 - `m3_candidate_preflight_20261015/` — **Phase M3 deliverable set**: Pre-registered `H1-Quality`, `H2-Entry`, `H3-Action`, and `v2_combined` non-return preflight and 38-case verification (`m3_preregistration_protocol.json`, `m3_preflight_comparison.csv`, `m3_casebook_verification.csv`, `m3_top15_diff_snap62_and_snap510.csv`, `m3_preflight_report.md`, `SHA256SUMS`).

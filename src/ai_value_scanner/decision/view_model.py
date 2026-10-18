@@ -17,6 +17,7 @@ from typing import Any
 
 from ai_value_scanner.decision.model import (
     ActionState,
+    EntryGateResult,
     EntryState,
     EvidenceItem,
     QualityGrade,
@@ -303,6 +304,8 @@ class SnapshotViewModel:
     concentration_summary_line: str = ""
     deprioritized_quality_integrity_notes: tuple[str, ...] = ()
     growth_compounder_offense_cards: tuple[StockCardViewModel, ...] = ()
+    state_change_alert_cards: tuple[StockCardViewModel, ...] = ()
+    state_change_alerts_total: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -561,19 +564,6 @@ _GATE_DEFS: tuple[dict[str, Any], ...] = (
 )
 
 
-def _gate_matches(
-    items: tuple[EvidenceItem, ...],
-    *,
-    codes: frozenset[str],
-    metrics: frozenset[str],
-) -> list[EvidenceItem]:
-    matched: list[EvidenceItem] = []
-    for item in items:
-        if item.code in codes or (item.metric or "") in metrics:
-            matched.append(item)
-    return matched
-
-
 # Medium-term extension warnings are non-blocking: they ride on metrics of
 # passing gates (sma200_trend, ret60_trend) and must never flip those gates
 # to FAIL_BLOCKER. They surface via badges + the blockers-inline note.
@@ -581,120 +571,116 @@ _NON_BLOCKING_ENTRY_WARN_CODES = frozenset(
     {"price_extended_above_sma200", "return_60d_extended"}
 )
 
+_SHORT_GATE_TAGS = {
+    "data_completeness": "data",
+    "freshness": "data age",
+    "benchmark_freshness": "bench age",
+    "sma200_trend": "SMA200",
+    "sma50_band": "SMA50 band",
+    "ret20_band": "20d mom",
+    "ret60_trend": "60d trend",
+    "rs60_qqq": "RS60 vs QQQ",
+    "drawdown_cap": "52w DD",
+    "volatility_cap": "volatility",
+    "trend_damage": "trend damage",
+    "overextension": "extension",
+    "market_regime": "regime",
+    "ma_alignment": "MA alignment",
+    "extension_watch": "extension",
+}
 
-def _human_gate_blocker_phrase(
-    gate_key: str, item: EvidenceItem, formatted: str
-) -> tuple[str, str, str]:
-    """Return (human_status, short_tag_with_val, natural_english_phrase)."""
-    code = item.code
-    if code in {"price_extended_above_sma50", "return_20d_overextended"}:
-        if gate_key == "sma50_band":
-            return (
-                "EXTENDED",
-                f"SMA50 {formatted}",
-                f"Extended above SMA50 ({formatted}; wait for 0.98x–1.08x)",
-            )
-        return (
-            "EXTENDED",
-            f"20d {formatted}",
-            f"20d return overextended ({formatted}; wait for <= +12%)",
-        )
-    if code in {"price_materially_below_sma200", "days_below_sma200_elevated"}:
-        if code == "days_below_sma200_elevated":
-            return (
-                "DAMAGED",
-                f"{formatted} < SMA200",
-                f"Spent {formatted} below SMA200 (need < 15d)",
-            )
-        return (
-            "DAMAGED",
-            f"SMA200 {formatted}",
-            f"Below SMA200 ({formatted}; damaged < 0.95x)",
-        )
-    if gate_key == "sma200_trend":
-        return ("WAIT", f"SMA200 {formatted}", f"Below SMA200 ({formatted}; need >= 1.00x)")
-    if gate_key == "sma50_band":
-        return ("WAIT", f"SMA50 {formatted}", f"SMA50 at {formatted} (need 0.98x–1.08x)")
-    if gate_key == "ret20_band":
-        return ("WAIT", f"20d {formatted}", f"20d return at {formatted} (need -3%..+12%)")
-    if gate_key == "ret60_trend":
-        if item.metric == "drawdown_from_52w_high":
-            return ("WAIT", f"52w DD {formatted}", f"52w drawdown {formatted} (> 22% cap)")
-        return ("WAIT", f"60d {formatted}", f"60d return weak at {formatted} (need >= 0%)")
-    if gate_key == "rs60_qqq":
-        return ("WAIT", f"RS60 {formatted}", f"60d RS vs QQQ at {formatted} (need >= -3%)")
-    if gate_key == "regime":
-        return ("WAIT", "Defensive regime", "Defensive regime (need RS >= +5%)")
-    return ("WAIT", f"{_compact_label(item)} {formatted}", f"{_compact_label(item)} at {formatted}")
+
+def _canonical_gate_human_status(gate: EntryGateResult) -> str:
+    """Formatting-only mapping from the canonical gate result to a badge."""
+    if gate.status == "PASS":
+        return "PASS"
+    if gate.status == "WARN":
+        return "WARN"
+    if gate.status == "UNKNOWN":
+        return "UNKNOWN"
+    if gate.status == "NOT_APPLICABLE":
+        return "N/A"
+    if gate.gate_key == "trend_damage":
+        return "DAMAGED"
+    if gate.gate_key == "sma200_trend":
+        observed = _as_float(gate.observed)
+        return "DAMAGED" if observed is not None and observed < 0.95 else "WAIT"
+    if gate.gate_key == "overextension":
+        return "EXTENDED"
+    if gate.gate_key == "sma50_band":
+        observed = _as_float(gate.observed)
+        return "EXTENDED" if observed is not None and observed > 1.08 else "WAIT"
+    if gate.gate_key == "ret20_band":
+        observed = _as_float(gate.observed)
+        return "EXTENDED" if observed is not None and observed > 0.12 else "WAIT"
+    return "WAIT"
 
 
 def _build_entry_checklist(decision: StockDecision) -> tuple[EntryGateCheckRow, ...]:
-    rows: list[EntryGateCheckRow] = []
-    for gate in _GATE_DEFS:
-        metrics: frozenset[str] = gate["metrics"]
-        pos = _gate_matches(
-            decision.entry.positives,
-            codes=gate["positive_codes"],
-            metrics=metrics,
+    """Format the canonical gate results; never re-infer thresholds (R06).
+
+    Decisions from pre-R06 snapshots carry no gate results. Those rows are
+    rendered as UNKNOWN ("not recorded") because the evidence items alone
+    cannot prove which gate fired — claiming a pass would be fabrication.
+    """
+    gate_results = decision.entry.gate_results
+    if not gate_results:
+        return tuple(
+            EntryGateCheckRow(
+                gate_key=gate["gate_key"],
+                gate_label=gate["gate_label"],
+                status="UNKNOWN",
+                human_status="UNKNOWN",
+                short_tag=gate["short_tag"],
+                observed_display="not recorded in this snapshot",
+                target_display=gate["target_display"],
+                human_summary=(
+                    "Gate evaluation was not recorded in this snapshot; "
+                    "PASS/FAIL cannot be verified."
+                ),
+                note=(
+                    "Old snapshot: gate results were not recorded. "
+                    "Re-run the scan to persist canonical gate outcomes."
+                ),
+            )
+            for gate in _GATE_DEFS
         )
-        neg = [
-            item
-            for item in _gate_matches(
-                decision.entry.risks,
-                codes=gate["negative_codes"],
-                metrics=metrics,
-            )
-            if item.code not in _NON_BLOCKING_ENTRY_WARN_CODES
-        ]
-        if neg:
-            item = neg[0]
-            formatted = format_metric_value(item.metric, item.value)
-            h_status, s_tag, h_phrase = _human_gate_blocker_phrase(
-                gate["gate_key"], item, formatted
-            )
-            rows.append(
-                EntryGateCheckRow(
-                    gate_key=gate["gate_key"],
-                    gate_label=gate["gate_label"],
-                    status="FAIL_BLOCKER",
-                    human_status=h_status,
-                    short_tag=s_tag,
-                    observed_display=formatted,
-                    target_display=gate["target_display"],
-                    human_summary=h_phrase,
-                    note=item.message.replace("\n", " "),
-                )
-            )
-        elif pos:
-            item = pos[0]
-            formatted = format_metric_value(item.metric, item.value)
-            rows.append(
-                EntryGateCheckRow(
-                    gate_key=gate["gate_key"],
-                    gate_label=gate["gate_label"],
-                    status="PASS",
-                    human_status="PASS",
-                    short_tag=gate["short_tag"],
-                    observed_display=formatted,
-                    target_display=gate["target_display"],
-                    human_summary=f"{gate['gate_label']}: {formatted}",
-                    note=item.message.replace("\n", " "),
-                )
-            )
+
+    rows: list[EntryGateCheckRow] = []
+    for gate in gate_results:
+        human_status = _canonical_gate_human_status(gate)
+        if isinstance(gate.observed, (int, float)) and gate.metric:
+            observed_display = format_metric_value(gate.metric, gate.observed)
+        elif gate.observed is None:
+            if gate.status == "UNKNOWN":
+                observed_display = "not available"
+            elif gate.status == "NOT_APPLICABLE":
+                observed_display = "n/a"
+            elif gate.status == "PASS":
+                observed_display = "ok"
+            else:
+                observed_display = "n/a"
         else:
-            rows.append(
-                EntryGateCheckRow(
-                    gate_key=gate["gate_key"],
-                    gate_label=gate["gate_label"],
-                    status="SILENT_OR_UNOBSERVED",
-                    human_status="WAIT",
-                    short_tag=gate["short_tag"],
-                    observed_display="Outside READY band (silent in v1)",
-                    target_display=gate["target_display"],
-                    human_summary=gate["silent_summary"],
-                    note=gate["silent_summary"],
-                )
+            observed_display = str(gate.observed)
+        rows.append(
+            EntryGateCheckRow(
+                gate_key=gate.gate_key,
+                gate_label=gate.gate_label,
+                status=(
+                    "PASS"
+                    if gate.status == "PASS"
+                    else "FAIL_BLOCKER"
+                    if gate.status == "BLOCK"
+                    else gate.status
+                ),
+                human_status=human_status,
+                short_tag=_SHORT_GATE_TAGS.get(gate.gate_key, gate.gate_key),
+                observed_display=observed_display,
+                target_display=gate.target,
+                human_summary=gate.reason,
+                note=gate.reason,
             )
+        )
     return tuple(rows)
 
 
@@ -790,24 +776,38 @@ def _build_entry_blockers_inline(
     decision: StockDecision,
     checklist: tuple[EntryGateCheckRow, ...],
 ) -> str:
-    if decision.entry.state is EntryState.ENTRY_READY:
-        extensions = [
-            item
-            for item in decision.entry.risks
-            if item.code in _NON_BLOCKING_ENTRY_WARN_CODES
-        ]
-        if not extensions:
-            return "All 7 readiness gates passed"
-        parts: list[str] = []
-        for item in extensions:
-            if item.code == "price_extended_above_sma200":
-                parts.append(f"SMA200 {format_metric_value(item.metric, item.value)}")
-            elif item.code == "return_60d_extended":
-                parts.append(f"60d Ret {format_metric_value(item.metric, item.value)}")
-        note = " · ".join(parts) if parts else "extended medium-term setup"
-        return f"All 7 readiness gates passed (⚠️ Extended: {note})"
-    blockers = [row.human_summary for row in checklist if row.status != "PASS"]
-    return "; ".join(blockers) if blockers else "See full report"
+    gate_results = decision.entry.gate_results
+    if not gate_results:
+        return (
+            "Gate results not recorded in this snapshot; readiness cannot be "
+            "fully verified"
+        )
+    blocking = [gate for gate in gate_results if gate.blocking]
+    warnings = [gate for gate in gate_results if gate.status == "WARN"]
+    if not blocking:
+        base = f"All {len(gate_results)} readiness gates passed"
+        if not warnings:
+            return base
+        return f"{base} (⚠️ {_gate_warning_fragment(warnings)})"
+    return "; ".join(gate.reason for gate in blocking)
+
+
+def _gate_warning_fragment(
+    warnings: list[EntryGateResult],
+) -> str:
+    parts: list[str] = []
+    for gate in warnings:
+        if gate.gate_key == "extension_watch" and gate.observed:
+            parts.append(
+                "Extended: " + " · ".join(str(gate.observed).split("; "))
+            )
+        elif gate.gate_key == "benchmark_freshness":
+            parts.append(f"Benchmark stale {gate.observed}d")
+        elif gate.gate_key == "freshness":
+            parts.append(f"Data age {gate.observed}d")
+        else:
+            parts.append(gate.gate_label)
+    return " · ".join(parts) if parts else "warnings present"
 
 
 def _build_fundamental_watchouts_inline(decision: StockDecision) -> str:
@@ -848,23 +848,31 @@ def _build_top_positives_inline(decision: StockDecision) -> str:
     return "; ".join(fragments) if fragments else "none"
 
 
+def _unmet_gate_keys(decision: StockDecision) -> list[str]:
+    gate_results = decision.entry.gate_results
+    if gate_results:
+        return [
+            gate.gate_key
+            for gate in gate_results
+            if gate.blocking or gate.status == "UNKNOWN"
+        ]
+    return []
+
+
 def _build_top_risks_inline(
     decision: StockDecision,
     checklist: tuple[EntryGateCheckRow, ...],
 ) -> str:
     candidates = (*decision.quality.risks, *decision.entry.risks)
     fragments = [_inline_fragment(item) for item in candidates[:2] if _inline_fragment(item)]
-    if (
-        decision.entry.state is not EntryState.ENTRY_READY
-        and not decision.entry.risks
-    ):
-        unmet = [row.gate_key for row in checklist if row.status != "PASS"]
+    if decision.entry.state is not EntryState.ENTRY_READY:
+        unmet = _unmet_gate_keys(decision)
         if unmet:
             fragments.append(f"Unmet READY gate(s): {', '.join(unmet)}")
     if fragments:
         return "; ".join(fragments)
     if decision.action_state is not ActionState.PRIORITY_REVIEW:
-        unmet = [row.gate_key for row in checklist if row.status != "PASS"]
+        unmet = _unmet_gate_keys(decision)
         if unmet:
             return f"Unmet READY gate(s): {', '.join(unmet)}"
         return "See detailed evidence."
@@ -1224,97 +1232,25 @@ def _deprioritized_quality_note(decision: StockDecision) -> str:
 
 # ---------------------------------------------------------------------------
 # Growth Compounder Leaders (Bull Offense Track)
+#
+# The frozen eligibility/order policy lives in ``decision.attention`` (A01);
+# these re-exports keep the historical import surface working.
 # ---------------------------------------------------------------------------
 
-OFFENSE_COMPOUNDER_MIN_QUALITY_SCORE: float = 0.68
-OFFENSE_COMPOUNDER_MIN_REV_YOY: float = 0.15
-OFFENSE_COMPOUNDER_MIN_OCF_NI: float = 0.80
-OFFENSE_COMPOUNDER_MIN_SMA200: float = 1.00
-OFFENSE_COMPOUNDER_MAX_SMA200: float = 1.60
-OFFENSE_COMPOUNDER_MIN_RS60: float = 0.0
-OFFENSE_COMPOUNDER_PRE_EARNINGS_PENALTY: float = 0.06
-
-
-def _decision_metric_value(
-    decision: StockDecision, metric: str
-) -> float | None:
-    """First finite numeric evidence value for a metric across quality/entry."""
-    for item in (
-        *decision.quality.positives,
-        *decision.quality.risks,
-        *decision.entry.positives,
-        *decision.entry.risks,
-    ):
-        if item.metric == metric:
-            value = _as_float(item.value)
-            if value is not None:
-                return value
-    return None
-
-
-def is_growth_compounder_offense_eligible(decision: StockDecision) -> bool:
-    """Frozen 6-condition growth-compounder offense eligibility gate."""
-    if decision.quality.grade not in {QualityGrade.A, QualityGrade.B}:
-        return False
-    if (
-        decision.quality.score is None
-        or float(decision.quality.score) < OFFENSE_COMPOUNDER_MIN_QUALITY_SCORE
-    ):
-        return False
-    if any(
-        item.code == "nonoperating_gain_inflation"
-        for item in decision.quality.risks
-    ):
-        return False
-    rev_yoy = _decision_metric_value(decision, "revenue_yoy")
-    if rev_yoy is None or rev_yoy < OFFENSE_COMPOUNDER_MIN_REV_YOY:
-        return False
-    ocf_ni = _decision_metric_value(decision, "ocf_to_net_income")
-    if ocf_ni is None or ocf_ni < OFFENSE_COMPOUNDER_MIN_OCF_NI:
-        return False
-    if decision.entry.state not in {
-        EntryState.ENTRY_READY, EntryState.WATCH_PULLBACK,
-    }:
-        return False
-    sma200 = _decision_metric_value(decision, "price_to_sma200")
-    if sma200 is None or not (
-        OFFENSE_COMPOUNDER_MIN_SMA200 <= sma200 <= OFFENSE_COMPOUNDER_MAX_SMA200
-    ):
-        return False
-    rs60 = _decision_metric_value(decision, "relative_strength_60d_qqq")
-    if rs60 is None or rs60 < OFFENSE_COMPOUNDER_MIN_RS60:
-        return False
-    return True
-
-
-def growth_compounder_offense_order_key(
-    decision: StockDecision,
-) -> tuple[float, float, float, str]:
-    """Descending offense score: quality + growth + RS60 minus pre-earnings."""
-    q_score = float(decision.quality.score or 0.0)
-    rev_yoy = _decision_metric_value(decision, "revenue_yoy") or 0.0
-    rs60 = _decision_metric_value(decision, "relative_strength_60d_qqq") or 0.0
-    penalty = (
-        OFFENSE_COMPOUNDER_PRE_EARNINGS_PENALTY
-        if any(
-            item.code == "pre_earnings_window_risk"
-            for item in decision.quality.risks
-        )
-        else 0.0
-    )
-    offense_score = (
-        q_score
-        + 0.50 * min(max(rev_yoy, 0.0), 1.0)
-        + 0.50 * min(max(rs60, 0.0), 1.0)
-        - penalty
-    )
-    e_score = float(decision.entry.score or 0.0)
-    return (
-        -round(offense_score, 6),
-        -round(q_score, 6),
-        -round(e_score, 6),
-        decision.symbol,
-    )
+from ai_value_scanner.decision.attention import (  # noqa: E402
+    OFFENSE_COMPOUNDER_MAX_SMA200,
+    OFFENSE_COMPOUNDER_MIN_OCF_NI,
+    OFFENSE_COMPOUNDER_MIN_QUALITY_SCORE,
+    OFFENSE_COMPOUNDER_MIN_REV_YOY,
+    OFFENSE_COMPOUNDER_MIN_RS60,
+    OFFENSE_COMPOUNDER_MIN_SMA200,
+    OFFENSE_COMPOUNDER_PRE_EARNINGS_PENALTY,
+    OFFENSE_TRACK_POLICY_VERSION,
+    growth_compounder_offense_order_key,
+    is_growth_compounder_offense_eligible,
+    select_growth_compounder_offense,
+    select_state_change_alerts,
+)
 
 
 def build_snapshot_view_model(
@@ -1325,7 +1261,6 @@ def build_snapshot_view_model(
     attention_cap: int = 15,
 ) -> SnapshotViewModel:
     """Build the snapshot-level view model."""
-    _ = attention_cap
     primary = tuple(primary_decisions)
     primary_symbols = {decision.symbol for decision in primary}
     primary_cards = tuple(
@@ -1342,21 +1277,20 @@ def build_snapshot_view_model(
     cap_omitted: tuple[StockCardViewModel, ...] = ()
     secondary_b: tuple[StockCardViewModel, ...] = ()
     offense_cards: tuple[StockCardViewModel, ...] = ()
+    alert_cards: tuple[StockCardViewModel, ...] = ()
+    alert_total = 0
     pool_size: int | None = None
     deprioritized_notes: tuple[str, ...] = ()
     if all_decisions is not None:
         ordered = sorted(tuple(all_decisions), key=_priority_order_key)
         pool_size = len(ordered)
-        eligible_offense = (
-            decision for decision in ordered
-            if decision.symbol not in primary_symbols
-            and is_growth_compounder_offense_eligible(decision)
-        )
         offense_cards = tuple(
             build_stock_card_view_model(decision)
-            for decision in sorted(
-                eligible_offense, key=growth_compounder_offense_order_key
-            )[:10]
+            for decision in select_growth_compounder_offense(
+                ordered,
+                exclude_symbols=primary_symbols,
+                cap=10,
+            )
         )
         offense_symbols = {card.symbol for card in offense_cards}
         cap_omitted = tuple(
@@ -1386,6 +1320,16 @@ def build_snapshot_view_model(
                 for item in decision.quality.risks
             )
         )[:10]
+        alert_selection = select_state_change_alerts(
+            ordered,
+            exclude_symbols=primary_symbols,
+            cap=attention_cap,
+        )
+        alert_cards = tuple(
+            build_stock_card_view_model(decision)
+            for decision in alert_selection.alerts
+        )
+        alert_total = alert_selection.total
     return SnapshotViewModel(
         title=title,
         cadence=cadence,
@@ -1398,4 +1342,6 @@ def build_snapshot_view_model(
         ),
         deprioritized_quality_integrity_notes=deprioritized_notes,
         growth_compounder_offense_cards=offense_cards,
+        state_change_alert_cards=alert_cards,
+        state_change_alerts_total=alert_total,
     )

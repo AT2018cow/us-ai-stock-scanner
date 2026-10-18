@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from datetime import date as date_module
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -47,6 +48,7 @@ from ai_value_scanner.fundamentals.accounting import (
     fundamental_quality_score_from_metrics,
     safe_yoy,
 )
+from ai_value_scanner.market_calendar import latest_completed_session
 from ai_value_scanner.fundamentals.facts import (
     PeriodValue,
     collapse_fact_records_by_end,
@@ -152,6 +154,14 @@ from ai_value_scanner.decision import (
     select_daily_attention,
     select_weekly_attention,
 )
+from ai_value_scanner.decision.entry import (
+    ENTRY_POLICY_VERSION,
+    ENTRY_V2_POLICY_VERSION,
+)
+from ai_value_scanner.decision.quality import (
+    QUALITY_POLICY_VERSION,
+    QUALITY_V2_POLICY_VERSION,
+)
 from ai_value_scanner.decision.discovery import (
     assert_memberships_asof,
     load_discovery_sources,
@@ -166,7 +176,10 @@ from ai_value_scanner.decision.universe import (
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
     load_previous_snapshot,
+    load_snapshot_manifest,
     resolve_git_commit_sha,
+    snapshot_identity,
+    snapshot_missing_files,
     write_decision_snapshot,
 )
 
@@ -3782,13 +3795,29 @@ def load_one_fundamental(
     capex = accounting["capex"]
     free_cash_flow = accounting["free_cash_flow"]
     total_debt = accounting["total_debt"]
+    total_debt_source = accounting["total_debt_source"]
     net_debt = accounting["net_debt"]
+    net_debt_source = accounting["net_debt_source"]
     revenue_yoy = accounting["revenue_yoy"]
     net_income_yoy = accounting["net_income_yoy"]
     adjusted_net_income_yoy = accounting["adjusted_net_income_yoy"]
     ebit_yoy = accounting["ebit_yoy"]
     adjusted_ebit_yoy = accounting["adjusted_ebit_yoy"]
     ocf_yoy = accounting["operating_cash_flow_yoy"]
+    net_income_growth = accounting["net_income_growth"]
+    net_income_growth_direction = accounting["net_income_growth_direction"]
+    adjusted_net_income_growth = accounting["adjusted_net_income_growth"]
+    adjusted_net_income_growth_direction = accounting[
+        "adjusted_net_income_growth_direction"
+    ]
+    ebit_growth = accounting["ebit_growth"]
+    ebit_growth_direction = accounting["ebit_growth_direction"]
+    adjusted_ebit_growth = accounting["adjusted_ebit_growth"]
+    adjusted_ebit_growth_direction = accounting["adjusted_ebit_growth_direction"]
+    operating_cash_flow_growth = accounting["operating_cash_flow_growth"]
+    operating_cash_flow_growth_direction = accounting[
+        "operating_cash_flow_growth_direction"
+    ]
     shares_yoy = accounting["shares_yoy"]
     receivables_yoy = accounting["receivables_yoy"]
     inventory_yoy = accounting["inventory_yoy"]
@@ -3796,6 +3825,7 @@ def load_one_fundamental(
     interest_expense_abs = accounting["interest_expense"]
     interest_coverage = accounting["interest_coverage"]
     net_debt_to_ebitda = accounting["net_debt_to_ebitda"]
+    net_debt_to_ebitda_source = accounting["net_debt_to_ebitda_source"]
     current_ratio = accounting["current_ratio"]
     current_debt_ratio_reported = accounting["current_debt_ratio_reported"]
     current_debt_ratio_inferred = accounting["current_debt_ratio_inferred"]
@@ -3951,7 +3981,9 @@ def load_one_fundamental(
         "ebit_form": ebit_form,
         "cash_and_equivalents": cash_and_equivalents,
         "total_debt": total_debt,
+        "total_debt_source": total_debt_source,
         "net_debt": net_debt,
+        "net_debt_source": net_debt_source,
         "interest_expense": interest_expense_abs,
         "interest_income": interest_income_pos,
         "depreciation_and_amortization": da,
@@ -3961,9 +3993,15 @@ def load_one_fundamental(
         "inventory_current": inventory_current,
         "revenue_yoy": revenue_yoy,
         "net_income_yoy": net_income_yoy,
+        "net_income_growth": net_income_growth,
+        "net_income_growth_direction": net_income_growth_direction,
         "ebit_yoy": ebit_yoy,
+        "ebit_growth": ebit_growth,
+        "ebit_growth_direction": ebit_growth_direction,
         "da_yoy": da_yoy,
         "operating_cash_flow_yoy": ocf_yoy,
+        "operating_cash_flow_growth": operating_cash_flow_growth,
+        "operating_cash_flow_growth_direction": operating_cash_flow_growth_direction,
         "shares_yoy": shares_yoy,
         "receivables_yoy": receivables_yoy,
         "inventory_yoy": inventory_yoy,
@@ -3975,7 +4013,11 @@ def load_one_fundamental(
         "adjusted_ebit": adjusted_ebit,
         "adjusted_ebitda": adjusted_ebitda,
         "adjusted_net_income_yoy": adjusted_net_income_yoy,
+        "adjusted_net_income_growth": adjusted_net_income_growth,
+        "adjusted_net_income_growth_direction": adjusted_net_income_growth_direction,
         "adjusted_ebit_yoy": adjusted_ebit_yoy,
+        "adjusted_ebit_growth": adjusted_ebit_growth,
+        "adjusted_ebit_growth_direction": adjusted_ebit_growth_direction,
         # Layer-1 Case C (P1-1): latest quarter non-operating income spike
         # screen inputs, matched to the latest reconstructed revenue quarter.
         "latest_quarterly_nonoperating_income": latest_q_nonop_income,
@@ -3984,6 +4026,7 @@ def load_one_fundamental(
         "latest_quarterly_period_end": latest_q_end,
         "interest_coverage": interest_coverage,
         "net_debt_to_ebitda": net_debt_to_ebitda,
+        "net_debt_to_ebitda_source": net_debt_to_ebitda_source,
         "current_ratio": current_ratio,
         "current_debt_ratio_reported": current_debt_ratio_reported,
         "current_debt_ratio_inferred": current_debt_ratio_inferred,
@@ -4196,47 +4239,242 @@ def _coalesce_filing_cik(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=["cik_filing"])
 
 
+@dataclass(frozen=True)
+class ScanRunStatus:
+    """Structured outcome of a scan run (R04).
+
+    ``run_scan`` keeps its legacy ``-> Path`` contract; cron/automation uses
+    ``run_scan_with_status`` to distinguish a fully published MVP run from
+    one where only the legacy CSV artifacts survived.
+    """
+
+    output_path: Path
+    report_path: Path
+    decision_snapshot_root: Path | None
+    decision_output_status: str  # written | reused | reused_version_mismatch | failed | not_attempted
+    decision_output_error: str | None
+    latest_pointer_status: str  # written | failed | not_applicable | not_attempted
+    latest_pointer_error: str | None
+    shadow_status: str | None  # None (disabled) | written | failed
+
+    @property
+    def core_failed(self) -> bool:
+        return self.decision_output_status in {
+            "failed",
+            "reused_version_mismatch",
+            "not_attempted",
+        } or self.latest_pointer_status == "failed"
+
+
+def _evaluate_existing_snapshot_reuse(
+    root: Path,
+    *,
+    decision_date: str,
+    strategy_style: str | None,
+    policy_version: str,
+    layout_version: str,
+) -> tuple[str, str | None]:
+    """Validate a same-session existing snapshot before reusing it (R04/R08).
+
+    Returns ``(status, error)`` where status is ``reused``,
+    ``reused_version_mismatch`` or ``failed``. A reuse is only acceptable when
+    the directory is complete, parseable, and records the same identity as
+    this run's configuration.
+    """
+    missing = snapshot_missing_files(root)
+    if missing:
+        return "failed", "existing snapshot is incomplete: " + ", ".join(missing)
+    try:
+        manifest = load_snapshot_manifest(root)
+    except (FileNotFoundError, ValueError) as exc:
+        return "failed", f"existing snapshot manifest unreadable: {exc}"
+    identity = snapshot_identity(manifest)
+    if identity["decision_date"] != str(decision_date):
+        return (
+            "failed",
+            "existing snapshot decision_date "
+            f"{identity['decision_date']!r} != {decision_date!r}",
+        )
+    manifest_style = identity["strategy_style"]
+    if manifest_style is not None and str(manifest_style) != str(strategy_style):
+        return (
+            "failed",
+            f"existing snapshot strategy_style {manifest_style!r} "
+            f"!= {strategy_style!r}",
+        )
+    if (
+        identity["policy_version"] != str(policy_version)
+        or identity["layout_version"] != str(layout_version)
+    ):
+        return (
+            "reused_version_mismatch",
+            "existing snapshot identity "
+            f"policy={identity['policy_version']} layout={identity['layout_version']} "
+            f"!= configured policy={policy_version} layout={layout_version}; "
+            "reusing it would not reflect this run's configuration",
+        )
+    expected_quality = (
+        QUALITY_V2_POLICY_VERSION if policy_version == "v2" else QUALITY_POLICY_VERSION
+    )
+    expected_entry = (
+        ENTRY_V2_POLICY_VERSION if policy_version == "v2" else ENTRY_POLICY_VERSION
+    )
+    manifest_quality = identity.get("quality_policy_version")
+    manifest_entry = identity.get("entry_policy_version")
+    if manifest_quality and str(manifest_quality) != expected_quality:
+        return (
+            "reused_version_mismatch",
+            "existing snapshot Company Quality policy "
+            f"{manifest_quality!r} != current {expected_quality!r}; "
+            "reusing it would mix evidence from different policy revisions",
+        )
+    if manifest_entry and str(manifest_entry) != expected_entry:
+        return (
+            "reused_version_mismatch",
+            "existing snapshot Entry policy "
+            f"{manifest_entry!r} != current {expected_entry!r}; "
+            "reusing it would mix evidence from different policy revisions",
+        )
+    return "reused", None
+
+
 def write_latest_decision_pointer(
     snapshot_root: str | Path,
     *,
     decision_date: str,
     strategy_style: str | None,
-    policy_version: str = "v1",
-    layout_version: str = "v1",
+    policy_version: str | None = None,
+    layout_version: str | None = None,
 ) -> Path:
     """Write/refresh the mutable ``latest_<style>.json`` snapshot pointer.
 
-    The pointer always stores paths *relative* to ``snapshot_root``
-    (e.g. ``"2026-10-15/risk_off/action_list.md"``), so it never leaks
-    absolute filesystem locations no matter where the snapshot lives.
-    The immutable decision snapshot itself is never modified here.
+    R08: the pointer identity is read from the *target snapshot manifest*,
+    never from the caller's configuration. The target must be a complete,
+    parseable snapshot; an incomplete or unknown target can never become
+    ``latest``. Optional ``policy_version``/``layout_version`` arguments are
+    caller expectations that must match the manifest — a mismatch raises
+    instead of silently publishing a wrong identity. The write is atomic
+    (temp file + replace) and refuses to move the pointer backwards in time.
     """
+    date_token = str(decision_date)
+    if (
+        not date_token.strip()
+        or any(sep in date_token for sep in ("/", "\\", ".."))
+    ):
+        raise ValueError(f"unsafe decision_date for pointer: {decision_date!r}")
+    try:
+        requested_day = date_module.fromisoformat(date_token[:10])
+    except ValueError as exc:
+        raise ValueError(f"invalid decision_date for pointer: {decision_date!r}") from exc
+
     root = Path(snapshot_root)
     snap_paths = decision_snapshot_paths(
         root,
         decision_date,
         strategy_style=strategy_style,
     )
+    if not snap_paths.root.is_dir():
+        raise FileNotFoundError(
+            f"refusing to publish latest pointer: snapshot target missing: {snap_paths.root}"
+        )
+    missing = snapshot_missing_files(snap_paths.root)
+    if missing:
+        raise ValueError(
+            "refusing to publish latest pointer: target snapshot is incomplete: "
+            + ", ".join(missing)
+        )
+    manifest = load_snapshot_manifest(snap_paths.root)
+    identity = snapshot_identity(manifest)
+    if identity["decision_date"] != date_token:
+        raise ValueError(
+            "snapshot manifest decision_date "
+            f"{identity['decision_date']!r} != requested {date_token!r}"
+        )
+    manifest_style = identity["strategy_style"]
+    if (
+        manifest_style is not None
+        and str(manifest_style) != str(strategy_style)
+    ):
+        raise ValueError(
+            f"snapshot manifest strategy_style {manifest_style!r} != "
+            f"requested {strategy_style!r}"
+        )
+    if policy_version is not None and str(policy_version) != identity["policy_version"]:
+        raise ValueError(
+            "caller policy_version "
+            f"{policy_version!r} != target manifest {identity['policy_version']!r}"
+        )
+    if layout_version is not None and str(layout_version) != identity["layout_version"]:
+        raise ValueError(
+            "caller layout_version "
+            f"{layout_version!r} != target manifest {identity['layout_version']!r}"
+        )
+
     try:
         rel_dir = snap_paths.root.relative_to(root).as_posix()
     except ValueError:
         rel_dir = f"{decision_date}/{snap_paths.root.name}"
     pointer = {
-        "decision_date": str(decision_date),
-        "strategy_style": strategy_style,
-        "decision_policy_version": str(policy_version),
-        "report_layout_version": str(layout_version),
+        "decision_date": date_token,
+        "strategy_style": identity["strategy_style"],
+        "decision_policy_version": identity["policy_version"],
+        "report_layout_version": identity["layout_version"],
         "snapshot_dir": rel_dir,
         "action_list_md": f"{rel_dir}/action_list.md",
         "weekly_review_md": f"{rel_dir}/weekly_review.md",
         "run_manifest_json": f"{rel_dir}/run_manifest.json",
     }
+    if identity.get("quality_policy_version"):
+        pointer["quality_policy_version"] = identity["quality_policy_version"]
+    if identity.get("entry_policy_version"):
+        pointer["entry_policy_version"] = identity["entry_policy_version"]
     pointer_path = root / f"latest_{strategy_style or 'default'}.json"
-    pointer_path.write_text(
-        json.dumps(pointer, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    if pointer_path.is_file():
+        existing = load_latest_pointer_payload(pointer_path)
+        existing_day = date_module.fromisoformat(
+            str(existing.get("decision_date", ""))[:10]
+        )
+        if existing_day > requested_day:
+            raise ValueError(
+                "refusing to move latest pointer backwards: "
+                f"existing {existing_day.isoformat()} > requested {date_token}"
+            )
+
+    tmp_path = pointer_path.with_name(f".{pointer_path.name}.{os.getpid()}.tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(pointer, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, pointer_path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
     return pointer_path
+
+
+def load_latest_pointer_payload(pointer_path: Path) -> dict[str, Any]:
+    """Parse an existing latest pointer; corrupt pointers fail closed."""
+    try:
+        payload = json.loads(pointer_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"existing latest pointer is unreadable: {pointer_path}"
+        ) from exc
+    if not isinstance(payload, dict) or not payload.get("decision_date"):
+        raise ValueError(
+            f"existing latest pointer is malformed: {pointer_path}"
+        )
+    try:
+        date_module.fromisoformat(str(payload["decision_date"])[:10])
+    except ValueError as exc:
+        raise ValueError(
+            f"existing latest pointer has an invalid decision_date: {pointer_path}"
+        ) from exc
+    return payload
 
 
 def run_scan(
@@ -4249,7 +4487,40 @@ def run_scan(
     decision_output_root: str | None = None,
     decision_attention_cap: int = DEFAULT_ATTENTION_CAP,
     allow_existing_decision_snapshot: bool = False,
+    freshness_now_utc: datetime | None = None,
 ) -> Path:
+    """Legacy-compatible scan entry: returns the ranked CSV path.
+
+    The full structured outcome (canonical snapshot / pointer / shadow
+    status) is available through ``run_scan_with_status``; this wrapper keeps
+    every existing ``run_scan(...) -> Path`` caller working unchanged.
+    """
+    return run_scan_with_status(
+        config,
+        output_path,
+        diagnostics_output_path,
+        network_report_output_path,
+        report_output_path,
+        scan_config_path,
+        decision_output_root,
+        decision_attention_cap,
+        allow_existing_decision_snapshot,
+        freshness_now_utc,
+    ).output_path
+
+
+def run_scan_with_status(
+    config: ScanConfig,
+    output_path: str | None = None,
+    diagnostics_output_path: str | None = None,
+    network_report_output_path: str | None = None,
+    report_output_path: str | None = None,
+    scan_config_path: str | None = None,
+    decision_output_root: str | None = None,
+    decision_attention_cap: int = DEFAULT_ATTENTION_CAP,
+    allow_existing_decision_snapshot: bool = False,
+    freshness_now_utc: datetime | None = None,
+) -> ScanRunStatus:
     def resolve_top_n(value: Any, fallback: int) -> int:
         try:
             resolved = int(value)
@@ -5312,6 +5583,11 @@ def run_scan(
 
     decision_snapshot_root: Path | None = None
     decision_output_error: str | None = None
+    decision_output_status = "not_attempted"
+    latest_pointer_status = "not_applicable"
+    latest_pointer_error: str | None = None
+    shadow_status: str | None = None
+    strict_decision_output = discovery_source_summary is not None
     try:
         decision_date = resolve_market_decision_date(
             df,
@@ -5359,12 +5635,19 @@ def run_scan(
         code_sha = resolve_git_commit_sha()
         policy_version = getattr(config, "decision_policy_version", "v1") or "v1"
         layout_version = getattr(config, "report_layout_version", "v1") or "v1"
+        # R03: the live run clock's most recent expected completed session.
+        # This is an independent freshness baseline; it never replaces
+        # decision_date and replays never pass it.
+        runtime_reference_date = latest_completed_session(
+            freshness_now_utc or datetime.now(timezone.utc)
+        ).isoformat()
         run_prov_payload = {
             "code_sha": code_sha,
             "config_fingerprint": config_fingerprint,
             "strategy_style": config.strategy_style,
             "scan_config_path": scan_config_path,
             "watchlist_csv_path": config.watchlist_csv_path,
+            "runtime_reference_session": runtime_reference_date,
         }
         decisions = build_stock_decisions(
             df,
@@ -5374,6 +5657,7 @@ def run_scan(
             source_lists_by_symbol=source_lists,
             run_provenance=run_prov_payload,
             policy_version=policy_version,
+            runtime_reference_date=runtime_reference_date,
         )
         candidate_universe_summary = build_candidate_universe_summary(
             discovery_symbols=watchlist_allowlist,
@@ -5442,112 +5726,174 @@ def run_scan(
             strategy_style=config.strategy_style,
         )
         if allow_existing_decision_snapshot and existing_paths.root.exists():
-            decision_snapshot_root = existing_paths.root
-            log_status(
-                started_at,
-                "INFO",
-                "MVP decision snapshot already exists for "
-                f"{decision_date}/{config.strategy_style}: "
-                f"{existing_paths.root} (preserved immutable snapshot)",
+            reuse_status, reuse_error = _evaluate_existing_snapshot_reuse(
+                existing_paths.root,
+                decision_date=decision_date,
+                strategy_style=config.strategy_style,
+                policy_version=policy_version,
+                layout_version=layout_version,
             )
+            decision_output_status = reuse_status
+            if reuse_error is not None:
+                decision_output_error = reuse_error
+            if reuse_status == "reused":
+                decision_snapshot_root = existing_paths.root
+                log_status(
+                    started_at,
+                    "INFO",
+                    "MVP decision snapshot already exists for "
+                    f"{decision_date}/{config.strategy_style}: "
+                    f"{existing_paths.root} (preserved immutable snapshot; "
+                    f"identity policy={policy_version} layout={layout_version})",
+                )
+            else:
+                log_status(
+                    started_at,
+                    "WARN",
+                    "MVP decision snapshot was NOT reused: " f"{decision_output_error}",
+                )
+                if strict_decision_output:
+                    raise ValueError(decision_output_error or "snapshot reuse rejected")
         else:
-            decision_paths = write_decision_snapshot(
-                output_root=snapshot_root,
-                strategy_style=config.strategy_style,
-                decisions=decisions,
-                daily_attention=daily_attention,
-                weekly_attention=weekly_attention,
-                generated_at_utc=finished_at.isoformat(),
-                decision_date=decision_date,
-                config_fingerprint=config_fingerprint,
-                code_sha=code_sha,
-                universe_exclusions=universe_exclusions,
-                candidate_universe_summary=candidate_universe_summary,
-                discovery_memberships=discovery_memberships,
-                discovery_source_rejections=discovery_rejections,
-                discovery_source_summary=discovery_source_summary,
-                input_provenance=input_prov_payload,
-                ticker_map_rows=ticker_map_rows_arg,
-                policy_version=policy_version,
-                layout_version=layout_version,
-            )
-            decision_snapshot_root = decision_paths.root
-            log_status(
-                started_at,
-                "INFO",
-                "MVP decision snapshot: "
-                f"{decision_paths.root} | decisions={len(decisions)} "
-                f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
-            )
+            try:
+                decision_paths = write_decision_snapshot(
+                    output_root=snapshot_root,
+                    strategy_style=config.strategy_style,
+                    decisions=decisions,
+                    daily_attention=daily_attention,
+                    weekly_attention=weekly_attention,
+                    generated_at_utc=finished_at.isoformat(),
+                    decision_date=decision_date,
+                    config_fingerprint=config_fingerprint,
+                    code_sha=code_sha,
+                    universe_exclusions=universe_exclusions,
+                    candidate_universe_summary=candidate_universe_summary,
+                    discovery_memberships=discovery_memberships,
+                    discovery_source_rejections=discovery_rejections,
+                    discovery_source_summary=discovery_source_summary,
+                    input_provenance=input_prov_payload,
+                    ticker_map_rows=ticker_map_rows_arg,
+                    policy_version=policy_version,
+                    layout_version=layout_version,
+                )
+                decision_snapshot_root = decision_paths.root
+                decision_output_status = "written"
+                log_status(
+                    started_at,
+                    "INFO",
+                    "MVP decision snapshot: "
+                    f"{decision_paths.root} | decisions={len(decisions)} "
+                    f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
+                )
+            except Exception as exc:
+                if strict_decision_output:
+                    raise
+                decision_output_status = "failed"
+                decision_output_error = f"{type(exc).__name__}: {exc}"
+                log_status(
+                    started_at,
+                    "WARN",
+                    "MVP decision snapshot failed without affecting legacy outputs: "
+                    f"{decision_output_error}",
+                )
         if decision_snapshot_root is not None and config.max_symbols is None:
-            latest_pointer_path = write_latest_decision_pointer(
-                snapshot_root,
-                decision_date=decision_date,
-                strategy_style=config.strategy_style,
-                policy_version=policy_version,
-                layout_version=layout_version,
-            )
-            log_status(
-                started_at,
-                "INFO",
-                f"MVP latest snapshot pointer: {latest_pointer_path}",
-            )
+            try:
+                latest_pointer_path = write_latest_decision_pointer(
+                    snapshot_root,
+                    decision_date=decision_date,
+                    strategy_style=config.strategy_style,
+                    policy_version=policy_version,
+                    layout_version=layout_version,
+                )
+                latest_pointer_status = "written"
+                log_status(
+                    started_at,
+                    "INFO",
+                    f"MVP latest snapshot pointer: {latest_pointer_path}",
+                )
+            except Exception as exc:
+                if strict_decision_output:
+                    raise
+                latest_pointer_status = "failed"
+                latest_pointer_error = f"{type(exc).__name__}: {exc}"
+                log_status(
+                    started_at,
+                    "WARN",
+                    "MVP latest pointer failed without affecting legacy outputs: "
+                    f"{latest_pointer_error}",
+                )
         if getattr(config, "enable_v2_shadow", False) and policy_version == "v1":
-            shadow_style = f"{config.strategy_style or 'default'}_shadow_v2"
-            shadow_prev = load_previous_snapshot(
-                snapshot_root,
-                decision_date,
-                strategy_style=shadow_style,
-            )
-            shadow_prev_by_symbol = {d.symbol: d for d in shadow_prev}
-            shadow_decisions = build_stock_decisions(
-                df,
-                decision_date=decision_date,
-                generated_at_utc=finished_at.isoformat(),
-                previous_by_symbol=shadow_prev_by_symbol,
-                source_lists_by_symbol=source_lists,
-                run_provenance=run_prov_payload,
-                policy_version="v2",
-            )
-            shadow_daily = select_daily_attention(
-                shadow_decisions,
-                cap=decision_attention_cap,
-            )
-            shadow_weekly = select_weekly_attention(
-                shadow_decisions,
-                cap=decision_attention_cap,
-            )
-            shadow_paths = write_decision_snapshot(
-                output_root=snapshot_root,
-                strategy_style=shadow_style,
-                decisions=shadow_decisions,
-                daily_attention=shadow_daily,
-                weekly_attention=shadow_weekly,
-                generated_at_utc=finished_at.isoformat(),
-                decision_date=decision_date,
-                config_fingerprint=config_fingerprint,
-                code_sha=code_sha,
-                universe_exclusions=universe_exclusions,
-                candidate_universe_summary=candidate_universe_summary,
-                discovery_memberships=discovery_memberships,
-                discovery_source_rejections=discovery_rejections,
-                discovery_source_summary=discovery_source_summary,
-                input_provenance=input_prov_payload,
-                ticker_map_rows=ticker_map_rows_arg,
-                policy_version="v2",
-                layout_version="v2",
-            )
-            log_status(
-                started_at,
-                "INFO",
-                "MVP v2 shadow snapshot: "
-                f"{shadow_paths.root} | decisions={len(shadow_decisions)} "
-                f"| daily={len(shadow_daily)} | weekly={len(shadow_weekly)}",
-            )
+            shadow_status = "failed"
+            try:
+                shadow_style = f"{config.strategy_style or 'default'}_shadow_v2"
+                shadow_prev = load_previous_snapshot(
+                    snapshot_root,
+                    decision_date,
+                    strategy_style=shadow_style,
+                )
+                shadow_prev_by_symbol = {d.symbol: d for d in shadow_prev}
+                shadow_decisions = build_stock_decisions(
+                    df,
+                    decision_date=decision_date,
+                    generated_at_utc=finished_at.isoformat(),
+                    previous_by_symbol=shadow_prev_by_symbol,
+                    source_lists_by_symbol=source_lists,
+                    run_provenance=run_prov_payload,
+                    policy_version="v2",
+                    runtime_reference_date=runtime_reference_date,
+                )
+                shadow_daily = select_daily_attention(
+                    shadow_decisions,
+                    cap=decision_attention_cap,
+                )
+                shadow_weekly = select_weekly_attention(
+                    shadow_decisions,
+                    cap=decision_attention_cap,
+                )
+                shadow_paths = write_decision_snapshot(
+                    output_root=snapshot_root,
+                    strategy_style=shadow_style,
+                    decisions=shadow_decisions,
+                    daily_attention=shadow_daily,
+                    weekly_attention=shadow_weekly,
+                    generated_at_utc=finished_at.isoformat(),
+                    decision_date=decision_date,
+                    config_fingerprint=config_fingerprint,
+                    code_sha=code_sha,
+                    universe_exclusions=universe_exclusions,
+                    candidate_universe_summary=candidate_universe_summary,
+                    discovery_memberships=discovery_memberships,
+                    discovery_source_rejections=discovery_rejections,
+                    discovery_source_summary=discovery_source_summary,
+                    input_provenance=input_prov_payload,
+                    ticker_map_rows=ticker_map_rows_arg,
+                    policy_version="v2",
+                    layout_version="v2",
+                )
+                shadow_status = "written"
+                log_status(
+                    started_at,
+                    "INFO",
+                    "MVP v2 shadow snapshot: "
+                    f"{shadow_paths.root} | decisions={len(shadow_decisions)} "
+                    f"| daily={len(shadow_daily)} | weekly={len(shadow_weekly)}",
+                )
+            except Exception as exc:
+                if strict_decision_output:
+                    raise
+                shadow_status = "failed"
+                log_status(
+                    started_at,
+                    "WARN",
+                    "MVP v2 shadow snapshot failed (main flow unaffected): "
+                    f"{type(exc).__name__}: {exc}",
+                )
     except Exception as exc:
         if discovery_source_summary is not None:
             # Opt-in provenance and as-of violations must never be soft warnings.
             raise
+        if decision_output_status == "not_attempted":
+            decision_output_status = "failed"
         decision_output_error = f"{type(exc).__name__}: {exc}"
         log_status(
             started_at,
@@ -5708,7 +6054,19 @@ def run_scan(
             )
     print("=== End Research Pool ===")
     log_status(started_at, "INFO", "Scan completed successfully.")
-    return out_path
+    if latest_pointer_status == "not_applicable" and config.max_symbols is None:
+        # Pointer was applicable but the main snapshot failed before reaching it.
+        latest_pointer_status = "not_attempted"
+    return ScanRunStatus(
+        output_path=out_path,
+        report_path=paths["report_md"],
+        decision_snapshot_root=decision_snapshot_root,
+        decision_output_status=decision_output_status,
+        decision_output_error=decision_output_error,
+        latest_pointer_status=latest_pointer_status,
+        latest_pointer_error=latest_pointer_error,
+        shadow_status=shadow_status,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

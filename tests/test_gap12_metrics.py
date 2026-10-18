@@ -456,8 +456,11 @@ class Gap12MetricTests(unittest.TestCase):
         out = load_one_fundamental(sec, "INF", "0000000004", cfg)
         self.assertEqual(out["current_debt_ratio_source"], "inferred_total_debt_capped_by_current_liabilities")
         self.assertAlmostEqual(float(out["current_debt_ratio"]), 0.4, places=6)
-        self.assertEqual(out["inventory_growth_gap_source"], "inferred_inventory_not_applicable")
-        self.assertAlmostEqual(float(out["inventory_growth_gap"]), 0.0, places=6)
+        # R01: missing inventory tags stay unknown; they no longer become a
+        # supportive "not applicable" zero gap.
+        self.assertEqual(out["inventory_growth_gap_source"], "missing")
+        self.assertIsNone(out["inventory_growth_gap"])
+        self.assertIsNone(out["inventory_growth_gap_inferred"])
 
     def test_hard_filter_coverage_mode_and_low_coverage_override(self) -> None:
         cfg = ScanConfig(metric_hard_filter_coverage_mode="high_coverage_only")

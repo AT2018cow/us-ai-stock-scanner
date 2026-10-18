@@ -19,7 +19,11 @@ def _load(name: str, relpath: str):
     return module
 
 
-scanner = _load("ai_value_scanner.scanner", "src/ai_value_scanner/scanner.py")
+# Load the scanner source under an isolated module name: binding it to the
+# real ``ai_value_scanner.scanner`` key would replace the package module in
+# ``sys.modules`` and leave every previously imported reference stale (R04
+# identity checks exposed this cross-test pollution).
+scanner = _load("io_safety_scanner", "src/ai_value_scanner/scanner.py")
 theme_obs = _load("theme_observation_scan", "scripts/theme_observation_scan.py")
 
 
