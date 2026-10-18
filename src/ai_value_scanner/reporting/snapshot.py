@@ -52,7 +52,7 @@ class DecisionSnapshotPaths:
 # be byte-verified by the validator; older snapshots are validated structurally
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-10-18"
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-10-18b"
 
 
 def _safe_style(style: str | None) -> str:

@@ -34,6 +34,7 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_action_list_v2,
     render_detailed_report,
+    render_detailed_report_v2,
 )
 
 
@@ -89,6 +90,7 @@ def _decision(
     quality_positives: tuple[EvidenceItem, ...] | None = None,
     quality_risks: tuple[EvidenceItem, ...] = (),
     quality_missing: tuple[EvidenceItem, ...] = (),
+    provenance: dict[str, str] | None = None,
 ) -> StockDecision:
     if quality_positives is None:
         quality_positives = (
@@ -117,7 +119,9 @@ def _decision(
         quality=quality, entry=entry, action_state=action, priority=priority,
         rationale=(), review_trigger="Review now.",
         source_lists=("research_pool",),
-        provenance={"cik": "0001108524"},
+        provenance=(
+            dict(provenance) if provenance is not None else {"cik": "0001108524"}
+        ),
     )
 
 
@@ -777,6 +781,101 @@ class TestGrowthCompounderOffenseTrack(unittest.TestCase):
             action_md = (root / "action_list.md").read_text(encoding="utf-8")
             self.assertIn("Growth Compounder Leaders", action_md)
             self.assertIn("[Full Report →](./detailed/P01.md)", action_md)
+
+
+class ForeignFilerAnnualDisclosureTests(unittest.TestCase):
+    """20-F/40-F filers: annual-cadence wording, not quarterly pre-earnings."""
+
+    @staticmethod
+    def _pre_earnings(age: int = 169) -> EvidenceItem:
+        return _ev(
+            "pre_earnings_window_risk", polarity="negative",
+            metric="fundamental_data_age_days", value=age,
+            threshold="<70d before next quarterly window",
+            label="Pre-earnings window (aging filing)",
+        )
+
+    def _annual_decision(self, form: str = "20-F", **kwargs) -> StockDecision:
+        kwargs.setdefault("quality_risks", (self._pre_earnings(),))
+        kwargs.setdefault(
+            "provenance",
+            {"cik": "0001513845", "fundamental_latest_periodic_form": form},
+        )
+        return _decision(**kwargs)
+
+    def test_badge_swapped_for_annual_forms(self) -> None:
+        for form in ("20-F", "40-F", "20-F/A"):
+            card = build_stock_card_view_model(self._annual_decision(form))
+            self.assertIn("⚠️Foreign-Filer(Annual)", card.warning_badges_inline)
+            self.assertNotIn("Pre-Earnings", card.warning_badges_inline)
+
+    def test_domestic_filer_keeps_pre_earnings_wording(self) -> None:
+        decision = _decision(
+            quality_risks=(self._pre_earnings(),),
+            provenance={
+                "cik": "0001108524",
+                "fundamental_latest_periodic_form": "10-Q",
+            },
+        )
+        card = build_stock_card_view_model(decision)
+        self.assertIn("⚠️Pre-Earnings(169d)", card.warning_badges_inline)
+
+    def test_missing_form_fails_open(self) -> None:
+        card = build_stock_card_view_model(
+            _decision(quality_risks=(self._pre_earnings(),))
+        )
+        self.assertIn("⚠️Pre-Earnings(169d)", card.warning_badges_inline)
+
+    def test_watchout_fragment_uses_annual_cadence_wording(self) -> None:
+        card = build_stock_card_view_model(self._annual_decision())
+        self.assertNotIn("Pre-Earnings", card.fundamental_watchouts_inline)
+        self.assertIn(
+            "⚠️ Foreign-Filer (Annual 20-F; "
+            "quarterly results (6-K) not machine-visible)",
+            card.fundamental_watchouts_inline,
+        )
+
+    def test_data_status_line_marks_annual_filing(self) -> None:
+        card = build_stock_card_view_model(self._annual_decision())
+        self.assertIn("Filing: Annual (20-F)", card.data_trust.freshness_display)
+        self.assertIn(
+            "quarterly results (6-K) not machine-visible",
+            card.data_trust.freshness_display,
+        )
+
+    def test_domestic_data_status_unchanged(self) -> None:
+        card = build_stock_card_view_model(
+            _decision(quality_risks=(self._pre_earnings(),))
+        )
+        self.assertEqual(
+            card.data_trust.freshness_display,
+            "Filing 2026-08-27 (46d) · Market 2026-10-12 (0d)",
+        )
+
+    def test_pillar_and_counter_rows_use_annual_wording(self) -> None:
+        card = build_stock_card_view_model(self._annual_decision())
+        summaries = [
+            item.summary_text
+            for pillar in card.quality_pillars
+            for item in pillar.risk_or_missing_items
+        ]
+        self.assertIn("Foreign-Filer Filing Age: 169d", summaries)
+        targets = [item.target_band for item in card.all_counter_evidence]
+        self.assertIn(
+            "Annual cadence (20-F); "
+            "quarterly results (6-K) not machine-visible",
+            targets,
+        )
+
+    def test_rendered_reports_show_annual_disclosure(self) -> None:
+        decision = self._annual_decision(symbol="FGN")
+        detailed = render_detailed_report_v2(decision)
+        self.assertIn("Foreign-Filer Filing Age", detailed)
+        self.assertIn("Filing: Annual (20-F)", detailed)
+        self.assertNotIn("Pre-Earnings Filing Age", detailed)
+        action = render_action_list_v2([decision], title="T", cadence="daily")
+        self.assertIn("⚠️Foreign-Filer(Annual)", action)
+        self.assertIn("Filing: Annual (20-F)", action)
 
 
 if __name__ == "__main__":

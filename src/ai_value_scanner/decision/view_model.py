@@ -377,8 +377,29 @@ def _short_label(label: str) -> str:
     return text
 
 
-def _compact_label(item: EvidenceItem) -> str:
+_ANNUAL_ONLY_FILING_FORMS = frozenset({"20-F", "40-F"})
+
+
+def _annual_filer_form(decision: StockDecision) -> str | None:
+    """Return the annual-only form (20-F/40-F) from decision provenance, else None.
+
+    Display-only classification: foreign private issuers furnish quarterly
+    results on Form 6-K, which are not part of the XBRL machine-readable feed,
+    so their structured data ages with the annual report and must not be
+    described with quarterly pre-earnings wording. Missing provenance fails
+    open to the existing presentation.
+    """
+    raw = decision.provenance.get("fundamental_latest_periodic_form")
+    if raw is None:
+        return None
+    form = str(raw).strip().upper().split("/", 1)[0].strip()
+    return form if form in _ANNUAL_ONLY_FILING_FORMS else None
+
+
+def _compact_label(item: EvidenceItem, *, annual_form: str | None = None) -> str:
     if item.code == "pre_earnings_window_risk":
+        if annual_form:
+            return "Foreign-Filer Filing Age"
         return "Pre-Earnings Filing Age"
     if item.code == "shares_yoy_split_or_basis_discontinuity":
         return "Shares YoY (Split/Basis)"
@@ -393,11 +414,18 @@ def _compact_label(item: EvidenceItem) -> str:
     return _short_label(item.label)
 
 
-def _format_evidence_row(item: EvidenceItem) -> FormattedEvidenceRow:
+def _format_evidence_row(
+    item: EvidenceItem, *, annual_form: str | None = None
+) -> FormattedEvidenceRow:
     formatted = format_metric_value(item.metric, item.value)
     target = "n/a" if item.threshold is None else str(item.threshold).replace("\n", " ")
     target = target.replace("|accrual|", "abs(accrual)")
-    short = _compact_label(item)
+    if item.code == "pre_earnings_window_risk" and annual_form:
+        target = (
+            f"Annual cadence ({annual_form}); "
+            "quarterly results (6-K) not machine-visible"
+        )
+    short = _compact_label(item, annual_form=annual_form)
     return FormattedEvidenceRow(
         code=item.code,
         label=item.label,
@@ -426,14 +454,19 @@ def _build_quality_pillars(decision: StockDecision) -> tuple[QualityPillarRow, .
     by_pillar_risk: dict[str, list[FormattedEvidenceRow]] = {
         key: [] for key, _, _ in _PILLAR_ORDER
     }
+    annual_form = _annual_filer_form(decision)
     for item in decision.quality.positives:
         if item.code == "fundamental_data_fresh":
             continue
         pillar = _PILLAR_METRIC_TO_KEY.get(item.metric or "", "operating_red_flags")
-        by_pillar_support[pillar].append(_format_evidence_row(item))
+        by_pillar_support[pillar].append(
+            _format_evidence_row(item, annual_form=annual_form)
+        )
     for item in (*decision.quality.risks, *decision.quality.missing):
         pillar = _PILLAR_METRIC_TO_KEY.get(item.metric or "", "operating_red_flags")
-        by_pillar_risk[pillar].append(_format_evidence_row(item))
+        by_pillar_risk[pillar].append(
+            _format_evidence_row(item, annual_form=annual_form)
+        )
     rows: list[QualityPillarRow] = []
     for key, label, _metrics in _PILLAR_ORDER:
         score = decision.quality.component_scores.get(key)
@@ -693,8 +726,15 @@ _FRESHNESS_POSITIVE_CODES = frozenset(
 )
 
 
-def _inline_fragment(item: EvidenceItem) -> str:
+def _inline_fragment(
+    item: EvidenceItem, *, annual_form: str | None = None
+) -> str:
     if item.code == "pre_earnings_window_risk":
+        if annual_form:
+            return (
+                f"⚠️ Foreign-Filer (Annual {annual_form}; "
+                "quarterly results (6-K) not machine-visible)"
+            )
         return f"⚠️ Pre-Earnings ({format_metric_value(item.metric, item.value)} filing)"
     if item.code == "shares_yoy_split_or_basis_discontinuity":
         return f"⚠️ Share Split/Basis ({format_metric_value(item.metric, item.value)})"
@@ -811,9 +851,16 @@ def _gate_warning_fragment(
 
 
 def _build_fundamental_watchouts_inline(decision: StockDecision) -> str:
-    fragments = [_inline_fragment(item) for item in decision.quality.risks[:3]]
+    annual_form = _annual_filer_form(decision)
+    fragments = [
+        _inline_fragment(item, annual_form=annual_form)
+        for item in decision.quality.risks[:3]
+    ]
     if decision.quality.missing:
-        miss_labels = [_compact_label(item) for item in decision.quality.missing[:2]]
+        miss_labels = [
+            _compact_label(item, annual_form=annual_form)
+            for item in decision.quality.missing[:2]
+        ]
         suffix = (
             f" (+{len(decision.quality.missing) - 2})"
             if len(decision.quality.missing) > 2
@@ -863,8 +910,13 @@ def _build_top_risks_inline(
     decision: StockDecision,
     checklist: tuple[EntryGateCheckRow, ...],
 ) -> str:
+    annual_form = _annual_filer_form(decision)
     candidates = (*decision.quality.risks, *decision.entry.risks)
-    fragments = [_inline_fragment(item) for item in candidates[:2] if _inline_fragment(item)]
+    fragments = [
+        _inline_fragment(item, annual_form=annual_form)
+        for item in candidates[:2]
+        if _inline_fragment(item, annual_form=annual_form)
+    ]
     if decision.entry.state is not EntryState.ENTRY_READY:
         unmet = _unmet_gate_keys(decision)
         if unmet:
@@ -970,10 +1022,17 @@ def _build_data_trust_badge(decision: StockDecision) -> DataTrustBadge:
             entity_display = "n/a"
 
     decision_day = _parse_iso_day(decision.decision_date)
-    freshness_display = (
-        f"Filing {_freshness_token(decision.quality.data_asof, decision_day)}"
-        f" · Market {_freshness_token(decision.entry.market_asof, decision_day)}"
-    )
+    filing_token = _freshness_token(decision.quality.data_asof, decision_day)
+    market_token = _freshness_token(decision.entry.market_asof, decision_day)
+    annual_form = _annual_filer_form(decision)
+    if annual_form:
+        freshness_display = (
+            f"Filing: Annual ({annual_form}) {filing_token}"
+            " · quarterly results (6-K) not machine-visible"
+            f" · Market {market_token}"
+        )
+    else:
+        freshness_display = f"Filing {filing_token} · Market {market_token}"
 
     warnings: list[str] = []
     if identity_unverified:
@@ -1024,8 +1083,12 @@ def _build_warning_badges_inline(
 ) -> str:
     """Ultra-compact warning badges for <summary> headers."""
     badges: list[str] = []
+    annual_form = _annual_filer_form(decision)
     for item in decision.quality.risks:
         if item.code == "pre_earnings_window_risk":
+            if annual_form:
+                badges.append("⚠️Foreign-Filer(Annual)")
+                break
             try:
                 age = int(item.value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
@@ -1119,8 +1182,9 @@ def build_stock_card_view_model(
 ) -> StockCardViewModel:
     """Build the presentation view model for one canonical decision."""
     checklist = _build_entry_checklist(decision)
+    annual_form = _annual_filer_form(decision)
     counter = tuple(
-        _format_evidence_row(item)
+        _format_evidence_row(item, annual_form=annual_form)
         for item in (
             *decision.quality.risks,
             *(
@@ -1131,7 +1195,7 @@ def build_stock_card_view_model(
         )
     )
     missing = tuple(
-        _format_evidence_row(item)
+        _format_evidence_row(item, annual_form=annual_form)
         for item in (
             *decision.quality.missing,
             *(
