@@ -283,9 +283,9 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 
 - `configs/config.risk_off.json`（默认配置，防守腿）：低吸回调 + 质量 + QQQ 深度熊市熔断（SMA200 破线熄火）。
 - `configs/config.risk_on.json`（进攻腿）：双动量结构——QQQ 绝对动量开关 + momentum 清单相对选择（`momentum_min_return_60d=0.10`）。
-- 观察期协议见 `docs/two_style_observation_protocol.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
+- 观察期协议见 `docs/archive/experiments/two_style_observation_protocol.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
 
-两风格各自的验证证据与历史沿革见 `docs/style_evolution_history.md`（Phase 0-4 完整记录）。
+两风格各自的验证证据与历史沿革见 `docs/archive/experiments/style_evolution_history.md`（Phase 0-4 完整记录）。
 
 另有一套候选生产配置：
 
@@ -956,7 +956,7 @@ near-miss 诊断：
 .venv/bin/python scripts/observation_scan.py --skip-scan
 ```
 
-每次扫描自动归档 watchlist 快照到 `data/watchlist_history/`（用于 PIT 回测）。观察指标与审查触发条件见 `docs/two_style_observation_protocol.md`。
+每次扫描自动归档 watchlist 快照到 `data/watchlist_history/`（用于 PIT 回测）。观察指标与审查触发条件见 `docs/archive/experiments/two_style_observation_protocol.md`。
 
 ### 13.2 `scripts/refresh_ai_watchlist.py` —— 刷新 ETF 持仓 watchlist
 
@@ -991,6 +991,8 @@ python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --n
 避免未来的 smallcap 重建再次注入已退休代码。SEC 映射不可用（无 `SEC_USER_AGENT` 或网络
 异常）时打印警告并优雅跳过；Alpaca 凭证不可用时仅按 SEC + 本地 `cache/` 历史映射对账。
 运行顺序建议：refresh watchlist → smallcap builder → scan。
+
+**建议刷新节奏**：每月一次（可固定在每月第一个周末）；3/6/9/12 月（指数季度重构于第三个周五之后生效）的那次顺延到重构后几天；增删 ETF 源、发现热门新股不在池中、或开启新的前瞻观察窗口之前，按需额外刷新。无需更频繁——ETF 成分为低频变动，频繁刷新只会积累重复快照；单次刷新约 20 秒，正式刷新前可先用 `--dry-run` 零写入预演。
 
 ### 13.3 `scripts/build_smallcap_universe.py` —— 构建小盘研究层
 
