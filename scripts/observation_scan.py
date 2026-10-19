@@ -10,15 +10,53 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import glob
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 STYLES = [
     ("risk_off", "configs/config.risk_off.json"),
     ("risk_on", "configs/config.risk_on.json"),
 ]
+
+# Reports live at the outputs root for fresh scans and under the monthly
+# archive (`outputs/scans/<YYYY-MM>/`, README §8.1) after a tidy.
+REPORT_GLOBS = (
+    "outputs/ai_value_scan_*_ranked_report.md",
+    "outputs/scans/*/ai_value_scan_*_ranked_report.md",
+)
+
+
+def _recent_report_paths(root: str | Path = ".") -> list[str]:
+    """Ranked style reports (full or capped/sample scopes), newest first."""
+    base = Path(root)
+    paths: set[str] = set()
+    for pattern in REPORT_GLOBS:
+        paths.update(glob.glob(str(base / pattern)))
+    return sorted(
+        paths, key=lambda path: Path(path).stat().st_mtime, reverse=True
+    )
+
+
+def _pick_reports_by_style(paths: Sequence[str]) -> dict[str, str]:
+    """Newest report per style, matched via the report's ``Config:`` header.
+
+    Header matching (not mtime pairing) keeps theme-scan reports from being
+    mislabelled as style reports.
+    """
+    picked: dict[str, str] = {}
+    for path in paths:
+        try:
+            head = Path(path).read_text()[:400]
+        except OSError:
+            continue
+        for label, cfg_name in STYLES:
+            if f"Config: {cfg_name}" in head and label not in picked:
+                picked[label] = path
+    return picked
 
 
 def main() -> None:
@@ -41,52 +79,20 @@ def main() -> None:
 
     # Observation summary — interleaved with scan so each style reads its own report.
     print(f"\n{'='*70}\n[observation summary]\n{'='*70}", flush=True)
-    import glob
-    import re
-    from pathlib import Path as _P
 
-    if args.skip_scan:
-        # No new scan: pick the newest AI-style report per style via the
-        # Config header (theme scans write reports with config.theme.*.json —
-        # mtime-order pairing would mislabel a theme report as a style).
-        import os
-        reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
-                         key=lambda p: _P(p).stat().st_mtime)
-        by_style: dict[str, str] = {}
-        for path in reversed(reports):
-            try:
-                head = _P(path).read_text()[:400]
-            except OSError:
-                continue
-            for label, cfg_name in STYLES:
-                if f"Config: {cfg_name}" in head and label not in by_style:
-                    by_style[label] = path
-        if len(by_style) < len(STYLES):
-            print("[skip-scan] fewer style reports than styles; run a full observation scan first.", flush=True)
+    by_style = _pick_reports_by_style(_recent_report_paths())
+    if len(by_style) < len(STYLES):
+        if args.skip_scan:
+            print(
+                "[skip-scan] fewer style reports than styles; run a full "
+                "observation scan first.",
+                flush=True,
+            )
             return
-        for label, _cfg in STYLES:
+        print("[warning] fewer reports than styles; scan may have failed.", flush=True)
+    for label, _cfg in STYLES:
+        if label in by_style:
             _print_summary(label, by_style[label])
-    else:
-        # We just ran the scans: the two reports this process wrote are the
-        # newest two of their styles (glob returns them last); verify via
-        # Config headers to stay theme-scan-proof.
-        import os
-        style_reports = sorted(glob.glob("outputs/ai_value_scan_*_full_ranked_report.md"),
-                               key=lambda p: _P(p).stat().st_mtime)
-        picked: dict[str, str] = {}
-        for path in reversed(style_reports):
-            try:
-                head = _P(path).read_text()[:400]
-            except OSError:
-                continue
-            for label, cfg_name in STYLES:
-                if f"Config: {cfg_name}" in head and label not in picked:
-                    picked[label] = path
-        if len(picked) < len(STYLES):
-            print("[warning] fewer reports than styles; scan may have failed.", flush=True)
-        for label, _cfg in STYLES:
-            if label in picked:
-                _print_summary(label, picked[label])
 
     print(
         "\nObservation reminder: record signal counts, style feature mirror stats, "
