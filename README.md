@@ -773,6 +773,28 @@ python run_scan.py --help
 
 `max_accrual_ratio` 过滤只惩罚高正值应计（利润未转化为现金）；负应计（经营现金流显著超过净利润）是盈利质量好的信号，不会被剔除。
 
+### 8.1 目录约定与每月整理
+
+报告类产物按"是否入 Git + 是否被冻结文档引用"分层，整理时对号入座：
+
+| 位置 | 内容 | 入 Git | 规则 |
+|---|---|---|---|
+| `outputs/decisions/<日期>/<风格>/` | **官方决策快照**（Action List / `detailed/` / `weekly_review.md` / `decisions.jsonl`） | 否 | 产品主输出；`latest_*.json` 指向当前快照；不要随意清理 |
+| `outputs/scans/<YYYY-MM>/` | 日常扫描原始产物（`ai_value_scan_*`） | 否 | 每次 cron/扫描产生；**每月归档一次**（见下方命令） |
+| `outputs/_archive_superseded_<日期>/` | 过期的一次性预览/实验目录 | 否 | 只移不删，保留可回溯性 |
+| `outputs/historical_selection_*`、`m4_revalidation_*`、`mvp_v11_*`、`posthoc_62*` 等 | 被冻结文档/工具引用的数据集与证据 | 否 | "被引用工作区"，不要移动或删除 |
+| `docs/<主题>_<日期>/` | 已提交的研究证据（`report.md` + 数据 + `SHA256SUMS`） | 是 | 新证据按此模式；索引见 `docs/README.md` |
+| `docs/agent_specs/` | 工程工单与执行契约 | 是 | 被取代的移交至 `docs/archive/` |
+| `.debug_logs/` | 本地调试日志 | 否 | 按月把旧文件移入 `_archive_<YYYYMM>/`；可整体清空 |
+
+**每月整理（约 10 秒，把根目录扫描产物按文件名月份归档；无匹配时天然无操作）**：
+
+```bash
+for f in outputs/ai_value_scan_*; do [ -f "$f" ] || continue; b=${f##*/}; m=${b:14:4}-${b:18:2}; mkdir -p "outputs/scans/$m" && mv "$f" "outputs/scans/$m/"; done
+```
+
+> 注：cron 目前仍把扫描产物写到 `outputs/` 根目录，上面命令即按月归档；如希望直接写入月份子目录可作为后续独立小改动。
+
 ## 9. 运行日志与诊断
 
 ### 9.1 终端日志
