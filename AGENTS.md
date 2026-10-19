@@ -179,6 +179,10 @@ Common commands:
   `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
 - Full unit tests:
   `python -m unittest discover -s tests`
+- Monthly maintenance (first weekend; also run when the user asks for a "monthly
+  check") — verify `data/watchlist_history/` has a current-month snapshot (refresh
+  command above; cadence: README §13.2) and that no stale `ai_value_scan_*` files sit
+  at the `outputs/` root (tidy one-liner: README §8.1).
 
 Tests use stdlib `unittest`, not pytest. CI runs the same unittest command on pull
 requests and main pushes. There is currently no mandatory lint / format / typecheck
