@@ -165,24 +165,29 @@ Package code lives under `src/ai_value_scanner/`. Root `run_scan.py` and
 Common commands:
 
 - Install: `.venv/bin/pip install -e .`
-- Scan (production configs default to MVP v2 policy & Report Layout v2):
-  `python run_scan.py --config configs/config.risk_off.json [--max-symbols N]`
+- Scan (production entry defaults to MVP v2 policy & Report Layout v2):
+  `python run_scan.py --config configs/config.production.json [--max-symbols N]`
 - Daily cron pipeline (Stage 1 SEC prewarm + Stage 2 MVP v2 scan):
-  `python scripts/run_daily_cron.py --config configs/config.risk_off.json`
+  `python scripts/run_daily_cron.py --config configs/config.production.json`
 - Pure SEC parsed-cache prewarm (no scan / no report side effects):
-  `python scripts/refresh_sec_cache.py --config configs/config.risk_off.json`
+  `python scripts/refresh_sec_cache.py --config configs/config.production.json`
 - Refresh ETF-derived watchlist:
-  `python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv`
-- Historical replay:
+  `python scripts/refresh_ai_watchlist.py --config configs/config.production.json --output data/ai_watchlist.csv`
+- Historical replay (frozen studies use the `risk_off` profile dataset):
   `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`
 - Small smoke test:
-  `python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100`
+  `python scripts/validate_small_scale.py --config configs/config.production.json --max-symbols 100`
 - Full unit tests:
   `python -m unittest discover -s tests`
 - Monthly maintenance (first weekend; also run when the user asks for a "monthly
   check") — verify `data/watchlist_history/` has a current-month snapshot (refresh
   command above; cadence: README §13.2) and that no stale `ai_value_scan_*` files sit
   at the `outputs/` root (tidy one-liner: README §8.1).
+
+Production entry: `configs/config.production.json` — identity `production`, effective
+parameters mirror the `risk_off` defense profile (drift-tested). Snapshots before
+2026-10-20 remain under `outputs/decisions/<date>/risk_off/` and are never modified.
+Full config map and naming rules: `configs/README.md`.
 
 Tests use stdlib `unittest`, not pytest. CI runs the same unittest command on pull
 requests and main pushes. There is currently no mandatory lint / format / typecheck

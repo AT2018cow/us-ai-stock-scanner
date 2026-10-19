@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -107,6 +108,42 @@ class TestScanConfigValidation(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "strategy_style must be 'risk_on'"):
                 load_config(str(path))
+
+
+class TestProductionIdentity(unittest.TestCase):
+    ROOT = Path(__file__).resolve().parents[1] / "configs"
+
+    def test_production_config_matches_risk_off_profile(self) -> None:
+        production = dataclasses.asdict(
+            load_config(str(self.ROOT / "config.production.json"))
+        )
+        risk_off = dataclasses.asdict(
+            load_config(str(self.ROOT / "config.risk_off.json"))
+        )
+        self.assertEqual(production.pop("strategy_style"), "production")
+        self.assertEqual(risk_off.pop("strategy_style"), "risk_off")
+        self.assertEqual(production, risk_off)
+
+    def test_production_config_must_declare_production_style(self) -> None:
+        payload = json.loads(
+            (self.ROOT / "config.production.json").read_text(encoding="utf-8")
+        )
+        payload["strategy_style"] = "risk_off"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.production.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "production"):
+                load_config(str(path))
+
+    def test_production_style_shares_defense_structural_filters(self) -> None:
+        from ai_value_scanner.strategy.filtering import (
+            STYLE_STRUCTURAL_STEP_NAMES,
+        )
+
+        self.assertIs(
+            STYLE_STRUCTURAL_STEP_NAMES["production"],
+            STYLE_STRUCTURAL_STEP_NAMES["risk_off"],
+        )
 
 
 if __name__ == "__main__":

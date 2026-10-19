@@ -21,12 +21,17 @@ CORE_FILTER_STEP_NAMES = frozenset({
     "max_estimated_slippage_bps",
 })
 
+# Defense-profile structural filters are shared by the `risk_off` profile and
+# the product-level `production` identity (see configs/README.md).
+_DEFENSE_STRUCTURAL_STEPS = frozenset({
+    "min_drawdown_from_52w_high",
+    "max_price_to_sma200",
+    "max_range_position_52w",
+})
+
 STYLE_STRUCTURAL_STEP_NAMES = {
-    "risk_off": frozenset({
-        "min_drawdown_from_52w_high",
-        "max_price_to_sma200",
-        "max_range_position_52w",
-    }),
+    "risk_off": _DEFENSE_STRUCTURAL_STEPS,
+    "production": _DEFENSE_STRUCTURAL_STEPS,
     "risk_on": frozenset({
         "min_price_to_sma200",
         "min_return_20d",

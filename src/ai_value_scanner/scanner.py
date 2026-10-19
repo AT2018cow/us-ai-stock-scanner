@@ -4570,7 +4570,7 @@ def run_scan_with_status(
     if watchlist_scores.empty:
         raise ValueError(
             "Watchlist is empty or missing. Run "
-            "`python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv` "
+            "`python scripts/refresh_ai_watchlist.py --config configs/config.production.json --output data/ai_watchlist.csv` "
             "or populate watchlist_csv_path manually."
         )
     watchlist_allowlist = set(watchlist_scores["symbol"].dropna().astype(str).tolist())
@@ -6075,7 +6075,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="configs/config.risk_off.json",
+        default="configs/config.production.json",
         help="JSON file path for filter configuration.",
     )
     parser.add_argument(

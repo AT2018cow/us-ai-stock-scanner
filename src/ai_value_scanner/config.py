@@ -562,8 +562,8 @@ class ScanConfig:
                 "config_schema_version",
                 f"unsupported version {self.config_schema_version!r}; expected 1",
             )
-        if self.strategy_style not in (None, "risk_on", "risk_off"):
-            err("strategy_style", "must be null, 'risk_on', or 'risk_off'")
+        if self.strategy_style not in (None, "risk_on", "risk_off", "production"):
+            err("strategy_style", "must be null, 'risk_on', 'risk_off', or 'production'")
         if self.decision_policy_version not in ("v1", "v2"):
             err("decision_policy_version", "must be 'v1' or 'v2'")
         if self.report_layout_version not in ("v1", "v2"):
@@ -1368,6 +1368,7 @@ def load_config(path: str | None) -> ScanConfig:
     expected_style = {
         "config.risk_on.json": "risk_on",
         "config.risk_off.json": "risk_off",
+        "config.production.json": "production",
     }.get(name)
     if expected_style is not None and config.strategy_style != expected_style:
         raise ValueError(

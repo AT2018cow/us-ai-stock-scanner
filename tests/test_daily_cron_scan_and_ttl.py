@@ -437,7 +437,7 @@ class DailyCronMainTests(unittest.TestCase):
         self.assertEqual(pre_kwargs.get("limit"), 0)
         self.assertEqual(stage2.call_count, 1)
         _, scan_kwargs = stage2.call_args
-        self.assertEqual(scan_kwargs.get("config_path"), "configs/config.risk_off.json")
+        self.assertEqual(scan_kwargs.get("config_path"), "configs/config.production.json")
         self.assertEqual(scan_kwargs.get("limit"), 0)
         self.assertEqual(scan_kwargs.get("skip_scan"), False)
         self.assertEqual(scan_kwargs.get("alpaca_ttl_sec"), 3600)

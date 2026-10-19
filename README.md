@@ -3,7 +3,7 @@
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
 
 > **当前运行状态（2026-10-15 MVP v2 已默认启用）：**
-> - **生产配置默认输出 MVP v2**：`configs/config.risk_off.json`、`configs/config.risk_on.json` 与 `configs/config.strict_candidate.json` 已默认设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`。直接运行 `python run_scan.py --config configs/config.risk_off.json` 即可产出完整的 MVP v2 选股结果与 v2 折叠卡片式报告（如需回退旧版可传 `--decision-policy-version v1 --report-layout-version v1`）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
+> - **生产配置默认输出 MVP v2**：生产入口为 `configs/config.production.json`（有效参数等同防守档 `config.risk_off.json`，档案身份为 `production`）；它与 `configs/config.risk_on.json`、`configs/config.strict_candidate.json` 均已默认设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`。直接运行 `python run_scan.py --config configs/config.production.json` 即可产出完整的 MVP v2 选股结果与 v2 折叠卡片式报告（如需回退旧版可传 `--decision-policy-version v1 --report-layout-version v1`）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
 > - **通用三源候选池发现（Opt-In）**：扫描器支持通过 `discovery_source_files` 接入独立的 **US Core Universe / Thematic Universe / Manual Research Universe** CSV（见 [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md) 与 [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)）。
 
 > **当前产品目标（北极星）：**
@@ -96,7 +96,7 @@ ALPACA_FEED=iex
 ### 3.3 刷新 watchlist（按需手工执行）
 
 ```bash
-python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv
+python scripts/refresh_ai_watchlist.py --config configs/config.production.json --output data/ai_watchlist.csv
 ```
 
 ### 3.4 运行扫描
@@ -104,13 +104,13 @@ python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --o
 示例（限制扫描数量）：
 
 ```bash
-python run_scan.py --config configs/config.risk_off.json --max-symbols 300
+python run_scan.py --config configs/config.production.json --max-symbols 300
 ```
 
 全量 watchlist：
 
 ```bash
-python run_scan.py --config configs/config.risk_off.json
+python run_scan.py --config configs/config.production.json
 ```
 
 ### 3.4.0 每日定时任务（SEC 预热 + 全量扫描）
@@ -118,7 +118,7 @@ python run_scan.py --config configs/config.risk_off.json
 每日 cron 使用专用编排器 `scripts/run_daily_cron.py`（职责分离设计）：
 
 ```bash
-python scripts/run_daily_cron.py --config configs/config.risk_off.json
+python scripts/run_daily_cron.py --config configs/config.production.json
 ```
 
 - **Stage 1（SEC 预热）**：调用 `refresh_sec_cache.run_sec_prewarm(...)`，默认
@@ -134,7 +134,7 @@ python scripts/run_daily_cron.py --config configs/config.risk_off.json
 `cache/` 解析缓存，从不触发扫描、不写报告），适合手工单独预热：
 
 ```bash
-python scripts/refresh_sec_cache.py --config configs/config.risk_off.json
+python scripts/refresh_sec_cache.py --config configs/config.production.json
 ```
 
 ### 3.4.1 MVP Action List / Detailed Report
@@ -258,13 +258,13 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 #### （4）MVP v2 的运行命令
 1. **日常标准扫描（生产配置已默认启用 MVP v2 策略 + v2 折叠卡片式报告）**：
    ```bash
-   python run_scan.py --config configs/config.risk_off.json
+   python run_scan.py --config configs/config.production.json
    ```
-   *(注：`configs/config.risk_off.json`、`configs/config.risk_on.json` 与 `configs/config.strict_candidate.json` 已默认配置 `"decision_policy_version": "v2", "report_layout_version": "v2"`，并将交互式 Alpaca 缓存 TTL 设为 6 小时 `21600s`；每日定时任务 `scripts/run_daily_cron.py` 则在 Stage 2 自动采用 1 小时 `3600s` Alpaca 保鲜窗口)*
+   *(注：生产入口 `configs/config.production.json`（有效参数等同防守档 `config.risk_off.json`）、`configs/config.risk_on.json` 与 `configs/config.strict_candidate.json` 均已默认配置 `"decision_policy_version": "v2", "report_layout_version": "v2"`，并将交互式 Alpaca 缓存 TTL 设为 6 小时 `21600s`；每日定时任务 `scripts/run_daily_cron.py` 则在 Stage 2 自动采用 1 小时 `3600s` Alpaca 保鲜窗口)*
 2. **离线将任意已有快照重渲染为 v2 折叠卡片式报告**：
    ```bash
    python scripts/render_snapshot_preview.py \
-     --snapshot-dir outputs/decisions/YYYY-MM-DD/risk_off \
+     --snapshot-dir outputs/decisions/YYYY-MM-DD/production \
      --output-dir outputs/preview_v2 \
      --layout v2
    ```
@@ -277,19 +277,27 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 - **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。
 - 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
 
-### 3.5 官方配置
+### 3.5 官方配置：生产策略与档案
 
-自 2026-09-24 起采用**两风格架构**（原 balanced 与 risk_off 收益相关性 0.999，已归档）：
+**生产入口只有一个：`configs/config.production.json`**（每日 cron / 正式扫描 / 正式报告使用）。它当前使用**防守档 `risk_off` 的参数**，并以档案身份 `strategy_style="production"` 写入快照与指针：
 
-- `configs/config.risk_off.json`（默认配置，防守腿）：低吸回调 + 质量 + QQQ 深度熊市熔断（SMA200 破线熄火）。
-- `configs/config.risk_on.json`（进攻腿）：双动量结构——QQQ 绝对动量开关 + momentum 清单相对选择（`momentum_min_return_60d=0.10`）。
-- 观察期协议见 `docs/archive/experiments/two_style_observation_protocol.md`：`python scripts/observation_scan.py` 同时输出两风格，不做权重与轮动。
+- 快照：`outputs/decisions/<日期>/production/`
+- 指针：`outputs/decisions/latest_production.json`
+- 历史快照（2026-10-20 之前）仍在 `outputs/decisions/<日期>/risk_off/`，不回迁、不修改。
 
-两风格各自的验证证据与历史沿革见 `docs/archive/experiments/style_evolution_history.md`（Phase 0-4 完整记录）。
+> 路径中的 `risk_off` / `production` 是**档案身份（provenance identity）**，不是市场状态判断。
 
-另有一套候选生产配置：
+| 名称 | 文件 | 身份 | 状态 |
+|---|---|---|---|
+| **生产策略 Production** | `configs/config.production.json` | `production` | ✅ 唯一生产入口 |
+| 防守档档案 | `configs/config.risk_off.json` | `risk_off` | ✅ 参数模板（与 Production 逐字段一致，漂移测试保证） |
+| 进攻档档案 | `configs/config.risk_on.json` | `risk_on` | 🧪 研究/观察，不在生产路径 |
+| 候选配置 | `configs/config.strict_candidate.json` | — | 候选，不自动使用 |
+| 历史配置 | `configs/archive/` | — | 已归档，不作为运行入口 |
 
-- `configs/config.strict_candidate.json`：基于 strict-list 调参复核得到的候选参数，聚焦 `low_value`、`industry_trend`、`momentum` 三张并行扫描清单，不作为默认配置自动使用。
+- 进攻需求由报告内的 **Offense Track（Growth Compounder Leaders）** 卫星栏承载（见 `docs/growth_compounder_offense_validation_20261017/`）。
+- 两风格观察协议与风格演化史（历史记录）：`docs/archive/experiments/two_style_observation_protocol.md`、`docs/archive/experiments/style_evolution_history.md`。
+- 配置地图与完整命名约定：`configs/README.md`。
 
 历史调参/实验配置已归档到 `configs/archive/`，不再作为日常运行入口。
 
@@ -357,7 +365,7 @@ ETF 持仓页内嵌数据实际只含前 ~25 大持仓，因此 ETF 并集天然
 构建入口（三源合并，已在 ETF 名单中的标的会被跳过，`SRC:` 前缀为来源标记，不计入 `etf_count`）：
 
 ```bash
-python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
+python scripts/build_smallcap_universe.py --config configs/config.production.json
 ```
 
 - `nasdaq`：Nasdaq Screener 全宇宙过滤（Technology 板块 AI 相关行业，或任意板块的 AI 电力行业 `Electric Utilities: Central`/`Power Generation`/`Electrical Products`；市值 `--market-cap-min/max` 默认 3 亿–800 亿 + 日成交量下限；公司注册地限美国及半导体盟友（爱尔兰/英国/台湾/荷兰/瑞士/德国/日韩/新加坡/以色列，中国除外），名称须过普通股过滤以剔除优先股/票据/权证），约数百只。
@@ -366,7 +374,7 @@ python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
 
 常用参数：`--sources nasdaq,yahoo,manual`、`--max-symbols 400`（默认上限）、`--offline`（仅用手工清单）、`--dry-run`（只打印不写盘）。每次执行会先清空旧 `ai_smallcap` 行再重建（幂等）；运行顺序建议：先 `refresh_ai_watchlist.py`，再本脚本，最后 `run_scan.py`。
 
-### 4.3 默认 ETF 三池（来自 `configs/config.risk_off.json`，三配置共享该清单）
+### 4.3 默认 ETF 三池（来自 `configs/config.production.json`，各配置共享该清单）
 
 - `watchlist_core_etfs`：`AIQ,BOTZ,ROBT,WTAI,SOXX,SMH,IRBO,ARKQ,IGV,IGM,FDN,PNQI,SOXQ,XSD,KOMP`
 - `watchlist_enabler_etfs`：`DTCR,IFRA,XLI,XLU,NLR,URA,SKYY,CLOU,SRVR,GRID,CIBR,IHAK,BUG,PAVE,IGF,IXP`
@@ -469,7 +477,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 ## 6. 配置说明
 
-默认扫描配置：`configs/config.risk_off.json`（`run_scan.py` 默认读取该文件；balanced 已归档）。
+默认扫描配置：`configs/config.production.json`（`run_scan.py` 默认读取该文件；`configs/config.risk_off.json` 为防守档档案；balanced 已归档）。
 
 ### 6.1 参数生效顺序与覆盖关系
 
@@ -478,11 +486,11 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 3. 通道参数来自 `channel_profiles.<channel>`，会覆盖同名全局参数。
 4. 未在配置中出现的字段，使用代码默认值（`ScanConfig` 默认值）。
 5. 配置采用 fail-fast 校验：未知字段、错误类型、非法范围或交叉约束会在启动时直接报错；仅 `_theme_meta` / `_venture_meta` 等以下划线开头的文档元数据不会进入运行时配置。
-6. `config.risk_on.json` / `config.risk_off.json` 通过顶层 `strategy_style` 显式声明风格身份；扫描报告写入 `Strategy-Style:`，下游优先读取该字段，不再依赖文件名推断。
+6. `config.production.json` / `config.risk_off.json` / `config.risk_on.json` 通过顶层 `strategy_style` 显式声明档案身份（`production` / `risk_off` / `risk_on`）；扫描报告写入 `Strategy-Style:`，下游优先读取该字段，不再依赖文件名推断。
 
-### 6.2 全局参数与阈值（以 `configs/config.risk_off.json` 为基准参考）
+### 6.2 全局参数与阈值（以 `configs/config.production.json` 为基准参考）
 
-说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.risk_off.json` / `config.risk_on.json` / `config.strict_candidate.json`；balanced 已归档）。
+说明：下表用于说明参数作用与调节方向；精确默认值以对应配置文件内容为准（`config.production.json` / `config.risk_off.json` / `config.risk_on.json` / `config.strict_candidate.json`；balanced 已归档）。
 
 #### 6.2.1 运行、并发、缓存、限速
 
@@ -728,7 +736,7 @@ python run_scan.py --help
 ```
 
 常用参数：
-- `--config`：配置文件路径（默认 `configs/config.risk_off.json`）
+- `--config`：配置文件路径（默认 `configs/config.production.json`）
 - `--max-symbols`：样本上限（在 watchlist 内按快照成交额降序截取）
 - `--output`：主结果 CSV 路径
 - `--diagnostics-output`：过滤诊断输出基路径
@@ -984,16 +992,16 @@ near-miss 诊断：
 
 ```bash
 # 正式刷新（安全增量合并 + 自动归档快照）
-python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --output data/ai_watchlist.csv
+python scripts/refresh_ai_watchlist.py --config configs/config.production.json --output data/ai_watchlist.csv
 
 # 预演：抓取 + 合并统计 + 新增行预览，不写任何文件
-python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --dry-run
+python scripts/refresh_ai_watchlist.py --config configs/config.production.json --dry-run
 
 # 显式清理已掉出 ETF 前 N 大持仓的历史 ETF 行（SRC:*/ai_smallcap/手工行仍保留）
-python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --prune-dropped-etf-rows
+python scripts/refresh_ai_watchlist.py --config configs/config.production.json --prune-dropped-etf-rows
 
 # 跳过 CIK 自动换码/退市清理（默认开启）
-python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --no-reconcile-corporate-actions
+python scripts/refresh_ai_watchlist.py --config configs/config.production.json --no-reconcile-corporate-actions
 ```
 
 从 ETF 持仓页面抓取标的并集，并通过 `merge_refreshed_watchlist` **安全增量合并**进现有
@@ -1019,7 +1027,7 @@ python scripts/refresh_ai_watchlist.py --config configs/config.risk_off.json --n
 ### 13.3 `scripts/build_smallcap_universe.py` —— 构建小盘研究层
 
 ```bash
-python scripts/build_smallcap_universe.py --config configs/config.risk_off.json
+python scripts/build_smallcap_universe.py --config configs/config.production.json
 ```
 
 合并 Nasdaq 筛选、Yahoo 热榜和 `data/ai_smallcap_manual.csv` 到 `ai_smallcap` bucket。幂等重建。运行顺序：refresh watchlist → smallcap builder → scan。
@@ -1083,7 +1091,7 @@ python scripts/audit_gap12_regression.py --config configs/config.risk_off.json
 ### 13.11 `scripts/validate_small_scale.py` —— 小规模验证
 
 ```bash
-python scripts/validate_small_scale.py --config configs/config.risk_off.json --max-symbols 100
+python scripts/validate_small_scale.py --config configs/config.production.json --max-symbols 100
 ```
 
 用少量标的快速验证扫描管线（引擎/配置/数据/输出列）是否正常，适合部署前冒烟。

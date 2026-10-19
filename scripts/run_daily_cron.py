@@ -9,7 +9,7 @@ Single-responsibility split:
 Example crontab (machine timezone UTC+8; 11:00 local is after the US market
 close and the 22:00 ET EDGAR filing cutoff):
     0 11 * * * cd <repo> && .venv/bin/python scripts/run_daily_cron.py \
-        --config configs/config.risk_off.json >> .debug_logs/daily_cron.log 2>&1
+        --config configs/config.production.json >> .debug_logs/daily_cron.log 2>&1
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Daily cron: SEC prewarm (Stage 1) + MVP scan (Stage 2)."
     )
-    parser.add_argument("--config", default="configs/config.risk_off.json")
+    parser.add_argument("--config", default="configs/config.production.json")
     parser.add_argument("--max-age-hours", type=float, default=4.0)
     parser.add_argument(
         "--alpaca-ttl-sec",
