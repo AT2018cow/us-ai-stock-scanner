@@ -1262,6 +1262,8 @@ python scripts/intraday_watch.py --poll 300 --save
 
 只读监控工具：只刷新价格（Alpaca snapshots + 日线），输出 现价 / 涨跌 / vs SMA50·SMA200 / 52 周回撤·位置 / 20d·60d 收益 / 告警标记（`S50↓` 跌破 SMA50、`S50✖` 当日下穿、`EXT` 偏离 SMA200 >60%、`HI` 距 52 周高 ≤3%、`LO` 处于 52 周低位、`MOVE` 单日 |涨跌| ≥3%、`PE` 财报窗口）。**不写入决策快照、不改变 Action List**——官方决策保持日级与不可变；缓存被强制关闭（`cache_enabled=False`）以保证盘中拿到最新价。`--scope report` 默认覆盖日报全部列出标的名（`--include-weekly` 可并入周报）。
 
+**临时 Entry 影子（默认开启，`--no-shadow` 关闭）**：把当前价当作"临时收盘价"，复用生产 Entry v2 构建器与 Action 映射，对名单重算 Entry State/Score，并列出翻转的门（如 `overextension:PASS→BLOCK`）。Quality 沿用最新快照（基本面不随盘中变化）。该影子**明确是临时/未验证结果，不是决策**，也不会写入任何快照；仅用于盘中判断"如果现在收盘，名单会怎么变"。收起该功能用 `--no-shadow`。
+
 ## 14. 说明与限制
 
 - 当前代码审查与修复记录：[问题、修复建议与验收条件](docs/code_review_and_repair_handoff_20261018.md)（交接基线）及 [修复结果与复验记录](docs/code_review_repair_results_20261018.md)（R03–R05 已复验通过；完整测试 1188 项通过）。

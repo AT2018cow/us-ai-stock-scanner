@@ -185,6 +185,74 @@ class TestRowComputation(unittest.TestCase):
         self.assertIn("PE", row["flags"])
 
 
+class TestShadowReestimation(unittest.TestCase):
+    def test_provisional_series_replaces_same_session_bar(self) -> None:
+        bars = [
+            {"t": "2026-10-18T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 100, "v": 1},
+            {"t": "2026-10-19T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 101, "v": 1},
+            {"t": "2026-10-20T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 102, "v": 1},
+        ]
+        snapshot = {
+            "latestTrade": {"p": 103, "t": "2026-10-20T20:00:00Z"},
+            "dailyBar": {
+                "o": 101, "h": 104, "l": 100, "c": 103, "v": 5,
+                "t": "2026-10-20T20:00:00Z",
+            },
+        }
+        price, series, snapshot_date = iw._provisional_series(bars, snapshot)
+        self.assertAlmostEqual(price, 103)
+        self.assertEqual(snapshot_date.isoformat(), "2026-10-20")
+        self.assertEqual(len(series), 3)  # replaced, not appended
+        self.assertTrue(series[-1].get("provisional"))
+        self.assertAlmostEqual(series[-1]["c"], 103)
+
+    def _qqq_context(self):
+        bars = _flat_bars(close=100.0, high=100.0, low=100.0)
+        snapshot = {
+            "latestTrade": {"p": 100, "t": "2026-10-20T20:00:00Z"},
+            "dailyBar": {"o": 100, "h": 100, "l": 100, "c": 100, "v": 1,
+                         "t": "2026-10-20T20:00:00Z"},
+        }
+        import types
+        config = types.SimpleNamespace(benchmark_trend_filter_sma_days=200)
+        return iw._qqq_context(snapshot, bars, config)
+
+    def test_compute_shadow_reports_state_for_healthy_and_crash(self) -> None:
+        decision = _decision("ADI", 1)
+        qqq = self._qqq_context()
+        self.assertIsNotNone(qqq)
+        bars = _flat_bars(close=100.0, high=100.0, low=100.0)
+        healthy = {
+            "latestTrade": {"p": 120, "t": "2026-10-20T20:00:00Z"},
+            "prevDailyBar": {"c": 118},
+            "dailyBar": {"o": 118, "h": 121, "l": 117, "c": 120, "v": 5,
+                         "t": "2026-10-20T20:00:00Z"},
+        }
+        crash = {
+            "latestTrade": {"p": 70, "t": "2026-10-20T20:00:00Z"},
+            "prevDailyBar": {"c": 118},
+            "dailyBar": {"o": 118, "h": 118, "l": 69, "c": 70, "v": 9,
+                         "t": "2026-10-20T20:00:00Z"},
+        }
+        healthy_row = iw.compute_shadow("ADI", decision, healthy, bars, qqq, None)
+        crash_row = iw.compute_shadow("ADI", decision, crash, bars, qqq, None)
+        self.assertIsNotNone(healthy_row)
+        self.assertIsNotNone(crash_row)
+        self.assertIn("shadow_state", healthy_row)
+        self.assertNotEqual(healthy_row["shadow_state"], "ENTRY_READY")
+        self.assertNotEqual(crash_row["shadow_state"], "ENTRY_READY")
+        self.assertLess(crash_row["shadow_score"], healthy_row["shadow_score"])
+
+    def test_compute_shadow_requires_decision_and_benchmark(self) -> None:
+        qqq = self._qqq_context()
+        bars = _flat_bars()
+        snapshot = {"latestTrade": {"p": 100, "t": "2026-10-20T20:00:00Z"}}
+        self.assertIsNone(iw.compute_shadow("ADI", None, snapshot, bars, qqq, None))
+        self.assertIsNone(
+            iw.compute_shadow("ADI", _decision("ADI", 1), snapshot, bars, None, None)
+        )
+
+
 class TestRenderingAndRunner(unittest.TestCase):
     def test_render_markdown_contains_rows(self) -> None:
         row = iw.compute_row(

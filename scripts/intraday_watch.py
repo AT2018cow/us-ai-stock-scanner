@@ -46,10 +46,14 @@ from ai_value_scanner.market_calendar import (  # noqa: E402
     latest_completed_session,
     session_close_utc,
 )
+from ai_value_scanner.decision.action import map_action_state_v2  # noqa: E402
+from ai_value_scanner.decision.entry import build_entry_quality_v2  # noqa: E402
+from ai_value_scanner.decision.model import QualityDecision, QualityGrade  # noqa: E402
 from ai_value_scanner.scanner import (  # noqa: E402
     AlpacaClient,
     RequestRateLimiter,
     build_session,
+    price_dimension_from_bars,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -248,6 +252,198 @@ def _session_status(now_utc: datetime) -> str:
     return "closed"
 
 
+def _snapshot_price(snapshot: dict | None) -> float | None:
+    snapshot = snapshot or {}
+    trade = snapshot.get("latestTrade") or {}
+    minute = snapshot.get("minuteBar") or {}
+    daily = snapshot.get("dailyBar") or {}
+    return (
+        _finite(trade.get("p"))
+        or _finite(minute.get("c"))
+        or _finite(daily.get("c"))
+    )
+
+
+def _snapshot_et_date(snapshot: dict | None) -> date | None:
+    """Latest ET date present in a snapshot (daily bar / trade / minute bar)."""
+    if not snapshot:
+        return None
+    dates: list[date] = []
+    for key in ("dailyBar", "latestTrade", "minuteBar"):
+        item = snapshot.get(key) or {}
+        parsed = _parse_ts(str(item.get("t") or ""))
+        if parsed is not None:
+            dates.append(parsed.astimezone(ET).date())
+    return max(dates) if dates else None
+
+
+def _provisional_series(
+    bars: list[dict] | None, snapshot: dict | None
+) -> tuple[float | None, list[dict], date | None]:
+    """Completed bars plus a snapshot-derived provisional bar for its session.
+
+    Any existing bar for the snapshot's session is replaced, so a partially
+    updating daily bar cannot be double-counted.
+    """
+    price = _snapshot_price(snapshot)
+    snapshot_date = _snapshot_et_date(snapshot)
+    ordered = [
+        b for b in sorted(bars or [], key=lambda b: str(b.get("t") or ""))
+        if isinstance(b, dict)
+    ]
+    if snapshot_date is None:
+        return price, ordered, None
+    series = [b for b in ordered if _bar_et_date(b) != snapshot_date]
+    last_date = _bar_et_date(series[-1]) if series else None
+    if last_date is not None and snapshot_date < last_date:
+        return price, ordered, snapshot_date
+    if price is None:
+        return price, series, snapshot_date
+    daily = snapshot.get("dailyBar") or {}
+    open_ = _finite(daily.get("o")) or price
+    high = _finite(daily.get("h")) or price
+    low = _finite(daily.get("l")) or price
+    close = _finite(daily.get("c")) or price
+    stamp = daily.get("t") or (snapshot.get("latestTrade") or {}).get("t")
+    if not stamp:
+        stamp = f"{snapshot_date.isoformat()}T20:00:00+00:00"
+    series.append(
+        {
+            "t": stamp,
+            "o": open_,
+            "h": max(high, open_, close),
+            "l": min(low, open_, close),
+            "c": close,
+            "v": daily.get("v"),
+            "provisional": True,
+        }
+    )
+    return price, series, snapshot_date
+
+
+def _qqq_context(
+    qqq_snapshot: dict | None, qqq_bars: list[dict] | None, config
+) -> dict | None:
+    """Benchmark context (regime / trend filter / 60d return) for the shadow."""
+    price, series, snapshot_date = _provisional_series(qqq_bars, qqq_snapshot)
+    if price is None or not series:
+        return None
+    features = price_dimension_from_bars(price, series)
+    return_60d = features.get("return_60d")
+    closes = [c for c in (_finite(b.get("c")) for b in series) if c is not None]
+    sma_days = int(getattr(config, "benchmark_trend_filter_sma_days", 200) or 200)
+    sma = _mean(closes[-sma_days:]) if len(closes) >= sma_days else None
+    trend_ok = True if sma is None else price >= sma
+    regime = (
+        "up" if return_60d is not None and return_60d >= 0.0
+        else "down" if return_60d is not None
+        else "unknown"
+    )
+    return {
+        "price": price,
+        "snapshot_date": snapshot_date,
+        "return_60d": return_60d,
+        "trend_ok": trend_ok,
+        "regime": regime,
+    }
+
+
+def _quality_from_snapshot(decision: dict | None) -> QualityDecision | None:
+    quality = (decision or {}).get("quality") or {}
+    try:
+        grade = QualityGrade(str(quality.get("grade")))
+    except ValueError:
+        return None
+    return QualityDecision(
+        grade=grade,
+        score=_finite(quality.get("score")),
+        confidence=_finite(quality.get("confidence")) or 0.0,
+        component_scores=dict(quality.get("component_scores") or {}),
+        positives=(),
+        risks=(),
+        missing=(),
+        data_asof=quality.get("data_asof"),
+    )
+
+
+def compute_shadow(
+    symbol: str,
+    decision: dict | None,
+    snapshot: dict | None,
+    bars: list[dict] | None,
+    qqq_context: dict | None,
+    config,
+) -> dict | None:
+    """Provisional Entry re-estimation using the current price as a close.
+
+    Reuses the production Entry v2 builder and action mapping. The result is
+    explicitly provisional: quality is carried over from the snapshot, and the
+    current session is treated as if it had closed now.
+    """
+    if decision is None or qqq_context is None:
+        return None
+    price, series, snapshot_date = _provisional_series(bars, snapshot)
+    if price is None or not series or snapshot_date is None:
+        return None
+    features = price_dimension_from_bars(price, series)
+    stock_ret60 = features.get("return_60d")
+    qqq_ret60 = qqq_context.get("return_60d")
+    rs60 = (
+        stock_ret60 - qqq_ret60
+        if stock_ret60 is not None and qqq_ret60 is not None
+        else None
+    )
+    metrics = {
+        **features,
+        "market_asof": snapshot_date.isoformat(),
+        "qqq_trailing_return_60d": qqq_ret60,
+        "relative_strength_60d_qqq": rs60,
+        "regime": qqq_context.get("regime"),
+        "benchmark_trend_ok": qqq_context.get("trend_ok"),
+    }
+    try:
+        entry = build_entry_quality_v2(
+            metrics,
+            decision_date=snapshot_date,
+            market_asof=snapshot_date,
+            runtime_reference_date=snapshot_date,
+        )
+    except Exception:  # noqa: BLE001 - a shadow must never break the monitor
+        return None
+    action = None
+    quality = _quality_from_snapshot(decision)
+    if quality is not None:
+        try:
+            action, _ = map_action_state_v2(quality, entry)
+        except ValueError:
+            action = None
+    official = decision.get("entry") or {}
+    official_status = {
+        str(gate.get("gate_key")): str(gate.get("status"))
+        for gate in (official.get("gate_results") or [])
+        if isinstance(gate, dict)
+    }
+    shadow_status = {gate.gate_key: gate.status for gate in entry.gate_results}
+    flips = [
+        f"{key}:{official_status[key]}→{shadow_status[key]}"
+        for key in sorted(official_status)
+        if key in shadow_status and official_status[key] != shadow_status[key]
+    ]
+    official_score = _finite(official.get("score"))
+    return {
+        "shadow_state": entry.state.value,
+        "shadow_score": entry.score,
+        "shadow_delta": (
+            entry.score - official_score
+            if entry.score is not None and official_score is not None
+            else None
+        ),
+        "shadow_action": action.value if action is not None else None,
+        "shadow_date": snapshot_date.isoformat(),
+        "gate_flips": flips,
+    }
+
+
 def _decision_context(decision: dict | None) -> dict:
     if not decision:
         return {
@@ -304,11 +500,7 @@ def compute_row(
     minute = snapshot.get("minuteBar") or {}
     daily = snapshot.get("dailyBar") or {}
     prev_daily = snapshot.get("prevDailyBar") or {}
-    price = (
-        _finite(trade.get("p"))
-        or _finite(minute.get("c"))
-        or _finite(daily.get("c"))
-    )
+    price = _snapshot_price(snapshot)
     prev_close = _finite(prev_daily.get("c")) or (closes[-1] if closes else None)
 
     sma50 = _mean(closes[-SMA_SHORT:]) if len(closes) >= SMA_SHORT else None
@@ -412,6 +604,36 @@ def format_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_shadow_table(rows: list[dict]) -> str:
+    header = (
+        f"{'SYM':7s} {'E official':22s} {'E shadow':22s} {'Δscore':>7s} "
+        f"{'A official':16s} {'A shadow':16s}  FLIPS"
+    )
+    lines = [
+        "[shadow] provisional Entry re-estimation (current price as provisional close; NOT a decision)",
+        header,
+        "-" * len(header),
+    ]
+    for row in rows:
+        if not row.get("shadow_state"):
+            continue
+        shadow_score = row.get("shadow_score")
+        shadow_text = (
+            f"{row['shadow_state']}:{shadow_score:.2f}"
+            if shadow_score is not None
+            else str(row["shadow_state"])
+        )
+        delta = row.get("shadow_delta")
+        delta_text = f"{delta:+.3f}" if delta is not None else "n/a"
+        lines.append(
+            f"{row['symbol']:7s} {row['entry'][:22]:22s} {shadow_text[:22]:22s} "
+            f"{delta_text:>7s} {row['action'][:16]:16s} "
+            f"{(row.get('shadow_action') or '-')[:16]:16s}  "
+            f"{','.join(row.get('gate_flips') or []) or '-'}"
+        )
+    return "\n".join(lines)
+
+
 def render_markdown(
     rows: list[dict],
     *,
@@ -439,6 +661,31 @@ def render_markdown(
             f"| {_pct(row['ret20'])} | {_pct(row['ret60'])} "
             f"| {','.join(row['flags']) or '-'} |"
         )
+    shadow_rows = [row for row in rows if row.get("shadow_state")]
+    if shadow_rows:
+        lines.append("")
+        lines.append(
+            "## Provisional Entry shadow (current price as provisional close — NOT a decision)"
+        )
+        lines.append("")
+        lines.append(
+            "| SYM | E official | E shadow | Δscore | Action official | Action shadow | Gate flips |"
+        )
+        lines.append("|---|---|---|---:|---|---|---|")
+        for row in shadow_rows:
+            score = row.get("shadow_score")
+            shadow_text = (
+                f"{row['shadow_state']}:{score:.2f}"
+                if score is not None
+                else row["shadow_state"]
+            )
+            delta = row.get("shadow_delta")
+            lines.append(
+                f"| {row['symbol']} | {row['entry']} | {shadow_text} "
+                f"| {f'{delta:+.3f}' if delta is not None else 'n/a'} "
+                f"| {row['action']} | {row.get('shadow_action') or '-'} "
+                f"| {','.join(row.get('gate_flips') or []) or '-'} |"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -477,32 +724,54 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
     if client is None:
         client = build_alpaca_client(config)
     chunk = args.chunk_size or config.chunk_size
-    snapshots = client.get_snapshots(symbols, chunk)
+    shadow = not getattr(args, "no_shadow", False)
+    fetch_symbols = list(symbols)
+    if shadow and "QQQ" not in fetch_symbols:
+        fetch_symbols.append("QQQ")
+    snapshots = client.get_snapshots(fetch_symbols, chunk)
     start_iso = (datetime.now(timezone.utc).date() - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    bars = client.get_daily_bars(symbols, start_iso, chunk)
+    bars = client.get_daily_bars(fetch_symbols, start_iso, chunk)
 
     now_utc = datetime.now(timezone.utc)
     latest_session = latest_completed_session(now_utc)
-    rows = [
-        compute_row(
+    qqq_context = (
+        _qqq_context(snapshots.get("QQQ"), bars.get("QQQ"), config)
+        if shadow else None
+    )
+    rows: list[dict] = []
+    for symbol in symbols:
+        row = compute_row(
             symbol,
             by_symbol.get(symbol),
             snapshots.get(symbol),
             bars.get(symbol),
             latest_session=latest_session,
         )
-        for symbol in symbols
-    ]
+        if shadow:
+            shadow_info = compute_shadow(
+                symbol,
+                by_symbol.get(symbol),
+                snapshots.get(symbol),
+                bars.get(symbol),
+                qqq_context,
+                config,
+            )
+            if shadow_info:
+                row.update(shadow_info)
+        rows.append(row)
     status = _session_status(now_utc)
     generated = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     print(
         f"[intraday] snapshot={bundle['decision_date']} scope={args.scope} "
-        f"names={len(rows)} market={status} "
+        f"names={len(rows)} market={status} shadow={'on' if shadow else 'off'} "
         f"session={latest_session.isoformat()} generated={generated}",
         flush=True,
     )
     print(format_table(rows), flush=True)
+    if any(row.get("shadow_state") for row in rows):
+        print("")
+        print(format_shadow_table(rows), flush=True)
 
     if args.save or args.out:
         out_path = (
@@ -543,6 +812,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--include-weekly", action="store_true")
     parser.add_argument("--chunk-size", type=int, default=0)
     parser.add_argument("--poll", type=int, default=0, help="Repeat every N seconds.")
+    parser.add_argument(
+        "--no-shadow", action="store_true",
+        help="Skip the provisional Entry re-estimation (shadow) section.",
+    )
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--out", default=None)
     return parser.parse_args(argv)
