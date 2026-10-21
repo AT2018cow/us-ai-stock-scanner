@@ -63,12 +63,48 @@ python scripts/intraday_watch.py --poll 300 --save
 python scripts/intraday_watch.py --no-shadow
 ```
 
-建议刷新时点（美股盘中北京时间 21:30–04:00）：开盘后 30 分钟、收盘前 30 分钟，以及需要时随时手工刷新。默认不配置定时任务。
+### 5.1 `--scope report` 覆盖范围
+
+`report` = 最新 `action_list.md` 中列出的全部标的，四块相加（以 2026-10-20 快照为例）：
+
+| 来源 | 数量 |
+|---|---|
+| Priority Review | 15 |
+| Growth Compounder Leaders（Offense） | 9 |
+| Secondary Radar（Cap-Omitted + Secondary Watch） | 20 |
+| Attention Changes | 8 |
+| **合计** | **52** |
+
+不包含决策池其余标的。需要更大范围时用 `--scope attention`（所有 PRIORITY/WATCH 状态，约百只）或 `--scope all`（全池，约 1 分钟）。周报名单与日报不同时，加 `--include-weekly` 并集。
+
+### 5.2 推荐刷新时点与命令
+
+美股常规时段为北京时间 21:30–04:00。建议两个固定时点：
+
+| 时点 | 北京时间 | 命令 | 目的 |
+|---|---|---|---|
+| 开盘后 30 分钟 | 22:00 | `python scripts/intraday_watch.py --scope report --save` | 情绪定调、识别单日异动（`MOVE`） |
+| 收盘前 30 分钟 | 次日 03:30 | `python scripts/intraday_watch.py --scope report --save` | 影子接近收盘价，预判次日名单翻转 |
+
+工具本身不配置定时任务，两个时点需手工执行；也可以用 `--poll 300` 让同一进程每 5 分钟自动刷新（Ctrl-C 结束）。`--save` 写入 `outputs/intraday/<快照日期>/monitor_*.md`（本地、gitignored）。
+
+只关心自选名单时用 `--symbols` 更快；只看价格、不要影子时加 `--no-shadow`：
+
+```bash
+python scripts/intraday_watch.py --symbols CRM,MU,OKTA,TEL --no-shadow
+```
+
+### 5.3 影子判读：先排除窗口滚动
+
+影子把当前价当作临时收盘价，同时把 20/60 日窗口**向前滚动一根 bar**。若被滚出的那根 bar 恰是大幅波动日，`20d`/`60d` 收益会显著跳变，`ret20_band`、`ret60_trend`、`rs60_qqq` 等门可能在当日几乎无涨跌时翻转。
+
+判读规则：先对照主表 `20d`/`60d` 与最新官方快照的同类值——差异大，说明是窗口边界；只有主表涨幅本身触发的翻转（如当日 `+5%` 把 `sma50_band` push 出 `0.98–1.08`）才是当日行情信号。
 
 ## 6. 限制与未来
 
 - 不重算基本面 / Quality（基本面盘中不变）；pre-earnings 窗口沿用快照；
 - 不模拟排名 / 优先级变化（仅 Entry 状态与 Action 映射；pre-earnings、非经营利得等优先级惩罚不在影子内）；
+- 影子的 20/60 日窗口会随临时 bar 向前滚动，窗口边界的大幅波动可导致分数/门禁翻转与当日行情无关（判读方法见 §5.3）；
 - 不自动交易、不连接券商；
 - 若未来需要"盘中全量重选股"，必须先有前瞻证据与新的预注册实验，而不是直接扩展本工具。
 
