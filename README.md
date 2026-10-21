@@ -462,8 +462,8 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 `filter_mode=scored`（默认）下，每张清单的过滤步骤分为两层：
 
 - **硬门**：核心可交易性（价格/成交额/市值/watchlist/通道/SIC）+ 风格结构门槛
-  （risk_off 的回撤/区间位置/价格相对 SMA200；risk_on 的站上 SMA200/正动量；
-  QQQ SMA200 熔断对所有清单生效）——未过即出局。
+  （`production` 沿用 `risk_off` 的回撤/区间位置/价格相对 SMA200；`risk_on` 的站上
+  SMA200/正动量；QQQ SMA200 熔断对所有清单生效）——未过即出局。
 - **软评分**：其余全部阈值（估值/质量/动量细项）不再直接淘汰，改为对幸存者
   逐项判定通过/不通过，以 `soft_pass_rate` 计入 `composite_score`（权重见
   各通道 `score_weights.soft_pass_rate`）。
@@ -494,10 +494,10 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.1 运行、并发、缓存、限速
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `config_schema_version` | `1` | 配置契约版本；缺省按 v1 兼容读取，显式出现未知版本会 fail-fast。 |
-| `strategy_style` | `risk_off` | 生产双风格显式身份（risk_on/risk_off）；主题、venture、校准配置可为 `null`。 |
+| `strategy_style` | `production` | 生产/档案身份（production/risk_on/risk_off）；主题、venture、校准配置可为 `null`。 |
 | `max_symbols` | `null` | 扫描上限（`null` 表示扫描完整 watchlist）。 |
 | `max_workers` | `8` | 并发线程数。 |
 | `chunk_size` | `200` | 拉取数据的批处理大小。 |
@@ -513,7 +513,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.2 Watchlist 与 AI 关联评分
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `watchlist_csv_path` | `data/ai_watchlist.csv` | 扫描输入 watchlist 路径。 |
 | `watchlist_fetch_timeout_sec` | `20` | watchlist 刷新脚本网络超时。 |
@@ -529,7 +529,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.3 Universe 与流动性门槛
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `enabled_exchanges` | `NYSE,NASDAQ,AMEX,ARCA,BATS` | 交易所白名单。 |
 | `min_price` | `1.0` | 最低股价。 |
@@ -540,7 +540,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.4 财务口径与正值开关
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `use_ttm_metrics` | `true` | 优先使用 TTM 指标。 |
 | `use_adjusted_quality_metrics` | `true` | 质量与盈利相关指标使用“调整后”口径。 |
@@ -558,7 +558,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 `max_price_to_sma200=1.12` 等，精确值以配置文件为准）。scored 模式下除核心硬门与风格
 结构门外，这些阈值作为软维度判定（通过/不通过计入 soft_pass_rate）。
 
-| 参数 | 全局值（risk_off） | 作用 |
+| 参数 | 全局值（production） | 作用 |
 |---|---:|---|
 | `min_fundamental_quality_score` | `0.64` | 质量综合分下限。 |
 | `min_revenue` | `10000000` | 收入下限。 |
@@ -593,7 +593,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.6 价格行为与波动阈值
 
-| 参数 | 全局值（risk_off） | 作用 |
+| 参数 | 全局值（production） | 作用 |
 |---|---:|---|
 | `price_lookback_days` | `420` | 价格特征计算回看天数。 |
 | `min_drawdown_from_52w_high` | 全局无；core_ai `0.05`、ai_smallcap `0.05`（风格结构硬门） | 52 周高点回撤下限。 |
@@ -610,7 +610,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.7 可交易性、分散化、评分稳健性
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `assumed_position_usd` | `250000` | 估算冲击成本的单票仓位。 |
 | `max_adv_participation` | `0.05` | 交易参与度（仓位/ADV）上限。 |
@@ -625,7 +625,7 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 
 #### 6.2.8 覆盖率模式、去重与输出数量
 
-| 参数 | 默认值（risk_off） | 作用 |
+| 参数 | 默认值（production） | 作用 |
 |---|---:|---|
 | `metric_hard_filter_coverage_mode` | `balanced` | 硬过滤覆盖率模式：`high_coverage_only` / `balanced` / `all_metrics`。 |
 | `force_hard_filter_low_coverage_metrics` | `false` | 是否将低覆盖指标强制纳入硬过滤。 |
@@ -661,8 +661,9 @@ IC 改进未能在组合级样本外存活），观察期持续跟踪。
 | momentum | avoid_for_now | AI 关联弱（research pool 语义） | 0.5x | +8.76% |
 | momentum | left_side_watch | 左侧下跌接刀 | **0x 排除** | +1.05%（胜率 43.8%） |
 
-注意：两风格共用同一 triage 阈值与 momentum 机器；风格分化由 low_value 的
-硬门结构（risk_off 要求回撤深度，risk_on 要求站上 SMA200）与评分权重承担。
+注意：两档档案（`risk_off`/`risk_on`）共用同一 triage 阈值与 momentum 机器；风格分化由 low_value 的
+硬门结构（`risk_off` 要求回撤深度，`risk_on` 要求站上 SMA200；生产入口 `production` 沿用 `risk_off`
+结构）与评分权重承担。
 `research_now`/`watch_for_pullback` 是最可信的两层；当前实证下
 `avoid_for_now` 的"回避"语义面向 research pool，momentum 语境中表现中游。
 
@@ -789,6 +790,7 @@ python run_scan.py --help
 |---|---|---|---|
 | `outputs/decisions/<日期>/<风格>/` | **官方决策快照**（Action List / `detailed/` / `weekly_review.md` / `decisions.jsonl`） | 否 | 产品主输出；`latest_*.json` 指向当前快照；不要随意清理 |
 | `outputs/scans/<YYYY-MM>/` | 日常扫描原始产物（`ai_value_scan_*`） | 否 | 每次 cron/扫描产生；**每月归档一次**（见下方命令） |
+| `outputs/intraday/<日期>/` | 盘中监控留痕（`monitor_*.md`，由 `scripts/intraday_watch.py --save` 生成） | 否 | 只读监控输出；可整体清理 |
 | `outputs/_archive_superseded_<日期>/` | 过期的一次性预览/实验目录 | 否 | 只移不删，保留可回溯性 |
 | `outputs/historical_selection_*`、`m4_revalidation_*`、`mvp_v11_*`、`posthoc_62*` 等 | 被冻结文档/工具引用的数据集与证据 | 否 | "被引用工作区"，不要移动或删除 |
 | `docs/<主题>_<日期>/` | 已提交的研究证据（`report.md` + 数据 + `SHA256SUMS`） | 是 | 新证据按此模式；索引见 `docs/README.md` |
@@ -971,9 +973,10 @@ near-miss 诊断：
 
 ## 13. 工具脚本参考
 
-### 13.1 `scripts/observation_scan.py` —— 双风格观察扫描
+### 13.1 `scripts/observation_scan.py` —— 双风格观察扫描（研究/历史工具）
 
-观察期的标准入口：依次运行 risk_off 和 risk_on 两个配置的完整扫描，并输出对照摘要。
+研究/历史工具：依次运行 `risk_off` 与 `risk_on` 两个档案的完整扫描并输出对照摘要。
+`risk_on` 不在生产路径（生产入口为 `config.production.json`）；该工具仅用于历史观察与研究。
 
 ```bash
 # 标准（两风格全量扫描）
@@ -1116,7 +1119,7 @@ I2=0 且运作窗口违反率 <1%。输出逐公司覆盖矩阵（`*_coverage.cs
 #       --include-smallcap（默认关闭：ai_smallcap 为辅线观察层，不进交易计划）
 ```
 
-从最新双风格扫描生成供人工复核的快速参考摘要（`outputs/trade_plan_<UTC>.md/.csv`）。历史文件名 `trade_plan` 为兼容保留；脚本**不连接券商、不读取真实持仓、不生成订单、不自动交易**。参考摘要只接受带 `Config:` 头、时间戳可解析且足够新鲜的一对报告；默认要求最新报告 ≤12 小时、两风格时间差 ≤6 小时，拒绝用旧报告补位：
+从最新双风格扫描生成供人工复核的快速参考摘要（`outputs/trade_plan_<UTC>.md/.csv`）；**两风格观察期工具，当前生产主路径不使用**。历史文件名 `trade_plan` 为兼容保留；脚本**不连接券商、不读取真实持仓、不生成订单、不自动交易**。参考摘要只接受带 `Config:` 头、时间戳可解析且足够新鲜的一对报告；默认要求最新报告 ≤12 小时、两风格时间差 ≤6 小时，拒绝用旧报告补位：
 排序规则：low_value 与 momentum 的 composite 出自不同权重向量、量纲不可直接比较
 （2026-10-02 中位数 sweep 后 momentum ~1.2-1.3 vs low_value ~0.6-0.8），袖珍选择按
 **各清单内、按通道分组的百分位名次（list_pct）** 排序——最佳 keep 与最佳 momentum
@@ -1243,12 +1246,12 @@ python scripts/audit_universe_coverage.py \
   --benchmark data/benchmarks/nasdaq100_202610.csv:NASDAQ100
 ```
 
-对比本地选股底单 `data/ai_watchlist.csv`（当前 907 行 / 761 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
+对比本地选股底单 `data/ai_watchlist.csv`（当前 890 行 / 749 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
 
 ### 13.23 `scripts/intraday_watch.py` —— 盘中监控（只读）
 
 ```bash
-# 默认：监控最新日报中列出的全部股票（Priority Review + Offense + Secondary Radar）
+# 默认：监控最新日报中列出的全部股票（Priority Review + Offense + Secondary Radar）+ 临时 Entry 影子
 python scripts/intraday_watch.py
 
 # 更宽范围
@@ -1262,7 +1265,7 @@ python scripts/intraday_watch.py --poll 300 --save
 
 只读监控工具：只刷新价格（Alpaca snapshots + 日线），输出 现价 / 涨跌 / vs SMA50·SMA200 / 52 周回撤·位置 / 20d·60d 收益 / 告警标记（`S50↓` 跌破 SMA50、`S50✖` 当日下穿、`EXT` 偏离 SMA200 >60%、`HI` 距 52 周高 ≤3%、`LO` 处于 52 周低位、`MOVE` 单日 |涨跌| ≥3%、`PE` 财报窗口）。**不写入决策快照、不改变 Action List**——官方决策保持日级与不可变；缓存被强制关闭（`cache_enabled=False`）以保证盘中拿到最新价。`--scope report` 默认覆盖日报全部列出标的名（`--include-weekly` 可并入周报）。
 
-**临时 Entry 影子（默认开启，`--no-shadow` 关闭）**：把当前价当作"临时收盘价"，复用生产 Entry v2 构建器与 Action 映射，对名单重算 Entry State/Score，并列出翻转的门（如 `overextension:PASS→BLOCK`）。Quality 沿用最新快照（基本面不随盘中变化）。该影子**明确是临时/未验证结果，不是决策**，也不会写入任何快照；仅用于盘中判断"如果现在收盘，名单会怎么变"。收起该功能用 `--no-shadow`。
+**临时 Entry 影子（默认开启，`--no-shadow` 关闭）**：把当前价当作"临时收盘价"，复用生产 Entry v2 构建器与 Action 映射，对名单重算 Entry State/Score，并列出翻转的门（如 `overextension:PASS→BLOCK`）。Quality 沿用最新快照（基本面不随盘中变化）。该影子**明确是临时/未验证结果，不是决策**，也不会写入任何快照；仅用于盘中判断"如果现在收盘，名单会怎么变"。收起该功能用 `--no-shadow`。完整能力说明与安全边界见 `docs/intraday_watch.md`。
 
 ## 14. 说明与限制
 

@@ -28,6 +28,7 @@ This directory separates **active product/architecture contracts and current pha
   - `growth_compounder_offense_validation_spec.md` — Spec for pre-registered Bull-Market Offense & Slow-Growth De-Crowding Validation (`C1`/`C2`/`C3` vs Gates G1–G4).
   - `report_growth_compounder_offense_track_spec.md` — Spec for Report Layout v2 `Growth Compounder Leaders (Bull Offense Track)` section (dedup vs Secondary Radar + drawdown caveat).
   - `regime_indicator_validation_spec.md` — Spec for E4a Trailing Regime-Indicator Separation Audit (`R0`/`R1`/`R2`; `S0`/`T1`/`T2`/`T3` gates; executed 2026-10-18, verdict `NO-GO`).
+- 配置地图与命名约定：`../configs/README.md` — `production` / `risk_off` / `risk_on` 档案、快照身份与路径、变更纪律。
 
 ## 2. Active Policy & Operational Specs
 
@@ -38,6 +39,7 @@ This directory separates **active product/architecture contracts and current pha
 - `mvp_full_scan_acceptance.md` — Full-scan execution and validator acceptance contract.
 - `sec_edgartools_live_fallback.md` — Exact-filing EdgarTools fallback specification for live SEC gaps.
 - `research_evidence_workflow.md` — Append-only `evidence-observations` branch workflow and SHA256 pinning rules.
+- `intraday_watch.md` — 盘中观测（只读）：监控范围、数据与告警、临时 Entry 影子、安全边界与操作手册（工具条目见 README §13.23）。
 - `identity_version_consistency/design_v0.md` — P0 financial-data identity, L0/L1/L2 provenance hashes, and `UNCOMPARABLE` audit state specification.
 - `business_model_quality_v0/` — 11-company cross-business-model accounting semantics research and entry diagnostics.
 
