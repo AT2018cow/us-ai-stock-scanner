@@ -1245,6 +1245,23 @@ python scripts/audit_universe_coverage.py \
 
 对比本地选股底单 `data/ai_watchlist.csv`（当前 907 行 / 761 只独立股票，含 `SRC:MANUAL` 手工补充）与 `data/benchmarks/` 下的 S&P 500 / Nasdaq-100 成分快照，统计覆盖率并按基准顺序输出缺失标的列表（默认只读离线；显式传入 `--fetch --fetch-ym YYYY-MM` 时才联网刷新基准快照）。
 
+### 13.23 `scripts/intraday_watch.py` —— 盘中监控（只读）
+
+```bash
+# 默认：监控最新日报中列出的全部股票（Priority Review + Offense + Secondary Radar）
+python scripts/intraday_watch.py
+
+# 更宽范围
+python scripts/intraday_watch.py --scope attention   # 所有 watch/priority 状态（约百只）
+python scripts/intraday_watch.py --scope all         # 全决策池（较慢，约 1 分钟）
+python scripts/intraday_watch.py --symbols ADI,CTAS  # 自定义名单
+
+# 盘中每 5 分钟刷新 + 保存 markdown 快照
+python scripts/intraday_watch.py --poll 300 --save
+```
+
+只读监控工具：只刷新价格（Alpaca snapshots + 日线），输出 现价 / 涨跌 / vs SMA50·SMA200 / 52 周回撤·位置 / 20d·60d 收益 / 告警标记（`S50↓` 跌破 SMA50、`S50✖` 当日下穿、`EXT` 偏离 SMA200 >60%、`HI` 距 52 周高 ≤3%、`LO` 处于 52 周低位、`MOVE` 单日 |涨跌| ≥3%、`PE` 财报窗口）。**不写入决策快照、不改变 Action List**——官方决策保持日级与不可变；缓存被强制关闭（`cache_enabled=False`）以保证盘中拿到最新价。`--scope report` 默认覆盖日报全部列出标的名（`--include-weekly` 可并入周报）。
+
 ## 14. 说明与限制
 
 - 当前代码审查与修复记录：[问题、修复建议与验收条件](docs/code_review_and_repair_handoff_20261018.md)（交接基线）及 [修复结果与复验记录](docs/code_review_repair_results_20261018.md)（R03–R05 已复验通过；完整测试 1188 项通过）。

@@ -177,6 +177,8 @@ Common commands:
   `python run_backtest.py --mode historical_replay --scan-config configs/config.risk_off.json`
 - Small smoke test:
   `python scripts/validate_small_scale.py --config configs/config.production.json --max-symbols 100`
+- Intraday watch monitor (read-only; prices only, never writes decision snapshots):
+  `python scripts/intraday_watch.py --scope report` (README §13.23)
 - Full unit tests:
   `python -m unittest discover -s tests`
 - Monthly maintenance (first weekend; also run when the user asks for a "monthly
