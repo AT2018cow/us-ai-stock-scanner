@@ -202,11 +202,29 @@ def with_provisional_context(
     provisional: Mapping[str, StockDecision],
     decision_date: str,
 ) -> list[StockDecision]:
-    """Overlay provisional entries and stamp the provisional decision date."""
-    return [
-        replace(provisional.get(decision.symbol, decision), decision_date=decision_date)
-        for decision in decisions
-    ]
+    """Overlay provisional entries and stamp the provisional decision date.
+
+    The source snapshot's canonical ``action_state`` is yesterday's official
+    state for the preview session, so it becomes ``previous_action_state``
+    (production derives the same field from the previous snapshot). Without
+    this, S2 grace would be denied to names that entered the list on the
+    source day, and stale state-change text would leak into the preview.
+    """
+    overlayed: list[StockDecision] = []
+    for decision in decisions:
+        current = provisional.get(decision.symbol)
+        if current is None:
+            overlayed.append(replace(decision, decision_date=decision_date))
+            continue
+        overlayed.append(
+            replace(
+                current,
+                decision_date=decision_date,
+                previous_action_state=decision.action_state,
+                state_change_reason=None,
+            )
+        )
+    return overlayed
 
 
 def previous_daily_symbols(
@@ -285,12 +303,6 @@ def render_preview(
         snapshot_dir.name,
         [decision.symbol for decision in daily],
     )
-    weekly_streaks = compute_in_list_streaks(
-        snapshot_root,
-        decision_date,
-        snapshot_dir.name,
-        [decision.symbol for decision in weekly],
-    )
 
     generated = datetime.now(timezone.utc).isoformat(timespec="seconds")
     source = f"{snapshot_dir.parent.name}/{snapshot_dir.name}"
@@ -317,7 +329,7 @@ def render_preview(
         layout_version="v2",
         all_decisions=ranked,
         detailed_subdir="detailed_v2",
-        streaks_by_symbol=weekly_streaks,
+        streaks_by_symbol=streaks,
     )
     (output_dir / "weekly_review_v2.md").write_text(
         note + weekly_body, encoding="utf-8"

@@ -8,8 +8,10 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from ai_value_scanner.decision.action import ActionState
 from ai_value_scanner.decision.entry import EntryState
@@ -223,6 +225,31 @@ class TestProvisionalBuild(unittest.TestCase):
         stamped = rip.with_provisional_context([decision], provisional, "2026-11-05")
         self.assertEqual(stamped[0].decision_date, "2026-11-05")
 
+    def test_overlay_promotes_source_action_to_previous_state(self) -> None:
+        """A name that entered the list on the source day still gets S2 grace."""
+        source = replace(
+            _decision(
+                "AAA",
+                action=ActionState.PRIORITY_REVIEW,
+                previous=ActionState.WATCH_BREAKOUT,
+            ),
+            state_change_reason="Action WATCH_BREAKOUT→PRIORITY_REVIEW.",
+        )
+        soft_breach = replace(
+            source,
+            action_state=ActionState.WATCH_BREAKOUT,
+            entry=replace(source.entry, state=EntryState.WATCH_BREAKOUT),
+        )
+        stamped = rip.with_provisional_context(
+            [source], {"AAA": soft_breach}, "2026-11-05"
+        )[0]
+        self.assertIs(stamped.previous_action_state, ActionState.PRIORITY_REVIEW)
+        self.assertIsNone(stamped.state_change_reason)
+        selected = rip.select_daily_attention(
+            [stamped], cap=5, previous_daily_symbols=["AAA"]
+        )
+        self.assertEqual([decision.symbol for decision in selected], ["AAA"])
+
 
 class TestRenderPreview(unittest.TestCase):
     def test_writes_provisional_report_and_never_mutates_snapshot(self) -> None:
@@ -269,6 +296,37 @@ class TestRenderPreview(unittest.TestCase):
             text = (out / "action_list_v2.md").read_text(encoding="utf-8")
             self.assertIn("PROVISIONAL INTRADAY PREVIEW", text)
             self.assertIn("confirm_1_2_safe_v1", json.dumps(metadata))
+
+    def test_streaks_are_computed_only_for_the_daily_list(self) -> None:
+        """Weekly cards reuse daily streaks, matching production snapshots."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "decisions"
+            snapshot = root / "2026-11-04" / "production"
+            snapshot.mkdir(parents=True)
+            decisions = [_decision("AAA", priority=1), _decision("BBB", priority=2)]
+            (snapshot / "decisions.jsonl").write_text(
+                stock_decisions_to_jsonl(decisions), encoding="utf-8"
+            )
+            (snapshot / "run_manifest.json").write_text(
+                json.dumps(
+                    {"decision_date": "2026-11-04", "daily_symbols": ["AAA", "BBB"]}
+                ),
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            with mock.patch.object(
+                rip, "compute_in_list_streaks", return_value={}
+            ) as streaks:
+                metadata = rip.render_preview(
+                    snapshot_dir=snapshot,
+                    output_dir=out,
+                    snapshot_root=root,
+                    client=FakeClient(),
+                    cap=5,
+                    top_candidates=5,
+                )
+            self.assertEqual(streaks.call_count, 1)
+            self.assertEqual(streaks.call_args.args[3], metadata["daily_symbols"])
 
 
 if __name__ == "__main__":

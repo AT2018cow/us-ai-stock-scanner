@@ -126,8 +126,8 @@
      - 若未传入 `streaks_by_symbol`（如无历史上下文的单测），则当 `decision.previous_action_state == ActionState.PRIORITY_REVIEW` 且当前为 `PRIORITY_REVIEW` 时默认标记状态为延续，否则不渲染 streak 标签，保持向后兼容。
 3. **卡片头部渲染格式（`reporting/decision.py`）**：
    - 当 `card.in_list_streak_days` 存在时，在 `<summary>` 标题行的 `#rank SYMBOL` 后紧跟紧凑标签：
-     - `in_list_streak_days == 1` 且有历史快照时：显示 `🆕1d`（今日新晋）；
-     - `in_list_streak_days >= 2` 时：显示 `🔒{N}d`（如 `🔒5d`，直观区分长驻稳健股与今日新进股）；
+     - `in_list_streak_days == 1` 且有历史快照时：显示 `[NEW]`（今日新晋）；
+     - `in_list_streak_days >= 2` 时：显示 `[LIST {N}d]`（如 `[LIST 5d]`，直观区分长驻稳健股与今日新进股）；
    - 同步将 `src/ai_value_scanner/reporting/snapshot.py` 中的 `REPORT_RENDERER_REVISION` 升级为 `"mvp_report_renderer_2026-11-05"`。
 
 ### 5.2 离线换手率与稳定性评估器（`scripts/evaluate_top15_turnover_stability.py`）
@@ -231,6 +231,6 @@
 ### 6.4 报告卡片对“软退场观察期（Grace Hold）”的透明披露（`view_model.py` / `reporting/decision.py`）
 
 1. 当主榜卡片满足 `card.in_list_streak_days is not None and card.in_list_streak_days >= 2 and card.action_state != "PRIORITY_REVIEW"` 时：
-   - 在 `reporting/decision.py` 的 `_v2_stock_card_block` 中，将在榜标签从 `🔒{N}d` 渲染为 **`🔒{N}d·⏳Grace(1/2d)`**；
+   - 在 `reporting/decision.py` 的 `_v2_stock_card_block` 中，将在榜标签从 `[LIST {N}d]` 渲染为 **`[LIST {N}d · GRACE 1/2]`**；
    - 让使用者一眼看清：该股已在榜连续 `N` 天，今日因软边界轻微越界进入第 1 天驻留观察期（若次日仍未恢复 `ENTRY_READY` 将自动移出 Top-15）；
    - 同步将 `REPORT_RENDERER_REVISION` 升级为 `"mvp_report_renderer_2026-11-05b"`。
