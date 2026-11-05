@@ -60,6 +60,7 @@ from ai_value_scanner.reporting.snapshot import (
     REPORT_RENDERER_REVISION,
     build_state_change_alert_records,
     collect_detailed_report_symbols,
+    compute_in_list_streaks,
     load_snapshot_decisions,
 )
 
@@ -624,12 +625,19 @@ def validate_snapshot(
     )
 
     if versions_supported and render_mode == "exact":
+        streaks_by_symbol = compute_in_list_streaks(
+            root.parents[1],
+            manifest.get("decision_date") or root.parent.name,
+            manifest.get("strategy_style") or root.name,
+            [decision.symbol for decision in daily],
+        )
         expected_daily = render_action_list(
             daily,
             title="Daily Action List",
             cadence="daily",
             layout_version=layout_version,
             all_decisions=decisions,
+            streaks_by_symbol=streaks_by_symbol,
         )
         actual_daily = required["daily"].read_text(encoding="utf-8")
         if actual_daily != expected_daily:
@@ -641,6 +649,7 @@ def validate_snapshot(
             cadence="weekly",
             layout_version=layout_version,
             all_decisions=decisions,
+            streaks_by_symbol=streaks_by_symbol,
         )
         actual_weekly = required["weekly"].read_text(encoding="utf-8")
         if actual_weekly != expected_weekly:

@@ -52,7 +52,7 @@ class DecisionSnapshotPaths:
 # be byte-verified by the validator; older snapshots are validated structurally
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-10-18b"
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-05"
 
 
 def _safe_style(style: str | None) -> str:
@@ -81,6 +81,79 @@ def decision_snapshot_paths(
         discovery_source_inputs_dir=root / "discovery_source_inputs",
         run_manifest_json=root / "run_manifest.json",
     )
+
+
+def _is_iso_date_token(token: str) -> bool:
+    try:
+        date.fromisoformat(token)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def compute_in_list_streaks(
+    output_root: str | Path,
+    decision_date: str | date,
+    strategy_style: str | None,
+    current_symbols: Iterable[str],
+) -> dict[str, int] | None:
+    """Consecutive trading-day streak for symbols in the current main list.
+
+    Scans prior same-style snapshots newest-first through each snapshot's
+    ``run_manifest.json`` ``daily_symbols``. Values are >= 1 for every current
+    symbol; ``None`` means there is no prior same-style snapshot (callers then
+    render without streak labels). Missing/unreadable prior dates are skipped,
+    so a weekend/holiday gap never breaks a streak.
+    """
+    root = Path(output_root)
+    day = (
+        decision_date.isoformat()
+        if isinstance(decision_date, date)
+        else str(decision_date)[:10]
+    )
+    current = sorted(
+        {str(symbol).strip().upper() for symbol in current_symbols if str(symbol).strip()}
+    )
+    if not current:
+        return {}
+    style_dir = _safe_style(strategy_style)
+    try:
+        prior_dates = sorted(
+            (
+                entry.name
+                for entry in root.iterdir()
+                if entry.is_dir()
+                and _is_iso_date_token(entry.name)
+                and entry.name < day
+            ),
+            reverse=True,
+        )
+    except FileNotFoundError:
+        return None
+    streaks = {symbol: 1 for symbol in current}
+    active = set(current)
+    found_prior = False
+    for prior_date in prior_dates:
+        manifest_path = root / prior_date / style_dir / "run_manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        found_prior = True
+        symbols = {
+            str(symbol).strip().upper()
+            for symbol in (manifest.get("daily_symbols") or [])
+        }
+        for symbol in list(active):
+            if symbol in symbols:
+                streaks[symbol] += 1
+            else:
+                active.discard(symbol)
+        if not active:
+            break
+    return streaks if found_prior else None
 
 
 def resolve_git_commit_sha() -> str | None:
@@ -282,6 +355,12 @@ def write_decision_snapshot(
             stock_decisions_to_jsonl(decisions_tuple),
             encoding="utf-8",
         )
+        streaks_by_symbol = compute_in_list_streaks(
+            output_root,
+            decision_date,
+            strategy_style,
+            [decision.symbol for decision in daily_tuple],
+        )
         (tmp_root / "action_list.md").write_text(
             render_action_list(
                 daily_tuple,
@@ -289,6 +368,7 @@ def write_decision_snapshot(
                 cadence="daily",
                 layout_version=layout_version,
                 all_decisions=decisions_tuple,
+                streaks_by_symbol=streaks_by_symbol,
             ),
             encoding="utf-8",
         )
@@ -299,6 +379,7 @@ def write_decision_snapshot(
                 cadence="weekly",
                 layout_version=layout_version,
                 all_decisions=decisions_tuple,
+                streaks_by_symbol=streaks_by_symbol,
             ),
             encoding="utf-8",
         )

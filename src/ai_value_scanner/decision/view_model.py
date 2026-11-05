@@ -8,7 +8,7 @@ paths—never leaking absolute filesystem paths or internal machine enums.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 import math
@@ -291,6 +291,7 @@ class StockCardViewModel:
     all_missing_evidence: tuple[FormattedEvidenceRow, ...]
     warning_badges_inline: str = ""
     pool_display: str = ""
+    in_list_streak_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1179,6 +1180,7 @@ def _format_bucket_tokens(raw_bucket: Any) -> str:
 def build_stock_card_view_model(
     decision: StockDecision,
     rank: int | None = None,
+    in_list_streak_days: int | None = None,
 ) -> StockCardViewModel:
     """Build the presentation view model for one canonical decision."""
     checklist = _build_entry_checklist(decision)
@@ -1229,6 +1231,7 @@ def build_stock_card_view_model(
         next_trigger_inline=trigger,
         warning_badges_inline=_build_warning_badges_inline(decision, data_trust),
         pool_display=_build_pool_display(decision),
+        in_list_streak_days=in_list_streak_days,
         data_trust=data_trust,
         quality_pillars=_build_quality_pillars(decision),
         entry_checklist=checklist,
@@ -1323,12 +1326,31 @@ def build_snapshot_view_model(
     title: str = "Action List",
     cadence: str | None = None,
     attention_cap: int = 15,
+    streaks_by_symbol: Mapping[str, int] | None = None,
 ) -> SnapshotViewModel:
     """Build the snapshot-level view model."""
     primary = tuple(primary_decisions)
     primary_symbols = {decision.symbol for decision in primary}
+
+    def _primary_streak(decision: StockDecision) -> int | None:
+        if streaks_by_symbol is not None:
+            return streaks_by_symbol.get(decision.symbol)
+        # No historical context (e.g. isolated unit fixtures): a decision that
+        # was already PRIORITY_REVIEW yesterday and still is today is treated
+        # as a continuation, without inventing a longer count.
+        if (
+            decision.previous_action_state is ActionState.PRIORITY_REVIEW
+            and decision.action_state is ActionState.PRIORITY_REVIEW
+        ):
+            return 2
+        return None
+
     primary_cards = tuple(
-        build_stock_card_view_model(decision) for decision in primary
+        build_stock_card_view_model(
+            decision,
+            in_list_streak_days=_primary_streak(decision),
+        )
+        for decision in primary
     )
     if primary:
         decision_day = primary[0].decision_date

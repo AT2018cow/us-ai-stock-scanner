@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from ai_value_scanner.decision.model import EvidenceItem, StockDecision
 from ai_value_scanner.decision.view_model import (
@@ -243,6 +243,7 @@ def render_action_list(
     layout_version: str = "v1",
     all_decisions: Iterable[StockDecision] | None = None,
     detailed_subdir: str = "detailed",
+    streaks_by_symbol: Mapping[str, int] | None = None,
 ) -> str:
     """Render the compact attention surface from canonical StockDecision objects."""
     if layout_version == "v2":
@@ -252,6 +253,7 @@ def render_action_list(
             cadence=cadence,
             all_decisions=all_decisions,
             detailed_subdir=detailed_subdir,
+            streaks_by_symbol=streaks_by_symbol,
         )
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
@@ -507,10 +509,16 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
         if card.entry_state == "ENTRY_READY"
         else "What to Wait For"
     )
+    streak_label = ""
+    if card.in_list_streak_days is not None:
+        if card.in_list_streak_days == 1:
+            streak_label = " 🆕1d"
+        elif card.in_list_streak_days >= 2:
+            streak_label = f" 🔒{card.in_list_streak_days}d"
     lines = [
         f'<a id="card-{anchor}"></a>',
         "<details>",
-        f"<summary><b>#{card.rank} {card.symbol}</b> · "
+        f"<summary><b>#{card.rank} {card.symbol}</b>{streak_label} · "
         f"Q:<b>{card.quality_grade}</b> {card.quality_score_display} · "
         f"E:<b>{_short_entry(card.entry_state)}</b> {card.entry_score_display} "
         f"— {_plain(card.accordion_Tagline)}"
@@ -557,6 +565,7 @@ def render_action_list_v2(
     cadence: str | None = None,
     all_decisions: Iterable[StockDecision] | None = None,
     detailed_subdir: str = "detailed",
+    streaks_by_symbol: Mapping[str, int] | None = None,
 ) -> str:
     """Clean, mobile-first Analyst Brief (v2) for the Daily/Weekly Action List.
 
@@ -566,7 +575,11 @@ def render_action_list_v2(
     """
     primary = tuple(decisions)
     snapshot = build_snapshot_view_model(
-        primary, all_decisions, title=title, cadence=cadence
+        primary,
+        all_decisions,
+        title=title,
+        cadence=cadence,
+        streaks_by_symbol=streaks_by_symbol,
     )
     cadence_display = cadence or "n/a"
     stock_jump_links = " · ".join(

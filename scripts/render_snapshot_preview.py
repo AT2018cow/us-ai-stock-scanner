@@ -60,6 +60,7 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
+from ai_value_scanner.reporting.snapshot import compute_in_list_streaks
 from ai_value_scanner.scanner import (
     INTEREST_INCOME_TAGS,
     extract_latest_quarterly_nonop_metrics,
@@ -727,7 +728,7 @@ def main() -> None:
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if args.recompute_v2:
-        _write_recompute_preview(decisions, output_dir)
+        _write_recompute_preview(decisions, output_dir, snapshot_dir)
         return
     by_symbol = {decision.symbol: decision for decision in decisions}
 
@@ -735,6 +736,12 @@ def main() -> None:
     weekly_symbols = list(manifest.get("weekly_symbols", []))
     daily = tuple(by_symbol[s] for s in daily_symbols if s in by_symbol)
     weekly = tuple(by_symbol[s] for s in weekly_symbols if s in by_symbol)
+    streaks_by_symbol = compute_in_list_streaks(
+        snapshot_dir.parents[1],
+        manifest.get("decision_date") or snapshot_dir.parent.name,
+        snapshot_dir.name,
+        [decision.symbol for decision in daily],
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "action_list_v2.md").write_text(
@@ -745,6 +752,7 @@ def main() -> None:
             layout_version="v2",
             all_decisions=decisions,
             detailed_subdir="detailed_v2",
+            streaks_by_symbol=streaks_by_symbol,
         ),
         encoding="utf-8",
     )
@@ -756,15 +764,24 @@ def main() -> None:
             layout_version="v2",
             all_decisions=decisions,
             detailed_subdir="detailed_v2",
+            streaks_by_symbol=streaks_by_symbol,
         ),
         encoding="utf-8",
     )
 
     daily_view = build_snapshot_view_model(
-        daily, decisions, title="Daily Action List", cadence="daily"
+        daily,
+        decisions,
+        title="Daily Action List",
+        cadence="daily",
+        streaks_by_symbol=streaks_by_symbol,
     )
     weekly_view = build_snapshot_view_model(
-        weekly, decisions, title="Weekly Review List", cadence="weekly"
+        weekly,
+        decisions,
+        title="Weekly Review List",
+        cadence="weekly",
+        streaks_by_symbol=streaks_by_symbol,
     )
     symbols = (
         {card.symbol for card in daily_view.primary_cards}
@@ -794,12 +811,18 @@ def main() -> None:
 
 
 def _write_recompute_preview(
-    decisions: list, output_dir: Path
+    decisions: list, output_dir: Path, snapshot_dir: Path
 ) -> None:
     """Non-destructive v2 recompute preview (never touches --snapshot-dir)."""
     recomputed = recompute_v2_decisions(list(decisions))
     daily = select_daily_attention(recomputed, cap=15)
     weekly = select_weekly_attention(recomputed, cap=15)
+    streaks_by_symbol = compute_in_list_streaks(
+        snapshot_dir.parents[1],
+        snapshot_dir.parent.name,
+        snapshot_dir.name,
+        [decision.symbol for decision in daily],
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "action_list_v2.md").write_text(
         render_action_list(
@@ -809,6 +832,7 @@ def _write_recompute_preview(
             layout_version="v2",
             all_decisions=recomputed,
             detailed_subdir="detailed_v2",
+            streaks_by_symbol=streaks_by_symbol,
         ),
         encoding="utf-8",
     )
@@ -820,14 +844,23 @@ def _write_recompute_preview(
             layout_version="v2",
             all_decisions=recomputed,
             detailed_subdir="detailed_v2",
+            streaks_by_symbol=streaks_by_symbol,
         ),
         encoding="utf-8",
     )
     daily_view = build_snapshot_view_model(
-        daily, recomputed, title="Daily Action List", cadence="daily"
+        daily,
+        recomputed,
+        title="Daily Action List",
+        cadence="daily",
+        streaks_by_symbol=streaks_by_symbol,
     )
     weekly_view = build_snapshot_view_model(
-        weekly, recomputed, title="Weekly Review List", cadence="weekly"
+        weekly,
+        recomputed,
+        title="Weekly Review List",
+        cadence="weekly",
+        streaks_by_symbol=streaks_by_symbol,
     )
     by_symbol = {decision.symbol: decision for decision in recomputed}
     symbols = (

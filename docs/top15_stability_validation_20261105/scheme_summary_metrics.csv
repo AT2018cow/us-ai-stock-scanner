@@ -1,0 +1,6 @@
+scheme,mean_retained_count,min_retained_count,mean_daily_turnover_rate,one_day_whipsaw_count,roundtrip_5d_count,damaged_leaked_count,mean_list_size,g1_pass,g2_pass,g3_pass
+B0_baseline,9.583333,6,0.361111,27,22,0,15.000000,False,True,
+S1_confirm_2_2_safe,12.500000,10,0.158120,2,4,0,14.846154,True,True,True
+S2_confirm_1_2_safe,12.500000,10,0.166667,2,7,0,15.000000,True,True,True
+S3_hysteresis_buffer,11.750000,7,0.216667,8,7,0,15.000000,True,True,True
+S4_hybrid_hysteresis_regime,11.750000,7,0.216667,9,9,0,15.000000,True,True,
