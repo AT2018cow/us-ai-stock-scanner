@@ -357,9 +357,67 @@ class TestCandidateSchemes(unittest.TestCase):
 class TestCliReproduction(unittest.TestCase):
     def test_part_a_outputs_are_byte_identical(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            out_dir = Path(td) / "out"
+            root = Path(td)
+            decisions_root = root / "decisions"
+            for day in ev.LIVE_DATES:
+                snap = decisions_root / day / "production"
+                snap.mkdir(parents=True, exist_ok=True)
+                (snap / "run_manifest.json").write_text(
+                    json.dumps({"daily_symbols": ["AAA", "BBB"]}),
+                    encoding="utf-8",
+                )
+                records = [
+                    {
+                        "symbol": sym,
+                        "priority": idx,
+                        "action_state": "PRIORITY_REVIEW",
+                        "quality": {
+                            "grade": "A",
+                            "score": 0.85,
+                            "confidence": 0.95,
+                            "risks": [],
+                        },
+                        "entry": {
+                            "state": "ENTRY_READY",
+                            "score": 0.90,
+                            "gate_results": [],
+                            "positives": [
+                                {"metric": "price_to_sma50", "value": 1.02},
+                                {"metric": "return_20d", "value": 0.03},
+                                {"metric": "return_60d", "value": 0.08},
+                                {
+                                    "metric": "relative_strength_60d_qqq",
+                                    "value": 0.04,
+                                },
+                            ],
+                            "risks": [],
+                        },
+                    }
+                    for idx, sym in enumerate(("AAA", "BBB"), start=1)
+                ]
+                (snap / "decisions.jsonl").write_text(
+                    "\n".join(json.dumps(r) for r in records) + "\n",
+                    encoding="utf-8",
+                )
+            base_csv = root / "base.csv"
+            bear_csv = root / "bear.csv"
+            base_csv.write_text("signal_date,symbol\n2025-01-31,AAA\n", encoding="utf-8")
+            bear_csv.write_text("signal_date,symbol\n2022-01-31,AAA\n", encoding="utf-8")
+            out_dir = root / "out"
+            cli_args = [
+                "--part",
+                "a",
+                "--decisions-root",
+                str(decisions_root),
+                "--base-dataset",
+                str(base_csv),
+                "--bear-dataset",
+                str(bear_csv),
+                "--output-dir",
+                str(out_dir),
+            ]
             with contextlib.redirect_stdout(io.StringIO()):
-                ev.main(["--part", "a", "--output-dir", str(out_dir)])
+                ev.main(cli_args)
             first = {
                 path.name: path.read_bytes()
                 for path in sorted(out_dir.iterdir())
@@ -382,7 +440,7 @@ class TestCliReproduction(unittest.TestCase):
             for path in out_dir.iterdir():
                 path.unlink()
             with contextlib.redirect_stdout(io.StringIO()):
-                ev.main(["--part", "a", "--output-dir", str(out_dir)])
+                ev.main(cli_args)
             second = {
                 path.name: path.read_bytes()
                 for path in sorted(out_dir.iterdir())
