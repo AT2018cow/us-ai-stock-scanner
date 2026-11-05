@@ -159,3 +159,78 @@
 - **G2（风控零漏网）**：所有 13 个日频快照及 51 个月度截面中，`TREND_DAMAGED`、`INSUFFICIENT_DATA`、`Quality C/UNRATED` 混入 Top-15 的次数 **严格等于 `0`**；
 - **G3（不追高 / 入场及时性）**：对比 `S3_hysteresis_buffer` / `S2_confirm_1_2_safe` 与 `S1_confirm_2_2_safe`，验证 `N=1` 进场不延迟方案能否在不牺牲稳定性的前提下避免 Day-1 回踩买点踏空；
 - **G4（长期收益与回撤不劣化）**：51 期历史回放中，`ALL_51` 的 60d 日期等权超额收益劣化不超过 `1.0pp`，`BEAR_2022` 与 `FWD_DRAWDOWN_60D` 的重伤率不恶化。
+
+---
+
+## 6. Phase 2 生产集成规范（已拍板采用 `S2_confirm_1_2_safe`）
+
+根据 Phase 1 实测结果（`docs/top15_stability_validation_20261105/report.md`）：
+- `S2_confirm_1_2_safe`（进场 `N=1` 不延迟 + 软越界 `M=2` 确认退场 + 硬破位 `M=1` 当日立即熔断）将 13 个实盘快照的日均保留数从 **`9.58` 提升至 `12.50 / 15`**、日均换手率从 **`36.1%` 降至 `16.7%`**、一日游从 **`27 次` 降至 `2 次`（-93%）**、5 日往返从 **`22 次` 降至 `7 次`（-68%）**，且硬破位漏网为 **`0`**、底层 `Company Quality × Entry Quality` 阈值 **0 放宽**。
+
+### 6.1 核心纯函数设计（`src/ai_value_scanner/decision/attention.py`）
+
+1. 新增常量：
+   - `DAILY_ATTENTION_STABILITY_POLICY_VERSION = "confirm_1_2_safe_v1"`
+   - `HARD_OVERBOUGHT_SMA50_FOR_RETENTION = 1.12`
+   - `HARD_OVERBOUGHT_RET20_FOR_RETENTION = 0.15`
+2. 实现硬破位熔断判定函数 `is_hard_damage_for_retention(decision: StockDecision) -> bool`：
+   - 当满足以下任一条件时返回 `True`（触发 `M=1` 当日立即移出，绝不给予驻留缓冲）：
+     - `decision.entry.state in {EntryState.TREND_DAMAGED, EntryState.INSUFFICIENT_DATA}`
+     - `decision.quality.grade in {QualityGrade.C, QualityGrade.UNRATED}`
+     - `decision_metric_value(decision, "price_to_sma50")` 非空且 `> 1.12`
+     - `decision_metric_value(decision, "return_20d")` 非空且 `> 0.15`
+3. 实现软越界 1 日驻留缓冲判定函数 `is_soft_exit_grace_eligible(decision: StockDecision, previous_daily_symbols: Iterable[str]) -> bool`：
+   - 仅当同时满足以下 4 个条件时返回 `True`：
+     1. `decision.symbol in {str(s).strip().upper() for s in previous_daily_symbols}`（上一交易日在 Top-15 主榜内）；
+     2. `decision.action_state is not ActionState.PRIORITY_REVIEW`（今日未达到标准 `PRIORITY_REVIEW`）；
+     3. `decision.previous_action_state is ActionState.PRIORITY_REVIEW`（上一交易日其 canonical `action_state` 为 `PRIORITY_REVIEW`，说明今天是第 1 天软越界 `soft_streak == 1 < 2`；若次日仍未恢复 `PRIORITY_REVIEW`，次日的 `previous_action_state` 将是非 `PRIORITY_REVIEW`，从而在第 2 天自动移出，无需跨多日状态文件即可严格实现 `M=2`！）；
+     4. `not is_hard_damage_for_retention(decision)`（未触发硬破位熔断）。
+
+### 6.2 `select_daily_attention` 升级（`src/ai_value_scanner/decision/integrated.py`）
+
+1. 扩展 `select_daily_attention` 签名（保持完全向后兼容）：
+   ```python
+   def select_daily_attention(
+       decisions: Iterable[StockDecision],
+       *,
+       cap: int = DEFAULT_ATTENTION_CAP,
+       previous_daily_symbols: Iterable[str] | None = None,
+   ) -> tuple[StockDecision, ...]:
+   ```
+2. 选择逻辑：
+   - **当 `previous_daily_symbols is None` 时**：保持现有旧行为不变（确保所有未传该参数的历史单测 100% 兼容）；
+   - **当传入 `previous_daily_symbols` 时**：
+     - 若 `previous_daily_symbols` 为空集合/空元组（例如首次运行无历史快照），退化为无历史模式（调用 `select_weekly_attention(ordered, cap=cap)`）；
+     - 若 `previous_daily_symbols` 非空（启用 `S2_confirm_1_2_safe`）：
+       1. 归一化 `incumbents = {str(s).strip().upper() for s in previous_daily_symbols if str(s).strip()}`；
+       2. **在榜保留集合 `keep`**：遍历 `ordered`（按 `(d.priority, d.symbol)` 排序），若 `d.symbol in incumbents` 且（`d.action_state is ActionState.PRIORITY_REVIEW` 或 `is_soft_exit_grace_eligible(d, incumbents)`），加入 `keep`（最多取前 `cap` 个）；
+       3. **新进候选集合 `candidates`**：遍历 `ordered`，若 `d.symbol not in incumbents` 且 `d.action_state is ActionState.PRIORITY_REVIEW`（`N=1` 进场不延迟），加入 `candidates`；
+       4. 取 `slots = max(0, resolved_cap - len(keep))`，合并 `selected = keep + candidates[:slots]`；
+       5. 按 `(0 if d.action_state is ActionState.PRIORITY_REVIEW else 1, d.priority, d.symbol)` 排序返回 `tuple(selected)`（确保正常 `PRIORITY_REVIEW` 排在前面，1 日缓冲驻留股紧随其后，且不再用一日游的 `AVOID` 降级股凑数）。
+
+### 6.3 历史主榜读取与生产调用链（`reporting/snapshot.py` / `scanner.py` / `scripts/render_snapshot_preview.py`）
+
+1. 在 `src/ai_value_scanner/reporting/snapshot.py` 中新增纯函数：
+   ```python
+   def load_previous_daily_symbols(
+       output_root: str | Path,
+       decision_date: str | date,
+       *,
+       strategy_style: str | None,
+   ) -> tuple[str, ...] | None:
+   ```
+   - 查找 `<output_root>/<prior_date>/<style>/run_manifest.json` 中 `< decision_date` 的最近一期有效 manifest：
+     - 若找到，返回 `tuple(str(s).strip().upper() for s in (manifest.get("daily_symbols") or []) if str(s).strip())`；
+     - 若不存在任何历史同 style 快照，返回 `None`。
+2. 在 `src/ai_value_scanner/scanner.py`（主快照与 shadow 快照两处 `select_daily_attention` 调用点）及 `scripts/render_snapshot_preview.py` 中：
+   - 先通过 `load_previous_daily_symbols(decision_output_root, decision_date, strategy_style=...)` 获取上一期主榜符号；
+   - 传入 `select_daily_attention(decisions, cap=decision_attention_cap, previous_daily_symbols=previous_daily_symbols)`。
+3. 在 `run_manifest.json` 中记录稳定性策略标识（可选附加字段，保持旧验证兼容）：
+   - `write_decision_snapshot` 写出 `run_manifest.json` 时记录 `"stability_policy_version": DAILY_ATTENTION_STABILITY_POLICY_VERSION`。
+
+### 6.4 报告卡片对“软退场观察期（Grace Hold）”的透明披露（`view_model.py` / `reporting/decision.py`）
+
+1. 当主榜卡片满足 `card.in_list_streak_days is not None and card.in_list_streak_days >= 2 and card.action_state != "PRIORITY_REVIEW"` 时：
+   - 在 `reporting/decision.py` 的 `_v2_stock_card_block` 中，将在榜标签从 `🔒{N}d` 渲染为 **`🔒{N}d·⏳Grace(1/2d)`**；
+   - 让使用者一眼看清：该股已在榜连续 `N` 天，今日因软边界轻微越界进入第 1 天驻留观察期（若次日仍未恢复 `ENTRY_READY` 将自动移出 Top-15）；
+   - 同步将 `REPORT_RENDERER_REVISION` 升级为 `"mvp_report_renderer_2026-11-05b"`。
