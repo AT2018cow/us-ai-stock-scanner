@@ -806,7 +806,7 @@ class ForeignFilerAnnualDisclosureTests(unittest.TestCase):
     def test_badge_swapped_for_annual_forms(self) -> None:
         for form in ("20-F", "40-F", "20-F/A"):
             card = build_stock_card_view_model(self._annual_decision(form))
-            self.assertIn("⚠️Foreign-Filer(Annual)", card.warning_badges_inline)
+            self.assertIn("[FOREIGN FILER ANNUAL]", card.warning_badges_inline)
             self.assertNotIn("Pre-Earnings", card.warning_badges_inline)
 
     def test_domestic_filer_keeps_pre_earnings_wording(self) -> None:
@@ -818,19 +818,19 @@ class ForeignFilerAnnualDisclosureTests(unittest.TestCase):
             },
         )
         card = build_stock_card_view_model(decision)
-        self.assertIn("⚠️Pre-Earnings(169d)", card.warning_badges_inline)
+        self.assertIn("[PRE-EARNINGS 169d]", card.warning_badges_inline)
 
     def test_missing_form_fails_open(self) -> None:
         card = build_stock_card_view_model(
             _decision(quality_risks=(self._pre_earnings(),))
         )
-        self.assertIn("⚠️Pre-Earnings(169d)", card.warning_badges_inline)
+        self.assertIn("[PRE-EARNINGS 169d]", card.warning_badges_inline)
 
     def test_watchout_fragment_uses_annual_cadence_wording(self) -> None:
         card = build_stock_card_view_model(self._annual_decision())
         self.assertNotIn("Pre-Earnings", card.fundamental_watchouts_inline)
         self.assertIn(
-            "⚠️ Foreign-Filer (Annual 20-F; "
+            "Foreign-Filer (Annual 20-F; "
             "quarterly results (6-K) not machine-visible)",
             card.fundamental_watchouts_inline,
         )
@@ -874,7 +874,7 @@ class ForeignFilerAnnualDisclosureTests(unittest.TestCase):
         self.assertIn("Filing: Annual (20-F)", detailed)
         self.assertNotIn("Pre-Earnings Filing Age", detailed)
         action = render_action_list_v2([decision], title="T", cadence="daily")
-        self.assertIn("⚠️Foreign-Filer(Annual)", action)
+        self.assertIn("[FOREIGN FILER ANNUAL]", action)
         self.assertIn("Filing: Annual (20-F)", action)
 
 

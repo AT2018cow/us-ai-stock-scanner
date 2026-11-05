@@ -234,7 +234,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 6. **营运红旗（`operating_red_flags`，权重 10%）**：
    - 考核指标：`receivables_growth_gap`（应收增速 - 营收增速）与 `inventory_growth_gap`（存货增速 - 营收增速）。
    - **核心升级（高增长现金牛营运资本豁免）**：当公司处于高速扩张且回款健康（`revenue_yoy >= 25%` 且 `OCF/NI >= 0.80`）时，豁免期末时点应收/存货增速差扣分与一票否决项，使 `MU`、`NVDA`、`TER` 等高景气龙头不再因单季末备货/应收时间基准错配被误降为 B 级。
-- **财报临近窗口预警（v2 新增，仅提示不扣分）**：当最新定期财报账龄进入 `70–400` 天区间（接近约 90 天财报周期尾声，如 `MSFT 78d`、`AMD 71d`、`FAST 91d`、`FDS 106d`），`build_company_quality_v2` 挂载 `pre_earnings_window_risk` 反方证据项并在报告中显示 **`⚠️Pre-Earnings(<age>d)`** 徽标，同时在 `PRIORITY_REVIEW` 联合排序中扣减 `0.06`（让财报刚落地 `<70d` 的同分标的排在前面）。该预警**不改变** `quality.score`、`confidence`、`grade`、`ENTRY_READY` / `PRIORITY_REVIEW` 状态。
+- **财报临近窗口预警（v2 新增，仅提示不扣分）**：当最新定期财报账龄进入 `70–400` 天区间（接近约 90 天财报周期尾声，如 `MSFT 78d`、`AMD 71d`、`FAST 91d`、`FDS 106d`），`build_company_quality_v2` 挂载 `pre_earnings_window_risk` 反方证据项并在报告中显示 **`[PRE-EARNINGS <age>d]`** 徽标，同时在 `PRIORITY_REVIEW` 联合排序中扣减 `0.06`（让财报刚落地 `<70d` 的同分标的排在前面）。该预警**不改变** `quality.score`、`confidence`、`grade`、`ENTRY_READY` / `PRIORITY_REVIEW` 状态。
 
 #### （2）Entry Quality v2（量价买点评估：回答“现在是不是相对合理的入场位置”）
 将候选股划分为 5 个清晰状态（`ENTRY_READY`, `WATCH_PULLBACK`, `WATCH_BREAKOUT`, `TREND_DAMAGED`, `INSUFFICIENT_DATA`），其中 **`ENTRY_READY` 必须同时满足 7 大买点门限**：
@@ -247,7 +247,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
    - **回调死带闭合（v2 升级）**：凡是长期趋势、中期动量、相对强度与回撤全部健康，仅因短期偏热（`price_to_sma50 > 1.08` 或 `return_20d > +12.0%`）未进 `ENTRY_READY` 的强势股，统一归入 **`WATCH_PULLBACK`（等待回调至 SMA50 带宽）**，不再误入 `WATCH_BREAKOUT`。
 7. **回撤与波动率受控**：距 52 周高点回撤 `drawdown_from_52w_high <= 22%`，60 日年化波动率 `volatility_60d <= 80%`。
    - **`WATCH_BREAKOUT` 蓄势 vs 滞后细分（v2 升级）**：将等待突破的标的显式区分为 `watch_breakout_near_consolidation`（站上 SMA200、均线对齐、60d 与 RS 接近就绪）与 `watch_breakout_lagging_structure`（趋势或相对强度明显滞后，扣减 `0.10` 分），且每一只非 `ENTRY_READY` 股票 100% 显式列出尚未达标的具体门限。
-   - **中期过热扣分与徽标（v2 新增，状态不变）**：当 `price_to_sma200 > 1.35x`（`>1.45x` 加重）或 `return_60d > +35%`（`>+45%` 加重）时，`entry.score` 分别扣减 `0.06` / `0.10`（可叠加、有 `0` 分下限），并挂 `price_extended_above_sma200` / `return_60d_extended` 反方证据与 **`⚠️Extended(...)`** 徽标——如 60d 大涨 `+45%..+53%`、贴在 `1.43x..1.51x` SMA200 上方的 `CRM`、`MSFT`、`AMD` 不再拿到人为的 `1.00` 满分，在联合排序中排到未过热 setup（如 `KEYS`、`ADI`、`EXPE`）之后。`ENTRY_READY` / `PRIORITY_REVIEW` 状态本身保持不变；且这两项属于非阻塞性提示，不会把已通过的 SMA200/60d 门限翻转为 `FAIL_BLOCKER`。
+   - **中期过热扣分与徽标（v2 新增，状态不变）**：当 `price_to_sma200 > 1.35x`（`>1.45x` 加重）或 `return_60d > +35%`（`>+45%` 加重）时，`entry.score` 分别扣减 `0.06` / `0.10`（可叠加、有 `0` 分下限），并挂 `price_extended_above_sma200` / `return_60d_extended` 反方证据与 **`[EXTENDED ...]`** 徽标——如 60d 大涨 `+45%..+53%`、贴在 `1.43x..1.51x` SMA200 上方的 `CRM`、`MSFT`、`AMD` 不再拿到人为的 `1.00` 满分，在联合排序中排到未过热 setup（如 `KEYS`、`ADI`、`EXPE`）之后。`ENTRY_READY` / `PRIORITY_REVIEW` 状态本身保持不变；且这两项属于非阻塞性提示，不会把已通过的 SMA200/60d 门限翻转为 `FAIL_BLOCKER`。
 
 #### （3）Action & Priority v2（行动状态路由与 Top-15 联合排序）
 1. **高确信度 `Quality B + ENTRY_READY` 提拔**：当 `Quality B` 满足 `quality.score >= 0.68`、`confidence >= 0.80` 且处于高分买点 `ENTRY_READY (entry.score >= 0.80)` 时，直接提拔进入 **`PRIORITY_REVIEW`**，避免优质成长股因单一指标暂处 B 级上限而被埋没在 `HOLD_MONITOR`。
@@ -272,10 +272,10 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 
 #### （5）Report Layout v2（报告呈现层：警告徽标、池归属与集中度披露）
 - **名单集中度总览行**：`action_list.md` 日期行正下方新增一行 `- **Pool & Concentration**: ...`，汇总候选池规模（如 `Pool (511 names)`）、Top-15 的 `watchlist_bucket` 分布（如 `ai_core 11/15, ai_peripheral 4/15`）与出现最多的来源 ETF（如 `Top ETFs: XLK (5), IGV (4)`），仅当快照携带 watchlist 来源元数据时渲染。
-- **卡片警告徽标**：每只股票 `<summary>` 行尾直接追加徽标——`⚠️Pre-Earnings(78d)`（财报临近窗口）、`⚠️Extended(SMA200 1.47x, 60d +51.4%)`（中期过热）、`⚠️Share-Basis/Split`（拆股/股本口径断裂或加权平均股本兜底）。
-- **在榜连续天数与 Grace 观察期标签**：卡片 `<summary>` 在 `#rank SYMBOL` 后显示 `🆕1d`（新进）或 `🔒Nd`（连续在榜 N 个交易日）；若今日处于软退场观察期，则显示 `🔒Nd·⏳Grace(1/2d)`，提示次日仍未恢复 `PRIORITY_REVIEW` 将自动移出 Top-15（report renderer revision `mvp_report_renderer_2026-11-05b`）。
+- **卡片警告徽标**：每只股票 `<summary>` 行尾直接追加徽标——`[PRE-EARNINGS 78d]`（财报临近窗口）、`[EXTENDED SMA200 1.47x, 60d +51.4%]`（中期过热）、`[SHARE-BASIS/SPLIT]`（拆股/股本口径断裂或加权平均股本兜底）。
+- **在榜连续天数与 Grace 观察期标签**：卡片 `<summary>` 在 `#rank SYMBOL` 后显示 `[NEW]`（新进）或 `[LIST Nd]`（连续在榜 N 个交易日）；若今日处于软退场观察期，则显示 `[LIST Nd · GRACE 1/2]`，提示次日仍未恢复 `PRIORITY_REVIEW` 将自动移出 Top-15（report renderer revision `mvp_report_renderer_2026-11-06a`）。
 - **池归属显示**：`- **Company**: ...` 行在有来源元数据时追加 `· **Pool**: \`ai_core\` (XLK, IGV)`。
-- **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
+- **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (Warning: Extended SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
 - **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。
 - 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
 

@@ -733,19 +733,19 @@ def _inline_fragment(
     if item.code == "pre_earnings_window_risk":
         if annual_form:
             return (
-                f"⚠️ Foreign-Filer (Annual {annual_form}; "
+                f"Foreign-Filer (Annual {annual_form}; "
                 "quarterly results (6-K) not machine-visible)"
             )
-        return f"⚠️ Pre-Earnings ({format_metric_value(item.metric, item.value)} filing)"
+        return f"Pre-Earnings ({format_metric_value(item.metric, item.value)} filing)"
     if item.code == "shares_yoy_split_or_basis_discontinuity":
-        return f"⚠️ Share Split/Basis ({format_metric_value(item.metric, item.value)})"
+        return f"Share Split/Basis ({format_metric_value(item.metric, item.value)})"
     if item.code == "nonoperating_gain_inflation":
         val_num = _as_float(item.value)
         if val_num is not None:
             if "quarterly revenue" in (item.message or ""):
-                return f"⚠️ Non-Op Gain (Qtr +{val_num * 100:.1f}% of rev)"
-            return f"⚠️ Non-Op Gain (+{val_num * 100:.1f}pp vs OpMargin)"
-        return "⚠️ Non-Op Gain"
+                return f"Non-Op Gain (Qtr +{val_num * 100:.1f}% of rev)"
+            return f"Non-Op Gain (+{val_num * 100:.1f}pp vs OpMargin)"
+        return "Non-Op Gain"
     if item.code == "ocf_conversion_lagging_high_margin":
         return f"OCF/NI {format_metric_value(item.metric, item.value)} (lagging margin)"
     if item.code == "operating_growth_basis_substituted":
@@ -829,7 +829,7 @@ def _build_entry_blockers_inline(
         base = f"All {len(gate_results)} readiness gates passed"
         if not warnings:
             return base
-        return f"{base} (⚠️ {_gate_warning_fragment(warnings)})"
+        return f"{base} (Warning: {_gate_warning_fragment(warnings)})"
     return "; ".join(gate.reason for gate in blocking)
 
 
@@ -840,7 +840,7 @@ def _gate_warning_fragment(
     for gate in warnings:
         if gate.gate_key == "extension_watch" and gate.observed:
             parts.append(
-                "Extended: " + " · ".join(str(gate.observed).split("; "))
+                "Extended " + " · ".join(str(gate.observed).split("; "))
             )
         elif gate.gate_key == "benchmark_freshness":
             parts.append(f"Benchmark stale {gate.observed}d")
@@ -1088,24 +1088,24 @@ def _build_warning_badges_inline(
     for item in decision.quality.risks:
         if item.code == "pre_earnings_window_risk":
             if annual_form:
-                badges.append("⚠️Foreign-Filer(Annual)")
+                badges.append("[FOREIGN FILER ANNUAL]")
                 break
             try:
                 age = int(item.value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 continue
-            badges.append(f"⚠️Pre-Earnings({age}d)")
+            badges.append(f"[PRE-EARNINGS {age}d]")
             break
     for item in decision.quality.risks:
         if item.code == "nonoperating_gain_inflation":
             val_num = _as_float(item.value)
             if val_num is not None:
                 if "quarterly revenue" in (item.message or ""):
-                    badges.append(f"⚠️NonOp-Gain(Qtr +{val_num * 100:.0f}% rev)")
+                    badges.append(f"[NON-OP GAIN QTR +{val_num * 100:.0f}% REV]")
                 else:
-                    badges.append(f"⚠️NonOp-Gain(+{val_num * 100:.1f}pp)")
+                    badges.append(f"[NON-OP GAIN +{val_num * 100:.1f}pp]")
             else:
-                badges.append("⚠️NonOp-Gain")
+                badges.append("[NON-OP GAIN]")
             break
     parts: list[str] = []
     for item in decision.entry.risks:
@@ -1114,12 +1114,12 @@ def _build_warning_badges_inline(
         elif item.code == "return_60d_extended":
             parts.append(f"60d {format_metric_value(item.metric, item.value)}")
     if parts:
-        badges.append(f"⚠️Extended({', '.join(parts)})")
+        badges.append(f"[EXTENDED {', '.join(parts)}]")
     quality_codes = {item.code for item in decision.quality.risks}
     if "shares_yoy_split_or_basis_discontinuity" in quality_codes or (
         "weighted-average fallback" in " ".join(data_trust.warnings)
     ):
-        badges.append("⚠️Share-Basis/Split")
+        badges.append("[SHARE-BASIS/SPLIT]")
     return " · ".join(badges)
 
 

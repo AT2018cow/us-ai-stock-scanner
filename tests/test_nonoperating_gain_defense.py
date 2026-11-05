@@ -575,13 +575,13 @@ class TestNonOpViewModel(unittest.TestCase):
             _inline_fragment(_ev("nonoperating_gain_inflation",
                                  polarity="negative", metric="net_margin",
                                  value=0.216605)),
-            "⚠️ Non-Op Gain (+21.7pp vs OpMargin)",
+            "Non-Op Gain (+21.7pp vs OpMargin)",
         )
         self.assertEqual(
             _inline_fragment(_ev("nonoperating_gain_inflation",
                                  polarity="negative", metric="net_margin",
                                  value=None)),
-            "⚠️ Non-Op Gain",
+            "Non-Op Gain",
         )
         self.assertEqual(
             _inline_fragment(_ev("ocf_conversion_lagging_high_margin",
@@ -597,7 +597,7 @@ class TestNonOpViewModel(unittest.TestCase):
                                value=0.216605),))
         card = build_stock_card_view_model(decision)
         self.assertEqual(card.warning_badges_inline,
-                         "⚠️NonOp-Gain(+21.7pp)")
+                         "[NON-OP GAIN +21.7pp]")
 
     def test_warning_badge_without_value(self) -> None:
         decision = _decision(
@@ -605,7 +605,7 @@ class TestNonOpViewModel(unittest.TestCase):
                                polarity="negative", metric="net_margin",
                                value=None),))
         card = build_stock_card_view_model(decision)
-        self.assertEqual(card.warning_badges_inline, "⚠️NonOp-Gain")
+        self.assertEqual(card.warning_badges_inline, "[NON-OP GAIN]")
 
     def test_badge_order_pre_earnings_then_nonop(self) -> None:
         decision = _decision(
@@ -618,7 +618,7 @@ class TestNonOpViewModel(unittest.TestCase):
         card = build_stock_card_view_model(decision)
         self.assertEqual(
             card.warning_badges_inline,
-            "⚠️Pre-Earnings(78d) · ⚠️NonOp-Gain(+21.7pp)",
+            "[PRE-EARNINGS 78d] · [NON-OP GAIN +21.7pp]",
         )
 
     def test_no_badge_for_clean_decision(self) -> None:
@@ -814,7 +814,7 @@ class TestRecomputeV2NonOpOverlay(unittest.TestCase):
                 (out_dir / "decisions_recomputed_v2.jsonl").exists())
             action_md = (out_dir / "action_list_v2.md").read_text(
                 encoding="utf-8")
-            self.assertIn("⚠️NonOp-Gain(+21.7pp)", action_md)
+            self.assertIn("[NON-OP GAIN +21.7pp]", action_md)
             for path in (list(out_dir.rglob("*.md"))
                          + list(out_dir.rglob("*.jsonl"))):
                 text = path.read_text(encoding="utf-8")
@@ -1017,12 +1017,12 @@ class TestCaseCBadgesAndFragments(unittest.TestCase):
         decision = _decision(quality_risks=(self._shop_risk(),))
         card = build_stock_card_view_model(decision)
         self.assertEqual(card.warning_badges_inline,
-                         "⚠️NonOp-Gain(Qtr +36% rev)")
+                         "[NON-OP GAIN QTR +36% REV]")
 
     def test_fragment_quarterly_variant(self) -> None:
         self.assertEqual(
             _inline_fragment(self._shop_risk()),
-            "⚠️ Non-Op Gain (Qtr +35.9% of rev)")
+            "Non-Op Gain (Qtr +35.9% of rev)")
 
     def test_pp_variant_unchanged(self) -> None:
         risk = _ev(
@@ -1031,9 +1031,9 @@ class TestCaseCBadgesAndFragments(unittest.TestCase):
         decision = _decision(quality_risks=(risk,))
         card = build_stock_card_view_model(decision)
         self.assertEqual(card.warning_badges_inline,
-                         "⚠️NonOp-Gain(+21.7pp)")
+                         "[NON-OP GAIN +21.7pp]")
         self.assertEqual(_inline_fragment(risk),
-                         "⚠️ Non-Op Gain (+21.7pp vs OpMargin)")
+                         "Non-Op Gain (+21.7pp vs OpMargin)")
 
 
 class TestOperatingGrowthBasisTrace(unittest.TestCase):
@@ -1309,7 +1309,7 @@ class TestRecomputeV2PositivesSync(unittest.TestCase):
                 positives["adjusted_net_income_yoy_strong"], 0.513,
                 places=6)
             card = build_stock_card_view_model(out)
-            self.assertIn("⚠️NonOp-Gain(Qtr +36% rev)",
+            self.assertIn("[NON-OP GAIN QTR +36% REV]",
                           card.warning_badges_inline)
             (twice,) = self._recompute([out], cache)
             self.assertEqual(twice.quality.risks, out.quality.risks)

@@ -197,11 +197,11 @@ class TestCardStreakRendering(unittest.TestCase):
         new_text = render_action_list_v2(
             [decision], streaks_by_symbol={"AAA": 1}
         )
-        self.assertIn("🆕1d", new_text)
+        self.assertIn("[NEW]", new_text)
         held_text = render_action_list_v2(
             [decision], streaks_by_symbol={"AAA": 5}
         )
-        self.assertIn("🔒5d", held_text)
+        self.assertIn("[LIST 5d]", held_text)
 
     def test_fallback_continuation_without_streak_map(self) -> None:
         decision = _decision(
@@ -209,12 +209,12 @@ class TestCardStreakRendering(unittest.TestCase):
             previous=ActionState.PRIORITY_REVIEW,
         )
         text = render_action_list_v2([decision])
-        self.assertIn("🔒2d", text)
+        self.assertIn("[LIST 2d]", text)
 
     def test_no_label_without_history(self) -> None:
         text = render_action_list_v2([_decision(symbol="AAA")])
-        self.assertNotIn("🆕", text)
-        self.assertNotIn("🔒", text)
+        self.assertNotIn("[NEW]", text)
+        self.assertNotIn("[LIST ", text)
 
     def test_view_model_exposes_optional_field(self) -> None:
         view = build_snapshot_view_model(
@@ -561,14 +561,14 @@ class TestGraceRendering(unittest.TestCase):
         text = render_action_list_v2(
             [decision], streaks_by_symbol={"AAA": 4}
         )
-        self.assertIn("🔒4d·⏳Grace(1/2d)", text)
+        self.assertIn("[LIST 4d · GRACE 1/2]", text)
 
-    def test_priority_review_keeps_plain_lock_label(self) -> None:
+    def test_priority_review_keeps_plain_list_label(self) -> None:
         text = render_action_list_v2(
             [_decision(symbol="AAA")], streaks_by_symbol={"AAA": 4}
         )
-        self.assertIn("🔒4d", text)
-        self.assertNotIn("Grace", text)
+        self.assertIn("[LIST 4d]", text)
+        self.assertNotIn("GRACE", text)
 
     def test_new_name_has_no_grace_label(self) -> None:
         decision = _decision(
@@ -579,8 +579,8 @@ class TestGraceRendering(unittest.TestCase):
         text = render_action_list_v2(
             [decision], streaks_by_symbol={"AAA": 1}
         )
-        self.assertIn("🆕1d", text)
-        self.assertNotIn("Grace", text)
+        self.assertIn("[NEW]", text)
+        self.assertNotIn("GRACE", text)
 
 
 class TestGraceSnapshotEndToEnd(unittest.TestCase):
@@ -656,7 +656,7 @@ class TestGraceSnapshotEndToEnd(unittest.TestCase):
             result = validator.validate_snapshot(paths.root)
             self.assertTrue(result["ok"], result["errors"])
             self.assertIn(
-                "🔒2d·⏳Grace(1/2d)",
+                "[LIST 2d · GRACE 1/2]",
                 paths.action_list_md.read_text(encoding="utf-8"),
             )
             manifest = json.loads(

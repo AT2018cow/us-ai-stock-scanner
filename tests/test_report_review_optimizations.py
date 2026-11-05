@@ -384,7 +384,7 @@ class TestViewModelNonBlockingWarns(unittest.TestCase):
         self.assertEqual(
             extended.entry_blockers_inline,
             "All 14 readiness gates passed "
-            "(⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)")
+            "(Warning: Extended SMA200 1.47x · 60d Ret +51.4%)")
         clean = build_stock_card_view_model(_decision())
         self.assertEqual(
             clean.entry_blockers_inline,
@@ -398,12 +398,12 @@ class TestViewModelNonBlockingWarns(unittest.TestCase):
             _inline_fragment(_ev("pre_earnings_window_risk",
                                  metric="fundamental_data_age_days", value=78,
                                  polarity="negative")),
-            "⚠️ Pre-Earnings (78d filing)")
+            "Pre-Earnings (78d filing)")
         self.assertEqual(
             _inline_fragment(_ev("shares_yoy_split_or_basis_discontinuity",
                                  metric="shares_yoy", value=-0.799,
                                  polarity="negative")),
-            "⚠️ Share Split/Basis (-79.9%)")
+            "Share Split/Basis (-79.9%)")
 
     def test_badges_and_pool(self) -> None:
         card = build_stock_card_view_model(self._extended_ready())
@@ -416,8 +416,8 @@ class TestViewModelNonBlockingWarns(unittest.TestCase):
             provenance={"watchlist_bucket": "ai_core", "watchlist_etfs": "XLK, IGV"},
         )
         aged_card = build_stock_card_view_model(aged)
-        self.assertIn("⚠️Pre-Earnings(78d)", aged_card.warning_badges_inline)
-        self.assertIn("⚠️Extended(SMA200 1.47x, 60d +51.4%)",
+        self.assertIn("[PRE-EARNINGS 78d]", aged_card.warning_badges_inline)
+        self.assertIn("[EXTENDED SMA200 1.47x, 60d +51.4%]",
                       card.warning_badges_inline)
         self.assertEqual(card.pool_display, "`ai_core` (XLK, IGV)")
         bare = build_stock_card_view_model(_decision())
@@ -457,8 +457,8 @@ class TestReportingV2Surfaces(unittest.TestCase):
         md = render_action_list_v2([decision], title="T", cadence="daily",
                                    all_decisions=[decision])
         summary = next(line for line in md.splitlines() if line.startswith("<summary>"))
-        self.assertIn("⚠️Pre-Earnings(78d)", summary)
-        self.assertIn("⚠️Extended(SMA200 1.47x)", summary)
+        self.assertIn("[PRE-EARNINGS 78d]", summary)
+        self.assertIn("[EXTENDED SMA200 1.47x]", summary)
         company = next(line for line in md.splitlines() if line.startswith("- **Company"))
         self.assertIn("**Pool**: `ai_core` (XLK)", company)
         lines = md.splitlines()
@@ -469,7 +469,8 @@ class TestReportingV2Surfaces(unittest.TestCase):
         md = render_action_list_v2([_decision()], title="T", cadence="daily")
         self.assertNotIn("Pool & Concentration", md)
         summary = next(line for line in md.splitlines() if line.startswith("<summary>"))
-        self.assertNotIn("⚠️", summary)
+        self.assertNotIn("[PRE-EARNINGS", summary)
+        self.assertNotIn("[EXTENDED", summary)
         company = next(line for line in md.splitlines() if line.startswith("- **Company"))
         self.assertNotIn("**Pool**", company)
 
@@ -641,8 +642,8 @@ class TestSecondaryRadarBadgesAndEntry(unittest.TestCase):
         lines = self._radar_lines(primaries, omitted)
         bullet = next(
             line for line in lines if line.startswith("- **#") and "MSFT" in line)
-        self.assertIn("⚠️Pre-Earnings(78d)", bullet)
-        self.assertIn("⚠️Extended(SMA200 1.47x)", bullet)
+        self.assertIn("[PRE-EARNINGS 78d]", bullet)
+        self.assertIn("[EXTENDED SMA200 1.47x]", bullet)
         self.assertIn("[Full Report →](./detailed/MSFT.md)", bullet)
         entry_idx = next(
             i for i, line in enumerate(lines) if "MSFT" in line
@@ -658,7 +659,7 @@ class TestSecondaryRadarBadgesAndEntry(unittest.TestCase):
         md = render_action_list_v2(primaries, title="T", cadence="daily",
                                    all_decisions=primaries + secondary)
         section = md[md.index("Secondary Watch: Top Quality B"):]
-        self.assertIn("⚠️Pre-Earnings(78d)", section)
+        self.assertIn("[PRE-EARNINGS 78d]", section)
         self.assertIn("  - **Entry**:", section)
 
     def test_no_badges_no_clutter(self) -> None:
@@ -673,7 +674,8 @@ class TestSecondaryRadarBadgesAndEntry(unittest.TestCase):
         bullet = next(
             line for line in md.splitlines()
             if line.startswith("- **#") and "ZZZ" in line)
-        self.assertNotIn("⚠️", bullet)
+        self.assertNotIn("[PRE-EARNINGS", bullet)
+        self.assertNotIn("[EXTENDED", bullet)
         self.assertTrue(bullet.rstrip().endswith("[Full Report →](./detailed/ZZZ.md)"))
 
 
@@ -846,7 +848,7 @@ class TestRecomputeV2Preview(unittest.TestCase):
             self.assertTrue((out_dir / "decisions_recomputed_v2.jsonl").exists())
             self.assertGreater(len(list((out_dir / "detailed_v2").glob("*.md"))), 0)
             action_md = (out_dir / "action_list_v2.md").read_text(encoding="utf-8")
-            self.assertIn("⚠️", action_md)
+            self.assertIn("[PRE-EARNINGS", action_md)
             for path in list(out_dir.rglob("*.md")) + list(out_dir.rglob("*.jsonl")):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("/tmp/", text)

@@ -64,7 +64,7 @@ Implemented in `decision/quality.py`, `decision/entry.py`, `decision/action.py`,
 
 ### 2.4 Presentation IR & Report Readability v2 (Track A + PR #86)
 Implemented in `src/ai_value_scanner/decision/view_model.py` and `src/ai_value_scanner/reporting/decision.py` (`layout_version="v2"`):
-- **Action List v2**: Quick-jump anchor bar, top `- **Pool & Concentration**:` summary line (`watchlist_bucket` + top source ETFs), collapsible `<details>` accordion cards with inline warning badges (`⚠️Pre-Earnings(78d)`, `⚠️Extended(...)`, `⚠️Share-Basis/Split`), per-card `**Pool**:` provenance, cross-pillar `Why Own` highlights, explicit `Entry Gate Check` / `What to Wait For` lines, and compact Secondary Radar summary.
+- **Action List v2**: Quick-jump anchor bar, top `- **Pool & Concentration**:` summary line (`watchlist_bucket` + top source ETFs), collapsible `<details>` accordion cards with inline warning badges (`[PRE-EARNINGS 78d]`, `[EXTENDED ...]`, `[SHARE-BASIS/SPLIT]`), per-card `**Pool**:` provenance, cross-pillar `Why Own` highlights, explicit `Entry Gate Check` / `What to Wait For` lines, and compact Secondary Radar summary.
 - **Detailed Report v2**: One-screen 6-Pillar Quality Scorecard table, 7-Gate Entry Readiness Checklist table (`PASS`/`WAIT`/`FAIL` with actual vs target values; non-blocking extension warnings never flip passing gates), and collapsible Audit Trail & Provenance sections with relative-only links and zero absolute paths.
 
 ### 2.5 Dual-Track Validation Summary (Phase M4 — `docs/m4_paired_validation_20261015/`) & Production Configuration
