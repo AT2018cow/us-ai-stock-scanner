@@ -15,7 +15,10 @@ from .action import (
     map_action_state,
     map_action_state_v2,
 )
-from .attention import DEFAULT_ATTENTION_CAP
+from .attention import (
+    DEFAULT_ATTENTION_CAP,
+    is_soft_exit_grace_eligible,
+)
 from .entry import (
     ENTRY_POLICY_VERSION,
     ENTRY_V2_POLICY_VERSION,
@@ -478,20 +481,68 @@ def select_daily_attention(
     decisions: Iterable[StockDecision],
     *,
     cap: int = DEFAULT_ATTENTION_CAP,
+    previous_daily_symbols: Iterable[str] | None = None,
 ) -> tuple[StockDecision, ...]:
-    """Daily list emphasizes state changes while keeping current priority reviews visible."""
+    """Daily list: S2 confirm_1_2_safe when prior-list context is supplied.
+
+    ``previous_daily_symbols is None`` keeps the legacy behaviour exactly
+    (state-change emphasis, weekly fallback without history). Passing the
+    previous daily list enables the asymmetric policy: N=1 entries, soft
+    exits held for one grace day, and hard damage removed immediately.
+    """
     ordered = sorted(tuple(decisions), key=lambda d: (d.priority, d.symbol))
-    has_history = any(d.previous_action_state is not None for d in ordered)
-    if not has_history:
+    resolved_cap = max(1, int(cap))
+
+    if previous_daily_symbols is None:
+        has_history = any(d.previous_action_state is not None for d in ordered)
+        if not has_history:
+            return select_weekly_attention(ordered, cap=cap)
+        selected = [
+            decision
+            for decision in ordered
+            if decision.action_state is ActionState.PRIORITY_REVIEW
+            or decision.state_change_reason is not None
+        ]
+        return tuple(selected[:resolved_cap])
+
+    incumbents = {
+        str(symbol).strip().upper()
+        for symbol in previous_daily_symbols
+        if str(symbol).strip()
+    }
+    if not incumbents:
         return select_weekly_attention(ordered, cap=cap)
 
-    selected = [
+    keep: list[StockDecision] = []
+    for decision in ordered:
+        if len(keep) >= resolved_cap:
+            break
+        if decision.symbol not in incumbents:
+            continue
+        if (
+            decision.action_state is ActionState.PRIORITY_REVIEW
+            or is_soft_exit_grace_eligible(decision, incumbents)
+        ):
+            keep.append(decision)
+
+    candidates = [
         decision
         for decision in ordered
-        if decision.action_state is ActionState.PRIORITY_REVIEW
-        or decision.state_change_reason is not None
+        if decision.symbol not in incumbents
+        and decision.action_state is ActionState.PRIORITY_REVIEW
     ]
-    return tuple(selected[: max(1, int(cap))])
+    slots = max(0, resolved_cap - len(keep))
+    selected = keep + candidates[:slots]
+    return tuple(
+        sorted(
+            selected,
+            key=lambda d: (
+                0 if d.action_state is ActionState.PRIORITY_REVIEW else 1,
+                d.priority,
+                d.symbol,
+            ),
+        )
+    )
 
 
 def decisions_by_symbol(

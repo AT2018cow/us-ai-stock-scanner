@@ -1,6 +1,13 @@
 """Canonical decision contract for the low-frequency selection MVP."""
 
 from .action import map_action_state
+from .attention import (
+    DAILY_ATTENTION_STABILITY_POLICY_VERSION,
+    HARD_OVERBOUGHT_RET20_FOR_RETENTION,
+    HARD_OVERBOUGHT_SMA50_FOR_RETENTION,
+    is_hard_damage_for_retention,
+    is_soft_exit_grace_eligible,
+)
 from .entry import ENTRY_POLICY_VERSION, build_entry_quality_v1
 from .integrated import (
     DEFAULT_ATTENTION_CAP,
@@ -36,6 +43,11 @@ __all__ = [
     "build_stock_decisions",
     "build_source_list_membership",
     "DEFAULT_ATTENTION_CAP",
+    "DAILY_ATTENTION_STABILITY_POLICY_VERSION",
+    "HARD_OVERBOUGHT_SMA50_FOR_RETENTION",
+    "HARD_OVERBOUGHT_RET20_FOR_RETENTION",
+    "is_hard_damage_for_retention",
+    "is_soft_exit_grace_eligible",
     "DECISION_SCHEMA_VERSION",
     "ENTRY_POLICY_VERSION",
     "ActionState",

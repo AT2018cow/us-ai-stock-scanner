@@ -13,6 +13,7 @@ import subprocess
 from typing import Any
 
 from ai_value_scanner.decision.attention import (
+    DAILY_ATTENTION_STABILITY_POLICY_VERSION,
     DEFAULT_ATTENTION_CAP,
     STATE_CHANGE_ALERTS_POLICY_VERSION,
     select_state_change_alerts,
@@ -52,7 +53,7 @@ class DecisionSnapshotPaths:
 # be byte-verified by the validator; older snapshots are validated structurally
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-05"
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-05b"
 
 
 def _safe_style(style: str | None) -> str:
@@ -156,6 +157,56 @@ def compute_in_list_streaks(
     return streaks if found_prior else None
 
 
+def load_previous_daily_symbols(
+    output_root: str | Path,
+    decision_date: str | date,
+    *,
+    strategy_style: str | None,
+) -> tuple[str, ...] | None:
+    """Daily symbols from the most recent prior same-style snapshot.
+
+    Returns ``None`` when no prior same-style manifest exists. Unreadable
+    manifests are skipped. An empty tuple is a valid observed prior list and
+    lets ``select_daily_attention`` fall back to its no-history mode.
+    """
+    root = Path(output_root)
+    day = (
+        decision_date.isoformat()
+        if isinstance(decision_date, date)
+        else str(decision_date)[:10]
+    )
+    style_dir = _safe_style(strategy_style)
+    try:
+        prior_dates = sorted(
+            (
+                entry.name
+                for entry in root.iterdir()
+                if entry.is_dir()
+                and _is_iso_date_token(entry.name)
+                and entry.name < day
+            ),
+            reverse=True,
+        )
+    except FileNotFoundError:
+        return None
+    for prior_date in prior_dates:
+        manifest_path = root / prior_date / style_dir / "run_manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        return tuple(
+            str(symbol).strip().upper()
+            for symbol in (manifest.get("daily_symbols") or [])
+            if str(symbol).strip()
+        )
+    return None
+
+
 def resolve_git_commit_sha() -> str | None:
     for key in ("GITHUB_SHA", "SOURCE_VERSION", "COMMIT_SHA"):
         value = os.getenv(key)
@@ -243,6 +294,7 @@ def build_run_manifest(
         "code_sha": code_sha,
         "config_fingerprint": str(config_fingerprint),
         "report_renderer_revision": REPORT_RENDERER_REVISION,
+        "stability_policy_version": DAILY_ATTENTION_STABILITY_POLICY_VERSION,
         **(
             {
                 "decision_policy_version": str(policy_version),

@@ -60,7 +60,10 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
-from ai_value_scanner.reporting.snapshot import compute_in_list_streaks
+from ai_value_scanner.reporting.snapshot import (
+    compute_in_list_streaks,
+    load_previous_daily_symbols,
+)
 from ai_value_scanner.scanner import (
     INTEREST_INCOME_TAGS,
     extract_latest_quarterly_nonop_metrics,
@@ -815,7 +818,16 @@ def _write_recompute_preview(
 ) -> None:
     """Non-destructive v2 recompute preview (never touches --snapshot-dir)."""
     recomputed = recompute_v2_decisions(list(decisions))
-    daily = select_daily_attention(recomputed, cap=15)
+    previous_daily_symbols = load_previous_daily_symbols(
+        snapshot_dir.parents[1],
+        snapshot_dir.parent.name,
+        strategy_style=snapshot_dir.name,
+    )
+    daily = select_daily_attention(
+        recomputed,
+        cap=15,
+        previous_daily_symbols=previous_daily_symbols,
+    )
     weekly = select_weekly_attention(recomputed, cap=15)
     streaks_by_symbol = compute_in_list_streaks(
         snapshot_dir.parents[1],

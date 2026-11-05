@@ -515,6 +515,8 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
             streak_label = " 🆕1d"
         elif card.in_list_streak_days >= 2:
             streak_label = f" 🔒{card.in_list_streak_days}d"
+            if card.action_state != "PRIORITY_REVIEW":
+                streak_label += "·⏳Grace(1/2d)"
     lines = [
         f'<a id="card-{anchor}"></a>',
         "<details>",

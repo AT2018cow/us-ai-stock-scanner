@@ -175,6 +175,7 @@ from ai_value_scanner.decision.universe import (
 )
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
+    load_previous_daily_symbols,
     load_previous_snapshot,
     load_snapshot_manifest,
     resolve_git_commit_sha,
@@ -5674,6 +5675,11 @@ def run_scan_with_status(
         daily_attention = select_daily_attention(
             decisions,
             cap=decision_attention_cap,
+            previous_daily_symbols=load_previous_daily_symbols(
+                snapshot_root,
+                decision_date,
+                strategy_style=config.strategy_style,
+            ),
         )
         weekly_attention = select_weekly_attention(
             decisions,
@@ -5845,6 +5851,11 @@ def run_scan_with_status(
                 shadow_daily = select_daily_attention(
                     shadow_decisions,
                     cap=decision_attention_cap,
+                    previous_daily_symbols=load_previous_daily_symbols(
+                        snapshot_root,
+                        decision_date,
+                        strategy_style=shadow_style,
+                    ),
                 )
                 shadow_weekly = select_weekly_attention(
                     shadow_decisions,

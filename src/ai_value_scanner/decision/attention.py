@@ -4,10 +4,11 @@ Selection logic lives here rather than in the presentation layer (A01/R07):
 
 - state-change alert selection (material downgrades that would otherwise be
   squeezed out of the compressed daily/weekly lists);
-- the frozen growth-compounder offense-track eligibility/order rules.
+- the frozen growth-compounder offense-track eligibility/order rules;
+- the daily Top-15 stability policy (N=1 entry, M=2 soft exit, M=1 hard damage).
 
 Renderers consume the selected decisions; they never re-implement the
-thresholds. Both policies are versioned and recorded in snapshot manifests.
+thresholds. All policies are versioned and recorded in snapshot manifests.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ DEFAULT_ATTENTION_CAP = 15
 
 OFFENSE_TRACK_POLICY_VERSION = "growth_compounder_offense_v1"
 STATE_CHANGE_ALERTS_POLICY_VERSION = "state_change_alerts_v1"
+DAILY_ATTENTION_STABILITY_POLICY_VERSION = "confirm_1_2_safe_v1"
+HARD_OVERBOUGHT_SMA50_FOR_RETENTION = 1.12
+HARD_OVERBOUGHT_RET20_FOR_RETENTION = 0.15
 
 
 _ACTION_RANK: dict[ActionState, int] = {
@@ -57,6 +61,60 @@ def decision_metric_value(decision: StockDecision, metric: str) -> float | None:
             if value is not None:
                 return value
     return None
+
+
+def is_hard_damage_for_retention(decision: StockDecision) -> bool:
+    """True when an incumbent must leave the daily list immediately (M=1).
+
+    Hard damage is structural or an overextension breach: trend damage,
+    insufficient entry data, Quality C/UNRATED, or a hard overbought reading
+    (SMA50 band / 20d return). Such names never receive the soft-exit grace.
+    """
+    if decision.entry.state in {
+        EntryState.TREND_DAMAGED,
+        EntryState.INSUFFICIENT_DATA,
+    }:
+        return True
+    if decision.quality.grade in {QualityGrade.C, QualityGrade.UNRATED}:
+        return True
+    price_to_sma50 = decision_metric_value(decision, "price_to_sma50")
+    if (
+        price_to_sma50 is not None
+        and price_to_sma50 > HARD_OVERBOUGHT_SMA50_FOR_RETENTION
+    ):
+        return True
+    return_20d = decision_metric_value(decision, "return_20d")
+    if (
+        return_20d is not None
+        and return_20d > HARD_OVERBOUGHT_RET20_FOR_RETENTION
+    ):
+        return True
+    return False
+
+
+def is_soft_exit_grace_eligible(
+    decision: StockDecision,
+    previous_daily_symbols: Iterable[str],
+) -> bool:
+    """One-day grace hold for an incumbent that just left PRIORITY_REVIEW.
+
+    The M=2 semantics rely on canonical history: on day 1 of a soft breach
+    ``previous_action_state`` is still PRIORITY_REVIEW, so the name stays one
+    more day; on day 2 that field is the (non-PRIORITY) state from day 1 and
+    the name exits automatically. Hard damage always bypasses the grace.
+    """
+    incumbents = {
+        str(symbol).strip().upper()
+        for symbol in previous_daily_symbols
+        if str(symbol).strip()
+    }
+    if decision.symbol not in incumbents:
+        return False
+    if decision.action_state is ActionState.PRIORITY_REVIEW:
+        return False
+    if decision.previous_action_state is not ActionState.PRIORITY_REVIEW:
+        return False
+    return not is_hard_damage_for_retention(decision)
 
 
 # ---------------------------------------------------------------------------

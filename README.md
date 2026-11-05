@@ -254,6 +254,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 2. **`PRIORITY_REVIEW` 内部联合确信度排序**：
    $$\text{Joint Conviction Score} = 0.60 \times \text{Quality Score} + 0.40 \times \text{Entry Score} + 0.04 \times \mathbb{I}(\text{Quality Grade} == \text{A})$$
    兼顾基本面厚度与当下买点质量；携带 `pre_earnings_window_risk` 的标的在排序分上再扣减 `0.06`（`HOLD_MONITOR` 与其余状态分支同样适用该扣减）；在 `HOLD_MONITOR` 内部，将剩余 `ENTRY_READY` 标的排在趋势受损（`TREND_DAMAGED`）的 A 级股之前。
+3. **Top-15 日频稳定化（`S2_confirm_1_2_safe`，policy `confirm_1_2_safe_v1`）**：进场保持 `N=1` 不延迟（当日 `PRIORITY_REVIEW` 即可入榜）；已在榜股票若今日仅软越界（不再是 `PRIORITY_REVIEW`、但昨日仍是），保留 1 个交易日作为 Grace 观察期（次日仍未恢复则自动移出）；若触发硬破位（`TREND_DAMAGED` / `INSUFFICIENT_DATA`、Quality `C/UNRATED`、`price_to_sma50 > 1.12` 或 `return_20d > 0.15`）则当日立即移出。空出的坑位由非在榜 `PRIORITY_REVIEW` 候选按 canonical priority 补齐。策略版本写入 `run_manifest.json` 的 `stability_policy_version`。
 
 #### （4）MVP v2 的运行命令
 1. **日常标准扫描（生产配置已默认启用 MVP v2 策略 + v2 折叠卡片式报告）**：
@@ -272,6 +273,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 #### （5）Report Layout v2（报告呈现层：警告徽标、池归属与集中度披露）
 - **名单集中度总览行**：`action_list.md` 日期行正下方新增一行 `- **Pool & Concentration**: ...`，汇总候选池规模（如 `Pool (511 names)`）、Top-15 的 `watchlist_bucket` 分布（如 `ai_core 11/15, ai_peripheral 4/15`）与出现最多的来源 ETF（如 `Top ETFs: XLK (5), IGV (4)`），仅当快照携带 watchlist 来源元数据时渲染。
 - **卡片警告徽标**：每只股票 `<summary>` 行尾直接追加徽标——`⚠️Pre-Earnings(78d)`（财报临近窗口）、`⚠️Extended(SMA200 1.47x, 60d +51.4%)`（中期过热）、`⚠️Share-Basis/Split`（拆股/股本口径断裂或加权平均股本兜底）。
+- **在榜连续天数与 Grace 观察期标签**：卡片 `<summary>` 在 `#rank SYMBOL` 后显示 `🆕1d`（新进）或 `🔒Nd`（连续在榜 N 个交易日）；若今日处于软退场观察期，则显示 `🔒Nd·⏳Grace(1/2d)`，提示次日仍未恢复 `PRIORITY_REVIEW` 将自动移出 Top-15（report renderer revision `mvp_report_renderer_2026-11-05b`）。
 - **池归属显示**：`- **Company**: ...` 行在有来源元数据时追加 `· **Pool**: \`ai_core\` (XLK, IGV)`。
 - **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (⚠️ Extended: SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
 - **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。

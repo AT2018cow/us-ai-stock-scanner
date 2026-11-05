@@ -17,6 +17,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ai_value_scanner.decision.attention import (
+    DAILY_ATTENTION_STABILITY_POLICY_VERSION,
+    HARD_OVERBOUGHT_RET20_FOR_RETENTION,
+    HARD_OVERBOUGHT_SMA50_FOR_RETENTION,
+    is_hard_damage_for_retention,
+    is_soft_exit_grace_eligible,
+)
+from ai_value_scanner.decision.integrated import select_daily_attention
 from ai_value_scanner.decision.model import (
     ActionState,
     EntryDecision,
@@ -30,6 +38,7 @@ from ai_value_scanner.decision.view_model import build_snapshot_view_model
 from ai_value_scanner.reporting.decision import render_action_list_v2
 from ai_value_scanner.reporting.snapshot import (
     compute_in_list_streaks,
+    load_previous_daily_symbols,
     write_decision_snapshot,
 )
 
@@ -50,10 +59,16 @@ def _load_script(name: str):
 ev = _load_script("evaluate_top15_turnover_stability.py")
 
 
-def _ev(code: str, polarity: str = "positive") -> EvidenceItem:
+def _ev(
+    code: str,
+    polarity: str = "positive",
+    *,
+    metric: str = "x",
+    value: object = 1.0,
+) -> EvidenceItem:
     return EvidenceItem(
         code=code, label=f"label {code}", polarity=polarity,  # type: ignore[arg-type]
-        metric="x", value=1.0, threshold="t", message=f"message {code}",
+        metric=metric, value=value, threshold="t", message=f"message {code}",
     )
 
 
@@ -64,13 +79,16 @@ def _decision(
     state: EntryState = EntryState.ENTRY_READY,
     action: ActionState = ActionState.PRIORITY_REVIEW,
     previous: ActionState | None = None,
+    priority: int = 1,
+    quality_positives: tuple[EvidenceItem, ...] = (),
+    entry_positives: tuple[EvidenceItem, ...] = (),
 ) -> StockDecision:
     quality = QualityDecision(
         grade=grade,
         score=0.80,
         confidence=0.95,
         component_scores={"profitability_cash": 0.8},
-        positives=(_ev("free_cash_flow_strong"),),
+        positives=(_ev("free_cash_flow_strong"), *quality_positives),
         risks=(),
         missing=(),
         data_asof="2026-10-31",
@@ -79,7 +97,7 @@ def _decision(
         state=state,
         score=0.90,
         confidence=0.90,
-        positives=(_ev("trend_intact"),),
+        positives=(_ev("trend_intact"), *entry_positives),
         risks=(),
         market_asof="2026-11-04",
     )
@@ -92,7 +110,7 @@ def _decision(
         quality=quality,
         entry=entry,
         action_state=action,
-        priority=1,
+        priority=priority,
         rationale=quality.positives + entry.positives,
         review_trigger="Review now.",
         source_lists=("research_pool",),
@@ -204,6 +222,451 @@ class TestCardStreakRendering(unittest.TestCase):
             streaks_by_symbol={"AAA": 4},
         )
         self.assertEqual(view.primary_cards[0].in_list_streak_days, 4)
+
+
+class TestRetentionPolicyFunctions(unittest.TestCase):
+    def test_hard_damage_entry_states_and_quality_grades(self) -> None:
+        for state in (
+            EntryState.TREND_DAMAGED,
+            EntryState.INSUFFICIENT_DATA,
+        ):
+            with self.subTest(state=state):
+                self.assertTrue(
+                    is_hard_damage_for_retention(_decision(state=state))
+                )
+        for grade in (QualityGrade.C, QualityGrade.UNRATED):
+            with self.subTest(grade=grade):
+                self.assertTrue(
+                    is_hard_damage_for_retention(_decision(grade=grade))
+                )
+        self.assertFalse(is_hard_damage_for_retention(_decision()))
+
+    def test_hard_damage_overbought_metrics_and_boundaries(self) -> None:
+        hard_sma = _decision(
+            entry_positives=(
+                _ev(
+                    "extended",
+                    metric="price_to_sma50",
+                    value=HARD_OVERBOUGHT_SMA50_FOR_RETENTION + 1e-9,
+                ),
+            )
+        )
+        self.assertTrue(is_hard_damage_for_retention(hard_sma))
+        edge_sma = _decision(
+            entry_positives=(
+                _ev(
+                    "extended",
+                    metric="price_to_sma50",
+                    value=HARD_OVERBOUGHT_SMA50_FOR_RETENTION,
+                ),
+            )
+        )
+        self.assertFalse(is_hard_damage_for_retention(edge_sma))
+
+        hard_ret20 = _decision(
+            entry_positives=(
+                _ev(
+                    "hot",
+                    metric="return_20d",
+                    value=HARD_OVERBOUGHT_RET20_FOR_RETENTION + 1e-9,
+                ),
+            )
+        )
+        self.assertTrue(is_hard_damage_for_retention(hard_ret20))
+        edge_ret20 = _decision(
+            entry_positives=(
+                _ev(
+                    "hot",
+                    metric="return_20d",
+                    value=HARD_OVERBOUGHT_RET20_FOR_RETENTION,
+                ),
+            )
+        )
+        self.assertFalse(is_hard_damage_for_retention(edge_ret20))
+
+    def test_soft_grace_requires_all_conditions(self) -> None:
+        soft = _decision(
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.PRIORITY_REVIEW,
+        )
+        self.assertTrue(is_soft_exit_grace_eligible(soft, ["AAA"]))
+        self.assertTrue(is_soft_exit_grace_eligible(soft, [" aaa "]))
+        self.assertFalse(is_soft_exit_grace_eligible(soft, ["BBB"]))
+        self.assertFalse(
+            is_soft_exit_grace_eligible(soft, [])
+        )
+        self.assertFalse(
+            is_soft_exit_grace_eligible(
+                _decision(
+                    action=ActionState.WATCH_BREAKOUT,
+                    previous=None,
+                ),
+                ["AAA"],
+            )
+        )
+        self.assertFalse(
+            is_soft_exit_grace_eligible(
+                _decision(
+                    action=ActionState.PRIORITY_REVIEW,
+                    previous=ActionState.PRIORITY_REVIEW,
+                ),
+                ["AAA"],
+            )
+        )
+        self.assertFalse(
+            is_soft_exit_grace_eligible(
+                _decision(
+                    action=ActionState.WATCH_BREAKOUT,
+                    previous=ActionState.PRIORITY_REVIEW,
+                    state=EntryState.TREND_DAMAGED,
+                ),
+                ["AAA"],
+            )
+        )
+
+
+class TestSelectDailyAttentionStability(unittest.TestCase):
+    def test_none_preserves_legacy_behavior(self) -> None:
+        decisions = (
+            _decision(
+                symbol="AAA",
+                priority=1,
+                action=ActionState.PRIORITY_REVIEW,
+                previous=ActionState.WATCH_BREAKOUT,
+            ),
+            _decision(
+                symbol="BBB",
+                priority=2,
+                action=ActionState.WATCH_BREAKOUT,
+                previous=ActionState.PRIORITY_REVIEW,
+            ),
+        )
+        legacy = select_daily_attention(decisions)
+        self.assertEqual([d.symbol for d in legacy], ["AAA"])
+
+    def test_empty_previous_list_uses_weekly_fallback(self) -> None:
+        decisions = (
+            _decision(symbol="AAA", priority=2),
+            _decision(
+                symbol="BBB",
+                priority=1,
+                action=ActionState.WATCH_BREAKOUT,
+                previous=ActionState.PRIORITY_REVIEW,
+            ),
+        )
+        selected = select_daily_attention(
+            decisions,
+            previous_daily_symbols=(),
+        )
+        self.assertEqual([d.symbol for d in selected], ["BBB", "AAA"])
+
+    def test_first_soft_breach_is_held_for_one_day(self) -> None:
+        soft = _decision(
+            symbol="AAA",
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.PRIORITY_REVIEW,
+        )
+        selected = select_daily_attention(
+            (soft,),
+            previous_daily_symbols=("AAA",),
+        )
+        self.assertEqual([d.symbol for d in selected], ["AAA"])
+
+    def test_second_consecutive_soft_breach_exits(self) -> None:
+        soft = _decision(
+            symbol="AAA",
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.WATCH_BREAKOUT,
+        )
+        selected = select_daily_attention(
+            (soft,),
+            previous_daily_symbols=("AAA",),
+        )
+        self.assertEqual(selected, ())
+
+    def test_hard_damage_exits_on_the_same_day(self) -> None:
+        for damaged in (
+            _decision(
+                symbol="AAA",
+                action=ActionState.WATCH_BREAKOUT,
+                previous=ActionState.PRIORITY_REVIEW,
+                state=EntryState.TREND_DAMAGED,
+            ),
+            _decision(
+                symbol="AAA",
+                action=ActionState.WATCH_BREAKOUT,
+                previous=ActionState.PRIORITY_REVIEW,
+                entry_positives=(
+                    _ev(
+                        "extended",
+                        metric="price_to_sma50",
+                        value=HARD_OVERBOUGHT_SMA50_FOR_RETENTION + 0.01,
+                    ),
+                ),
+            ),
+            _decision(
+                symbol="AAA",
+                action=ActionState.WATCH_BREAKOUT,
+                previous=ActionState.PRIORITY_REVIEW,
+                grade=QualityGrade.C,
+            ),
+        ):
+            with self.subTest(damaged=damaged.entry.state.value):
+                selected = select_daily_attention(
+                    (damaged,),
+                    previous_daily_symbols=("AAA",),
+                )
+                self.assertEqual(selected, ())
+
+    def test_slot_filling_and_priority_order(self) -> None:
+        grace = _decision(
+            symbol="GRC",
+            priority=1,
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.PRIORITY_REVIEW,
+        )
+        priority_late = _decision(symbol="AAA", priority=2)
+        priority_early = _decision(symbol="BBB", priority=1)
+        non_priority_new = _decision(
+            symbol="CCC",
+            priority=0,
+            action=ActionState.WATCH_BREAKOUT,
+            previous=None,
+        )
+        decisions = (grace, priority_late, priority_early, non_priority_new)
+
+        selected = select_daily_attention(
+            decisions,
+            cap=3,
+            previous_daily_symbols=("GRC",),
+        )
+        self.assertEqual(
+            [d.symbol for d in selected], ["BBB", "AAA", "GRC"]
+        )
+
+        capped = select_daily_attention(
+            decisions,
+            cap=2,
+            previous_daily_symbols=("GRC",),
+        )
+        self.assertEqual([d.symbol for d in capped], ["BBB", "GRC"])
+        self.assertNotIn("CCC", [d.symbol for d in capped])
+
+
+class TestLoadPreviousDailySymbols(unittest.TestCase):
+    def _write_manifest(
+        self,
+        root: Path,
+        day: str,
+        style: str,
+        payload: object,
+    ) -> None:
+        target = root / day / style
+        target.mkdir(parents=True)
+        (target / "run_manifest.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_returns_latest_prior_same_style(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_manifest(
+                root, "2026-10-01", "production", {"daily_symbols": ["aaa"]}
+            )
+            self._write_manifest(
+                root,
+                "2026-10-02",
+                "production",
+                {"daily_symbols": ["bbb", "CCC"]},
+            )
+            self._write_manifest(
+                root,
+                "2026-10-03",
+                "risk_off",
+                {"daily_symbols": ["DDD"]},
+            )
+            self._write_manifest(
+                root,
+                "2026-10-04",
+                "production",
+                {"daily_symbols": ["EEE"]},
+            )
+            result = load_previous_daily_symbols(
+                root,
+                "2026-10-03",
+                strategy_style="production",
+            )
+            self.assertEqual(result, ("BBB", "CCC"))
+
+    def test_none_without_prior_same_style(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_manifest(
+                root, "2026-10-03", "risk_off", {"daily_symbols": ["AAA"]}
+            )
+            self.assertIsNone(
+                load_previous_daily_symbols(
+                    root,
+                    "2026-10-04",
+                    strategy_style="production",
+                )
+            )
+            self.assertIsNone(
+                load_previous_daily_symbols(
+                    root,
+                    "2026-10-01",
+                    strategy_style="production",
+                )
+            )
+
+    def test_unreadable_manifest_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_manifest(
+                root, "2026-10-01", "production", {"daily_symbols": ["AAA"]}
+            )
+            broken = root / "2026-10-02" / "production"
+            broken.mkdir(parents=True)
+            (broken / "run_manifest.json").write_text("{", encoding="utf-8")
+            result = load_previous_daily_symbols(
+                root,
+                "2026-10-03",
+                strategy_style="production",
+            )
+            self.assertEqual(result, ("AAA",))
+
+    def test_empty_prior_list_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_manifest(
+                root, "2026-10-01", "production", {"daily_symbols": []}
+            )
+            self.assertEqual(
+                load_previous_daily_symbols(
+                    root,
+                    "2026-10-02",
+                    strategy_style="production",
+                ),
+                (),
+            )
+
+
+class TestGraceRendering(unittest.TestCase):
+    def test_grace_label_for_incumbent_soft_exit(self) -> None:
+        decision = _decision(
+            symbol="AAA",
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.PRIORITY_REVIEW,
+        )
+        text = render_action_list_v2(
+            [decision], streaks_by_symbol={"AAA": 4}
+        )
+        self.assertIn("🔒4d·⏳Grace(1/2d)", text)
+
+    def test_priority_review_keeps_plain_lock_label(self) -> None:
+        text = render_action_list_v2(
+            [_decision(symbol="AAA")], streaks_by_symbol={"AAA": 4}
+        )
+        self.assertIn("🔒4d", text)
+        self.assertNotIn("Grace", text)
+
+    def test_new_name_has_no_grace_label(self) -> None:
+        decision = _decision(
+            symbol="AAA",
+            action=ActionState.WATCH_BREAKOUT,
+            previous=ActionState.PRIORITY_REVIEW,
+        )
+        text = render_action_list_v2(
+            [decision], streaks_by_symbol={"AAA": 1}
+        )
+        self.assertIn("🆕1d", text)
+        self.assertNotIn("Grace", text)
+
+
+class TestGraceSnapshotEndToEnd(unittest.TestCase):
+    def test_validator_accepts_grace_hold_snapshot(self) -> None:
+        validator = _load_script("validate_mvp_snapshot.py")
+        from dataclasses import replace
+
+        from ai_value_scanner.decision.entry import ENTRY_V2_POLICY_VERSION
+        from ai_value_scanner.decision.quality import QUALITY_V2_POLICY_VERSION
+
+        def _as_day(decision: StockDecision, day: str) -> StockDecision:
+            return replace(
+                decision,
+                decision_date=day,
+                generated_at_utc=f"{day}T12:00:00+00:00",
+                provenance={
+                    "quality_policy_version": QUALITY_V2_POLICY_VERSION,
+                    "entry_policy_version": ENTRY_V2_POLICY_VERSION,
+                    "decision_policy_version": "q=v2,e=v2,a=v2",
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as td:
+            prior = _as_day(_decision(symbol="AAA"), "2026-11-03")
+            write_decision_snapshot(
+                output_root=td,
+                strategy_style="production",
+                decisions=(prior,),
+                daily_attention=(prior,),
+                weekly_attention=(prior,),
+                generated_at_utc=prior.generated_at_utc,
+                decision_date="2026-11-03",
+                config_fingerprint="fp",
+                policy_version="v2",
+                layout_version="v2",
+            )
+            previous_symbols = load_previous_daily_symbols(
+                td,
+                "2026-11-04",
+                strategy_style="production",
+            )
+            self.assertEqual(previous_symbols, ("AAA",))
+
+            grace = _as_day(
+                _decision(
+                    symbol="AAA",
+                    state=EntryState.WATCH_BREAKOUT,
+                    action=ActionState.WATCH_BREAKOUT,
+                    previous=ActionState.PRIORITY_REVIEW,
+                ),
+                "2026-11-04",
+            )
+            new = _as_day(_decision(symbol="BBB", priority=2), "2026-11-04")
+            decisions = (grace, new)
+            daily = select_daily_attention(
+                decisions,
+                previous_daily_symbols=previous_symbols,
+            )
+            self.assertEqual([d.symbol for d in daily], ["BBB", "AAA"])
+
+            paths = write_decision_snapshot(
+                output_root=td,
+                strategy_style="production",
+                decisions=decisions,
+                daily_attention=daily,
+                weekly_attention=decisions,
+                generated_at_utc="2026-11-04T12:00:00+00:00",
+                decision_date="2026-11-04",
+                config_fingerprint="fp",
+                policy_version="v2",
+                layout_version="v2",
+            )
+            result = validator.validate_snapshot(paths.root)
+            self.assertTrue(result["ok"], result["errors"])
+            self.assertIn(
+                "🔒2d·⏳Grace(1/2d)",
+                paths.action_list_md.read_text(encoding="utf-8"),
+            )
+            manifest = json.loads(
+                paths.run_manifest_json.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["stability_policy_version"],
+                DAILY_ATTENTION_STABILITY_POLICY_VERSION,
+            )
+            self.assertEqual(manifest["daily_symbols"], ["BBB", "AAA"])
 
 
 def _metric(
