@@ -100,15 +100,32 @@ python scripts/intraday_watch.py --symbols CRM,MU,OKTA,TEL --no-shadow
 
 判读规则：先对照主表 `20d`/`60d` 与最新官方快照的同类值——差异大，说明是窗口边界；只有主表涨幅本身触发的翻转（如当日 `+5%` 把 `sma50_band` push 出 `0.98–1.08`）才是当日行情信号。
 
+### 5.4 盘中全量重排：`render_intraday_preview.py`
+
+`intraday_watch.py` 只重估 Entry 并输出影子，不重排 Action/Priority。若需要一份带完整 Top-15 稳定策略的盘中报告，使用：
+
+```bash
+python scripts/render_intraday_preview.py
+```
+
+- 默认读取 `outputs/decisions/latest_production.json` 指向的官方快照；
+- 用当前盘中价重算 Entry，再映射 Action、重排 Priority；
+- 套用 `S2_confirm_1_2_safe`（`confirm_1_2_safe_v1`），输出 `[NEW]` / `[LIST Nd]` / `[LIST Nd · GRACE 1/2]`；
+- 写入 `outputs/preview_intraday_<YYYY-MM-DD>/`，包含 `action_list_v2.md`、`weekly_review_v2.md`、`detailed_v2/`、`preview_manifest.json`；
+- 报告首行明确标注 `PROVISIONAL INTRADAY PREVIEW`，不更新 `latest_production.json`，不写 `outputs/decisions/`。
+
+该脚本是只读预览，不是正式决策。正式报告仍以收盘后扫描生成的官方快照为准。
+
 ## 6. 限制与未来
 
 - 不重算基本面 / Quality（基本面盘中不变）；pre-earnings 窗口沿用快照；
 - 不模拟排名 / 优先级变化（仅 Entry 状态与 Action 映射；pre-earnings、非经营利得等优先级惩罚不在影子内）；
 - 影子的 20/60 日窗口会随临时 bar 向前滚动，窗口边界的大幅波动可导致分数/门禁翻转与当日行情无关（判读方法见 §5.3）；
 - 不自动交易、不连接券商；
-- 若未来需要"盘中全量重选股"，必须先有前瞻证据与新的预注册实验，而不是直接扩展本工具。
+- 影子不重排 Action/Priority；需要盘中全量重排时使用 `scripts/render_intraday_preview.py`（只读预览，见 §5.4）。把盘中重排提升为正式决策仍需前瞻证据与预注册实验。
 
 ## 7. 验证
 
 - 15 个离线测试（范围选择、临时 bar 替换、影子状态差异、只读契约等）；
-- 全量测试 1245 项通过（2026-10-21）。
+- 新增 `tests/test_render_intraday_preview.py` 6 项离线测试（候选集、Grace/硬破位、临时 Entry、只读契约、报告与元数据）；
+- 全量测试 1284 项通过（2026-11-06）。

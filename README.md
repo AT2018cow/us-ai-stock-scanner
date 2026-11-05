@@ -267,8 +267,13 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
    python scripts/render_snapshot_preview.py \
      --snapshot-dir outputs/decisions/YYYY-MM-DD/production \
      --output-dir outputs/preview_v2 \
-     --layout v2
+     --recompute-v2
    ```
+3. **盘中 + 稳定策略的临时报告（只读，不写官方快照）**：
+   ```bash
+   python scripts/render_intraday_preview.py
+   ```
+   默认读取 `outputs/decisions/latest_production.json` 指向的官方快照，用当前盘中价重算 Entry、Action 与 Priority，并套用 `S2_confirm_1_2_safe` 稳定策略；输出到 `outputs/preview_intraday_<YYYY-MM-DD>/`，包含 `action_list_v2.md`、`weekly_review_v2.md`、`detailed_v2/` 与 `preview_manifest.json`。该报告明确标注 `PROVISIONAL INTRADAY PREVIEW`，不会更新 `latest_production.json`。可指定 `--snapshot-dir`、`--output-dir`、`--cap`、`--top-candidates`。
 
 #### （5）Report Layout v2（报告呈现层：警告徽标、池归属与集中度披露）
 - **名单集中度总览行**：`action_list.md` 日期行正下方新增一行 `- **Pool & Concentration**: ...`，汇总候选池规模（如 `Pool (511 names)`）、Top-15 的 `watchlist_bucket` 分布（如 `ai_core 11/15, ai_peripheral 4/15`）与出现最多的来源 ETF（如 `Top ETFs: XLK (5), IGV (4)`），仅当快照携带 watchlist 来源元数据时渲染。
