@@ -45,6 +45,8 @@
 `config.production.json` and `config.risk_off.json` use `official_market_mode=sip_eod`.
 Official scans and replay clients select historical SIP; official scans require at
 least 20 minutes after the session close and never call SIP latest snapshots.
+Before the next open they may still target the latest completed session, so a
+failed post-close run remains retryable without changing its decision date.
 The 2m dollar-volume floor now explicitly measures full-market SIP volume; it is
 not a conversion of the previous IEX floor. Intraday Watch remains IEX with visible
 provisional source labels. Legacy configs without this field retain snapshot mode.

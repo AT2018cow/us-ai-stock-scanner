@@ -22,6 +22,7 @@ from functools import lru_cache
 from zoneinfo import ZoneInfo
 
 NYSE_TZ = ZoneInfo("America/New_York")
+_REGULAR_OPEN = (9, 30)
 _REGULAR_CLOSE = (16, 0)
 _EARLY_CLOSE = (13, 0)
 _WEEKEND = {5, 6}
@@ -118,6 +119,15 @@ def is_early_close(day: date) -> bool:
     if christmas.weekday() in {1, 2, 3, 4} and day == date(day.year, 12, 24):
         return True
     return False
+
+
+def session_open_utc(day: date) -> datetime:
+    """Regular-session open (09:30 ET); early-close days open at the same time."""
+    local_open = datetime(
+        day.year, day.month, day.day, _REGULAR_OPEN[0], _REGULAR_OPEN[1],
+        tzinfo=NYSE_TZ,
+    )
+    return local_open.astimezone(timezone.utc)
 
 
 def session_close_utc(day: date) -> datetime:

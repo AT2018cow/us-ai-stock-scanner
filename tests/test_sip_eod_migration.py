@@ -42,6 +42,23 @@ class SipMigrationTests(unittest.TestCase):
         self.assertEqual(session,date(2026,11,5));self.assertEqual(end,'2026-11-05T21:01:00+00:00')
         self.assertEqual(official_eod_window(datetime(2026,11,7,12,tzinfo=timezone.utc))[0],date(2026,11,6))
 
+    def test_preopen_retry_targets_latest_completed_session(self):
+        # Monday 08:00 ET and 00:30 ET both allow a retry of Friday's session.
+        for hour, minute in [(13, 0), (5, 30)]:
+            session, end = official_eod_window(
+                datetime(2026, 11, 9, hour, minute, tzinfo=timezone.utc)
+            )
+            self.assertEqual(session, date(2026, 11, 6))
+            self.assertGreater(pd.Timestamp(end), pd.Timestamp('2026-11-06T21:00:00Z'))
+        # Tuesday pre-open targets Monday, not Friday.
+        self.assertEqual(
+            official_eod_window(datetime(2026, 11, 10, 13, tzinfo=timezone.utc))[0],
+            date(2026, 11, 9),
+        )
+        # At the 09:30 ET open the official gate closes again.
+        with self.assertRaises(ValueError):
+            official_eod_window(datetime(2026, 11, 9, 14, 30, tzinfo=timezone.utc))
+
     def test_completed_bar_rejects_stale_and_discards_future(self):
         rows=[dict(t='2026-11-04T05:00:00Z',c=10,v=2),dict(t='2026-11-05T05:00:00Z',c=11,v=3),dict(t='2026-11-06T05:00:00Z',c=999,v=999)]
         self.assertEqual(completed_bar(rows,date(2026,11,5))['c'],11)

@@ -3,17 +3,34 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import math
 
-from .market_calendar import is_session_day, latest_completed_session, session_close_utc
+from .market_calendar import (
+    is_session_day,
+    latest_completed_session,
+    session_close_utc,
+    session_open_utc,
+)
 
 
 def official_eod_window(now: datetime):
-    if now.tzinfo is None: raise ValueError('timezone-aware clock required')
-    local_day=now.astimezone(ZoneInfo('America/New_York')).date()
-    session=latest_completed_session(now)
+    """Return (latest completed session, delayed-access request end).
+
+    Official scans are blocked while a session is open and during SIP's
+    delayed-access window (20 minutes after the close). Before the open they
+    are allowed to target the latest completed session, which keeps the
+    post-close run retryable after midnight without changing the decision date.
+    """
+    if now.tzinfo is None:
+        raise ValueError('timezone-aware clock required')
+    local_day = now.astimezone(ZoneInfo('America/New_York')).date()
+    session = latest_completed_session(now)
     # No official publication during a session or inside SIP's delayed window.
-    if is_session_day(local_day) and now < session_close_utc(local_day)+timedelta(minutes=20):
-        raise ValueError('Official SIP scan is available only 20 minutes after market close; use intraday_watch for monitoring')
-    return session, (now.astimezone(timezone.utc)-timedelta(minutes=20)).isoformat()
+    if is_session_day(local_day):
+        if session_open_utc(local_day) <= now < session_close_utc(local_day) + timedelta(minutes=20):
+            raise ValueError(
+                'Official SIP scan is available before the open or at least 20 '
+                'minutes after the close; use intraday_watch for monitoring'
+            )
+    return session, (now.astimezone(timezone.utc) - timedelta(minutes=20)).isoformat()
 
 
 def completed_bar(rows, session):
