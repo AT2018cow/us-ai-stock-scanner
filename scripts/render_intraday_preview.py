@@ -70,6 +70,7 @@ from intraday_watch import (  # noqa: E402
     _provisional_series,
     _qqq_context,
     build_alpaca_client,
+    snapshot_market_source,
 )
 
 DEFAULT_CONFIG = str(REPO_ROOT / "configs" / "config.production.json")
@@ -86,7 +87,7 @@ def display_path(path: Path) -> str:
         return os.path.relpath(path.resolve(), REPO_ROOT)
 PROVISIONAL_NOTE = (
     "> **PROVISIONAL INTRADAY PREVIEW** — generated {generated} UTC\n"
-    "> from `{source}` with current intraday prices.\n"
+    "> from `{source}` (baseline: **{baseline}**) with current **IEX intraday** prices.\n"
     "> This is not an official decision snapshot and does not update "
     "`latest_production.json`.\n\n"
 )
@@ -257,6 +258,9 @@ def render_preview(
     decisions = stock_decisions_from_jsonl(
         (snapshot_dir / "decisions.jsonl").read_text(encoding="utf-8")
     )
+    baseline_source = snapshot_market_source(
+        [{"provenance": dict(decision.provenance)} for decision in decisions]
+    )
     incumbents = tuple(str(s) for s in (manifest.get("daily_symbols") or []))
     symbols = candidate_symbols(decisions, incumbents, top_n=top_candidates)
 
@@ -307,7 +311,9 @@ def render_preview(
     generated = datetime.now(timezone.utc).isoformat(timespec="seconds")
     source = f"{snapshot_dir.parent.name}/{snapshot_dir.name}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    note = PROVISIONAL_NOTE.format(generated=generated, source=source)
+    note = PROVISIONAL_NOTE.format(
+        generated=generated, source=source, baseline=baseline_source
+    )
 
     action_body = render_action_list(
         daily,
@@ -360,6 +366,8 @@ def render_preview(
         "output_dir": display_path(output_dir),
         "decision_date": decision_date,
         "generated_at_utc": generated,
+        "provisional_market_data_feed": "iex",
+        "baseline_market_data_source": baseline_source,
         "stability_policy_version": DAILY_ATTENTION_STABILITY_POLICY_VERSION,
         "report_renderer_revision": REPORT_RENDERER_REVISION,
         "candidate_count": len(symbols),

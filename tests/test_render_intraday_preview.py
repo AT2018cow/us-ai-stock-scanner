@@ -295,6 +295,9 @@ class TestRenderPreview(unittest.TestCase):
             self.assertTrue((out / "preview_manifest.json").is_file())
             text = (out / "action_list_v2.md").read_text(encoding="utf-8")
             self.assertIn("PROVISIONAL INTRADAY PREVIEW", text)
+            self.assertIn("IEX intraday", text)
+            self.assertIn("baseline:", text)
+            self.assertEqual(metadata["provisional_market_data_feed"], "iex")
             self.assertIn("confirm_1_2_safe_v1", json.dumps(metadata))
 
     def test_streaks_are_computed_only_for_the_daily_list(self) -> None:
