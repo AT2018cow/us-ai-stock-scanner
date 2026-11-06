@@ -1,0 +1,16 @@
+variant,criterion,result
+A,initial_screen,False
+A,positive_ci,False
+A,holm_significant,False
+A,three_eras_nonnegative,True
+A,deep_validation,not triggered by initial screen
+B,initial_screen,False
+B,positive_ci,False
+B,holm_significant,False
+B,three_eras_nonnegative,False
+B,deep_validation,not triggered by initial screen
+C,initial_screen,False
+C,positive_ci,False
+C,holm_significant,False
+C,three_eras_nonnegative,False
+C,deep_validation,not triggered by initial screen

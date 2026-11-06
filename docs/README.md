@@ -46,6 +46,7 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 3. Current Baseline Reviews & Decisions
 
+- [2026-11-06 价值与回踩有界实验](value_pullback_optimization_20261106/README.md) — v4三个单因素的基线复现、长期/压力期比较、归因与快照对照；[已批准方案](agent_specs/value_and_pullback_optimization_spec.md)。
 - [2026-11-06 五项审查问题修复](review_followup_20261106/report.md) — 修复120日合法标签误拒绝、提前收盘门禁、SIP缓存、配置续跑身份与外部CSV CLI；恢复受影响样本并重算验证。
 - [2026-11-06 SIP收盘名单、IEX盘中来源与日期对齐](sip_eod_migration_20261106/report.md) — 正式生产切换、长期/压力期标签与全部受影响评估重算、全池726份决策及Top-15验收、断点恢复与哈希证据；迁移前冻结报告保留。
 - [2026-10-18 代码审查与修复交接](code_review_and_repair_handoff_20261018.md) — 8 项缺陷、2 项结构建议、离线复现、DeepSeek 实施边界及 Codex 逐项验收契约（历史基线）。

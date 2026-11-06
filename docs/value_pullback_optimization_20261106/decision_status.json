@@ -1,0 +1,31 @@
+{
+  "screen": {
+    "A": {
+      "pass_screen": false,
+      "delta60": -0.0009608855645368038,
+      "delta120": 0.002981990613334158,
+      "severe_delta": 0.0
+    },
+    "B": {
+      "pass_screen": false,
+      "delta60": -0.012030277908365734,
+      "delta120": -0.023905320033116656,
+      "severe_delta": -0.00847457627118644
+    },
+    "C": {
+      "pass_screen": false,
+      "delta60": 4.0689694671918685e-05,
+      "delta120": -0.0012408638812419536,
+      "severe_delta": 0.0
+    }
+  },
+  "robustness": {
+    "passed": [],
+    "skipped": "no candidate passes initial screen"
+  },
+  "combination": {
+    "status": "not_needed",
+    "rule": "only combine at least two screened factors; no subset search"
+  },
+  "production_adopted": false
+}

@@ -1,0 +1,27 @@
+{
+  "checks": [
+    {
+      "scope": "monthly",
+      "n_cohorts": 2080,
+      "max_error": 1.1102230246251565e-16
+    },
+    {
+      "scope": "covid",
+      "n_cohorts": 336,
+      "max_error": 1.1102230246251565e-16
+    },
+    {
+      "scope": "bear",
+      "n_cohorts": 832,
+      "max_error": 1.1102230246251565e-16
+    }
+  ],
+  "total_cohorts": 3248,
+  "max_error": 1.1102230246251565e-16,
+  "inputs": {
+    "outputs/review_followup_20261106/datasets/sip_2016_2020_v1/dataset.csv": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+    "outputs/review_followup_20261106/datasets/sip_2021_2026_v1/dataset.csv": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+    "outputs/review_followup_20261106/datasets/sip_covid_weekly_v1/dataset.csv": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+    "outputs/review_followup_20261106/datasets/sip_bear_weekly_v1/dataset.csv": "d2fd0dc9b7a21d170c36125ed505e34721d4d145722c77fdee883ff82be87436"
+  }
+}

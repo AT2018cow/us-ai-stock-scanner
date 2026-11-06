@@ -1,0 +1,82 @@
+{
+  "version": "value_pullback_v4_execution_2",
+  "approval": "User approved implementation of v4 in conversation",
+  "variants": [
+    "D0",
+    "A",
+    "B",
+    "C"
+  ],
+  "c_status": "approved explicitly by user in conversation: use production joint conviction, not ordinal rank",
+  "primary": "monthly 60d fixed_usage paired vs D0; common dates across P1; qualified benchmark history",
+  "hypothesis_family": [
+    "A",
+    "B",
+    "C"
+  ],
+  "unexecuted_hypothesis_p": 1.0,
+  "cap": 15,
+  "seed": 61106,
+  "labels": {
+    "entry": "next_open",
+    "exit": "close",
+    "cost_per_side_bps": 15,
+    "dividends": false,
+    "horizons": [
+      20,
+      60,
+      120,
+      252
+    ]
+  },
+  "parameters": {
+    "A": {
+      "sma50_lower": 0.95,
+      "ret20_lower": -0.07,
+      "sma200_min": 1.02,
+      "alignment_min": 1,
+      "rs_min": 0,
+      "nondefensive_only": true
+    },
+    "B": {
+      "sma50_upper": 1.05,
+      "sma200_upper": 1.3,
+      "ret20_upper": 0.07
+    },
+    "C": {
+      "base": "production joint conviction including A bonus and risk penalties",
+      "weight": 0.1,
+      "cash_weight": 0.7,
+      "growth_weight": 0.3,
+      "fcf_scale": 0.08,
+      "revenue_scale": 0.2,
+      "negative_fcf_signal": 0,
+      "missing_signal": 0,
+      "preserve_lexicographic_layers": true
+    }
+  },
+  "screening": {
+    "delta60_gt": 0,
+    "delta120_ge": 0,
+    "severe_rate_delta_le": 0.01
+  },
+  "robustness": {
+    "calendar_block_months": [
+      6,
+      12
+    ],
+    "time_repeats": 2000,
+    "symbol_fraction": 0.7,
+    "symbol_repeats": 200,
+    "cost_stress_bps": 30,
+    "top_contributors": 5,
+    "holm_alpha": 0.05
+  },
+  "baseline_reference": "review_followup_20261106_v1; exact memberships and numeric tolerance 1e-10",
+  "limitations": [
+    "retrospective universe approximation",
+    "overlapping cohorts, not account CAGR",
+    "price returns exclude dividends",
+    "unknown market warmup dates excluded as in accepted D0"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "A": {
+    "classification": "\u62d2\u7edd\u672c\u8f6e\u6536\u76ca\u5019\u9009",
+    "gates": {
+      "initial_screen": false,
+      "positive_ci": false,
+      "holm_significant": false,
+      "three_eras_nonnegative": true,
+      "deep_validation": "not triggered by initial screen"
+    }
+  },
+  "B": {
+    "classification": "\u4ec5\u6709\u98ce\u9669\u6539\u5584\uff1a\u672a\u901a\u8fc7\u6536\u76ca\u521d\u7b5b",
+    "gates": {
+      "initial_screen": false,
+      "positive_ci": false,
+      "holm_significant": false,
+      "three_eras_nonnegative": false,
+      "deep_validation": "not triggered by initial screen"
+    }
+  },
+  "C": {
+    "classification": "\u62d2\u7edd\u672c\u8f6e\u6536\u76ca\u5019\u9009",
+    "gates": {
+      "initial_screen": false,
+      "positive_ci": false,
+      "holm_significant": false,
+      "three_eras_nonnegative": false,
+      "deep_validation": "not triggered by initial screen"
+    }
+  }
+}

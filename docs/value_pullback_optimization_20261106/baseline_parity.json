@@ -1,0 +1,102 @@
+{
+  "monthly": {
+    "pass_parity": true,
+    "scope": "monthly",
+    "dates": 130,
+    "rows": 80531,
+    "slot_checks": 13724,
+    "max_error": 9.8879238130678e-17,
+    "production_conviction_min": -0.031,
+    "production_conviction_max": 1.0230002,
+    "c_integer_priority_unsuitable": true,
+    "contracts": [
+      {
+        "study": "sip_2016_2020_v1",
+        "feed": "sip",
+        "cost": 0.003,
+        "entry": "next_open",
+        "exit": "close"
+      },
+      {
+        "study": "sip_2021_2026_v1",
+        "feed": "sip",
+        "cost": 0.003,
+        "entry": "next_open",
+        "exit": "close"
+      }
+    ],
+    "market_warmup_excluded_from_formal_comparison": true,
+    "inputs": {
+      "datasets/sip_2016_2020_v1/dataset.csv": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+      "datasets/sip_2016_2020_v1/dataset.meta.json": "a196d75050daba5cb5dbc8027a26741578b32dc538028e806a4a673094e605f5",
+      "datasets/sip_2016_2020_v1/success.json": "f8fd83374ff94cfcc2303c598886dd4b6d8d1ad63f20b0f79897c96d62309dfb",
+      "datasets/sip_2021_2026_v1/dataset.csv": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+      "datasets/sip_2021_2026_v1/dataset.meta.json": "8ec7161e1734907792a2bd348a7f8388d5b495eeedd6624d6024eb0b74f1ac25",
+      "datasets/sip_2021_2026_v1/success.json": "137375c590e880f00847f7e87c09b9def7b7c879573ac9ae0bc64c79dedd81ef",
+      "evaluations/evaluation_sip_monthly_v2/manifest.json": "c9d782f3531ac1731e7b260e2df9b6da124e550b59298d16def86ab790756201",
+      "evaluations/evaluation_sip_monthly_v2/slots.csv": "1156de4b89ad3046c52158a74ebe976572bf8f240a05be489ae99bed70d0f388",
+      "evaluations/evaluation_sip_monthly_v2/cohorts.csv": "86e5422f8d3297dfd275d05d230b8f6761280cdf9ee50d026fc353aa79c4416f"
+    },
+    "elapsed_seconds": 157.691500082
+  },
+  "covid": {
+    "pass_parity": true,
+    "scope": "covid",
+    "dates": 21,
+    "rows": 11861,
+    "slot_checks": 1764,
+    "max_error": 9.71445146547012e-17,
+    "production_conviction_min": -0.031,
+    "production_conviction_max": 0.9928002,
+    "c_integer_priority_unsuitable": true,
+    "contracts": [
+      {
+        "study": "sip_covid_weekly_v1",
+        "feed": "sip",
+        "cost": 0.003,
+        "entry": "next_open",
+        "exit": "close"
+      }
+    ],
+    "market_warmup_excluded_from_formal_comparison": true,
+    "inputs": {
+      "datasets/sip_covid_weekly_v1/dataset.csv": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+      "datasets/sip_covid_weekly_v1/dataset.meta.json": "7a13f871c36cf0eb283e4ee9e535ba68d19168f15e62d3b1f50127dc2e67a26f",
+      "datasets/sip_covid_weekly_v1/success.json": "36b55822d41976995e30c7233a01365b719266eb2c9d37287dc001268129db27",
+      "evaluations/evaluation_sip_covid_weekly_v2/manifest.json": "13c83f0407eec3d255ccb1c67bde43aa3c1e58d8e70461189158a40be0083c72",
+      "evaluations/evaluation_sip_covid_weekly_v2/slots.csv": "082a776db4138a77017fa0ff4b846f8ad201f65ba7056a9ea95906cde2a15813",
+      "evaluations/evaluation_sip_covid_weekly_v2/cohorts.csv": "871eaa9f2e48f05b4db419e42f82189c57f632cf23eb851d2df7e1abf693d398"
+    },
+    "elapsed_seconds": 23.981917311
+  },
+  "bear": {
+    "pass_parity": true,
+    "scope": "bear",
+    "dates": 52,
+    "rows": 35747,
+    "slot_checks": 4832,
+    "max_error": 9.84455572616838e-17,
+    "production_conviction_min": -0.031,
+    "production_conviction_max": 0.9999998,
+    "c_integer_priority_unsuitable": true,
+    "contracts": [
+      {
+        "study": "sip_bear_weekly_v1",
+        "feed": "sip",
+        "cost": 0.003,
+        "entry": "next_open",
+        "exit": "close"
+      }
+    ],
+    "market_warmup_excluded_from_formal_comparison": true,
+    "inputs": {
+      "datasets/sip_bear_weekly_v1/dataset.csv": "d2fd0dc9b7a21d170c36125ed505e34721d4d145722c77fdee883ff82be87436",
+      "datasets/sip_bear_weekly_v1/dataset.meta.json": "9ca1b97544350bd6ceda467c46c2168edfeb56e5eea6f104b1a234797004efc8",
+      "datasets/sip_bear_weekly_v1/success.json": "45f0b4668e3d041c5aa87151996b75cae59919713fd91b5bc95f7970d3ccc4bb",
+      "evaluations/evaluation_sip_bear_weekly_v2/manifest.json": "1333a9bee5b356afd1d384fd53a6c74ef835053ff33573a8af7f869e39ed778c",
+      "evaluations/evaluation_sip_bear_weekly_v2/slots.csv": "c4a96e1ef9cdf58e700d23c36c289e120035d70f62eacaf0dbb06bbd7f31d448",
+      "evaluations/evaluation_sip_bear_weekly_v2/cohorts.csv": "dc5b8dba623e007f43281a1224e2f31219bc212880cb388e06f609a6f15df2d3"
+    },
+    "elapsed_seconds": 72.26720127899999
+  }
+}

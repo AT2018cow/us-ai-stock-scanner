@@ -1,0 +1,31 @@
+{
+  "status": "PASS",
+  "unit_tests": 1382,
+  "unit_seconds": 41.442,
+  "targeted_tests": 18,
+  "tests_log": {
+    "path": "outputs/value_pullback_20261106/tests_full_final.log",
+    "sha256": "d8794a14fbea49001389b42dbc37b34459318e145d42d7599b25f479df9701fd"
+  },
+  "targeted_log": {
+    "path": "outputs/value_pullback_20261106/tests_targeted.log",
+    "sha256": "e29bb455a905f6275184962359899c807ce2ebdab01bdf7ee9ec6de877ca17fe"
+  },
+  "baseline_dates": 203,
+  "baseline_rows": 128139,
+  "baseline_slot_checks": 20320,
+  "baseline_max_error": 9.8879238130678e-17,
+  "independent_cohorts": 3248,
+  "independent_max_error": 1.1102230246251565e-16,
+  "snapshot_reconstruction": "PASS; verified original financial identities and raw SIP closes; boundary precision checked",
+  "production_code_modified": false,
+  "production_config_modified": false,
+  "official_snapshots_modified": false,
+  "git_writes_performed": false,
+  "inputs_refetched": false,
+  "skipped": [
+    "P2 combination: fewer than two passing factors",
+    "P3 symbol subsets/top5/threshold/cost: no monthly passing factor"
+  ],
+  "all_modal_apps_stopped": true
+}
