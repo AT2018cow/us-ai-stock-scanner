@@ -26,6 +26,7 @@ from .entry import (
     build_entry_quality_v2,
 )
 from ..fundamentals.provenance import fingerprint_scoring_inputs
+from .review_context import build_review_context
 from .model import (
     DECISION_SCHEMA_VERSION,
     ActionState,
@@ -342,6 +343,7 @@ def build_stock_decisions(
         previous = previous_map.get(symbol)
 
         provenance = dict(base_provenance)
+        provenance.update(build_review_context(row))
         provenance.update(
             {
                 "quality_policy_version": quality_policy,
@@ -353,6 +355,10 @@ def build_stock_decisions(
                 f"q={resolved_quality},e={resolved_entry},a={resolved_action}"
             )
         for key in (
+            "sic",
+            "sic_description",
+            "sector",
+            "accounting_version",
             "watchlist_bucket",
             "watchlist_etfs",
             "cik",

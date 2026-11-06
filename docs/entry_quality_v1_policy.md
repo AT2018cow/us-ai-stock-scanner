@@ -1,5 +1,7 @@
 # Entry Quality v1 policy
 
+> Current correctness revision (2026-11-06): `entry_quality_v1_2026-11-06` requires a complete finite 60-session volatility window. Missing/invalid volatility is blocking and yields INSUFFICIENT_DATA; v2 shares this guard. The original registration below remains historical evidence. See [implementation and validation](review_20261106/implementation_and_validation.md).
+
 > Status: **pre-registered MVP v1 policy**
 >
 > Date frozen for Implementation PR 3: 2026-10-10

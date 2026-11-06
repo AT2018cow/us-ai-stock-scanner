@@ -1,8 +1,6 @@
-"""Minimal NYSE session calendar for live runtime freshness (R03).
+"""Pure NYSE sessions shared by EOD publication and holding-period labels.
 
-Historical / replay decision paths must never depend on the wall clock, so
-this module exists purely to answer one live-mode question: "which US market
-session should the newest daily data describe by now?".
+Historical / replay paths take explicit dates and never use the wall clock.
 
 Scope is intentionally small and testable:
 
@@ -11,13 +9,10 @@ Scope is intentionally small and testable:
   not shifted to the preceding Friday, matching NYSE practice);
 - Good Friday is derived from the Gregorian Easter algorithm;
 - Juneteenth is a holiday from 2022 onward;
-- early closes (13:00 ET) cover the day after Thanksgiving, the session
-  before Independence Day, and Christmas Eve when it is a regular session.
-
-The day-level lag used by the product is insensitive to the exact early-close
-boundary (it only matters for scans run between 13:00 and 16:00 ET on those
-few days), so the calendar favors clarity over a full exchange calendar
-library. All functions are pure and take explicit dates/times.
+- early closes (13:00 ET) cover the day after Thanksgiving, July 3 when
+  it is a session, and Christmas Eve when it is a regular session;
+- a Friday before a Sunday/Monday July 4 remains a full session. The
+  publication gate must not infer an early close from holiday proximity.
 """
 
 from __future__ import annotations
@@ -97,6 +92,12 @@ def nyse_holidays(year: int) -> frozenset[date]:
     holidays.add(_observed_fixed(date(year, 12, 25)))
     if year >= 2022:
         holidays.add(_observed_fixed(date(year, 6, 19)))
+    # Exchange-announced national days of mourning in this study's history.
+    # ICE notices: Bush (2018-12-05), Carter (2025-01-09).
+    if year == 2018:
+        holidays.add(date(2018, 12, 5))
+    if year == 2025:
+        holidays.add(date(2025, 1, 9))
     return frozenset(holidays)
 
 
@@ -111,14 +112,7 @@ def is_early_close(day: date) -> bool:
         return False
     if day == _nth_weekday(day.year, 11, 3, 4) + timedelta(days=1):
         return True  # day after Thanksgiving
-    july4 = date(day.year, 7, 4)
-    if july4.weekday() == 0:
-        if day == july4 - timedelta(days=3):
-            return True
-    elif july4.weekday() == 6:
-        if day == july4 - timedelta(days=2):
-            return True
-    elif day == date(day.year, 7, 3):
+    if day == date(day.year, 7, 3):
         return True
     christmas = date(day.year, 12, 25)
     if christmas.weekday() in {1, 2, 3, 4} and day == date(day.year, 12, 24):

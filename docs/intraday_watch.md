@@ -28,7 +28,8 @@
 
 ## 3. 数据与计算
 
-- 数据源：Alpaca snapshots（`latestTrade` / `minuteBar` / `dailyBar` / `prevDailyBar`）+ 日线（400 天回看）；默认 IEX feed；
+- 数据源：Alpaca snapshots（`latestTrade` / `minuteBar` / `dailyBar` / `prevDailyBar`）+ 日线（400 天回看）；固定IEX feed，不受.env中ALPACA_FEED覆盖；
+- 正式生产名单来自SIP完整日线。监控终端/Markdown分别标记IEX临时行情和实际快照来源；旧快照没有来源证据时不推断为SIP。显式snapshot目录的日期从决策记录读取；
 - **缓存强制关闭**（`cache_enabled=False`）：避免生产配置 6 小时 TTL 在盘中返回旧价；
 - 价格层：现价、Δ%、vs SMA50/SMA200、52 周回撤/位置、20d/60d 收益；
 - 告警标记：`S50↓`（跌破 SMA50）、`S50✖`（当日下穿）、`S200↓`/`S200✖`、`EXT`（偏离 SMA200 >60%）、`HI`（距 52 周高 ≤3%）、`LO`（52 周低位）、`MOVE`（单日 |涨跌| ≥3%）、`PE`（财报窗口）；

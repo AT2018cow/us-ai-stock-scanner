@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import math
+from functools import lru_cache
+from datetime import timedelta
 from typing import Any
 
 import numpy as np
@@ -14,6 +16,21 @@ def next_trading_index(index: pd.DatetimeIndex, signal_dt: pd.Timestamp) -> int 
     if pos >= len(index):
         return None
     return int(pos)
+
+
+@lru_cache(maxsize=8192)
+def holding_session_dates(signal_date: str, horizon: int) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Use the same exchange sessions for every stock and benchmark."""
+    from ai_value_scanner.market_calendar import is_session_day
+    signal_dt = pd.Timestamp(signal_date)
+    if pd.isna(signal_dt):
+        raise ValueError('signal_date must be a valid date')
+    day = signal_dt.date() + timedelta(days=1)
+    sessions = []
+    while len(sessions) < max(1, int(horizon)):
+        if is_session_day(day): sessions.append(day)
+        day += timedelta(days=1)
+    return pd.Timestamp(sessions[0], tz='UTC'), pd.Timestamp(sessions[-1], tz='UTC')
 
 
 def forward_return_with_exit(
@@ -34,22 +51,25 @@ def forward_return_with_exit(
     calendar days. Exit date is None for delist-assumed returns (exact
     delist date unknown) and for immature windows.
     """
-    signal_dt = pd.Timestamp(signal_date, tz="UTC")
     if price_frame is None or price_frame.empty:
         return None, None
-    idx = next_trading_index(price_frame.index, signal_dt)
-    if idx is None:
+    entry_date, exit_date = holding_session_dates(signal_date, horizon)
+    if not price_frame.index.is_unique or not price_frame.index.is_monotonic_increasing:
         return None, None
-    hold = max(1, int(horizon))
-    exit_idx = idx + hold - 1
-    if exit_idx >= len(price_frame):
+    if entry_date not in price_frame.index:
+        return None, None
+    # Require the calendar entry, including when an IPO/relisting appears later.
+    idx = int(price_frame.index.get_loc(entry_date))
+    if exit_date not in price_frame.index:
         if global_end_date is not None and delist_return_assumption is not None:
             last_dt = pd.Timestamp(price_frame.index[-1]).tz_convert("UTC")
-            if last_dt < (global_end_date - pd.Timedelta(days=delist_detection_buffer_days)):
+            if last_dt < exit_date and last_dt < (global_end_date - pd.Timedelta(days=delist_detection_buffer_days)):
                 # Assume an adverse delisting return when a symbol disappears
                 # well before the backtest window end.
                 return float(delist_return_assumption) - roundtrip_cost, None
         return None, None
+
+    exit_idx = int(price_frame.index.get_loc(exit_date))
 
     entry_col = "open" if str(entry_price_mode).strip().lower() == "next_open" else "close"
     exit_col = "open" if str(exit_price_mode).strip().lower() == "open" else "close"
@@ -57,30 +77,26 @@ def forward_return_with_exit(
         return None, None
     entry = float(price_frame.iloc[idx][entry_col])
     exit_px = float(price_frame.iloc[exit_idx][exit_col])
-    if entry <= 0:
+    if not all(math.isfinite(x) for x in (entry, exit_px, roundtrip_cost)) or entry <= 0 or exit_px <= 0:
         return None, None
-    exit_date = pd.Timestamp(price_frame.index[exit_idx]).tz_convert("UTC")
-    return (exit_px / entry) - 1.0 - roundtrip_cost, exit_date
+    value = (exit_px / entry) - 1.0 - roundtrip_cost
+    return (value, exit_date) if math.isfinite(value) else (None, None)
 
 
 def fallback_label_end_date(signal_date: str, horizon: int) -> pd.Timestamp | None:
-    """Conservative label end when an exact trading-day exit is unavailable.
+    """Calendar holding-period end when the observed exit date is unavailable.
 
-    Used for leakage purging only. The horizon is in trading days, so convert
-    with a 7/5 calendar factor plus a small holiday/data buffer. Over-purging a
-    boundary event is preferable to letting a forward-return label cross into
-    the held-out window.
+    Price availability cannot move the scheduled end. Use the same exchange
+    sessions for label validation, leakage purging, and return generation;
+    a weekday estimate can be shorter than a valid holiday-heavy window.
     """
     try:
         dt = pd.Timestamp(signal_date)
-        if dt.tzinfo is None:
-            dt = dt.tz_localize("UTC")
-        else:
-            dt = dt.tz_convert("UTC")
-    except (TypeError, ValueError):
+        if pd.isna(dt):
+            return None
+        return holding_session_dates(dt.date().isoformat(), horizon)[1]
+    except (TypeError, ValueError, OverflowError):
         return None
-    days = int(math.ceil(max(1, int(horizon)) * 7.0 / 5.0)) + 10
-    return dt + pd.Timedelta(days=days)
 
 
 def split_query_end_iso(end_dt: object, horizons: object) -> str:
@@ -94,8 +110,7 @@ def split_query_end_iso(end_dt: object, horizons: object) -> str:
     2026-04-06 with a 2026-03-31 query cap produced fwd_ret_120 ≈ -0.97;
     KLAC 10:1 2026-06-12 produced ≈ -0.88). Capping the split query at the
     signal-window end therefore corrupts exactly the labels that cross a
-    later split. Extend by the same calendar envelope used for label-end
-    purging so every label end is covered by construction.
+    later split. Query through the calendar-derived final holding session.
     """
     try:
         base = pd.Timestamp(end_dt)
@@ -105,8 +120,10 @@ def split_query_end_iso(end_dt: object, horizons: object) -> str:
         hs = [max(1, int(x)) for x in (horizons or [])]
     except (TypeError, ValueError):
         hs = []
-    days = int(math.ceil((max(hs) if hs else 120) * 7.0 / 5.0)) + 10
-    return (base + pd.Timedelta(days=days)).date().isoformat()
+    end = fallback_label_end_date(base, max(hs) if hs else 120)
+    if end is None:
+        raise ValueError('cannot determine corporate-action query end')
+    return end.date().isoformat()
 
 
 def fetch_split_events_or_raise(client: object, symbols: list[str],

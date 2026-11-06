@@ -846,7 +846,7 @@ def load_alpaca_client(scan_config: ScanConfig) -> tuple[AlpacaClient, NetworkMo
     api_key = os.getenv("ALPACA_API_KEY", "").strip()
     api_secret = os.getenv("ALPACA_API_SECRET", "").strip()
     data_endpoint = os.getenv("ALPACA_DATA_ENDPOINT", "https://data.alpaca.markets")
-    feed = os.getenv("ALPACA_FEED", "iex")
+    feed = 'sip' if scan_config.official_market_mode == 'sip_eod' else os.getenv("ALPACA_FEED", "iex")
     if not api_endpoint or not api_key or not api_secret:
         raise ValueError("Missing Alpaca credentials in .env.")
 
@@ -1561,22 +1561,22 @@ def compute_price_features_asof(
     dollar_volume = price * volume
 
     highs = (
-        pd.to_numeric(range_window["high"], errors="coerce").dropna().astype(float).tolist()
+        pd.to_numeric(range_window["high"], errors="coerce").astype(float).tolist()
         if "high" in range_window.columns
         else []
     )
     lows = (
-        pd.to_numeric(range_window["low"], errors="coerce").dropna().astype(float).tolist()
+        pd.to_numeric(range_window["low"], errors="coerce").astype(float).tolist()
         if "low" in range_window.columns
         else []
     )
-    closes = pd.to_numeric(up_to["close"], errors="coerce").dropna().astype(float).tolist()
+    closes = pd.to_numeric(up_to["close"], errors="coerce").astype(float).tolist()
 
     dollar_volumes: list[float] = []
     if "volume" in up_to.columns:
         close_series = pd.to_numeric(up_to["close"], errors="coerce")
         volume_series = pd.to_numeric(up_to["volume"], errors="coerce")
-        dollar_volumes = (close_series * volume_series).dropna().astype(float).tolist()
+        dollar_volumes = (close_series * volume_series).astype(float).tolist()
 
     features = compute_price_history_features(
         current_price=price,
@@ -1584,6 +1584,7 @@ def compute_price_features_asof(
         range_lows=lows,
         closes=closes,
         dollar_volumes=dollar_volumes,
+        session_dates=up_to.index.tolist(),
     )
     market_asof = pd.Timestamp(up_to.index[-1]).date().isoformat()
     return {
@@ -1598,6 +1599,7 @@ def build_rebalance_dates(
     end_date: datetime,
     frequency: str,
 ) -> list[pd.Timestamp]:
+    from ai_value_scanner.market_calendar import is_session_day
     if frequency == "monthly":
         idx = pd.date_range(start=start_date.date(), end=end_date.date(), freq="BME", tz="UTC")
     else:
@@ -1609,7 +1611,11 @@ def build_rebalance_dates(
             ts = ts.tz_localize("UTC")
         else:
             ts = ts.tz_convert("UTC")
-        out.append(ts.normalize())
+        ts = ts.normalize()
+        while not is_session_day(ts.date()):
+            ts -= pd.Timedelta(days=1)
+        if ts.date() >= start_date.date() and ts not in out:
+            out.append(ts)
     return out
 
 

@@ -344,7 +344,7 @@ class ParsedCacheBindingTests(unittest.TestCase):
         cfg = _test_config(cache_dir)
         return load_one_fundamental(stub, "AAA", cik, cfg)
 
-    def test_fresh_compute_writes_v9_with_map_sha(self) -> None:
+    def test_fresh_compute_writes_v10_with_map_sha(self) -> None:
         with TemporaryDirectory() as tmp:
             sub, fac = _submissions_doc(), _facts_doc()
             stub = _StubSec(sub, fac, map_sha="mapsha1")
@@ -353,7 +353,7 @@ class ParsedCacheBindingTests(unittest.TestCase):
             out = self._run(tmp, stub)
             self.assertTrue(out["fundamental_operating_entity_verified"])
             meta = json.loads((Path(tmp) / "parsed_fund_0000111111.json").read_text())["_cache_meta"]
-            self.assertEqual(meta["v"], 9)
+            self.assertEqual(meta["v"], 10)
             self.assertEqual(meta["ticker_map_sha"], "mapsha1")
 
     def test_hit_serves_without_refetch(self) -> None:
@@ -428,7 +428,7 @@ class ParsedCacheBindingTests(unittest.TestCase):
                 t.join()
             self.assertEqual(errors, [])
             payload = json.loads((Path(tmp) / "parsed_fund_0000111111.json").read_text())
-            self.assertEqual(payload["_cache_meta"]["v"], 9)
+            self.assertEqual(payload["_cache_meta"]["v"], 10)
 
     def test_identity_payload_ready_same_verdict_all_paths(self) -> None:
         from ai_value_scanner.scanner import identity_payload_ready

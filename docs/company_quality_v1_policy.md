@@ -1,5 +1,7 @@
 # Company Quality v1 policy
 
+> Current correctness revision (2026-11-06): `company_quality_v1_2026-11-06` scores leverage only with positive EBITDA. Positive net debt with nonpositive EBITDA emits a risk and suppresses Grade A; v2 shares this guard. The original registration below remains historical evidence. See [implementation and validation](review_20261106/implementation_and_validation.md).
+
 > Status: **pre-registered MVP v1 policy**
 >
 > Date frozen for Implementation PR 2: 2026-10-10

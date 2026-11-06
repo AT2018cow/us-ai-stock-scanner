@@ -1,0 +1,81 @@
+{
+  "evidence_class": "retrospective_diagnostic",
+  "universe_sources": [
+    "union_superset_approx"
+  ],
+  "quality_policy": "v2",
+  "entry_policy": "v2",
+  "n_rows": 25025,
+  "n_quality_ab": 15909,
+  "outcome_integrity": [
+    {
+      "horizon": 20,
+      "n_rows": 15909,
+      "n_valid_paired": 15909,
+      "n_missing_or_nonfinite": 0,
+      "n_timing_invalid": 0
+    },
+    {
+      "horizon": 60,
+      "n_rows": 15909,
+      "n_valid_paired": 15909,
+      "n_missing_or_nonfinite": 0,
+      "n_timing_invalid": 0
+    },
+    {
+      "horizon": 120,
+      "n_rows": 15909,
+      "n_valid_paired": 15909,
+      "n_missing_or_nonfinite": 0,
+      "n_timing_invalid": 0
+    }
+  ],
+  "full_dataset_outcome_integrity": [
+    {
+      "horizon": 20,
+      "n_rows": 25025,
+      "n_valid_paired": 24971,
+      "n_missing_or_nonfinite": 0,
+      "n_timing_invalid": 54
+    },
+    {
+      "horizon": 60,
+      "n_rows": 25025,
+      "n_valid_paired": 24965,
+      "n_missing_or_nonfinite": 2,
+      "n_timing_invalid": 58
+    },
+    {
+      "horizon": 120,
+      "n_rows": 25025,
+      "n_valid_paired": 24957,
+      "n_missing_or_nonfinite": 5,
+      "n_timing_invalid": 63
+    }
+  ],
+  "comparison": "same-date A/B pool versus its ENTRY_READY subset",
+  "caveat": "Selection association, not causal timing alpha; historical inputs retain frozen coverage and universe approximations; no production promotion",
+  "input_contract": {
+    "dataset_kind": "entry_quality",
+    "n_rows": 25025,
+    "n_dates": 39,
+    "watchlist_source": "mixed: pit_snapshots from 2026-09-22 + union_superset_approx before that (membership/etf_count approximated from earliest snapshot or current list; PIT data availability filters candidates; documented upward bias)",
+    "entry_price_mode": "next_open",
+    "exit_price_mode": "close",
+    "roundtrip_cost": 0.003,
+    "pre_strategy_cross_section": true
+  },
+  "input_sha256": {
+    "entry_quality_dataset_risk_off.v3.csv": "2a4600ee72de560f4966a4a5aefae233b10ea0e6417a17fbdd1566578e5a328e",
+    "entry_quality_dataset_risk_off.v3.meta.json": "fbb734f84e0bb6345258fce2fa1452276f347418538a64ea41cb4b299d38680d"
+  },
+  "code_sha": "830702b73749c92be20f02a3463669f1b8e7dbd8",
+  "working_tree_dirty": true,
+  "source_sha256": {
+    "src/ai_value_scanner/research/review_utility.py": "674916ab4f84b2e49570b662d936c2007889e191f249bb64d9fff9b5381ddfa7",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/fundamentals/accounting.py": "7efcd9023f548701fd2867b88ec197c79de9388e7518c063c6ddef00cbbb6909",
+    "scripts/review_selection_utility.py": "0224f31c993587f4274749a17f16efcaef020368ac1fbde85fd44c343e3df492"
+  }
+}

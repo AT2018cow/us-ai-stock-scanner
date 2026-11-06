@@ -1,0 +1,62 @@
+[
+  {
+    "scope": "sip_monthly",
+    "n_weighted_cohorts_checked": 2718,
+    "max_weighted_return_error": 1.6764367671839864e-14,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 118,
+        "independent_mean_delta": 0.00030651953479399863
+      },
+      "usage": {
+        "n_dates": 118,
+        "independent_mean_delta": 0.0004013672062472429
+      }
+    }
+  },
+  {
+    "scope": "iex_monthly",
+    "n_weighted_cohorts_checked": 1350,
+    "max_weighted_return_error": 1.3156142841808105e-14,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 62,
+        "independent_mean_delta": 0.000580833081775231
+      },
+      "usage": {
+        "n_dates": 62,
+        "independent_mean_delta": 0.0007054902883216938
+      }
+    }
+  },
+  {
+    "scope": "sip_covid_weekly",
+    "n_weighted_cohorts_checked": 472,
+    "max_weighted_return_error": 2.653433028854124e-14,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 21,
+        "independent_mean_delta": 0.006601809067464527
+      },
+      "usage": {
+        "n_dates": 21,
+        "independent_mean_delta": 0.0024950091437208758
+      }
+    }
+  },
+  {
+    "scope": "sip_bear_weekly",
+    "n_weighted_cohorts_checked": 1154,
+    "max_weighted_return_error": 4.829470157119431e-15,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 52,
+        "independent_mean_delta": 0.00020636755709465665
+      },
+      "usage": {
+        "n_dates": 52,
+        "independent_mean_delta": 0.00114359471772301
+      }
+    }
+  }
+]

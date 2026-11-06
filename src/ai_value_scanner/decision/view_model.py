@@ -1255,7 +1255,10 @@ def _build_concentration_summary_line(
         if _normalize_primary_bucket(card.decision.provenance.get("watchlist_bucket"))
         or str(card.decision.provenance.get("watchlist_etfs") or "").strip()
     ]
-    if not bucketed:
+    if not bucketed and not any(
+        card.decision.provenance.get("sector") or card.decision.provenance.get("sic_description")
+        for card in primary_cards
+    ):
         return ""
     total = len(primary_cards)
     bucket_counts: dict[str, int] = {}
@@ -1282,8 +1285,16 @@ def _build_concentration_summary_line(
         ordered_etfs = sorted(etf_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
         etfs_text = ", ".join(f"{name} ({count})" for name, count in ordered_etfs)
         parts.append(f"Top ETFs: {etfs_text}")
-    if not parts:
-        return ""
+    sectors: dict[str, int] = {}
+    for card in primary_cards:
+        provenance = card.decision.provenance
+        sector = str(provenance.get("sector") or provenance.get("sic_description") or "Unknown").strip()
+        sectors[sector] = sectors.get(sector, 0) + 1
+    if any(sector != "Unknown" for sector in sectors):
+        parts.append("Industry exposure: " + ", ".join(
+            f"{sector} {count}/{len(primary_cards)}" for sector, count in
+            sorted(sectors.items(), key=lambda pair: (-pair[1], pair[0]))[:4]
+        ))
     return " · ".join(parts) + " — diversify across sectors manually"
 
 

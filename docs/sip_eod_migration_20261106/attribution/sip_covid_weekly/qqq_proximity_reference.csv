@@ -1,0 +1,5 @@
+scope,variant,view,n_dates,reference_tolerance_not_approved,mean_excess,point_estimate_within_reference,ci_low,ci_high,block_dates,interval_supports_reference
+sip_covid_weekly,baseline,list,21,0.01,-0.0595620634064363,False,,,12,
+sip_covid_weekly,baseline,usage,21,0.01,-0.1845557145020833,False,,,12,
+sip_covid_weekly,no_age_penalty,list,21,0.01,-0.0529602543389717,False,,,12,
+sip_covid_weekly,no_age_penalty,usage,21,0.01,-0.1820607053583624,False,,,12,

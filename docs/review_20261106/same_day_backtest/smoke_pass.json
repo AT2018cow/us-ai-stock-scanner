@@ -1,0 +1,20 @@
+{
+  "path": "selection_review_20261106/infi_smoke_v1/dataset.csv",
+  "sha256": "8fd5881ae4262ddad55e317cbaeeb83a8a3d3e66a218835827ca035cf47e7982",
+  "n_rows": 9,
+  "n_dates": 3,
+  "independent_hash_verified": true,
+  "all_60d_labels_observed": true,
+  "workspace": "infi",
+  "elapsed_extract_seconds": 7,
+  "evaluator_input_contracts": [
+    {
+      "dataset": "dataset.csv",
+      "status": "verified_label_contract",
+      "metadata_sha256": "4d2c86f6b570d5f30281276ba5272f141d9bdff333b161397bf499621a29f427",
+      "feed": "sip",
+      "cost": 0.003
+    }
+  ],
+  "evaluator_n_dates": 3
+}

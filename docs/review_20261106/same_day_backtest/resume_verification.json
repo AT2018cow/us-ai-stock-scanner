@@ -1,0 +1,11 @@
+{
+  "workspace": "infi",
+  "extraction_resumed_without_regeneration": true,
+  "completed_extractions": 5,
+  "completed_evaluations": 4,
+  "cache_recovery_test": "PASS",
+  "recovered_evaluation_scope": "sip_covid_weekly",
+  "smoke_first": true,
+  "foreground_only": true,
+  "cache_verification_app": "https://modal.com/apps/infi/main/ap-AHaSIkFtT6BwkHYqbRLqvH"
+}

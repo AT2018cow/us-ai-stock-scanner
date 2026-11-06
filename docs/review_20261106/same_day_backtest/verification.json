@@ -1,0 +1,22 @@
+{
+  "tests": 1325,
+  "result": "OK",
+  "seconds": 76.09,
+  "targeted_new_tests": 20,
+  "source_hashes": {
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/market_calendar.py": "5d3391c4787a298d685e4690a5decb8cc54bad4210044aefa601d662d3d01a50",
+    "src/ai_value_scanner/evaluation/backtest.py": "343672a99e23e9153b18134aa765efd70c626d1a45b43fd45aa63cbcf1ba3186",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6",
+    "src/ai_value_scanner/backtest.py": "cf81cae0e2bc8830ec9c811850b8bb9e5481853ed69436fb4727da45b11fb665",
+    "scripts/extract_weight_dataset.py": "22f9ef44a083dc842bb7a75468ba5f762983e5c47b994ae8d775e3db7698d575",
+    "scripts/evaluate_current_top15.py": "f0df68412214d891edb2bfefbd9daed10b71279069f9eb262cac8ec5c669ed14",
+    "scripts/modal_selection_backtest.py": "87ef7811f3364743cc39a8864d91b51f5c1e1e6c5dbd632e89aa8a7efe8bbea1",
+    "tests/test_current_top15_backtest.py": "4658f25a791b5ed11ca0f7dc77b2c0525ce48ff672c2692416ae29eaaad9fde5"
+  },
+  "note": "No strategy default changed; calendar/replay/annual-label correctness fixes are shared by both variants.",
+  "evaluator_smoke": "PASS on real infi volume mount",
+  "full_extraction_status": "5/5 complete",
+  "formal_evaluation_status": "4/4 complete",
+  "candidate_adopted": false
+}

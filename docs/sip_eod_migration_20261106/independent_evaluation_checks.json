@@ -1,0 +1,50 @@
+{
+  "sip_monthly": {
+    "membership_order_states_scores_unchanged": true,
+    "weighted_cohorts_checked": 2813,
+    "max_weighted_return_error": 1.6764367671839864e-14,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 118,
+        "independent_candidate_delta": 0.00030651953479399863
+      },
+      "usage": {
+        "n_dates": 118,
+        "independent_candidate_delta": 0.0004013672062472429
+      }
+    },
+    "manifest_sha256": "b85fe03c41bf480cd48f08e260d9c343c65281913b9be927fe4062e9a0e64c43"
+  },
+  "sip_covid_weekly": {
+    "membership_order_states_scores_unchanged": true,
+    "weighted_cohorts_checked": 504,
+    "max_weighted_return_error": 2.653433028854124e-14,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 21,
+        "independent_candidate_delta": 0.006601809067464527
+      },
+      "usage": {
+        "n_dates": 21,
+        "independent_candidate_delta": 0.0024950091437208758
+      }
+    },
+    "manifest_sha256": "189b5b38d2855c5430374f43c716ba4b826ba3e0d93ccb223abb547e9ebd9aff"
+  },
+  "sip_bear_weekly": {
+    "membership_order_states_scores_unchanged": true,
+    "weighted_cohorts_checked": 1237,
+    "max_weighted_return_error": 7.105427357601002e-15,
+    "paired_recalculation": {
+      "list": {
+        "n_dates": 52,
+        "independent_candidate_delta": 0.00020636755709465665
+      },
+      "usage": {
+        "n_dates": 52,
+        "independent_candidate_delta": 0.00114359471772301
+      }
+    },
+    "manifest_sha256": "36b4d6bb58601d0e30fa5f460d5e9a19d76ffc08fe25e50612a2586f0f74605a"
+  }
+}

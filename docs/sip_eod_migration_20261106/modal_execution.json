@@ -1,0 +1,63 @@
+{
+  "workspace": "infi",
+  "foreground_only": true,
+  "detached": false,
+  "apps": [
+    {
+      "app_id": "ap-fFWMrjJf4QtGr2xSfNbNap",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 12:01:43+08:00",
+      "stopped_at": "2026-11-06 12:02:11+08:00"
+    },
+    {
+      "app_id": "ap-5ynVzVHhDYibTC3VDedZOa",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 12:01:18+08:00",
+      "stopped_at": "2026-11-06 12:01:44+08:00"
+    },
+    {
+      "app_id": "ap-LR6toaEAK9htuaDDB99uyy",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 11:40:35+08:00",
+      "stopped_at": "2026-11-06 11:53:52+08:00"
+    },
+    {
+      "app_id": "ap-fToo8NW9fEwvuKTY26TqbR",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 11:47:20+08:00",
+      "stopped_at": "2026-11-06 11:50:59+08:00"
+    },
+    {
+      "app_id": "ap-PF46khqNG9HikAb8QLzrDX",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 11:41:45+08:00",
+      "stopped_at": "2026-11-06 11:46:42+08:00"
+    },
+    {
+      "app_id": "ap-wk4hSRA2RApF5coC5MyanY",
+      "description": "sip-eod-calendar-migration",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-11-06 11:26:34+08:00",
+      "stopped_at": "2026-11-06 11:41:28+08:00"
+    }
+  ],
+  "outcomes": {
+    "relabel": "complete after smoke",
+    "evaluate": "complete after smoke",
+    "attribute": "complete after smoke",
+    "official": "completed scan; cloud validator initially lacked PYTHONPATH",
+    "official_validate": "passed on resumed immutable checkpoint",
+    "mistyped_stage_attempt": "no compute dispatched; stopped"
+  }
+}

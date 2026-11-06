@@ -62,7 +62,9 @@ class _FakeClient:
 
 
 def _frame(entry_open: float, exit_close: float) -> pd.DataFrame:
-    idx = pd.date_range("2025-01-02", periods=120, freq="B", tz="UTC")
+    from ai_value_scanner.market_calendar import is_session_day
+    days=[d for d in pd.date_range('2025-01-02',periods=200,tz='UTC') if is_session_day(d.date())][:120]
+    idx = pd.DatetimeIndex(days)
     opens = [entry_open] * len(idx)
     closes = [entry_open] * len(idx)
     closes[-1] = exit_close

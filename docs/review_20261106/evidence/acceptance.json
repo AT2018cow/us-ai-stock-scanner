@@ -1,0 +1,10 @@
+{
+  "command": ".venv/bin/python -m unittest discover -s tests",
+  "n_tests": 1305,
+  "elapsed_seconds": 30.247,
+  "result": "OK",
+  "base_commit": "830702b73749c92be20f02a3463669f1b8e7dbd8",
+  "working_tree_dirty": true,
+  "note": "Code identity is pinned by source_sha256 and test_source_sha256 in special_validation.json; terminal logs are local working artifacts.",
+  "special_validation_sha256": "b87c6494fab8e1f5e3e8774183b0bd07f658ce8a971776bb20393c3ced75c2a9"
+}

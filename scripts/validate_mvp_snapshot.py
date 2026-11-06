@@ -58,6 +58,7 @@ from ai_value_scanner.reporting.decision import (
 )
 from ai_value_scanner.reporting.snapshot import (
     REPORT_RENDERER_REVISION,
+    COMPATIBLE_RENDERER_REVISIONS,
     build_state_change_alert_records,
     collect_detailed_report_symbols,
     compute_in_list_streaks,
@@ -67,10 +68,14 @@ from ai_value_scanner.reporting.snapshot import (
 SUPPORTED_POLICY_VERSIONS = {"v1", "v2"}
 SUPPORTED_LAYOUT_VERSIONS = {"v1", "v2"}
 KNOWN_QUALITY_POLICY_VERSIONS = {
+    "company_quality_v1_2026-10-18",
+    "company_quality_v2_2026-10-18",
     QUALITY_POLICY_VERSION,
     QUALITY_V2_POLICY_VERSION,
 }
 KNOWN_ENTRY_POLICY_VERSIONS = {
+    "entry_quality_v1_2026-10-18",
+    "entry_quality_v2_2026-10-18",
     ENTRY_POLICY_VERSION,
     ENTRY_V2_POLICY_VERSION,
 }
@@ -259,11 +264,15 @@ def validate_snapshot(
             "legacy snapshot (no report_renderer_revision): byte-level render "
             "comparison is skipped; structural checks still run"
         )
-    elif str(renderer_revision) != REPORT_RENDERER_REVISION:
-        errors.append(
-            f"unsupported report_renderer_revision {renderer_revision!r}"
-        )
-        render_mode = "unsupported"
+    elif str(renderer_revision) not in COMPATIBLE_RENDERER_REVISIONS:
+        if str(renderer_revision) == "mvp_report_renderer_2026-10-18b":
+            render_mode = "legacy"
+            warnings.append("Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.")
+        else:
+            errors.append(
+                f"unsupported report_renderer_revision {renderer_revision!r}"
+            )
+            render_mode = "unsupported"
     else:
         render_mode = "exact"
 
@@ -626,9 +635,9 @@ def validate_snapshot(
 
     if versions_supported and render_mode == "exact":
         streaks_by_symbol = compute_in_list_streaks(
-            root.parents[1],
-            manifest.get("decision_date") or root.parent.name,
-            manifest.get("strategy_style") or root.name,
+            root_path.parents[1],
+            manifest.get("decision_date") or root_path.parent.name,
+            manifest.get("strategy_style") or root_path.name,
             [decision.symbol for decision in daily],
         )
         expected_daily = render_action_list(

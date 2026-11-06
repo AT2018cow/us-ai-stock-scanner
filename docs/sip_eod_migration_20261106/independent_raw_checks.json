@@ -1,0 +1,73 @@
+[
+  {
+    "symbol": "DRS",
+    "signal_date": "2022-09-30",
+    "horizon": 60,
+    "feed": "sip",
+    "entry_date": "2022-10-03",
+    "exit_date": "2022-12-27",
+    "entry_present": true,
+    "exit_present": true,
+    "raw_open": 9.75,
+    "raw_close": 12.81,
+    "split_multiplier_between_endpoints": 0.6890160506288994,
+    "independent_net_return": 0.9038440461538465,
+    "dataset_net_return": 0.9038440461538464,
+    "absolute_error": 1.1102230246251565e-16
+  },
+  {
+    "symbol": "DRS",
+    "signal_date": "2022-11-25",
+    "horizon": 252,
+    "feed": "sip",
+    "entry_date": "2022-11-28",
+    "exit_date": "2023-11-28",
+    "entry_present": false,
+    "exit_present": true,
+    "dataset_outcome": "unavailable; no replacement entry or exit session"
+  },
+  {
+    "symbol": "NBIS",
+    "signal_date": "2024-07-31",
+    "horizon": 60,
+    "feed": "sip",
+    "entry_date": "2024-08-01",
+    "exit_date": "2024-10-24",
+    "entry_present": true,
+    "exit_present": true,
+    "raw_open": 18.94,
+    "raw_close": 17.63,
+    "split_multiplier_between_endpoints": 1,
+    "independent_net_return": -0.07216578669482587,
+    "dataset_net_return": -0.0721657866948258,
+    "absolute_error": 6.938893903907228e-17
+  },
+  {
+    "symbol": "AAPL",
+    "signal_date": "2016-11-30",
+    "horizon": 60,
+    "entry_date": "2016-12-01",
+    "raw_open": 110.365,
+    "exit_date": "2017-02-28",
+    "raw_close": 136.99,
+    "split_multiplier": 1,
+    "independent_net_return": 0.23824495990576733,
+    "dataset_net_return": 0.2382449599057673,
+    "absolute_error": 2.7755575615628914e-17,
+    "verification": "prior independently queried raw endpoints rechecked against migrated frozen labels"
+  },
+  {
+    "symbol": "AAPL",
+    "signal_date": "2020-03-31",
+    "horizon": 120,
+    "entry_date": "2020-04-01",
+    "raw_open": 246.5,
+    "exit_date": "2020-09-21",
+    "raw_close": 110.08,
+    "split_multiplier": 0.25,
+    "independent_net_return": 0.7832880324543611,
+    "dataset_net_return": 0.7832880324543611,
+    "absolute_error": 0.0,
+    "verification": "prior independently queried raw endpoints rechecked against migrated frozen labels"
+  }
+]

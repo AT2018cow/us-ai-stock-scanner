@@ -1,0 +1,15 @@
+{
+  "n_symbols": 3,
+  "symbols": [
+    "MSFT",
+    "AAPL",
+    "NVDA"
+  ],
+  "session": "2026-11-05",
+  "official_feed": "sip",
+  "official_mode": "sip_eod",
+  "snapshot_validator": "PASS; no errors/warnings",
+  "intraday_feed": "iex",
+  "monitor_source_visible": true,
+  "snapshot_manifest_sha256": "bc1ee2631e0a814af23204e8019e7ba1f8dcc208c9735fd927975ae97535a85c"
+}

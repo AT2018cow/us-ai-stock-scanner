@@ -1,0 +1,118 @@
+{
+  "sip_2016_2020_v1": {
+    "rows": 31516,
+    "changed_rows": 1064,
+    "changed_fields": 4250,
+    "all_feature_text_unchanged": true,
+    "all_unregistered_label_text_unchanged": true,
+    "paired_exits_checked": 125910,
+    "paired_exit_mismatches": 0,
+    "horizon_coverage": {
+      "20": {
+        "old_observed": 31487,
+        "new_observed": 31487
+      },
+      "60": {
+        "old_observed": 31483,
+        "new_observed": 31483
+      },
+      "120": {
+        "old_observed": 30416,
+        "new_observed": 31477
+      },
+      "252": {
+        "old_observed": 31463,
+        "new_observed": 31463
+      }
+    },
+    "sha256": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+    "metadata_sha256": "a196d75050daba5cb5dbc8027a26741578b32dc538028e806a4a673094e605f5"
+  },
+  "sip_2021_2026_v1": {
+    "rows": 49015,
+    "changed_rows": 2140,
+    "changed_fields": 8552,
+    "all_feature_text_unchanged": true,
+    "all_unregistered_label_text_unchanged": true,
+    "paired_exits_checked": 179581,
+    "paired_exit_mismatches": 0,
+    "horizon_coverage": {
+      "20": {
+        "old_observed": 48221,
+        "new_observed": 48221
+      },
+      "60": {
+        "old_observed": 46780,
+        "new_observed": 46780
+      },
+      "120": {
+        "old_observed": 42379,
+        "new_observed": 44515
+      },
+      "252": {
+        "old_observed": 40065,
+        "new_observed": 40065
+      }
+    },
+    "sha256": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+    "metadata_sha256": "8ec7161e1734907792a2bd348a7f8388d5b495eeedd6624d6024eb0b74f1ac25"
+  },
+  "sip_bear_weekly_v1": {
+    "rows": 35747,
+    "changed_rows": 689,
+    "changed_fields": 2756,
+    "all_feature_text_unchanged": true,
+    "all_unregistered_label_text_unchanged": true,
+    "paired_exits_checked": 142802,
+    "paired_exit_mismatches": 0,
+    "horizon_coverage": {
+      "20": {
+        "old_observed": 35707,
+        "new_observed": 35707
+      },
+      "60": {
+        "old_observed": 35708,
+        "new_observed": 35708
+      },
+      "120": {
+        "old_observed": 35018,
+        "new_observed": 35707
+      },
+      "252": {
+        "old_observed": 35680,
+        "new_observed": 35680
+      }
+    },
+    "sha256": "d2fd0dc9b7a21d170c36125ed505e34721d4d145722c77fdee883ff82be87436",
+    "metadata_sha256": "9ca1b97544350bd6ceda467c46c2168edfeb56e5eea6f104b1a234797004efc8"
+  },
+  "sip_covid_weekly_v1": {
+    "rows": 11861,
+    "changed_rows": 0,
+    "changed_fields": 0,
+    "all_feature_text_unchanged": true,
+    "all_unregistered_label_text_unchanged": true,
+    "paired_exits_checked": 47444,
+    "paired_exit_mismatches": 0,
+    "horizon_coverage": {
+      "20": {
+        "old_observed": 11861,
+        "new_observed": 11861
+      },
+      "60": {
+        "old_observed": 11861,
+        "new_observed": 11861
+      },
+      "120": {
+        "old_observed": 11861,
+        "new_observed": 11861
+      },
+      "252": {
+        "old_observed": 11861,
+        "new_observed": 11861
+      }
+    },
+    "sha256": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+    "metadata_sha256": "7a13f871c36cf0eb283e4ee9e535ba68d19168f15e62d3b1f50127dc2e67a26f"
+  }
+}

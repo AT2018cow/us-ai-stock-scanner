@@ -1,0 +1,26 @@
+{
+  "inputs": {
+    "research/sip_migration_20261106_v1/datasets/sip_2016_2020_v1/dataset.csv": "975cb1a655e4831f4cb84b5beee7d6b3df74c509f6b3a7ba39ef7e178e25dea6",
+    "research/sip_migration_20261106_v1/datasets/sip_2021_2026_v1/dataset.csv": "3b6d2e1564be0e2c5b4ec974a527a4642ad86d84f93d292fcf87206da4ae4ca7",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_monthly_v2/slots.csv": "45a74802288738adc124c481f5fd24278dfefa6bf4e00f029f401768608d3550",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_monthly_v2/cohorts.csv": "a3f08da5fec547f358a0b8fa6f7c33f5b3921d231fb487d61ddf942d6473371f",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_monthly_v2/manifest.json": "b85fe03c41bf480cd48f08e260d9c343c65281913b9be927fe4062e9a0e64c43"
+  },
+  "sources": {
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "scripts/complete_selection_review.py": "5a96304f4d8f67fa54fd3cb903fd2532398d792d92cf8d376d58ab2b9d08bc5c",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6"
+  },
+  "protocol_sha256": "39357003b934371bf8d3eac1bd9f90e79cb7b84538f99d05d94c3be1dbe01eb7",
+  "elapsed_seconds": 184.24305683199998,
+  "smoke": false,
+  "tolerance": 0.01,
+  "evidence_class": "supplemental already-viewed retrospective diagnostics; original candidate result unchanged",
+  "new_strategy_candidates": 0,
+  "classification": "current SIC descriptions / SIC 2-digit; not historical GICS",
+  "weights": "deletion sensitivity leaves cash; no renormalization; original complete common dates retained"
+}

@@ -1,0 +1,92 @@
+{
+  "studies": {
+    "sip_2016_2020_v1": {
+      "source_dataset_sha256": "975cb1a655e4831f4cb84b5beee7d6b3df74c509f6b3a7ba39ef7e178e25dea6",
+      "windows": [
+        {
+          "signal_date": "2018-08-31",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2019-02-26"
+          }
+        },
+        {
+          "signal_date": "2018-11-30",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2019-05-28"
+          }
+        }
+      ],
+      "n_dates": 60,
+      "source_metadata_sha256": "6526783be90088eba5b138db9bf43f9659f6b3cab8b88591c1266f2783dfeecb",
+      "source_splits_sha256": "5c8b51a242ab77d0a126d530af67ce64fea41f2b7c06eed934c3d893cbb17916"
+    },
+    "sip_2021_2026_v1": {
+      "source_dataset_sha256": "3b6d2e1564be0e2c5b4ec974a527a4642ad86d84f93d292fcf87206da4ae4ca7",
+      "windows": [
+        {
+          "signal_date": "2024-08-30",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2025-02-25"
+          }
+        },
+        {
+          "signal_date": "2024-10-31",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2025-04-28"
+          }
+        },
+        {
+          "signal_date": "2024-11-29",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2025-05-27"
+          }
+        }
+      ],
+      "n_dates": 70,
+      "source_metadata_sha256": "c12af3b3fd4656f5ff40c8b2558ed87a444eda9c1aa3c32d13ebc351f60da5f9",
+      "source_splits_sha256": "58c71a892696179a519d93648899e0ac0282c29821a0bbae4f5366aef8b62ee4"
+    },
+    "sip_bear_weekly_v1": {
+      "source_dataset_sha256": "05464e7f8e3fd0c193f305f2886c04136f1a81899a8015b3c41f17816449aa64",
+      "windows": [
+        {
+          "signal_date": "2022-12-23",
+          "horizons": [
+            120
+          ],
+          "expected_exit": {
+            "120": "2023-06-20"
+          }
+        }
+      ],
+      "n_dates": 52,
+      "source_metadata_sha256": "a319bdc1d0b733d572232b8e4ce09b027089635109d058798584c9a42d1009b0",
+      "source_splits_sha256": "a12be6f224d2174c435a26ecb5da82ffff3696bb2eae51277d8afc868b81b81e"
+    },
+    "sip_covid_weekly_v1": {
+      "source_dataset_sha256": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+      "windows": [],
+      "n_dates": 21,
+      "source_metadata_sha256": "5da4a6e10f25c25c97e4bb2d93f08e2af871c941dc2f4ef825cc24604b011fef",
+      "source_splits_sha256": "4b7a676b2ab2519c2c5d719b84517d9ecfd2d6b2fde0c7f5afe7b83fb85259e8"
+    }
+  },
+  "source_root": "sip_migration_20261106_v1/datasets",
+  "cutoff": "2026-11-05",
+  "scope": "repair only valid calendar endpoints rejected by the previous estimated envelope; no strategy changes"
+}

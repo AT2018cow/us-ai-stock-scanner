@@ -20,6 +20,7 @@ def _rows() -> pd.DataFrame:
             "price_to_sma50": 1.03,
             "return_20d": 0.05,
             "return_60d": 0.10,
+        "volatility_60d": .30,
             "relative_strength_60d_qqq": 0.05,
             "drawdown_from_52w_high": 0.10,
             "fwd_ret_60": ret,

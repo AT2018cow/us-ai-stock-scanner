@@ -1,0 +1,14 @@
+{
+  "workspace": "infi",
+  "authority": "explicit user instruction during implementation overrides AGENTS at2018cow default",
+  "foreground_only": true,
+  "smoke_first": true,
+  "max_parallel_containers": 2,
+  "cpu_request": 1,
+  "cpu_burst_limit": 2,
+  "memory_request_mib": 8192,
+  "memory_limit_mib": 16384,
+  "feed_coverage": "IEX QQQ/AAPL begin 2020-07-27; SIP available from 2016-01-04; direct authenticated coverage probe saved separately",
+  "research_feed": "sip with isolated cache; production IEX evaluated separately; no implicit liquidity equivalence",
+  "candidate": "single preregistered no-age-penalty candidate, no additional tuning"
+}

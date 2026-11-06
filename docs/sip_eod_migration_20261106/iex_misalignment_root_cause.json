@@ -1,0 +1,40 @@
+[
+  {
+    "symbol": "EOG",
+    "missing_sessions": [
+      "2022-03-08"
+    ],
+    "expected_entry": "2022-03-01",
+    "expected_exit": "2022-05-24",
+    "corrected_exit": "2022-05-24",
+    "corrected_return": 0.11074611935150058
+  },
+  {
+    "symbol": "KMI",
+    "missing_sessions": [
+      "2022-03-08"
+    ],
+    "expected_entry": "2022-03-01",
+    "expected_exit": "2022-05-24",
+    "corrected_exit": "2022-05-24",
+    "corrected_return": 0.09462381906670492
+  },
+  {
+    "symbol": "QQQ",
+    "missing_sessions": [],
+    "expected_entry": "2022-03-01",
+    "expected_exit": "2022-05-24",
+    "corrected_exit": "2022-05-24",
+    "corrected_return": -0.1722697035430224
+  },
+  {
+    "symbol": "SCCO",
+    "missing_sessions": [
+      "2022-03-08"
+    ],
+    "expected_entry": "2022-03-01",
+    "expected_exit": "2022-05-24",
+    "corrected_exit": "2022-05-24",
+    "corrected_return": -0.13400498930862448
+  }
+]

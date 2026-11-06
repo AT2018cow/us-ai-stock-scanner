@@ -1,0 +1,15 @@
+{
+  "tests": 1330,
+  "seconds": 34.066,
+  "result": "OK",
+  "new_targeted_tests": 5,
+  "scope_evaluations": 4,
+  "source_hashes": {
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "scripts/complete_selection_review.py": "5a96304f4d8f67fa54fd3cb903fd2532398d792d92cf8d376d58ab2b9d08bc5c",
+    "scripts/modal_selection_backtest.py": "2a386e2d8b885dca8fb85611a999abdd2b9c958b9fa37c5ae123d5e624fc9a42",
+    "tests/test_selection_attribution.py": "04a6a6ba0f97e9c9ced9273de390ca5fa05e6f554ab2b10e88c2f2e6a7283965"
+  },
+  "candidate_count_unchanged": true,
+  "numerical_qqq_tolerance_not_selected": true
+}

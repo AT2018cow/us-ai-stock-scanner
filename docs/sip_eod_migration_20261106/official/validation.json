@@ -1,0 +1,70 @@
+{
+  "counts": {
+    "action": {
+      "AVOID": 275,
+      "HOLD_MONITOR": 361,
+      "PRIORITY_REVIEW": 19,
+      "WATCH_BREAKOUT": 38,
+      "WATCH_PULLBACK": 33
+    },
+    "candidate_universe": {
+      "contract_version": "candidate_universe_v1_2026-10-11",
+      "decision_universe_symbols": 726,
+      "discovery_unique_symbols": 749,
+      "excluded_symbols": 23,
+      "exclusion_reason_counts": {
+        "ALPACA_ACTIVE_ASSET_MISSING": 2,
+        "DOLLAR_VOLUME_BELOW_MIN": 10,
+        "PRICE_BELOW_MIN": 8,
+        "SEC_MAPPING_MISSING": 3
+      },
+      "exclusion_stage_counts": {
+        "asset_eligibility": 2,
+        "price_liquidity_prefilter": 18,
+        "sec_mapping": 3
+      },
+      "market_data_feed": "sip",
+      "min_dollar_volume": 2000000.0,
+      "min_price": 1.0,
+      "post_sample_symbols": 744,
+      "tradable_mapped_symbols": 744
+    },
+    "daily_attention": 15,
+    "decisions": 726,
+    "entry": {
+      "ENTRY_READY": 37,
+      "INSUFFICIENT_DATA": 16,
+      "TREND_DAMAGED": 397,
+      "WATCH_BREAKOUT": 140,
+      "WATCH_PULLBACK": 136
+    },
+    "fundamental_fallback": {
+      "edgartools_10q_used": 0,
+      "status": {
+        "fetch_failed": 30,
+        "ineligible_form": 14,
+        "not_needed": 682
+      }
+    },
+    "fundamental_integrity": {
+      "fundamental_currency_unsupported": 22,
+      "latest_periodic_filing_not_covered": 44
+    },
+    "quality": {
+      "A": 174,
+      "B": 277,
+      "C": 195,
+      "UNRATED": 80
+    },
+    "weekly_attention": 15
+  },
+  "decision_date": "2026-11-05",
+  "errors": [],
+  "ok": true,
+  "root": "outputs/sip_eod_migration/official_decisions/2026-11-05/production",
+  "strategy_style": "production",
+  "warnings": [
+    "latest periodic filing is not covered by recognized Company Facts for 44 decision(s)",
+    "non-USD core monetary facts are unsupported for 22 decision(s)"
+  ]
+}

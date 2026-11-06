@@ -96,6 +96,19 @@ def load_snapshot(snapshot_root: Path, snapshot_dir: Path | None = None) -> dict
         for line in decisions_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    recorded_dates = {str(row['decision_date']) for row in decisions if row.get('decision_date')}
+    if len(recorded_dates) > 1:
+        raise ValueError('snapshot contains mixed decision dates')
+    if recorded_dates:
+        recorded_date = next(iter(recorded_dates))
+        if snapshot_dir is None and decision_date != recorded_date:
+            raise ValueError('snapshot date differs from latest pointer')
+        decision_date = recorded_date
+    elif snapshot_dir is not None:
+        try:
+            decision_date = date.fromisoformat(target.parent.name).isoformat()
+        except ValueError:
+            pass
     return {
         "snapshot_dir": target,
         "decision_date": decision_date,
@@ -185,7 +198,7 @@ def build_alpaca_client(config) -> AlpacaClient:
     data_endpoint = os.getenv(
         "ALPACA_DATA_ENDPOINT", "https://data.alpaca.markets"
     ).strip()
-    feed = os.getenv("ALPACA_FEED", "iex").strip() or "iex"
+    feed = 'iex'  # Explicit monitor feed, independent of official SIP decisions.
     if not api_endpoint or not api_key or not api_secret:
         raise ValueError(
             "Missing Alpaca credentials; fill ALPACA_API_ENDPOINT/KEY/SECRET in .env"
@@ -634,6 +647,18 @@ def format_shadow_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def snapshot_market_source(decisions: list[dict]) -> str:
+    sources = set()
+    for decision in decisions:
+        provenance = decision.get('provenance') or {}
+        feed = provenance.get('market_data_feed')
+        if feed == 'sip' and provenance.get('market_data_mode') == 'sip_eod':
+            sources.add('SIP completed-session daily bars')
+        else:
+            sources.add(str(feed).upper() if feed else 'unspecified (legacy snapshot)')
+    return ', '.join(sorted(sources)) or 'unspecified (empty snapshot)'
+
+
 def render_markdown(
     rows: list[dict],
     *,
@@ -641,6 +666,7 @@ def render_markdown(
     scope: str,
     market_status: str,
     generated_utc: str,
+    baseline_source: str = 'unspecified (legacy snapshot)',
 ) -> str:
     lines = [
         f"# Intraday Watch — {generated_utc}",
@@ -648,6 +674,7 @@ def render_markdown(
         f"- Decision snapshot: `{decision_date}` · Scope: `{scope}` · "
         f"Market: **{market_status}** · Names: {len(rows)}",
         "- Read-only monitor; official decisions stay daily and immutable.",
+        f"- Market data: **IEX intraday**; snapshot baseline: **{baseline_source}**. Shadow estimates may differ across feeds.",
         "",
         "| SYM | Action | Quality | Entry | Price | Δ% | vs50 | vs200 | DD52w | 20d | 60d | Flags |",
         "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -700,6 +727,7 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
     snapshot_dir = Path(args.snapshot_dir) if args.snapshot_dir else None
     bundle = load_snapshot(snapshot_root, snapshot_dir)
     decisions = bundle["decisions"]
+    baseline_source = snapshot_market_source(decisions)
     by_symbol = {str(r.get("symbol")): r for r in decisions}
     action_list_text = (
         bundle["action_list"].read_text(encoding="utf-8")
@@ -763,7 +791,7 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
     generated = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     print(
-        f"[intraday] snapshot={bundle['decision_date']} scope={args.scope} "
+        f"[intraday] feed=IEX (provisional; baseline={baseline_source}) snapshot={bundle['decision_date']} scope={args.scope} "
         f"names={len(rows)} market={status} shadow={'on' if shadow else 'off'} "
         f"session={latest_session.isoformat()} generated={generated}",
         flush=True,
@@ -788,6 +816,7 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
                 scope=args.scope,
                 market_status=status,
                 generated_utc=generated,
+                baseline_source=baseline_source,
             ),
             encoding="utf-8",
         )

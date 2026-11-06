@@ -32,6 +32,7 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 2. Active Policy & Operational Specs
 
+- [2026-11-06 本轮修改与使用影响](changes_and_usage_20261106.md) — 统一说明日常命令、收盘门禁、SIP/IEX、旧快照/缓存、报告变化及研究工具兼容性。
 - `company_quality_v1_policy.md` — Pre-registered Company Quality v1 components, thresholds, and coverage rules.
 - `entry_quality_v1_policy.md` — Pre-registered Entry Quality v1 states and readiness rules.
 - `mvp_candidate_universe_provenance.md` — Candidate universe provenance and `universe_exclusions.jsonl` contract.
@@ -45,6 +46,8 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 3. Current Baseline Reviews & Decisions
 
+- [2026-11-06 五项审查问题修复](review_followup_20261106/report.md) — 修复120日合法标签误拒绝、提前收盘门禁、SIP缓存、配置续跑身份与外部CSV CLI；恢复受影响样本并重算验证。
+- [2026-11-06 SIP收盘名单、IEX盘中来源与日期对齐](sip_eod_migration_20261106/report.md) — 正式生产切换、长期/压力期标签与全部受影响评估重算、全池726份决策及Top-15验收、断点恢复与哈希证据；迁移前冻结报告保留。
 - [2026-10-18 代码审查与修复交接](code_review_and_repair_handoff_20261018.md) — 8 项缺陷、2 项结构建议、离线复现、DeepSeek 实施边界及 Codex 逐项验收契约（历史基线）。
 - [2026-10-18 代码审查修复结果](code_review_repair_results_20261018.md) — R01–R08/A01/A02 实施记录；R03–R05 已完成 Codex 复验，完整测试 1188 项通过。
 - `m0_baseline_review_20261014/` — **Phase M0 deliverable set**: `baseline_inventory.md`, `human_review_worksheet.csv` (18 stratified cases), `attention_failure_cases.md` (3 failure families + M1 correctness contract), and `review_gate.json`.

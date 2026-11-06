@@ -1065,3 +1065,8 @@ Following the M0–M5 failure-attribution and validation roadmap (`docs/mvp_v2_c
    - Ranks `PRIORITY_REVIEW` by `0.60 * quality.score + 0.40 * entry.score + 0.04 * I(grade == A) - 0.06 * I(pre_earnings_window_risk)` and ranks remaining `ENTRY_READY` ahead of `TREND_DAMAGED` inside `HOLD_MONITOR`.
 5. **Presentation IR & Report Layout v2 (`decision/view_model.py`, `reporting/decision.py`, `reporting/snapshot.py`)**:
    - Collapsible `<details>` accordion cards in Action List v2 with top `- **Pool & Concentration**:` disclosure, per-card `**Pool**:` provenance, inline warning badges (`[PRE-EARNINGS]`, `[EXTENDED]`, `[SHARE-BASIS/SPLIT]`), cross-pillar `Why Own` highlights, 6-Pillar Quality Scorecard table and 7-Gate Readiness Checklist table in Detailed Report v2, and CLI support via `--decision-policy-version v2`, `--report-layout-version v2`, and `--enable-v2-shadow`.
+
+
+## Correctness addendum — 2026-11-06
+
+The shared accounting layer now treats non-finite values as missing and only forms net-debt/EBITDA with positive EBITDA. Positive debt without positive EBITDA emits explicit Quality counter-evidence. Price adapters preserve invalid slots and detect missing sessions; missing volatility blocks Entry confirmation. These correctness changes apply to v1/v2 under new policy revisions and parsed-cache v10. Canonical decisions also carry precomputed valuation sensitivity context for report rendering. The offline attention/Entry tools and four specialized acceptance suites are documented in [the implementation record](review_20261106/implementation_and_validation.md).

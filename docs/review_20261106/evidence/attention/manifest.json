@@ -1,0 +1,118 @@
+{
+  "evidence_class": "observed_snapshot_diagnostic",
+  "style": "production",
+  "n_snapshots": 13,
+  "first_date": "2026-10-19",
+  "last_date": "2026-11-04",
+  "n_human_reviews": 0,
+  "snapshot_validation_warnings": {
+    "2026-10-19/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 12 decision(s)",
+      "non-USD core monetary facts are unsupported for 19 decision(s)"
+    ],
+    "2026-10-20/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-10-21/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+      "non-USD core monetary facts are unsupported for 19 decision(s)"
+    ],
+    "2026-10-22/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-10-23/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+      "non-USD core monetary facts are unsupported for 19 decision(s)"
+    ],
+    "2026-10-26/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 10 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-10-27/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 12 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-10-28/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 15 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-10-29/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 15 decision(s)",
+      "non-USD core monetary facts are unsupported for 18 decision(s)"
+    ],
+    "2026-10-30/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 21 decision(s)",
+      "non-USD core monetary facts are unsupported for 19 decision(s)"
+    ],
+    "2026-11-02/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 21 decision(s)",
+      "non-USD core monetary facts are unsupported for 20 decision(s)"
+    ],
+    "2026-11-03/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 22 decision(s)",
+      "non-USD core monetary facts are unsupported for 19 decision(s)"
+    ],
+    "2026-11-04/production/run_manifest.json": [
+      "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+      "latest periodic filing is not covered by recognized Company Facts for 22 decision(s)",
+      "non-USD core monetary facts are unsupported for 21 decision(s)"
+    ]
+  },
+  "notes": [
+    "First observed snapshot has unknown new/repeated status.",
+    "Failed upgrade means a worse Action within five subsequent observed snapshots; incomplete follow-up is censored.",
+    "Missing snapshots are not inferred; this is observed cadence, not guaranteed trading-day persistence.",
+    "Review minutes and rejection reasons require actual human logs."
+  ],
+  "input_sha256": {
+    "2026-10-19/production/run_manifest.json": "7fefe41c85dbeb6499facb6da1fd22c299de8978974ed034e2e32c549e5817e2",
+    "2026-10-19/production/decisions.jsonl": "cc109462ba039c690e7254cfbe2f0187687afe8a20a9836b94253388396b5b50",
+    "2026-10-20/production/run_manifest.json": "e1d55da0055ac86ee0e4d9c077a0d420f340b12b2b7ec2b481396a2027b6a2f5",
+    "2026-10-20/production/decisions.jsonl": "950425057b69ce0e491b7f305a3eaeb6a194e3d46d7c1346d14109bd032b0cf9",
+    "2026-10-21/production/run_manifest.json": "bedcbdcdea94b46ddf38389c24d4dad835540165f63b1d535005b1051dcfc141",
+    "2026-10-21/production/decisions.jsonl": "3453d8b69e0038fa2369940637422e2884e5a1ee4ed6ec71f14e4d4eecf6f24a",
+    "2026-10-22/production/run_manifest.json": "6aecd8dbe875d2ecf87234e0bd620c5fa379166306a4b18df4c61e547521050c",
+    "2026-10-22/production/decisions.jsonl": "3eaa12948d8c90ce197c5f81110c166f3e7177db68ad3914b45310ad9bc2c76b",
+    "2026-10-23/production/run_manifest.json": "4137a6f8efc460ea1c075fba676a07ad3bd7b6e2cb9dc3ba79391465872be265",
+    "2026-10-23/production/decisions.jsonl": "8b452b9a7e7fd63910eb54728d42c24c387949aad5efd1b9d6fc36042a569f43",
+    "2026-10-26/production/run_manifest.json": "ac8a2aa2630b8c66a19feb55011addd75449b8168d8e20b476b848819bd00d3e",
+    "2026-10-26/production/decisions.jsonl": "5d1b3f32b11ed8ad8c1047316ce8b490ab6f25b8887e177ffbabeac49cdf6cbc",
+    "2026-10-27/production/run_manifest.json": "9ba6bb2f8299c7eaf9fe8d361dd39279e9a38b33c2063795763d833cb87cee7d",
+    "2026-10-27/production/decisions.jsonl": "cf2d0a428f05ad0de98d5fc90e7f2f17d210b7b0a609ba603ab2bbfac84085d1",
+    "2026-10-28/production/run_manifest.json": "490654f1bfafa601fa7e163cd38144521a38f9362fe1e88d18b39add859a8535",
+    "2026-10-28/production/decisions.jsonl": "58056b9efeeea884c5bb1eaced99871ef7d918d7fd9282b1e2478d309e03f77c",
+    "2026-10-29/production/run_manifest.json": "2bb5975580c5f0303f250fd4ad9a393c97509702c1bfc4779aee574231087dad",
+    "2026-10-29/production/decisions.jsonl": "9857cc1e6f428da191ec6b3c2beaf01920bc16b9021edb2b94a6140c5cf44ea9",
+    "2026-10-30/production/run_manifest.json": "4bd58dff7e67a27eafa3fb31eceb3ba9f04ce6cb95dad346e13ee43fe9dfb551",
+    "2026-10-30/production/decisions.jsonl": "80487d7bc4265e875895b009691dffa7ede542d0936f128fa6ab4c8972ce423c",
+    "2026-11-02/production/run_manifest.json": "d97e366f6891d9b5050730a4efbe5eadc1bd40e3607ff76a653964674db3da9c",
+    "2026-11-02/production/decisions.jsonl": "1e8691a1266a66677cae7b1e74ae0f4930b673ce5447414a5d25526ffb135ac6",
+    "2026-11-03/production/run_manifest.json": "e67a1259f83a39727fc85e5917d4591a2f2295a5db7fa44620b8e567cc3efce7",
+    "2026-11-03/production/decisions.jsonl": "c3fceb3c66ee26c1d1a885e6725c3774013f64a18beec69a9f267610d73cd274",
+    "2026-11-04/production/run_manifest.json": "5196271ef8baac13248dd23f1b3df4a627bc9b264a811840d4e5ade6e56bcd16",
+    "2026-11-04/production/decisions.jsonl": "cd38ddb3aabe0678c50243602d7e360f2a10da1dc2a44889e74d264705ca052b"
+  },
+  "code_sha": "830702b73749c92be20f02a3463669f1b8e7dbd8",
+  "working_tree_dirty": true,
+  "source_sha256": {
+    "src/ai_value_scanner/research/review_utility.py": "674916ab4f84b2e49570b662d936c2007889e191f249bb64d9fff9b5381ddfa7",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/fundamentals/accounting.py": "7efcd9023f548701fd2867b88ec197c79de9388e7518c063c6ddef00cbbb6909",
+    "scripts/review_selection_utility.py": "0224f31c993587f4274749a17f16efcaef020368ac1fbde85fd44c343e3df492"
+  }
+}

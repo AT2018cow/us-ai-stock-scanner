@@ -1,0 +1,26 @@
+{
+  "inputs": {
+    "research/selection_review_20261106/sip_2016_2020_v1/dataset.csv": "fe3ab8d08b4359e082b921d092c9ac55a7c73601c1e370113f89ca9f34b81774",
+    "research/selection_review_20261106/sip_2021_2026_v1/dataset.csv": "052d6f1685dd9890859b82bf3071ef19d9f07dc4f54662d70edd900078150edf",
+    "research/selection_review_20261106/evaluation_sip_monthly_v2/slots.csv": "1726bbcd3722bfe718d7ee6b4623c1cd89eb447dd37c07c82a871f4fd9a04534",
+    "research/selection_review_20261106/evaluation_sip_monthly_v2/cohorts.csv": "cecd2a1f95821e18e95362f0f25dcec42c136e3e4c9af1d0c2271e1d570a1ad3",
+    "research/selection_review_20261106/evaluation_sip_monthly_v2/manifest.json": "3790fdffd73b4bc107d8c15f6e9844a9316b1596b375e5e51d69f70aa3ff9ecb"
+  },
+  "sources": {
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "scripts/complete_selection_review.py": "5a96304f4d8f67fa54fd3cb903fd2532398d792d92cf8d376d58ab2b9d08bc5c",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6"
+  },
+  "protocol_sha256": "39357003b934371bf8d3eac1bd9f90e79cb7b84538f99d05d94c3be1dbe01eb7",
+  "elapsed_seconds": 138.03072777900002,
+  "smoke": false,
+  "tolerance": 0.01,
+  "evidence_class": "supplemental already-viewed retrospective diagnostics; original candidate result unchanged",
+  "new_strategy_candidates": 0,
+  "classification": "current SIC descriptions / SIC 2-digit; not historical GICS",
+  "weights": "deletion sensitivity leaves cash; no renormalization; original complete common dates retained"
+}

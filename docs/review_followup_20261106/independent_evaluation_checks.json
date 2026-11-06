@@ -1,0 +1,29 @@
+[
+  {
+    "scope": "sip_monthly",
+    "slot_identities_and_order_checked": 204284,
+    "changed_outcome_slots_120d_only": 2129,
+    "cohort_weighted_sums_checked": 2843,
+    "max_weighted_return_error": 7.771561172376096e-16,
+    "configuration_and_all_sources_inputs_verified": true,
+    "all_overall_counts_and_mean_returns_recomputed": true
+  },
+  {
+    "scope": "sip_covid_weekly",
+    "slot_identities_and_order_checked": 31984,
+    "changed_outcome_slots_120d_only": 0,
+    "cohort_weighted_sums_checked": 504,
+    "max_weighted_return_error": 6.661338147750939e-16,
+    "configuration_and_all_sources_inputs_verified": true,
+    "all_overall_counts_and_mean_returns_recomputed": true
+  },
+  {
+    "scope": "sip_bear_weekly",
+    "slot_identities_and_order_checked": 87920,
+    "changed_outcome_slots_120d_only": 413,
+    "cohort_weighted_sums_checked": 1243,
+    "max_weighted_return_error": 3.3306690738754696e-16,
+    "configuration_and_all_sources_inputs_verified": true,
+    "all_overall_counts_and_mean_returns_recomputed": true
+  }
+]

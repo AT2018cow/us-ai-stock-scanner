@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 from ai_value_scanner.decision.attention import (
@@ -53,7 +54,9 @@ class DecisionSnapshotPaths:
 # be byte-verified by the validator; older snapshots are validated structurally
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-06a"
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-06c"
+# New context is conditional; snapshots lacking it render identically.
+COMPATIBLE_RENDERER_REVISIONS = frozenset({REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-06a", "mvp_report_renderer_2026-11-06b"})
 
 
 def _safe_style(style: str | None) -> str:
@@ -394,10 +397,8 @@ def write_decision_snapshot(
 
     parent = paths.root.parent
     parent.mkdir(parents=True, exist_ok=True)
-    tmp_root = parent / f".{paths.root.name}.{os.getpid()}.tmp"
-    if tmp_root.exists():
-        shutil.rmtree(tmp_root)
-    tmp_root.mkdir(parents=True, exist_ok=False)
+    # Each writer owns its staging tree, including threads in the same process.
+    tmp_root = Path(tempfile.mkdtemp(prefix=f".{paths.root.name}.", suffix=".tmp", dir=parent))
 
     try:
         detailed_dir = tmp_root / "detailed"
@@ -539,6 +540,9 @@ def write_decision_snapshot(
             encoding="utf-8",
         )
 
+        # mkdtemp is private while staging; published reports inherit their
+        # parent directory's access policy, as the previous mkdir path did.
+        tmp_root.chmod(parent.stat().st_mode & 0o777)
         os.replace(tmp_root, paths.root)
     except Exception:
         shutil.rmtree(tmp_root, ignore_errors=True)

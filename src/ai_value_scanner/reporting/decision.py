@@ -539,6 +539,13 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
         f"- **Fundamental Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
         f"- **Next Step**: {_plain(card.next_trigger_inline)}",
     ]
+    if card.decision.provenance.get("review_context_version"):
+        previous = card.decision.previous_action_state
+        if previous is not None and previous.value != card.action_state:
+            lines.append(
+                f"- **Changed State**: `{previous.value}` → `{card.action_state}` · "
+                f"{_plain(card.decision.state_change_reason or 'Review the current evidence.')}"
+            )
     for warning in card.data_trust.warnings:
         lines.append(f"- **Data Note**: {_plain(warning)}")
     lines.extend(
@@ -608,6 +615,12 @@ def render_action_list_v2(
         lines.insert(
             4, f"- **Pool & Concentration**: {snapshot.concentration_summary_line}"
         )
+    if any(card.decision.provenance.get('market_data_mode')=='sip_eod' for card in snapshot.primary_cards):
+        lines.append('- **Market data**: SIP completed-session daily bars; full-market dollar volume. Intraday IEX monitoring is provisional.')
+    if cadence == "weekly" and any(
+        card.decision.provenance.get("review_context_version") for card in snapshot.primary_cards
+    ):
+        lines.append("- **Weekly review focus**: Recheck Company Quality, valuation assumptions, event risk, and counter-evidence in each Full Report.")
     if snapshot.deprioritized_quality_integrity_notes:
         insert_at = 5 if snapshot.concentration_summary_line else 4
         lines.insert(
@@ -834,6 +847,29 @@ def render_detailed_report_v2(
         f"| **Data Status** | {card.data_trust.human_status} ({_tcell(card.data_trust.freshness_display)}) |",
         "",
     ]
+    if decision.provenance.get("review_context_version"):
+        context = decision.provenance
+        lines.extend([
+            "## Valuation Assumptions & Counter-Evidence", "",
+            f"- **Basis**: {_plain(str(context.get('review_valuation_basis', 'Unavailable')))}",
+            f"- **Earnings event**: {_plain(str(context.get('review_earnings_calendar_status', 'Unverified')))}",
+            "- **Sensitivity**: Income varies at a fixed market cap; scenarios are arithmetic assumptions.",
+            "", "| TTM earnings basis | Implied P/E |", "| --- | --- |",
+        ])
+        for label, key in (("GAAP reported", "review_gaap_pe"),
+                           ("Adjusted income -20%", "review_adjusted_pe_lower"),
+                           ("Adjusted income unchanged", "review_adjusted_pe_base"),
+                           ("Adjusted income +20%", "review_adjusted_pe_higher")):
+            value = context.get(key)
+            display = f"{value:.2f}x" if isinstance(value, (int, float)) else "Unavailable"
+            lines.append(f"| {label} | {display} |")
+        lines.extend(["", "**Counter-evidence to review**:", ""])
+        counter = (*decision.quality.risks, *decision.entry.risks, *decision.quality.missing)
+        if counter:
+            lines.extend(f"- {_plain(item.label)}: {_plain(item.message)}" for item in counter)
+        else:
+            lines.append("- No counter-signals recorded; business thesis and event calendar still require human review.")
+        lines.append("")
     flags = _attention_flags(decision)
     for flag in flags:
         lines.append(f"- **Alert**: {_plain(flag)}")

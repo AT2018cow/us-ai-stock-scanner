@@ -23,6 +23,7 @@ def row(symbol: str, *, rs: float, ret20: float, defensive: bool = False) -> dic
         "fundamental_data_asof": "2024-01-20", "market_asof": "2024-01-31",
         "price_to_sma200": 1.04, "price_to_sma50": 1.02,
         "return_20d": ret20, "return_60d": 0.10,
+        "volatility_60d": .30,
         "relative_strength_60d_qqq": rs,
         "drawdown_from_52w_high": .12, "range_position_52w": .6,
         "regime": "down" if defensive else "up",

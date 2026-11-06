@@ -1,0 +1,35 @@
+{
+  "workspace": "infi",
+  "environment": "main",
+  "foreground": true,
+  "detached": false,
+  "max_containers_per_stage": 2,
+  "apps": [
+    {
+      "app_id": "ap-ltGvjmrJFqik50giWjYc3k",
+      "stage": "repair",
+      "terminal_status": "completed",
+      "foreground_exit_code": 0,
+      "url": "https://modal.com/apps/infi/main/ap-ltGvjmrJFqik50giWjYc3k"
+    },
+    {
+      "app_id": "ap-yiJUHlg4pjRN2kl6oZOlwz",
+      "stage": "evaluate",
+      "terminal_status": "completed",
+      "foreground_exit_code": 0,
+      "url": "https://modal.com/apps/infi/main/ap-yiJUHlg4pjRN2kl6oZOlwz"
+    },
+    {
+      "app_id": "ap-Tvge2DC6jfEKGTJL8KBxg6",
+      "stage": "attribute",
+      "terminal_status": "completed",
+      "foreground_exit_code": 0,
+      "url": "https://modal.com/apps/infi/main/ap-Tvge2DC6jfEKGTJL8KBxg6"
+    }
+  ],
+  "observed_active_apps": [],
+  "live_app_list_query_utc": "2026-11-06T09:31:35.350744+00:00",
+  "live_app_list_rows": 0,
+  "historical_status_source": "Each foreground command returned exit 0 and App completed. Older stopped apps may no longer appear in the recent app list.",
+  "recovery": "Automatic approval review hit its service usage limit on a post-compute download. Authorized retries after user resume succeeded; no completed calculations were restarted."
+}

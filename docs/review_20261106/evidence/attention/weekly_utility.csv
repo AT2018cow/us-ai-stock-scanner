@@ -1,0 +1,4 @@
+iso_week,n_slots,n_unique_symbols,n_new,n_repeated,n_first_snapshot_unknown,n_upgrades,n_upgrade_outcomes_observed,n_upgrade_outcomes_censored,n_failed_upgrades,n_human_reviews,review_minutes,n_rejections
+2026-W43,75,34,24,36,15,14,14,0,11,0,,0
+2026-W44,75,32,22,53,0,16,15,1,13,0,,0
+2026-W45,45,27,19,26,0,14,9,5,9,0,,0

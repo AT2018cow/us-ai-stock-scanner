@@ -1,0 +1,47 @@
+[
+  {
+    "study": "iex_2021_2026_v1",
+    "rows": 48934,
+    "dates": 70,
+    "start": "2021-01-29",
+    "end": "2026-10-30",
+    "feed": "iex",
+    "sha256": "3c6a56fcc0380c9478880275f9351beb19972b6be92fe3632d27a0d80e92c01a"
+  },
+  {
+    "study": "sip_2016_2020_v1",
+    "rows": 31516,
+    "dates": 60,
+    "start": "2016-01-29",
+    "end": "2020-12-31",
+    "feed": "sip",
+    "sha256": "fe3ab8d08b4359e082b921d092c9ac55a7c73601c1e370113f89ca9f34b81774"
+  },
+  {
+    "study": "sip_2021_2026_v1",
+    "rows": 49015,
+    "dates": 70,
+    "start": "2021-01-29",
+    "end": "2026-10-30",
+    "feed": "sip",
+    "sha256": "052d6f1685dd9890859b82bf3071ef19d9f07dc4f54662d70edd900078150edf"
+  },
+  {
+    "study": "sip_bear_weekly_v1",
+    "rows": 35747,
+    "dates": 52,
+    "start": "2022-01-07",
+    "end": "2022-12-30",
+    "feed": "sip",
+    "sha256": "0ad845456229de76cad3fe36f147f45d3a18449174ada5e5686ab27521754890"
+  },
+  {
+    "study": "sip_covid_weekly_v1",
+    "rows": 11861,
+    "dates": 21,
+    "start": "2020-02-07",
+    "end": "2020-06-26",
+    "feed": "sip",
+    "sha256": "4d68df045e7f3937de0ff92c6687cbe9514e1ce265629b9fc44fb22a6f1f5739"
+  }
+]

@@ -1,0 +1,82 @@
+[
+  {
+    "date": "2026-10-30",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-21",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-23",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-27",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-09",
+    "style": "risk_off",
+    "match": true
+  },
+  {
+    "date": "2026-11-03",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-11-04",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-26",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-20",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-11-02",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-15",
+    "style": "risk_off",
+    "match": true
+  },
+  {
+    "date": "2026-10-16",
+    "style": "risk_off",
+    "match": true
+  },
+  {
+    "date": "2026-10-29",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-28",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-22",
+    "style": "production",
+    "match": true
+  },
+  {
+    "date": "2026-10-19",
+    "style": "production",
+    "match": true
+  }
+]

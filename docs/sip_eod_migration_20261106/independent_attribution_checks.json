@@ -1,0 +1,26 @@
+[
+  {
+    "scope": "sip_monthly",
+    "input_and_source_hashes_verified": 12,
+    "weighted_stage_means_checked": 789,
+    "max_weighted_error": 1.3877787807814457e-16,
+    "all_matched_edges_recomputed": true,
+    "cost_and_datewise_exposure_bridge_verified": true
+  },
+  {
+    "scope": "sip_covid_weekly",
+    "input_and_source_hashes_verified": 11,
+    "weighted_stage_means_checked": 136,
+    "max_weighted_error": 1.1102230246251565e-16,
+    "all_matched_edges_recomputed": true,
+    "cost_and_datewise_exposure_bridge_verified": true
+  },
+  {
+    "scope": "sip_bear_weekly",
+    "input_and_source_hashes_verified": 11,
+    "weighted_stage_means_checked": 351,
+    "max_weighted_error": 1.1102230246251565e-16,
+    "all_matched_edges_recomputed": true,
+    "cost_and_datewise_exposure_bridge_verified": true
+  }
+]

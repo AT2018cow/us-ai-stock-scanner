@@ -1,0 +1,47 @@
+[
+  {
+    "study": "iex_2021_2026_v1",
+    "n_declared_sources": 113,
+    "current_mismatches": [
+      "scripts/modal_selection_backtest.py",
+      "src/ai_value_scanner/research/top15_backtest.py"
+    ],
+    "critical_feature_mismatches": []
+  },
+  {
+    "study": "sip_2016_2020_v1",
+    "n_declared_sources": 113,
+    "current_mismatches": [
+      "scripts/modal_selection_backtest.py",
+      "src/ai_value_scanner/research/top15_backtest.py"
+    ],
+    "critical_feature_mismatches": []
+  },
+  {
+    "study": "sip_2021_2026_v1",
+    "n_declared_sources": 113,
+    "current_mismatches": [
+      "scripts/modal_selection_backtest.py",
+      "src/ai_value_scanner/research/top15_backtest.py"
+    ],
+    "critical_feature_mismatches": []
+  },
+  {
+    "study": "sip_bear_weekly_v1",
+    "n_declared_sources": 113,
+    "current_mismatches": [
+      "scripts/modal_selection_backtest.py",
+      "src/ai_value_scanner/research/top15_backtest.py"
+    ],
+    "critical_feature_mismatches": []
+  },
+  {
+    "study": "sip_covid_weekly_v1",
+    "n_declared_sources": 113,
+    "current_mismatches": [
+      "scripts/modal_selection_backtest.py",
+      "src/ai_value_scanner/research/top15_backtest.py"
+    ],
+    "critical_feature_mismatches": []
+  }
+]

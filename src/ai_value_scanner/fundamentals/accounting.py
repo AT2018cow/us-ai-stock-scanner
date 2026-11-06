@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import numpy as np
 
 
+ACCOUNTING_VERSION = "accounting_2026-11-06"
+
+
+def finite_number(value: Any) -> float | None:
+    """Normalize unavailable numeric evidence without manufacturing a value."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def safe_yoy(latest: float | None, previous: float | None) -> float | None:
     """Return latest/previous - 1, preserving the scanner's missing semantics."""
+    latest, previous = finite_number(latest), finite_number(previous)
     if latest is None or previous is None:
         return None
     if previous == 0:
@@ -40,6 +54,7 @@ def growth_direction(
     Returns ``(None, None)`` when either input is missing, and
     ``("incomparable", None)`` when the prior base is exactly zero.
     """
+    latest, previous = finite_number(latest), finite_number(previous)
     if latest is None or previous is None:
         return None, None
     try:
@@ -60,7 +75,8 @@ def growth_direction(
 
 
 def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+    number = finite_number(value)
+    return 0.0 if number is None else max(0.0, min(1.0, number))
 
 
 def fundamental_quality_score_from_metrics(
@@ -71,6 +87,11 @@ def fundamental_quality_score_from_metrics(
     accrual_ratio: float | None,
 ) -> float:
     """Current five-component quality score with neutral missing fallbacks."""
+    net_debt_to_ebitda = finite_number(net_debt_to_ebitda)
+    interest_coverage = finite_number(interest_coverage)
+    current_ratio = finite_number(current_ratio)
+    ocf_to_net_income = finite_number(ocf_to_net_income)
+    accrual_ratio = finite_number(accrual_ratio)
     nd_component = 0.5
     if net_debt_to_ebitda is not None:
         if net_debt_to_ebitda <= 0:
@@ -132,6 +153,20 @@ def compute_adjusted_metrics(
     arithmetic. Keeping that caller distinction explicit preserves PR #8 as a
     behavior-neutral refactor.
     """
+    # Non-finite provider values are missing evidence, never arithmetic inputs.
+    net_income = finite_number(net_income)
+    ebit = finite_number(ebit)
+    da = finite_number(da)
+    revenue = finite_number(revenue)
+    revenue_prev = finite_number(revenue_prev)
+    addback = finite_number(addback)
+    gain = finite_number(gain)
+    addback_prev = finite_number(addback_prev)
+    gain_prev = finite_number(gain_prev)
+    cap_ratio = finite_number(cap_ratio)
+    net_income_prev = finite_number(net_income_prev)
+    ebit_prev = finite_number(ebit_prev)
+
     if cap_ratio is not None:
         if addback is not None and revenue is not None and revenue > 0:
             addback = min(float(addback), float(revenue) * float(cap_ratio))
@@ -204,6 +239,36 @@ def derive_accounting_metrics(
     This function deliberately knows nothing about SEC filings, visibility,
     TTM reconstruction, caches, prices or strategy configuration.
     """
+    # Non-finite provider values are missing evidence, never arithmetic inputs.
+    revenue = finite_number(revenue)
+    revenue_prev = finite_number(revenue_prev)
+    net_income = finite_number(net_income)
+    net_income_prev = finite_number(net_income_prev)
+    operating_cash_flow = finite_number(operating_cash_flow)
+    operating_cash_flow_prev = finite_number(operating_cash_flow_prev)
+    capex_raw = finite_number(capex_raw)
+    ebit = finite_number(ebit)
+    ebit_prev = finite_number(ebit_prev)
+    shares = finite_number(shares)
+    shares_prev = finite_number(shares_prev)
+    cash_and_equivalents = finite_number(cash_and_equivalents)
+    debt_long_term = finite_number(debt_long_term)
+    debt_current = finite_number(debt_current)
+    current_assets = finite_number(current_assets)
+    current_liabilities = finite_number(current_liabilities)
+    receivables_current = finite_number(receivables_current)
+    receivables_prev = finite_number(receivables_prev)
+    inventory_current = finite_number(inventory_current)
+    inventory_prev = finite_number(inventory_prev)
+    interest_expense = finite_number(interest_expense)
+    depreciation_and_amortization = finite_number(depreciation_and_amortization)
+    depreciation_and_amortization_prev = finite_number(depreciation_and_amortization_prev)
+    adjusted_net_income = finite_number(adjusted_net_income)
+    adjusted_net_income_prev = finite_number(adjusted_net_income_prev)
+    adjusted_ebit = finite_number(adjusted_ebit)
+    adjusted_ebit_prev = finite_number(adjusted_ebit_prev)
+    adjusted_ebitda = finite_number(adjusted_ebitda)
+
     capex = abs(capex_raw) if capex_raw is not None else None
     free_cash_flow = (
         float(operating_cash_flow) - float(capex)
@@ -297,10 +362,13 @@ def derive_accounting_metrics(
     if (
         net_debt is not None
         and adjusted_ebitda is not None
-        and adjusted_ebitda != 0
+        and adjusted_ebitda > 0
     ):
         net_debt_to_ebitda = float(net_debt) / float(adjusted_ebitda)
         net_debt_to_ebitda_source = net_debt_source
+
+    if adjusted_ebitda is not None and adjusted_ebitda <= 0:
+        net_debt_to_ebitda_source = "nonpositive_ebitda"
 
     current_ratio = None
     if current_assets is not None and current_liabilities not in (None, 0):
@@ -387,6 +455,7 @@ def derive_accounting_metrics(
         "total_debt": total_debt,
         "total_debt_source": total_debt_source,
         "net_debt": net_debt,
+        "adjusted_ebitda": adjusted_ebitda,
         "net_debt_source": net_debt_source,
         "revenue_yoy": revenue_yoy,
         "net_income_yoy": net_income_yoy,
@@ -425,4 +494,10 @@ def derive_accounting_metrics(
         "inventory_growth_gap_inferred": inventory_growth_gap_inferred,
         "inventory_growth_gap_source": inventory_growth_gap_source,
         "fundamental_quality_score": quality_score,
+        "fundamental_quality_coverage": sum(
+            finite_number(value) is not None
+            for value in (net_debt_to_ebitda, interest_coverage, current_ratio,
+                          ocf_to_net_income, accrual_ratio)
+        ) / 5.0,
+        "accounting_version": ACCOUNTING_VERSION,
     }

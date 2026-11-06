@@ -8,7 +8,7 @@ from typing import Any
 from .model import EvidenceItem, QualityDecision, QualityGrade
 
 
-QUALITY_POLICY_VERSION = "company_quality_v1_2026-10-18"
+QUALITY_POLICY_VERSION = "company_quality_v1_2026-11-06"
 
 QUALITY_V1_COMPONENT_WEIGHTS: dict[str, float] = {
     "profitability_cash": 0.30,
@@ -443,6 +443,41 @@ def _score_net_debt(value: float) -> float:
     return 0.0
 
 
+def _debt_without_earnings(metrics: Mapping[str, Any]) -> bool:
+    net_debt = _finite_value(metrics, "net_debt")
+    ebitda = _finite_value(metrics, "adjusted_ebitda")
+    return net_debt is not None and net_debt > 0 and ebitda is not None and ebitda <= 0
+
+
+def _assess_leverage(
+    metrics: Mapping[str, Any], *, positives: list[EvidenceItem],
+    risks: list[EvidenceItem], missing: list[EvidenceItem],
+) -> float | None:
+    ebitda = _finite_value(metrics, "adjusted_ebitda")
+    if ebitda is not None and ebitda <= 0:
+        if _debt_without_earnings(metrics):
+            risks.append(_metric_item(
+                code="net_debt_nonpositive_ebitda", label="Debt without positive EBITDA",
+                polarity="negative", metric="adjusted_ebitda", value=ebitda,
+                threshold=">0 when net debt is positive",
+                message="Net debt is positive while EBITDA is nonpositive; a negative leverage ratio cannot demonstrate debt coverage.",
+            ))
+            return 0.0 if metrics.get("net_debt_source") in (None, "reported") else None
+        missing.append(_metric_item(
+            code="net_debt_to_ebitda_not_meaningful", label="Leverage ratio unavailable",
+            polarity="missing", metric="net_debt_to_ebitda", value=None,
+            threshold="positive EBITDA required",
+            message="EBITDA is nonpositive; assess the cash balance separately rather than scoring the ratio.",
+        ))
+        return None
+    return _assess_numeric_metric(
+        metrics, key="net_debt_to_ebitda", label="Net debt / EBITDA",
+        score_fn=_score_net_debt, strong_score=0.80, weak_score=0.25,
+        threshold_text="<=1.5 supportive; >4 weak", positives=positives,
+        risks=risks, missing=missing, source_key="net_debt_to_ebitda_source",
+    )
+
+
 def _score_interest_coverage(value: float) -> float:
     if value >= 8.0:
         return 1.0
@@ -646,19 +681,7 @@ def build_company_quality_v1(
     ]
 
     balance_scores = [
-        _assess_numeric_metric(
-            metrics,
-            key="net_debt_to_ebitda",
-            label="Net debt / EBITDA",
-            score_fn=_score_net_debt,
-            strong_score=0.80,
-            weak_score=0.25,
-            threshold_text="<=1.5 supportive; >4 weak",
-            positives=positives,
-            risks=risks,
-            missing=missing,
-            source_key="net_debt_to_ebitda_source",
-        ),
+        _assess_leverage(metrics, positives=positives, risks=risks, missing=missing),
         _assess_numeric_metric(
             metrics,
             key="interest_coverage",
@@ -932,7 +955,7 @@ def build_company_quality_v1(
             )
         )
 
-    severe_risks = 0
+    severe_risks = int(_debt_without_earnings(metrics))
     severe_checks = (
         (_finite_value(metrics, "net_debt_to_ebitda"), lambda x: x > 5.0),
         (_finite_value(metrics, "interest_coverage"), lambda x: x < 1.0),
@@ -989,7 +1012,7 @@ def build_company_quality_v1(
     )
 
 
-QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-10-18"
+QUALITY_V2_POLICY_VERSION = "company_quality_v2_2026-11-06"
 
 QUALITY_V2_PRE_EARNINGS_WARN_DAYS = 70
 QUALITY_V2_ORGANIC_SHARES_YOY_MIN = -0.30
@@ -1491,19 +1514,7 @@ def build_company_quality_v2(
     ]
 
     balance_scores = [
-        _assess_numeric_metric(
-            work,
-            key="net_debt_to_ebitda",
-            label="Net debt / EBITDA",
-            score_fn=_score_net_debt,
-            strong_score=0.80,
-            weak_score=0.25,
-            threshold_text="<=1.5 supportive; >4 weak",
-            positives=positives,
-            risks=risks,
-            missing=missing,
-            source_key="net_debt_to_ebitda_source",
-        ),
+        _assess_leverage(work, positives=positives, risks=risks, missing=missing),
         _assess_numeric_metric(
             work,
             key="interest_coverage",
@@ -1814,7 +1825,7 @@ def build_company_quality_v2(
             )
         )
 
-    severe_risks = 0
+    severe_risks = int(_debt_without_earnings(work))
     severe_checks: list[tuple[float | None, Any]] = [
         (_finite_value(work, "net_debt_to_ebitda"), lambda x: x > 5.0),
         (_finite_value(work, "interest_coverage"), lambda x: x < 1.0),

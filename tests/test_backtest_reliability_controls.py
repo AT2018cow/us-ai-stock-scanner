@@ -292,7 +292,8 @@ class TestBacktestReliabilityControls(unittest.TestCase):
             exit_price_mode="close",
         )
         self.assertIsNotNone(ret)
-        self.assertEqual(round(float(ret), 6), 0.25)
+        # Jan 1 is a holiday: Jan 2 open=11, Jan 6 close=13.5.
+        self.assertAlmostEqual(float(ret),13.5/11-1)
 
     def test_event_backtest_records_forward_label_end_for_purging(self) -> None:
         idx = pd.date_range("2026-01-01", "2026-01-12", freq="B", tz="UTC")
@@ -323,9 +324,9 @@ class TestBacktestReliabilityControls(unittest.TestCase):
             roundtrip_cost=0.0,
             benchmark_symbols=["QQQ"],
         )
-        # Entry is 2026-01-01; horizon=3 exits on the third trading row.
-        self.assertEqual(events.iloc[0]["label_end_date"], "2026-01-05")
-        self.assertEqual(benchmarks.iloc[0]["label_end_date"], "2026-01-05")
+        # Entry Jan 2, third actual session Jan 6.
+        self.assertEqual(events.iloc[0]["label_end_date"], "2026-01-06")
+        self.assertEqual(benchmarks.iloc[0]["label_end_date"], "2026-01-06")
 
     def test_event_backtest_marks_no_signal_and_unpriced_events(self) -> None:
         signals = pd.DataFrame(

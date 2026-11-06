@@ -1,0 +1,5 @@
+scope,variant,view,n_dates,tolerance,mean_excess,observed_close,ci_low,ci_high,block_dates,interval_supports_close
+iex_monthly,baseline,list,62,0.01,-0.011517439500599632,False,-0.030149752591884876,0.007892220034996235,3,False
+iex_monthly,baseline,usage,62,0.01,-0.010013023316113642,False,-0.029787094859275286,0.0116462751447583,3,False
+iex_monthly,no_age_penalty,list,62,0.01,-0.0109366064188244,False,-0.029763060007639404,0.008939555550897016,3,False
+iex_monthly,no_age_penalty,usage,62,0.01,-0.009307533027791949,True,-0.02978628276229609,0.012463184280717507,3,False

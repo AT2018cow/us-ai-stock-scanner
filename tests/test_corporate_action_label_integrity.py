@@ -38,8 +38,12 @@ def _frame(dates: list[str], closes: list[float]) -> pd.DataFrame:
 
 
 def _daily_dates(start: str, n: int) -> list[str]:
-    return [(pd.Timestamp(start, tz="UTC") + pd.Timedelta(days=i)).strftime("%Y-%m-%d")
-            for i in range(n)]
+    from ai_value_scanner.market_calendar import is_session_day
+    dates=[];day=pd.Timestamp(start,tz='UTC')
+    while len(dates)<n:
+        if is_session_day(day.date()):dates.append(day.strftime('%Y-%m-%d'))
+        day+=pd.Timedelta(days=1)
+    return dates
 
 
 def _label_frame(rows: list[tuple]) -> pd.DataFrame:
@@ -53,11 +57,11 @@ def _label_frame(rows: list[tuple]) -> pd.DataFrame:
 class SplitQueryEndTests(unittest.TestCase):
     def test_covers_longest_label_end(self) -> None:        # The exact production case: 2026-03-31 window + 120d labels end
         # 2026-09-22; the query end must not precede any label end.
-        self.assertEqual(split_query_end_iso("2026-03-31", [20, 60, 120]), "2026-09-25")
+        self.assertEqual(split_query_end_iso("2026-03-31", [20, 60, 120]), "2026-09-22")
         self.assertGreaterEqual(split_query_end_iso("2026-03-31", [20, 60, 120]), "2026-09-22")
 
     def test_empty_horizons_fall_back_to_120(self) -> None:
-        self.assertEqual(split_query_end_iso("2026-03-31", []), "2026-09-25")
+        self.assertEqual(split_query_end_iso("2026-03-31", []), "2026-09-22")
 
     def test_short_horizons_shrink_envelope(self) -> None:
         short = split_query_end_iso("2026-03-31", [20])
@@ -77,7 +81,7 @@ class SplitInsideHoldingWindowTests(unittest.TestCase):
         assert bad is not None
         self.assertLess(bad, -0.9)
         # Fixed behavior: known split adjusts pre-split rows -> ~ -cost.
-        adj = apply_split_adjustment_to_frame(raw, [("2026-04-15", 0.04)])
+        adj = apply_split_adjustment_to_frame(raw, [(dates[100], 0.04)])
         good, exit_dt = forward_return_with_exit(adj, "2026-02-01", 120, 0.003)
         self.assertIsNotNone(good)
         assert good is not None
@@ -92,7 +96,7 @@ class SplitInsideHoldingWindowTests(unittest.TestCase):
         self.assertIsNotNone(bad)
         assert bad is not None
         self.assertGreater(bad, 5.0)  # unadjusted reverse split prints a windfall
-        adj = apply_split_adjustment_to_frame(raw, [("2026-04-15", 10.0)])
+        adj = apply_split_adjustment_to_frame(raw, [(dates[100], 10.0)])
         good, _ = forward_return_with_exit(adj, "2026-02-01", 120, 0.003)
         assert good is not None
         self.assertAlmostEqual(good, -0.003, places=6)

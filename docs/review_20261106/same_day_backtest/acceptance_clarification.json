@@ -1,0 +1,8 @@
+{
+  "user_goal": "use a theory-grounded stable parameter set and a small number of tests; aim for returns broadly comparable with QQQ",
+  "numerical_tolerance_selected": false,
+  "reference_margin_60d": 0.01,
+  "margin_role": "illustrative sensitivity only, not user-approved acceptance criterion",
+  "original_candidate_decision": "unchanged: rejected on original preregistered comparison",
+  "new_parameter_search": false
+}

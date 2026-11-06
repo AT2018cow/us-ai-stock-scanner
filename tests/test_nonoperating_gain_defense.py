@@ -229,8 +229,8 @@ class TestLayer3DisposalTag(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assertNotIn(tag, NONRECURRING_GAIN_TAGS)
 
-    def test_parsed_fund_cache_version_not_bumped(self) -> None:
-        self.assertEqual(PARSED_FUND_CACHE_VERSION, 9)
+    def test_parsed_fund_cache_version_includes_domain_repairs(self) -> None:
+        self.assertEqual(PARSED_FUND_CACHE_VERSION, 10)
 
 
 class TestNonOpConstants(unittest.TestCase):

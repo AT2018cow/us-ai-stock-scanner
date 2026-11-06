@@ -1,0 +1,34 @@
+{
+  "evidence_class": "supplemental retrospective diagnostics on already viewed frozen data",
+  "changes": "user accepts proximity to QQQ; original promotion decision unchanged",
+  "provisional_qqq_tolerance_60d": 0.01,
+  "criterion": "report point-estimate proximity separately from one-sided/noninferiority evidence; no hidden promotion",
+  "stages": [
+    "eligible_all",
+    "quality_ab",
+    "quality_ab_ready",
+    "priority_review",
+    "priority_top15",
+    "action_eligible_ab",
+    "weekly_top15",
+    "fixed_usage"
+  ],
+  "cost_sides_bps": [
+    15,
+    30
+  ],
+  "concentration_groups": [
+    "SIC description",
+    "SIC two-digit group"
+  ],
+  "sensitivity": [
+    "original",
+    "drop_baseline_top_return_contributor",
+    "drop_baseline_top3_return_contributors",
+    "drop_baseline_top_industry_by_weight"
+  ],
+  "sensitivity_weight_rule": "deleted slots stay cash; no renormalization; same original valid dates",
+  "case_selection": "worst and best matched stage difference per edge; ex-post explanation only",
+  "candidate_limit": 1,
+  "new_candidates": 0
+}

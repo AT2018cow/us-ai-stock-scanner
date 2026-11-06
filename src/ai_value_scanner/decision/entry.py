@@ -8,7 +8,7 @@ from typing import Any
 from .model import EntryDecision, EntryGateResult, EntryState, EvidenceItem
 
 
-ENTRY_POLICY_VERSION = "entry_quality_v1_2026-10-18"
+ENTRY_POLICY_VERSION = "entry_quality_v1_2026-11-06"
 
 ENTRY_V1_COMPONENT_WEIGHTS: dict[str, float] = {
     "trend": 0.35,
@@ -542,22 +542,22 @@ def _build_v1_gate_results(
             )
         )
 
-    if volatility is None:
+    if volatility is None or volatility < 0:
         gates.append(
             _gate(
                 gate_key="volatility_cap",
                 gate_label="Volatility",
-                status="NOT_APPLICABLE",
-                blocking=False,
+                status="UNKNOWN",
+                blocking=True,
                 metric="volatility_60d",
                 observed=None,
                 target="<= 80% annualized",
-                reason="Volatility is unavailable; treated as non-blocking.",
+                reason="A complete 60-session volatility window is required for ENTRY_READY.",
                 policy_version=policy_version,
             )
         )
     else:
-        vol_ok = volatility <= 0.80
+        vol_ok = 0 <= volatility <= 0.80
         gates.append(
             _gate(
                 gate_key="volatility_cap",
@@ -884,6 +884,16 @@ def _build_entry_with_thresholds(
         reference_dt = runtime_dt
 
     insufficient_reason = False
+    volatility_input = _finite_value(metrics, "volatility_60d")
+    if volatility_input is None or volatility_input < 0:
+        insufficient_reason = True
+        confidence = min(confidence, 0.49)
+        risks.append(_item(
+            code="volatility_60d_missing", label="Volatility window unavailable",
+            polarity="missing", metric="volatility_60d", value=None,
+            threshold="complete 60-session window",
+            message="Missing or invalid volatility cannot confirm an entry; check price-window completeness.",
+        ))
     age_days: int | None = None
     benchmark_lag_days: int | None = None
     market_ahead_days: int | None = None
@@ -1432,7 +1442,7 @@ def _build_entry_with_thresholds(
         )
     overextended = bool(overextension_reasons)
 
-    volatility_ready = volatility is None or volatility <= 0.80
+    volatility_ready = volatility is not None and 0 <= volatility <= 0.80
     base_ready = bool(
         sma200 is not None
         and sma200 >= 1.00
@@ -1503,7 +1513,7 @@ def _build_entry_with_thresholds(
     )
 
 
-ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-10-18"
+ENTRY_V2_POLICY_VERSION = "entry_quality_v2_2026-11-06"
 
 ENTRY_V2_MA_ALIGNMENT_MIN = 0.98
 ENTRY_V2_LAGGING_SCORE_PENALTY = 0.10
@@ -1568,7 +1578,7 @@ def _v2_core_uptrend_ready_except_extension(
         and relative_strength >= ready_rs60_min
         and drawdown is not None
         and drawdown <= 0.22
-        and (volatility is None or volatility <= 0.80)
+        and volatility is not None and 0 <= volatility <= 0.80
         and defensive_entry_ok
         and sma50 is not None
         and sma50 >= 0.98

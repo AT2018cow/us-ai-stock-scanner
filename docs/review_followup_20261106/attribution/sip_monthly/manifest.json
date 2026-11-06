@@ -1,0 +1,29 @@
+{
+  "inputs": {
+    "research/review_followup_20261106_v1/datasets/sip_2016_2020_v1/dataset.csv": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+    "research/review_followup_20261106_v1/datasets/sip_2021_2026_v1/dataset.csv": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+    "research/review_followup_20261106_v1/evaluations/evaluation_sip_monthly_v2/slots.csv": "1156de4b89ad3046c52158a74ebe976572bf8f240a05be489ae99bed70d0f388",
+    "research/review_followup_20261106_v1/evaluations/evaluation_sip_monthly_v2/cohorts.csv": "86e5422f8d3297dfd275d05d230b8f6761280cdf9ee50d026fc353aa79c4416f",
+    "research/review_followup_20261106_v1/evaluations/evaluation_sip_monthly_v2/manifest.json": "c9d782f3531ac1731e7b260e2df9b6da124e550b59298d16def86ab790756201"
+  },
+  "sources": {
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "src/ai_value_scanner/research/provenance.py": "ca41e100883bb2e3467f254478af0cb024ab8017d88b979e27afc71f3130dbe1",
+    "scripts/complete_selection_review.py": "db2f24a93a6642e6ed256835941e5bc07609d0a2f54df66d83fb71dab258b78a",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6"
+  },
+  "config_path": "configs/config.production.json",
+  "config_sha256": "d1a5dc413d097c90bbd6cec9a60ad79dbb907ca296fbb2e4773308a144bbe4d7",
+  "protocol_sha256": "39357003b934371bf8d3eac1bd9f90e79cb7b84538f99d05d94c3be1dbe01eb7",
+  "elapsed_seconds": 109.90813720099999,
+  "smoke": false,
+  "tolerance": 0.01,
+  "evidence_class": "supplemental already-viewed retrospective diagnostics; original candidate result unchanged",
+  "new_strategy_candidates": 0,
+  "classification": "current SIC descriptions / SIC 2-digit; not historical GICS",
+  "weights": "deletion sensitivity leaves cash; no renormalization; original complete common dates retained"
+}

@@ -287,10 +287,12 @@ do not defer evidence requirements until after the experiment.
 
 ### Liquidity
 
-- Default market-data feed is IEX unless explicitly changed.
-- Dollar-volume metrics are therefore IEX-scale proxies, not consolidated-tape
-  liquidity. Do not interpret them as real executable capacity or compare them 1:1
-  with SIP-derived figures.
+- Production and risk_off official scans use `official_market_mode=sip_eod`:
+  completed-session historical SIP bars, only at least 20 minutes after close.
+  Intraday monitoring explicitly uses IEX and must label its provisional feed.
+- Official SIP dollar volume is consolidated-tape scale; intraday IEX volume is a
+  single-exchange proxy. Neither proves executable capacity. Never mix caches or
+  interpret identical IEX/SIP numeric thresholds as economically equivalent.
 - Changing the feed changes liquidity semantics and must not be treated as a cosmetic
   config edit.
 
@@ -326,7 +328,7 @@ artifacts still exist.
 
 ## 11. Modal / heavy compute
 
-Long or compute-heavy tasks must prefer the Modal at2018cow workspace over local
+Long or compute-heavy tasks must prefer the Modal infi workspace over local
 execution. Size containers from observed need and use parallelism to finish
 faster. Only quick/cheap tasks (seconds to a few minutes) should run locally.
 
@@ -334,7 +336,7 @@ Hard rules:
 
 - **never use `--detach` or detached app execution**;
 - run foreground only;
-- explicitly use `MODAL_PROFILE=at2018cow`;
+- explicitly use `MODAL_PROFILE=infi` (user-directed workspace);
 - do not rely on whichever profile is currently active;
 - tuner candidate concurrency must not exceed 80 in-flight containers;
 - reuse persistent checkpoints/results where the run specification matches;

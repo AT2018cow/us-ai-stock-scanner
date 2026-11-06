@@ -40,3 +40,14 @@
 2. 不要新增 `strategy_style` 之外的风格标签；新增风格需同时更新 `src/ai_value_scanner/config.py` 的校验与 `src/ai_value_scanner/strategy/filtering.py` 的 `STYLE_STRUCTURAL_STEP_NAMES`。
 3. `configs/archive/` 只读，不修改、不运行。
 4. 生产命令统一使用 `--config configs/config.production.json`；研究/回放命令可显式使用 `config.risk_off.json`（档案）。
+# Market-data contract update (2026-11-06)
+
+`config.production.json` and `config.risk_off.json` use `official_market_mode=sip_eod`.
+Official scans and replay clients select historical SIP; official scans require at
+least 20 minutes after the session close and never call SIP latest snapshots.
+The 2m dollar-volume floor now explicitly measures full-market SIP volume; it is
+not a conversion of the previous IEX floor. Intraday Watch remains IEX with visible
+provisional source labels. Legacy configs without this field retain snapshot mode.
+See [migration evidence](../docs/sip_eod_migration_20261106/README.md).
+
+完整日常使用影响及同日独立运行方法见[统一说明](../docs/changes_and_usage_20261106.md)。

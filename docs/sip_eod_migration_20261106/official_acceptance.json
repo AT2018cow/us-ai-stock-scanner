@@ -1,0 +1,55 @@
+{
+  "decision_date": "2026-11-05",
+  "counts": {
+    "action": {
+      "AVOID": 275,
+      "HOLD_MONITOR": 361,
+      "PRIORITY_REVIEW": 19,
+      "WATCH_BREAKOUT": 38,
+      "WATCH_PULLBACK": 33
+    },
+    "daily_attention": 15,
+    "decisions": 726,
+    "entry": {
+      "ENTRY_READY": 37,
+      "INSUFFICIENT_DATA": 16,
+      "TREND_DAMAGED": 397,
+      "WATCH_BREAKOUT": 140,
+      "WATCH_PULLBACK": 136
+    },
+    "quality": {
+      "A": 174,
+      "B": 277,
+      "C": 195,
+      "UNRATED": 80
+    },
+    "weekly_attention": 15
+  },
+  "feed": "sip",
+  "mode": "sip_eod",
+  "market_asof_counts": {
+    "2026-11-05": 726
+  },
+  "source_display_verified": true,
+  "validator_ok": true,
+  "warnings": [
+    "latest periodic filing is not covered by recognized Company Facts for 44 decision(s)",
+    "non-USD core monetary facts are unsupported for 22 decision(s)"
+  ],
+  "old_same_day_iex_snapshot_preserved": true,
+  "old_snapshot_sha256": "1f90666274c0dbef92bdaadb32ed326bf9be8f4bfde1068d3da2c96901d19b4e",
+  "old_snapshot_reuse_status": "failed",
+  "same_day_migration_root": "outputs/sip_eod_migration/official_decisions/2026-11-05/production",
+  "next_session_default": "outputs/decisions; production and risk_off configs force SIP EOD",
+  "official_snapshot_files": {
+    "action_list.md": "83660c3a215fe4e946e7400d9fab2ebff959ea516f34a1c363211bcfd3235616",
+    "decisions.jsonl": "0ffea47aa6b3b66ecf17594b8860f4663edcdc3b38e63be7c033e302ec62ab08",
+    "weekly_review.md": "13bf01be77d8ae566aa3263fe562b2c947bd57ab7d2c3137b13fc1def8949329",
+    "run_manifest.json": "4637be1f60670c07deab410c95d30d2cb39e0a1fe38042f1a8d038564a15cfb8",
+    "ticker_map_rows.json": "4dd1d47d3819c99d24a77ebfbd3ac0dee7dd4efe45f1e2d5f3bc27e4bec4db2d",
+    "universe_exclusions.jsonl": "5ce793e6b5706d480dff13034f8b3323bbc4f9d6a54a55a3d164d4bb5962b5f8",
+    "state_change_alerts.jsonl": "8bae0dd5b9cb8e33313ea00bc636e7dfa12cf85213ddfd62d756287d3b82217c"
+  },
+  "intraday": "IEX; explicit real snapshot date and SIP baseline source confirmed",
+  "cron_schedule": "11:00 Asia/Singapore daily; existing command uses production config by default"
+}

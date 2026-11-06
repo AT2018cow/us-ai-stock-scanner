@@ -1,0 +1,47 @@
+[
+  {
+    "scope": "sip_monthly",
+    "all_60d_outputs_identical_to_prior_sip": [
+      "casebook.json",
+      "concentration_by_date.csv",
+      "concentration_sensitivity.csv",
+      "concentration_summary.csv",
+      "costs.csv",
+      "stage_comparisons.csv",
+      "stage_members.csv",
+      "stages_by_date.csv",
+      "symbol_contributions.csv"
+    ],
+    "current_configuration_and_inputs_and_declared_sources_verified": true
+  },
+  {
+    "scope": "sip_covid_weekly",
+    "all_60d_outputs_identical_to_prior_sip": [
+      "casebook.json",
+      "concentration_by_date.csv",
+      "concentration_sensitivity.csv",
+      "concentration_summary.csv",
+      "costs.csv",
+      "stage_comparisons.csv",
+      "stage_members.csv",
+      "stages_by_date.csv",
+      "symbol_contributions.csv"
+    ],
+    "current_configuration_and_inputs_and_declared_sources_verified": true
+  },
+  {
+    "scope": "sip_bear_weekly",
+    "all_60d_outputs_identical_to_prior_sip": [
+      "casebook.json",
+      "concentration_by_date.csv",
+      "concentration_sensitivity.csv",
+      "concentration_summary.csv",
+      "costs.csv",
+      "stage_comparisons.csv",
+      "stage_members.csv",
+      "stages_by_date.csv",
+      "symbol_contributions.csv"
+    ],
+    "current_configuration_and_inputs_and_declared_sources_verified": true
+  }
+]

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -122,6 +123,11 @@ def research_skip_low_value_hard_steps(
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Extract hard-gate survivor dataset for weight sweeps.")
     p.add_argument("--scan-config", default="configs/config.risk_off.json")
+    p.add_argument("--market-data-feed", choices=["iex", "sip"], default=None,
+                   help="Explicit research feed; SIP caches are isolated from production IEX.")
+    p.add_argument("--symbols", default="", help="Explicit smoke-test subset, never an outcome-selected pool.")
+    p.add_argument("--signal-dates", default="", help="Explicit smoke dates within the requested interval.")
+    p.add_argument("--bars-start-date", default=None, help="Shared price prefetch boundary for parallel study shards.")
     p.add_argument("--output", default=None, help="Output CSV path (default: outputs/weight_dataset_<style>.csv)")
     p.add_argument(
         "--dataset-kind",
@@ -241,7 +247,16 @@ def main() -> None:
             started,
         )
 
+    if args.market_data_feed:
+        os.environ["ALPACA_FEED"] = args.market_data_feed
+        # Explicit research-feed override must not inherit the official mode.
+        scan_config.official_market_mode = 'snapshot'
     client, monitor = load_alpaca_client(scan_config)
+    if client.feed != "iex":
+        # Cross-key cache fallback has no feed metadata in legacy payloads.
+        # Never let a research feed read or enrich production IEX payloads.
+        client.cache_dir = Path(scan_config.cache_dir) / f"alpaca_{client.feed}_research"
+        client.cache_dir.mkdir(parents=True, exist_ok=True)
     sec = load_sec_client(scan_config, monitor)
 
     snapshots, latest_watchlist_map = load_watchlist_snapshots(
@@ -272,6 +287,9 @@ def main() -> None:
     base_universe = base_universe.dropna(subset=["symbol"]).copy()
     base_universe["symbol"] = base_universe["symbol"].astype(str).str.upper()
     base_universe = base_universe[base_universe["symbol"].isin(watchlist_allowlist)].copy()
+    if args.symbols:
+        requested_symbols = {s.strip().upper() for s in args.symbols.split(',') if s.strip()}
+        base_universe = base_universe[base_universe.symbol.isin(requested_symbols)].copy()
 
     prefetch_universe = base_universe.copy()
     if args.replay_max_symbols and args.replay_max_symbols > 0:
@@ -298,6 +316,10 @@ def main() -> None:
     start_dt = parse_date_utc(args.start_date) or datetime(2023, 1, 1, tzinfo=timezone.utc)
     end_dt = parse_date_utc(args.end_date) or datetime.now(timezone.utc)
     bars_start = (start_dt - pd.Timedelta(days=max(420, scan_config.price_lookback_days))).isoformat()
+    if args.bars_start_date:
+        shared_start = parse_date_utc(args.bars_start_date)
+        if shared_start > start_dt: raise ValueError('bars start must precede decisions')
+        bars_start = shared_start.isoformat()
 
     log(f"universe symbols={len(symbols)} | fetching bars from {bars_start[:10]}", started)
     bar_db = build_bar_db(client, bars_symbols, bars_start, scan_config.chunk_size)
@@ -340,6 +362,10 @@ def main() -> None:
         theme_scores = {}
 
     dates = build_rebalance_dates(start_dt, end_dt, args.rebalance_frequency)
+    if args.signal_dates:
+        requested_dates = {s.strip() for s in args.signal_dates.split(',') if s.strip()}
+        dates = [d for d in dates if d.date().isoformat() in requested_dates]
+        if len(dates) != len(requested_dates): raise ValueError('smoke dates outside schedule')
     log(f"rebalance dates={len(dates)}", started)
 
     global_end_date = None
@@ -458,6 +484,15 @@ def main() -> None:
         )
         if df.empty:
             continue
+
+        # Ex-ante market grouping for selection studies; not a strategy gate.
+        qqq_features = compute_price_features_asof(
+            bar_db.get("QQQ"), asof=asof,
+            lookback_days=scan_config.price_lookback_days,
+            split_events=split_events.get("QQQ"),
+        ) if bar_db.get("QQQ") is not None else {}
+        df["qqq_price_to_sma200"] = (qqq_features or {}).get("price_to_sma200")
+        df["market_data_feed"] = client.feed
 
         if args.dataset_kind in {"company_quality", "entry_quality"}:
             current_watchlist_symbols = {
@@ -654,6 +689,9 @@ def main() -> None:
         )
     meta = {
         "scan_config": scan_config_path,
+        "market_data_feed": client.feed,
+        "requested_symbols": args.symbols,
+        "requested_signal_dates": args.signal_dates,
         "style": style,
         "dataset_kind": str(args.dataset_kind),
         "pre_strategy_cross_section": bool(

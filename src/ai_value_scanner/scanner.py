@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import fcntl
+import tempfile
 import json
 import os
 import re
@@ -681,7 +683,8 @@ class AlpacaClient:
         self.timeout_sec = timeout_sec
         self.feed = feed
         self.request_limiter = request_limiter
-        self.cache_dir = cache_dir / "alpaca"
+        # Legacy IEX caches have no embedded feed identity: isolate other feeds.
+        self.cache_dir = cache_dir / ("alpaca" if feed == 'iex' else f"alpaca_{feed}")
         self.cache_enabled = bool(cache_enabled)
         self.cache_ttl_assets_sec = max(0, int(cache_ttl_assets_sec))
         self.cache_ttl_snapshots_sec = max(0, int(cache_ttl_snapshots_sec))
@@ -1099,6 +1102,12 @@ class AlpacaClient:
     def get_daily_bars(
         self, symbols: list[str], start_iso: str, chunk_size: int
     ) -> dict[str, list[dict[str, Any]]]:
+        end_iso = getattr(self, 'daily_end_iso', None)
+        eod_session = getattr(self, 'eod_session', None)
+        if eod_session:
+            from .market_calendar import session_close_utc
+            if not end_iso or pd.Timestamp(end_iso) < pd.Timestamp(session_close_utc(eod_session)):
+                raise ValueError('official bar request end must cover the completed session close')
         bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for i in range(0, len(symbols), chunk_size):
             batch = symbols[i : i + chunk_size]
@@ -1108,6 +1117,12 @@ class AlpacaClient:
                 "start": start_iso,
                 "symbols": sorted(str(sym).upper() for sym in batch),
             }
+            if eod_session:
+                # The request cutoff changes with the delayed-access clock;
+                # the completed-session data identity does not.
+                cache_key['completed_session'] = eod_session.isoformat()
+            elif end_iso:
+                cache_key['end'] = end_iso
             cached = self._load_cache("bars", cache_key, self.cache_ttl_bars_sec)
             if isinstance(cached, dict):
                 needs_enrichment: list[str] = []
@@ -1122,7 +1137,7 @@ class AlpacaClient:
                     min_ts = self._rows_min_timestamp(cached_rows)
                     if not min_ts or (start_iso and min_ts > str(start_iso)):
                         needs_enrichment.append(sym)
-                if needs_enrichment:
+                if needs_enrichment and not end_iso:
                     any_cache = self._load_bars_from_any_cache(
                         needs_enrichment,
                         start_iso,
@@ -1148,6 +1163,7 @@ class AlpacaClient:
                         "feed": self.feed,
                         "adjustment": "raw",
                     }
+                    if end_iso: params['end'] = end_iso
                     if page_token:
                         params["page_token"] = page_token
                     url = f"{self.data_endpoint}/v2/stocks/bars"
@@ -1172,7 +1188,7 @@ class AlpacaClient:
                         if isinstance(rows, list):
                             batch_bars.setdefault(symbol, []).extend(rows)
                 else:
-                    any_cache = self._load_bars_from_any_cache(
+                    any_cache = {} if end_iso else self._load_bars_from_any_cache(
                         batch,
                         start_iso,
                         provenance_source="stale_cross_key_fallback",
@@ -1191,6 +1207,9 @@ class AlpacaClient:
             for symbol, rows in batch_bars.items():
                 bars_by_symbol.setdefault(symbol, []).extend(rows)
             time.sleep(0.05)
+        if getattr(self, 'eod_session', None):
+            cutoff=self.eod_session.isoformat()
+            bars_by_symbol={s:[r for r in rows if str(r.get('t',''))[:10]<=cutoff] for s,rows in bars_by_symbol.items()}
         return bars_by_symbol
 
 
@@ -1867,33 +1886,19 @@ def price_dimension_from_bars(
             dollar_volumes=[],
         )
 
-    highs: list[float] = []
-    lows: list[float] = []
-    closes: list[float] = []
-    dollar_volumes: list[float] = []
-    for row in sorted(bars, key=lambda item: str(item.get("t", ""))):
+    ordered = sorted(bars, key=lambda item: str(item.get("t", "")))
+    def number(row: dict, key: str) -> float:
         try:
-            high = float(row["h"]) if row.get("h") is not None else None
-            low = float(row["l"]) if row.get("l") is not None else None
-            close = float(row["c"]) if row.get("c") is not None else None
-            volume = float(row["v"]) if row.get("v") is not None else None
+            return float(row.get(key))
         except (TypeError, ValueError):
-            continue
-        if high is not None:
-            highs.append(high)
-        if low is not None:
-            lows.append(low)
-        if close is not None:
-            closes.append(close)
-        if close is not None and volume is not None:
-            dollar_volumes.append(close * volume)
-
+            return float("nan")
     return compute_price_history_features(
         current_price=price,
-        range_highs=highs,
-        range_lows=lows,
-        closes=closes,
-        dollar_volumes=dollar_volumes,
+        range_highs=[number(row, "h") for row in ordered],
+        range_lows=[number(row, "l") for row in ordered],
+        closes=[number(row, "c") for row in ordered],
+        dollar_volumes=[number(row, "c") * number(row, "v") for row in ordered],
+        session_dates=[row.get("t") for row in ordered],
     )
 
 def theme_score_from_news(news: list[dict[str, Any]], keywords: list[str]) -> float:
@@ -2844,7 +2849,7 @@ def load_runtime_settings(config: ScanConfig) -> tuple[AlpacaClient, SecClient, 
     api_key = os.getenv("ALPACA_API_KEY", "").strip()
     api_secret = os.getenv("ALPACA_API_SECRET", "").strip()
     data_endpoint = os.getenv("ALPACA_DATA_ENDPOINT", "https://data.alpaca.markets")
-    feed = os.getenv("ALPACA_FEED", "iex")
+    feed = 'sip' if config.official_market_mode == 'sip_eod' else os.getenv("ALPACA_FEED", "iex")
     user_agent = os.getenv("SEC_USER_AGENT", "").strip()
 
     if not api_endpoint or not api_key or not api_secret:
@@ -2945,7 +2950,14 @@ def collect_candidates_with_universe_audit(
         merged = merged[merged["symbol"].isin(eligible_symbols)].copy()
 
     symbols = merged["symbol"].tolist()
-    snapshots = alpaca.get_snapshots(symbols, config.chunk_size)
+    eod_session=getattr(alpaca,'eod_session',None)
+    if eod_session:
+        from .market_data import completed_bar
+        start=(eod_session-timedelta(days=7)).isoformat()
+        daily=alpaca.get_daily_bars(symbols,start,config.chunk_size)
+        snapshots={s:{'dailyBar':bar} for s in symbols if (bar:=completed_bar(daily.get(s,[]),eod_session))}
+    else:
+        snapshots = alpaca.get_snapshots(symbols, config.chunk_size)
     px_rows = []
     for symbol in symbols:
         price, dollar_volume = price_from_snapshot(snapshots.get(symbol, {}))
@@ -3178,7 +3190,7 @@ def _parsed_fund_config_fingerprint(config: ScanConfig) -> dict[str, object]:
     }
 
 
-PARSED_FUND_CACHE_VERSION = 9
+PARSED_FUND_CACHE_VERSION = 10
 PENDING_CHECKED_SCAN_COOLDOWN_SEC = 21600.0
 _TERMINAL_PENDING_FALLBACK_STATUSES = frozenset(
     {
@@ -4274,6 +4286,7 @@ def _evaluate_existing_snapshot_reuse(
     strategy_style: str | None,
     policy_version: str,
     layout_version: str,
+    market_mode: str | None = None,
 ) -> tuple[str, str | None]:
     """Validate a same-session existing snapshot before reusing it (R04/R08).
 
@@ -4290,6 +4303,11 @@ def _evaluate_existing_snapshot_reuse(
     except (FileNotFoundError, ValueError) as exc:
         return "failed", f"existing snapshot manifest unreadable: {exc}"
     identity = snapshot_identity(manifest)
+    if market_mode == 'sip_eod':
+        records = root/'decisions.jsonl'
+        stored=[json.loads(line) for line in records.read_text().splitlines() if line.strip()]
+        if not stored or any(r.get('provenance',{}).get('market_data_mode')!='sip_eod' for r in stored):
+            return 'failed', 'existing immutable snapshot uses a different market-data mode; use a new output root or next session'
     if identity["decision_date"] != str(decision_date):
         return (
             "failed",
@@ -4430,30 +4448,37 @@ def write_latest_decision_pointer(
     if identity.get("entry_policy_version"):
         pointer["entry_policy_version"] = identity["entry_policy_version"]
     pointer_path = root / f"latest_{strategy_style or 'default'}.json"
-    if pointer_path.is_file():
-        existing = load_latest_pointer_payload(pointer_path)
-        existing_day = date_module.fromisoformat(
-            str(existing.get("decision_date", ""))[:10]
-        )
-        if existing_day > requested_day:
-            raise ValueError(
-                "refusing to move latest pointer backwards: "
-                f"existing {existing_day.isoformat()} > requested {date_token}"
+    # Serialize the monotonic-date check and publication across threads/processes.
+    with (root / f".latest_{strategy_style or 'default'}.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if pointer_path.is_file():
+            existing = load_latest_pointer_payload(pointer_path)
+            existing_day = date_module.fromisoformat(
+                str(existing.get("decision_date", ""))[:10]
             )
+            if existing_day > requested_day:
+                raise ValueError(
+                    "refusing to move latest pointer backwards: "
+                    f"existing {existing_day.isoformat()} > requested {date_token}"
+                )
 
-    tmp_path = pointer_path.with_name(f".{pointer_path.name}.{os.getpid()}.tmp")
-    try:
-        tmp_path.write_text(
-            json.dumps(pointer, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(tmp_path, pointer_path)
-    finally:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+        tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{pointer_path.name}.", suffix=".tmp", dir=root)
+        os.close(tmp_fd)
+        tmp_path = Path(tmp_name)
+        try:
+            tmp_path.write_text(
+                json.dumps(pointer, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            mode = (pointer_path.stat().st_mode & 0o777) if pointer_path.exists() else (root.stat().st_mode & 0o666)
+            tmp_path.chmod(mode)
+            os.replace(tmp_path, pointer_path)
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
     return pointer_path
 
 
@@ -4530,6 +4555,10 @@ def run_scan_with_status(
         return max(1, resolved)
 
     started_at = datetime.now(timezone.utc)
+    eod_session = None
+    if config.official_market_mode == 'sip_eod':
+        from .market_data import official_eod_window
+        eod_session, eod_end_iso = official_eod_window(freshness_now_utc or started_at)
     paths = resolve_output_paths(
         config,
         started_at,
@@ -4543,6 +4572,9 @@ def run_scan_with_status(
     log_status(started_at, "INFO", "Scan started.")
     log_status(started_at, "INFO", f"Ranked output target: {paths['ranked_csv']}")
     alpaca, sec, network_monitor = load_runtime_settings(config)
+    if eod_session:
+        alpaca.eod_session=eod_session
+        alpaca.daily_end_iso=eod_end_iso
 
     log_status(
         started_at, "INFO",
@@ -4641,6 +4673,10 @@ def run_scan_with_status(
     if trend_filter_symbol and trend_filter_symbol not in bars_symbols:
         bars_symbols = sorted(set(bars_symbols).union({trend_filter_symbol}))
     bars_map = alpaca.get_daily_bars(bars_symbols, bars_start_iso, config.chunk_size)
+    if eod_session:
+        from .market_data import completed_bar
+        if completed_bar(bars_map.get('QQQ',[]),eod_session) is None:
+            raise ValueError('Official SIP benchmark is missing the expected completed session')
     # Raw bars are NOT split-adjusted (Alpaca adjustment=raw). Cross-day price
     # metrics below must be computed on a split-continuous series, so split
     # events are pulled from the authoritative corporate-actions feed and the
@@ -4650,7 +4686,7 @@ def run_scan_with_status(
     split_events: dict[str, list[tuple[str, float]]] = {}
     try:
         split_events = alpaca.get_corporate_action_splits(
-            bars_symbols, bars_start_iso, datetime.now(timezone.utc).date().isoformat()
+            bars_symbols, bars_start_iso, (eod_session or datetime.now(timezone.utc).date()).isoformat()
         )
         if split_events:
             log_status(
@@ -4660,6 +4696,7 @@ def run_scan_with_status(
                 f"e.g. {sorted(split_events)[:5]}",
             )
     except Exception as exc:
+        if eod_session: raise RuntimeError('Official SIP split fetch failed') from exc
         # Fail open: unadjusted bars reproduce the legacy behaviour.
         log_status(
             started_at,
@@ -5588,7 +5625,7 @@ def run_scan_with_status(
     latest_pointer_status = "not_applicable"
     latest_pointer_error: str | None = None
     shadow_status: str | None = None
-    strict_decision_output = discovery_source_summary is not None
+    strict_decision_output = discovery_source_summary is not None or eod_session is not None
     try:
         decision_date = resolve_market_decision_date(
             df,
@@ -5649,6 +5686,9 @@ def run_scan_with_status(
             "scan_config_path": scan_config_path,
             "watchlist_csv_path": config.watchlist_csv_path,
             "runtime_reference_session": runtime_reference_date,
+            "market_data_feed": alpaca.feed,
+            "market_data_mode": config.official_market_mode,
+            "market_data_session": eod_session.isoformat() if eod_session else None,
         }
         decisions = build_stock_decisions(
             df,
@@ -5687,6 +5727,8 @@ def run_scan_with_status(
         )
         input_prov_payload = {
             "watchlist_csv_path": config.watchlist_csv_path,
+            "market_data_feed": alpaca.feed,
+            "market_data_mode": config.official_market_mode,
             **(
                 {
                     "discovery_mode": "multi_source_opt_in",
@@ -5738,6 +5780,7 @@ def run_scan_with_status(
                 strategy_style=config.strategy_style,
                 policy_version=policy_version,
                 layout_version=layout_version,
+                market_mode=config.official_market_mode,
             )
             decision_output_status = reuse_status
             if reuse_error is not None:
@@ -5900,7 +5943,7 @@ def run_scan_with_status(
                     f"{type(exc).__name__}: {exc}",
                 )
     except Exception as exc:
-        if discovery_source_summary is not None:
+        if strict_decision_output:
             # Opt-in provenance and as-of violations must never be soft warnings.
             raise
         if decision_output_status == "not_attempted":
@@ -5912,6 +5955,9 @@ def run_scan_with_status(
             "MVP decision output failed without affecting legacy outputs: "
             f"{decision_output_error}",
         )
+
+    if eod_session and (decision_output_status not in {'written','reused'} or latest_pointer_status=='failed'):
+        raise RuntimeError(decision_output_error or latest_pointer_error or 'Official SIP snapshot publication failed')
 
     md_report = build_run_report_markdown(
         started_at=started_at,

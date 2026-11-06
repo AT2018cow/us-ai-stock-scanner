@@ -105,6 +105,7 @@ def map_action_state_v2(
 
 def assign_action_priorities_v2(
     decisions: Iterable[StockDecision],
+    *, pre_earnings_penalty: float = H3_PRE_EARNINGS_PRIORITY_PENALTY,
 ) -> list[StockDecision]:
     """Rank decisions under H3: joint composite inside action states.
 
@@ -115,10 +116,13 @@ def assign_action_priorities_v2(
     """
     from dataclasses import replace
 
+    if not 0.0 <= pre_earnings_penalty <= 1.0:
+        raise ValueError("pre_earnings_penalty must be finite and in [0, 1]")
+
     def _sort_key(decision: StockDecision) -> tuple:
         joint = _joint_conviction_score(decision.quality, decision.entry)
         pre_earn_penalty = (
-            H3_PRE_EARNINGS_PRIORITY_PENALTY if _has_pre_earnings_risk(decision) else 0.0
+            pre_earnings_penalty if _has_pre_earnings_risk(decision) else 0.0
         )
         nonop_penalty = (
             H3_NONOPERATING_GAIN_PRIORITY_PENALTY

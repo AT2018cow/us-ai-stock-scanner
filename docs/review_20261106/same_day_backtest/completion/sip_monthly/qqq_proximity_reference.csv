@@ -1,0 +1,5 @@
+scope,variant,view,n_dates,tolerance,mean_excess,observed_close,ci_low,ci_high,block_dates,interval_supports_close
+sip_monthly,baseline,list,118,0.01,-0.004873886465077841,True,-0.017869162634643058,0.008810832851495757,3,False
+sip_monthly,baseline,usage,118,0.01,-0.011346096448891048,False,-0.028141401935249864,0.003949436270515045,3,False
+sip_monthly,no_age_penalty,list,118,0.01,-0.004567366930283847,True,-0.017855681798853912,0.009278137300223142,3,False
+sip_monthly,no_age_penalty,usage,118,0.01,-0.01094472924264381,False,-0.028180187399992014,0.004991225259828486,3,False

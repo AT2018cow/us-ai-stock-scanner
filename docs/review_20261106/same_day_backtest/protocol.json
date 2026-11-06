@@ -1,0 +1,24 @@
+{
+  "registered_utc": "2026-11-05T20:00:10.586734+00:00",
+  "candidate": "remove_age_proxy_priority_penalty",
+  "candidate_rule": "assign_action_priorities_v2(pre_earnings_penalty=0); keep risk evidence and safety gates",
+  "primary_horizon": 60,
+  "horizons": [
+    20,
+    60,
+    120,
+    252
+  ],
+  "cap": 15,
+  "base_cost_per_side_bps": 15,
+  "stress_cost_per_side_bps": 30,
+  "random_seed": 61106,
+  "bootstrap_repeats": 2000,
+  "bootstrap_block": "ceil(horizon*7/5 / median calendar spacing)",
+  "min_delta": 0.005,
+  "ci": 0.95,
+  "candidate_limit": 1,
+  "adoption": "all criteria in implementation_review_plan section 4; no promotion if coverage or uncertainty fails",
+  "evidence_class": "retrospective; frozen/union universe approximation",
+  "weekly_transition": "previous daily state unavailable in monthly data; no reconstruction of downgrade alert-only slots"
+}

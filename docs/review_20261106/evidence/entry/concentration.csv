@@ -1,0 +1,3 @@
+cohort,n_decisions,n_symbols,n_dates,top_symbol,top_symbol_share,top_date_share
+quality_ab,15909,540,39,QRVO,0.0024514425796718837,0.029103023445848263
+quality_ab_entry_ready,1997,420,39,FAST,0.00801201802704056,0.05758637956935403

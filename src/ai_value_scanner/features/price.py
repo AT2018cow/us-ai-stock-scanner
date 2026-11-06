@@ -2,9 +2,33 @@ from __future__ import annotations
 
 import math
 from typing import Sequence
+from datetime import date, timedelta
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
+
+from ai_value_scanner.market_calendar import is_session_day
+from ai_value_scanner.fundamentals.accounting import finite_number
+
+
+PRICE_FEATURE_VERSION = "price_features_2026-11-06"
+
+
+@lru_cache(maxsize=4096)
+def _expected_sessions(start: date, end: date) -> frozenset[date]:
+    return frozenset(start + timedelta(days=i) for i in range((end-start).days+1)
+                     if is_session_day(start + timedelta(days=i)))
+
+
+def _missing_sessions(tokens: Sequence[object]) -> int | None:
+    try:
+        days = [pd.Timestamp(token).date() for token in tokens]
+        if any(pd.isna(day) for day in days) or days != sorted(set(days)):
+            return None
+        return len(_expected_sessions(days[0], days[-1]) - set(days)) if days else None
+    except (ValueError, TypeError):
+        return None
 
 
 PRICE_HISTORY_FEATURE_KEYS = (
@@ -17,6 +41,8 @@ PRICE_HISTORY_FEATURE_KEYS = (
     "return_60d",
     "volatility_60d",
     "avg_dollar_volume_20d",
+    "volatility_60d_observations",
+    "price_history_missing_sessions",
 )
 
 
@@ -32,6 +58,7 @@ def compute_price_history_features(
     closes: Sequence[float],
     dollar_volumes: Sequence[float],
     sma_window: int = 200,
+    session_dates: Sequence[object] | None = None,
 ) -> dict[str, float | int | None]:
     """Compute canonical trailing price/range/momentum/liquidity features.
 
@@ -44,80 +71,76 @@ def compute_price_history_features(
     average SMA50/SMA200 creates a different signal for recently listed names
     and is not considered a valid fallback.
     """
-    if current_price is None or not range_highs or not range_lows:
+    price = finite_number(current_price)
+    if price is None or price <= 0:
         return empty_price_history_features()
 
-    price = float(current_price)
-    highs = [float(value) for value in range_highs]
-    lows = [float(value) for value in range_lows]
-    close_values = [float(value) for value in closes]
-    dollar_volume_values = [float(value) for value in dollar_volumes]
+    # Preserve slots: dropping a bad observation silently changes every horizon.
+    close_values = [finite_number(value) for value in closes]
+    highs = [finite_number(value) for value in range_highs]
+    lows = [finite_number(value) for value in range_lows]
+    dollar_volume_values = [finite_number(value) for value in dollar_volumes]
 
-    high_52w = max(highs)
-    low_52w = min(lows)
+    def complete(values: list, n: int, *, positive: bool = True) -> bool:
+        if len(values) < n:
+            return False
+        if any(v is None or (v <= 0 if positive else v < 0) for v in values[-n:]):
+            return False
+        if session_dates is not None:
+            if len(session_dates) != len(close_values) or len(session_dates) < n:
+                return False
+            if _missing_sessions(session_dates[-n:]) != 0:
+                return False
+        return True
 
-    drawdown = None
-    if high_52w > 0:
-        drawdown = 1.0 - (price / high_52w)
-
-    range_pos = None
-    if high_52w > low_52w:
-        range_pos = (price - low_52w) / (high_52w - low_52w)
+    drawdown = range_pos = None
+    if highs and lows and all(v is not None and v > 0 for v in highs + lows):
+        high_52w, low_52w = max(highs), min(lows)
+        drawdown = 1.0 - price / high_52w
+        if high_52w > low_52w:
+            range_pos = (price - low_52w) / (high_52w - low_52w)
 
     price_to_sma50 = None
-    if len(close_values) >= 50:
-        sma50 = float(np.mean(np.asarray(close_values[-50:], dtype="float64")))
-        if np.isfinite(sma50) and sma50 > 0:
-            price_to_sma50 = price / sma50
+    if complete(close_values, 50):
+        price_to_sma50 = price / float(np.mean(close_values[-50:]))
 
-    price_to_sma200 = None
-    days_below_sma200 = None
+    price_to_sma200 = days_below_sma200 = None
     required_sma = max(1, int(sma_window))
-    if len(close_values) >= required_sma:
-        window = close_values[-required_sma:]
-        sma = float(np.mean(np.asarray(window, dtype="float64")))
-        if np.isfinite(sma) and sma > 0:
-            price_to_sma200 = price / sma
-
+    if complete(close_values, required_sma):
+        price_to_sma200 = price / float(np.mean(close_values[-required_sma:]))
         series = pd.Series(close_values, dtype="float64")
-        sma_roll = series.rolling(
-            window=required_sma,
-            min_periods=required_sma,
-        ).mean()
-        below = series < sma_roll
+        sma_roll = series.rolling(window=required_sma, min_periods=required_sma).mean()
         trailing = 0
-        for flag in reversed(below.tolist()):
-            if pd.isna(flag) or not bool(flag):
+        for i in range(len(series)-1, -1, -1):
+            if not np.isfinite(sma_roll.iloc[i]) or series.iloc[i] >= sma_roll.iloc[i]:
                 break
             trailing += 1
         days_below_sma200 = trailing
 
-    return_20d = None
-    if len(close_values) >= 21 and close_values[-21] > 0:
-        return_20d = (price / close_values[-21]) - 1.0
-
-    return_60d = None
-    if len(close_values) >= 61 and close_values[-61] > 0:
-        return_60d = (price / close_values[-61]) - 1.0
+    return_20d = price / close_values[-21] - 1.0 if complete(close_values, 21) else None
+    return_60d = price / close_values[-61] - 1.0 if complete(close_values, 61) else None
 
     volatility_60d = None
+    observations = 0
     if len(close_values) >= 61:
-        window_61 = np.asarray(close_values[-61:], dtype="float64")
-        daily_ret = (window_61[1:] / window_61[:-1]) - 1.0
-        if daily_ret.size > 0:
-            vol = float(np.nanstd(daily_ret, ddof=0) * math.sqrt(252.0))
-            if np.isfinite(vol):
-                volatility_60d = vol
+        observations = sum(a is not None and b is not None and a > 0 and b > 0
+                           for a, b in zip(close_values[-61:-1], close_values[-60:]))
+    if complete(close_values, 61):
+        window = np.asarray(close_values[-61:], dtype="float64")
+        vol = float(np.std(window[1:] / window[:-1] - 1.0, ddof=0) * math.sqrt(252.0))
+        if np.isfinite(vol):
+            volatility_60d = vol
 
     avg_dollar_volume_20d = None
-    if len(dollar_volume_values) >= 20:
-        adv20 = float(
-            np.mean(np.asarray(dollar_volume_values[-20:], dtype="float64"))
-        )
-        if np.isfinite(adv20):
-            avg_dollar_volume_20d = adv20
+    if complete(dollar_volume_values, 20, positive=False):
+        avg_dollar_volume_20d = float(np.mean(dollar_volume_values[-20:]))
 
     return {
+        "volatility_60d_observations": observations,
+        "price_history_missing_sessions": (
+            _missing_sessions(session_dates[-max(61, required_sma):])
+            if session_dates is not None else None
+        ),
         "drawdown_from_52w_high": (
             round(drawdown, 6) if drawdown is not None else None
         ),

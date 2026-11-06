@@ -93,6 +93,10 @@ ALPACA_DATA_ENDPOINT=https://data.alpaca.markets
 ALPACA_FEED=iex
 ```
 
+正式生产与`risk_off`配置使用`official_market_mode="sip_eod"`，覆盖上述通用feed设置：只读取收盘后的SIP历史日线，不请求付费实时SIP快照，须在美股收盘20分钟后运行。盘中请用`intraday_watch.py`，固定使用IEX并标注临时来源。SIP的美元成交额为全市场口径，不能与旧IEX门槛等价解释。迁移与重算记录见[说明](docs/sip_eod_migration_20261106/README.md)。
+
+本轮全部修改及日常使用影响见[统一说明](docs/changes_and_usage_20261106.md)，包括运行时点、旧快照、缓存、失败处理和研究工具的使用变化。
+
 ### 3.3 刷新 watchlist（按需手工执行）
 
 ```bash
@@ -126,7 +130,7 @@ python scripts/run_daily_cron.py --config configs/config.production.json
 - **Stage 2（全量 MVP v2 扫描）**：紧接着运行 `run_scan(...,
   allow_existing_decision_snapshot=True)`，Alpaca 行情强制 1 小时新鲜度
   （`--alpaca-ttl-sec`，默认 `3600`，即使前一晚跑过手工扫描也会重抓盘后
-  日线/快照），并刷新 `outputs/decisions/latest_<style>.json` 指针。
+  SIP完整日线），并刷新 `outputs/decisions/latest_<style>.json` 指针。
 - `--limit N` 烟雾测试与 `--skip-scan` 只跑 Stage 1；周末/非交易日重跑会
   保留已存在的同日期不可变快照。
 
@@ -170,8 +174,9 @@ outputs/decisions/
 - 同一日期、同一 style 的正式 snapshot 不会被覆盖（在 `scripts/run_daily_cron.py` 中启用 `allow_existing_decision_snapshot=True`，周末或同日重跑会自动保留既有不可变快照并跳过覆盖）；如需保留第二次独立运行，可显式指定新的
   `--decision-output-root`。
 
-新 decision 输出采用 failure-contained 集成：若 snapshot 写入失败，legacy scanner CSV、
-network report 和旧 Markdown report 仍继续生成，并在日志中记录 WARN。
+正式SIP模式下，决策快照或latest指针失败会使扫描失败并返回非零退出状态。
+legacy CSV可能已经写出，不能仅凭CSV存在认定正式名单发布成功。旧快照和来源/版本
+检查不会被自动覆盖；同日独立验证请使用新的`--decision-output-root`。
 
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
@@ -1275,6 +1280,26 @@ python scripts/intraday_watch.py --poll 300 --save
 **临时 Entry 影子（默认开启，`--no-shadow` 关闭）**：把当前价当作"临时收盘价"，复用生产 Entry v2 构建器与 Action 映射，对名单重算 Entry State/Score，并列出翻转的门（如 `overextension:PASS→BLOCK`）。Quality 沿用最新快照（基本面不随盘中变化）。该影子**明确是临时/未验证结果，不是决策**，也不会写入任何快照；仅用于盘中判断"如果现在收盘，名单会怎么变"。收起该功能用 `--no-shadow`。完整能力说明与安全边界见 `docs/intraday_watch.md`。
 
 ## 14. 说明与限制
+
+- 本轮修改与使用影响：[统一使用说明](docs/changes_and_usage_20261106.md)（正式SIP的时间窗口、IEX监控、缓存/旧快照、研究结果与交付范围）。
+
+- 最新审查收尾：[五项审查问题修复与验收](docs/review_followup_20261106/report.md)（1,363项测试；120日合法样本恢复，缓存/配置复用/外部CLI修复；原策略参数保留）。
+
+- 最新验收：[SIP收盘名单、IEX盘中来源与日期修复重算](docs/sip_eod_migration_20261106/report.md)（全池726份决策、日报/周报各15名；长期及压力期评估和归因已重做，原始冻结证据保持不变）。
+
+- 迁移前补充验收：[逐层归因、行业/证券集中度、成本与QQQ目标澄清](docs/review_20261106/same_day_backtest/completion/report.md)（已补齐实施方案D/E缺项；不穷举参数，保留原候选拒绝结论；受日期修复影响的数值以最新验收为准）。
+
+- 迁移前实施结果：[2016—2026跨周期Top-15回测与最小改进验收](docs/review_20261106/same_day_backtest/report.md)（infi前台、smoke先行；唯一候选未通过，生产排序默认值保留）。
+
+- 已执行的实施方案：[长期选股回测与最小改进](docs/review_20261106/implementation_review_plan.md)（结果见上方验收报告）。
+
+- 历史精简计划：[当日改进与回测验收](docs/review_20261106/same_day_backtest_plan.md)（保留原计划，实验结果以最新验收报告为准）。
+
+- 完整研发计划：[选股能力提升、阈值审查与效果评估总方案](docs/review_20261106/selection_capability_master_plan.md)（研究计划，覆盖财务/量价阈值、回测、Top-15和前瞻人工验证；不代表已完成实验）。
+
+- Top-15 后续研究：[改进顺序与完整使用验证方案](docs/review_20261106/top15_improvement_and_validation_protocol.md)（方案草案，覆盖名单、纸面使用和人工增量三层）。
+
+- 最新专项审查：[2026-11-06 计算、逻辑与优化建议](docs/review_20261106/README.md)；[修复、四项优化与四项专项验收](docs/review_20261106/implementation_and_validation.md)（含离线工具、冻结研究证据和缓存/版本迁移说明）。
 
 - 当前代码审查与修复记录：[问题、修复建议与验收条件](docs/code_review_and_repair_handoff_20261018.md)（交接基线）及 [修复结果与复验记录](docs/code_review_repair_results_20261018.md)（R03–R05 已复验通过；完整测试 1188 项通过）。
 - 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。

@@ -1,0 +1,420 @@
+{
+  "sec_ttm_pit": {
+    "tests": 152,
+    "passed": true,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 1.828,
+    "test_modules": [
+      "test_ttm_quarter_reconstruction",
+      "test_cumulative_cashflow_reconstruction",
+      "test_fundamental_reconstruction",
+      "test_fundamental_adapter_parity",
+      "test_capex_tag_fallbacks",
+      "test_identity_verification",
+      "test_share_count_integrity",
+      "test_nonoperating_gain_defense"
+    ]
+  },
+  "corporate_actions_prices": {
+    "tests": 65,
+    "passed": true,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 0.338,
+    "test_modules": [
+      "test_split_adjustment",
+      "test_backtest_splits_unpriced",
+      "test_corporate_action_label_integrity",
+      "test_historical_valuation_percentile",
+      "test_price_feature_core",
+      "test_review_20261106_repairs",
+      "test_review_special_validation.ForwardLabelValidation"
+    ]
+  },
+  "cache_invalidation": {
+    "tests": 107,
+    "passed": true,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 1.819,
+    "test_modules": [
+      "test_identity_provenance",
+      "test_companyfacts_cache_miss",
+      "test_parsed_cache_periodic_gate",
+      "test_sec_periodic_pending_hardening",
+      "test_daily_cron_scan_and_ttl",
+      "test_review_special_validation.CacheVersionValidation"
+    ]
+  },
+  "snapshots_publication": {
+    "tests": 34,
+    "passed": true,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 0.416,
+    "test_modules": [
+      "test_code_review_repair_r04_r08_contract_e2e",
+      "test_code_review_repair_r05_validator",
+      "test_integrated_mvp_outputs",
+      "test_io_safety",
+      "test_review_special_validation.AtomicSnapshotValidation"
+    ]
+  },
+  "existing_snapshots": [
+    {
+      "snapshot": "2026-10-09/risk_off",
+      "ok": true,
+      "warnings": [
+        "legacy snapshot (no report_renderer_revision): byte-level render comparison is skipped; structural checks still run",
+        "run manifest has no state_change_alerts summary",
+        "latest periodic filing is not covered by recognized Company Facts for 9 decision(s)",
+        "non-USD core monetary facts are unsupported for 17 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-15/risk_off",
+      "ok": true,
+      "warnings": [
+        "legacy snapshot (no report_renderer_revision): byte-level render comparison is skipped; structural checks still run",
+        "run manifest has no state_change_alerts summary",
+        "latest periodic filing is not covered by recognized Company Facts for 9 decision(s)",
+        "non-USD core monetary facts are unsupported for 17 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-16/risk_off",
+      "ok": true,
+      "warnings": [
+        "legacy snapshot (no report_renderer_revision): byte-level render comparison is skipped; structural checks still run",
+        "run manifest has no state_change_alerts summary",
+        "latest periodic filing is not covered by recognized Company Facts for 9 decision(s)",
+        "non-USD core monetary facts are unsupported for 12 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-19/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 12 decision(s)",
+        "non-USD core monetary facts are unsupported for 19 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-20/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-21/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+        "non-USD core monetary facts are unsupported for 19 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-22/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-23/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 11 decision(s)",
+        "non-USD core monetary facts are unsupported for 19 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-26/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 10 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-27/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 12 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-28/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 15 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-29/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 15 decision(s)",
+        "non-USD core monetary facts are unsupported for 18 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-10-30/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 21 decision(s)",
+        "non-USD core monetary facts are unsupported for 19 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-11-02/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 21 decision(s)",
+        "non-USD core monetary facts are unsupported for 20 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-11-03/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 22 decision(s)",
+        "non-USD core monetary facts are unsupported for 19 decision(s)"
+      ],
+      "errors": []
+    },
+    {
+      "snapshot": "2026-11-04/production",
+      "ok": true,
+      "warnings": [
+        "Known historical renderer 2026-10-18b: structural validation only; current report bytes differ.",
+        "latest periodic filing is not covered by recognized Company Facts for 22 decision(s)",
+        "non-USD core monetary facts are unsupported for 21 decision(s)"
+      ],
+      "errors": []
+    }
+  ],
+  "local_parsed_cache_inventory": {
+    "files": 963,
+    "cache_version_9": 963,
+    "positive_net_debt_nonpositive_ebitda": 33,
+    "old_negative_ratio": 33
+  },
+  "validation_scope": "Offline synthetic contract tests and local immutable snapshot/cache inventory; no provider refetch or full raw SEC population reparse.",
+  "base_commit": "830702b73749c92be20f02a3463669f1b8e7dbd8",
+  "source_sha256": {
+    "src/ai_value_scanner/__init__.py": "d540301cc526e55b27c1a2907a8d15c92380a29e8a795778d9415694dbc71294",
+    "src/ai_value_scanner/backtest.py": "6d0a1b8013cbc3676d84af2e2fe621225181a3772498a925b53a9153cedcc464",
+    "src/ai_value_scanner/config.py": "c1cfb6e106fdc51777f395759da2a8ba6ee72e2e4eac23e5f73d54b69b2baed2",
+    "src/ai_value_scanner/decision/__init__.py": "d56104b62029f9adbadb51ada08e4c14132a96e533cacd51a1d64ce223c08c2d",
+    "src/ai_value_scanner/decision/action.py": "3dae98135b11cb740b6a68146752841cca8d931c1b1404c53b20e22c863a82bb",
+    "src/ai_value_scanner/decision/attention.py": "6eac216b030db1b38fe8950070a0cf118b2710c33ffe741f86ee3619f859d63c",
+    "src/ai_value_scanner/decision/discovery.py": "586b4387f140300844ce6ddf33aa24c963395849c02d5a58ad27b78cd4b6f678",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/integrated.py": "c0127515f79f2fd44655a66ff2119ca7861784d4bb40949bc60a504c66931ef8",
+    "src/ai_value_scanner/decision/model.py": "1402d1304b15d541bcad02fc992753227a3a28fb704913bf28a47e40cf7274e5",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/review_context.py": "48283b7cf1922b24f46fa4fef73fdbc646044bd127f677ee39b520cd91195a67",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/decision/view_model.py": "82ed1f548e92ba9b6be43c85ec8f4e110ffaa08c8a2e385a7898e3fde421e03b",
+    "src/ai_value_scanner/evaluation/__init__.py": "7c87403f667d11268fbfc5fbeeada925d0d61b9cf95d52d81aae6fffe679313c",
+    "src/ai_value_scanner/evaluation/action.py": "12f8a9046c54b421a8915aa11334c735d82fa2195955ff436452fee22d1632a3",
+    "src/ai_value_scanner/evaluation/backtest.py": "cb1e76906e06b2d8e5fd4c7cd1b6e2144861a4000a831e508130fb7d37115c5e",
+    "src/ai_value_scanner/evaluation/company_quality.py": "9a3398ba749ffb9f991869582f4b956c24682a829b3c606639f42173dff448fc",
+    "src/ai_value_scanner/evaluation/entry_quality.py": "5ed8148b489c4dd71fa443e9c0ac14444d80e937bd5f82b7fe4071f4b19c6643",
+    "src/ai_value_scanner/evaluation/equity_continuity.py": "bb28578089d892bd65ac64bf85728eb55555ffc3382316217b891fd1acd4c38e",
+    "src/ai_value_scanner/features/__init__.py": "f0a7aebc8ac0493e8c161ab4f3e4e8ddb8c6ae7c973c889ee66c7538041bb4ed",
+    "src/ai_value_scanner/features/ai_link.py": "f7192f71245e3cba16c2c9cf0db34c1049c3b2212dd0c724cafe9d2965ec377f",
+    "src/ai_value_scanner/features/derived.py": "59c6adf1bf5bd0f1c3a7c0e8318514386178725f5ef0de5d7d12435b73f85525",
+    "src/ai_value_scanner/features/peer_valuation.py": "207f7bbaa5f36fc5860229a20e8428abe8e3b3e84cfa4273d6b81baa755a914a",
+    "src/ai_value_scanner/features/price.py": "63867b2bcd58ddebe3ec98430261b9de40830c6ada3331bea86f37ff7146d1b3",
+    "src/ai_value_scanner/features/valuation.py": "20a3d381563fc87daf2a03f6e35f626cf315ec74aec6a3a745eb365abf1105cd",
+    "src/ai_value_scanner/fundamentals/__init__.py": "1d612719193d7e2e4f93597ce220f4bb6be9b0a4d3c7d0dbc746d12498cc2744",
+    "src/ai_value_scanner/fundamentals/accounting.py": "7efcd9023f548701fd2867b88ec197c79de9388e7518c063c6ddef00cbbb6909",
+    "src/ai_value_scanner/fundamentals/edgartools_diagnostic.py": "6c402af5702c7be366d04bfd21b0b5a78feab6099ea076df073161cde5ff3132",
+    "src/ai_value_scanner/fundamentals/edgartools_fallback.py": "9a61193eea62df40c286fd1ede634167b3ba3c6d92389ad71ddc36ef2857cf94",
+    "src/ai_value_scanner/fundamentals/facts.py": "68785735b7c57fb997ffeeef6ab06d9a7b34ee63367bafa43d1df29efd1f01ee",
+    "src/ai_value_scanner/fundamentals/identity.py": "f32b2316ce8663aa92750dbf48efd4ff7ac748a700a8c138a58f1895a937efff",
+    "src/ai_value_scanner/fundamentals/provenance.py": "1ae085f0990cacb856a9d048d32d8d558e37f6b24c5948bfb6e7c2bfcc4809f7",
+    "src/ai_value_scanner/fundamentals/reconstruction.py": "ecd1a6138864c36228d7d9e52adfb15d101bddc319b94659690cba3bde693f68",
+    "src/ai_value_scanner/fundamentals/shares.py": "eaf99517f87030613211b1dc6de73d7abaa04582efef1321fd951e092790d2ae",
+    "src/ai_value_scanner/market_calendar.py": "9373d33656911fc6f24a9fdc2b30f0c21911fbbe816dc49ef731e073321dd80d",
+    "src/ai_value_scanner/replay_checkpoint.py": "e943cd6b43a72d9afaf3da92b53f650f59240bea82c7a63fdcbe30b1be41e38e",
+    "src/ai_value_scanner/reporting/__init__.py": "b339ccdbb1e3bf4e935434b8acf034d68b80c486b88d1e555340290a74f6f4f4",
+    "src/ai_value_scanner/reporting/backtest.py": "37a8d40b34ac3ec9c6ad5eefc40f7dac8cd7b181b79daec40815eef21c4ded1e",
+    "src/ai_value_scanner/reporting/decision.py": "9700b87c9ec7e2e2180e21413a3237368ded1fa16aa6d7911989a1108e5c7fbf",
+    "src/ai_value_scanner/reporting/scan.py": "b81e50abc8454c7fddc0905fa3910380f6e10a0d603cac261943232b0393d13d",
+    "src/ai_value_scanner/reporting/snapshot.py": "089585ce2e902290e55d0b852d2348cbd693cde346c5ad9e77a600af28fb9d08",
+    "src/ai_value_scanner/research/__init__.py": "12e39151468cef8b3f1079a56adbc233d60d9443f8da73aba93f6289335d1156",
+    "src/ai_value_scanner/research/m0_baseline_review.py": "80d979b07ce69c1d13c572523efa67bc6e831ed39e71968864fdb9b97e9f7de1",
+    "src/ai_value_scanner/research/m2_failure_attribution.py": "14c4c7312af750b057fb665a26027cafcd2aa686ecea126ee478c8a64ac8b4f0",
+    "src/ai_value_scanner/research/m3_candidate_preflight.py": "e3b5840213e7bdbae0d94490d386ac12562c3ed76dc8c929b278494c6dc2439e",
+    "src/ai_value_scanner/research/m4_paired_validation.py": "da9ab180f8a85bf620b668978c30db555a0154f4bbb4bee355ceb00daad207c8",
+    "src/ai_value_scanner/research/mvp_v11.py": "eb58d0bd71a66235818c0878f13e000d435e9f3baeef8658aabe9fcbc15326b8",
+    "src/ai_value_scanner/research/mvp_v11_candidates.py": "9dd6c1cbf695ca09770fe16f59bcfa900fe24fa32c942259a607a7afe30174b7",
+    "src/ai_value_scanner/research/mvp_v11_comparison.py": "bef6f9e244f86debceb432f66c0fb5d901b821fee429eb96e80e6daa47fdc24a",
+    "src/ai_value_scanner/research/mvp_v11_dev_reports.py": "40b62bf743deb1d8c4883c2f7c6baca9c3dbeb1e1b631655a4114c824a2dfc26",
+    "src/ai_value_scanner/research/mvp_v11_score_masks.py": "8c2f7ff530a21e4c6a961b8d9310e375eb5da4ffaca530b2ac9d8a251eb57ce6",
+    "src/ai_value_scanner/research/review_utility.py": "674916ab4f84b2e49570b662d936c2007889e191f249bb64d9fff9b5381ddfa7",
+    "src/ai_value_scanner/scanner.py": "e1fdc5937d093506c2683ce492dbfdee61f2bc213d9ea2b84b70fd191ac475fb",
+    "src/ai_value_scanner/strategy/__init__.py": "cb182307a92d04a8880a3c816cd71df5ed44372eceaf0c5fd5dc01e1762f0972",
+    "src/ai_value_scanner/strategy/filtering.py": "57b2cc4ddf0ac983571541b837f6c9ac82924315aa90767cf8ce0891206c7d42",
+    "src/ai_value_scanner/strategy/research.py": "2f8917aa3d3d8d346b03769be51f8b6d096357d1a91ca76ea6cf02cd810ffa3b",
+    "src/ai_value_scanner/strategy/rules.py": "c7a1af85c633e89f7debb459e95a2a682386e40192bfdad12641e3e36e34df85",
+    "src/ai_value_scanner/strategy/scoring.py": "f7377ecf2f3f7c6333339844c1d09c765a20bb42df6b43d174954245c74a62c4",
+    "src/ai_value_scanner/strategy/selection.py": "ce0c1915f53412aa4d22dd8eaa2ba01121970a23a3bb1da410da1d2580085352",
+    "src/ai_value_scanner/validation/__init__.py": "cba9b8c484b4a1b39f903ae9bff42a2bd00937fbec8651984e1a92e988f35926",
+    "src/ai_value_scanner/validation/snapshots.py": "782b9834bd182a1b801223c41831ddf7eff14c162e46186525793dd227f992b8"
+  },
+  "test_source_sha256": {
+    "test_accounting_core.py": "3dd174c3a30b6eb489b3ba0b58f274ab85e97fbdfe1d07090f1c1464c359de4f",
+    "test_alpaca_cache_fallback.py": "ab0d647a60abaa98681cee20d981fedf3f2382b8e443720cc04b8cbb6c47cb76",
+    "test_alpha_attribution.py": "b64d5c46cd1962dd6dbd125d431ffe16da52ac7b631847c9571d2ddbe1f761b6",
+    "test_audit_regime_separation.py": "59fd6e6f5f40e5e469742c3388247446b19832ab1173ea73132aca2906cb9e88",
+    "test_audit_universe_coverage.py": "e2c1b4852cd6400c0426908271e101a82b5883cbd878e42d38a327af18a00476",
+    "test_backtest_evaluation_reporting_boundary.py": "7a32da66341694c4caad575c7f38f0d3aef9c36371be0b9e06fd3c3abd6567d8",
+    "test_backtest_reliability_controls.py": "21b537861922b08e59a65aaefeb2331b724c6d0c5fbba0f82ed1e3cc697f8293",
+    "test_backtest_splits_unpriced.py": "1869106e22867d75cd573b2cf4ba6da8af06afcb9769c4c68f7418915614b4f2",
+    "test_candidate_universe_contract.py": "0ac71bdc15afe757a6f8b2f7cf8af1120ae2c08a9ed4c816422661e6ec2403b0",
+    "test_capex_tag_fallbacks.py": "901359f5bec3e86801c88bb638fb823636023099f5a441bb9b6caa4762c47161",
+    "test_code_review_repair_r01_r02.py": "dc3193c0aa6e970eae35df42f9fc7e93599b5b0ef04a7f814c75afaf04036c20",
+    "test_code_review_repair_r03_freshness.py": "31f2dd32e8ddd82ba9c11eb36facc393e6e0506011297b8aa9d80ca2ea908428",
+    "test_code_review_repair_r04_r08_contract_e2e.py": "a1a06459937464352c4df4e6f7975adf0d8465f04ff3362aedd13dbdddb9484a",
+    "test_code_review_repair_r05_validator.py": "9df70d87eac902fd5fb06f4593c02dee41ea46f0c00602f08f6eaa2945ec3a9c",
+    "test_code_review_repair_r06_gates.py": "6e06c24db642699ef8ee14da4683f5064cca533540d8b22f1a6a61f7645c4290",
+    "test_code_review_repair_r07_alerts.py": "db38f7428deec2c3ebceab2f075344d250c0f1efa34492a25e000d607cb9a406",
+    "test_company_quality_v1.py": "1a052c7a9324238ccfe1b6aade123e875d309fab991a2b953292b71e2affaf26",
+    "test_companyfacts_cache_miss.py": "9cbc2a5da8352621cf22c4595875b87a21ac329041847ac4227f5bf94d7dc6ed",
+    "test_config_validation.py": "06558e1f57158f22ebd494ff0d9611e33dff7f4bdc2e017c8c9563555b643082",
+    "test_corporate_action_label_integrity.py": "df548742660b7130e7d51fa78067fff816304bc6c7d4e5674679d967e754b3e5",
+    "test_cumulative_cashflow_reconstruction.py": "674aa1c96fb0c7d17a73d6e16e26ffaa17721f168bf456d6da2db1eb094c11aa",
+    "test_daily_cron_scan_and_ttl.py": "e9ea81f20a03d0deb2cdcc83193d642190d7c5d4e8ccf6c02f395e200773ea79",
+    "test_decision_contract.py": "0c8e418d86e7a7b0c0a5d82f8340bcf9f57e0978d1bc8b9024249d22272bb6cb",
+    "test_decision_view_model_and_report_v2.py": "0d6837ebe486006b4d8975744570b239c03a952c3c7d8fb4b0b182e44e4c38bb",
+    "test_derived_feature_core.py": "6ac2948dd9a2205022d9f4a71751073fa0a3b63e2eb975fadc0f60b5cb9ee772",
+    "test_edgartools_diagnostic.py": "17ab7ef13588668b61c49d8fef59bebd6205b6202629f61afe0d67d45a776df1",
+    "test_edgartools_fallback.py": "8de89c2224bbcc66695d79ac14be58e962158d2241adb322378241dae3f6f3f6",
+    "test_entry_diagnostics_rebuild.py": "5b3225c6df42895d0a59565870db19fb5578722cdcf4b98094fd1c99bb07aecf",
+    "test_entry_quality_v1.py": "3e5ccb82feaf82f808bfc6e39a5bd2299f438fc044b0a5259b132a06b192cfe5",
+    "test_evaluation_harness_guards.py": "f99dd8493c29f27f2884969c011a562e502aca76a626db7745a9ea6ca14a8c15",
+    "test_execution_safety_regressions.py": "1c1d7ac2ccde2713c298b0e52bf647ee37cbfca1de39cad82e20e5d5dacdae1b",
+    "test_fast_feature_snapshot_gate.py": "b81ff18b09d46617eba9b5a5f86182ff5e5d063bc8498fa6a01e33e1ed4a5065",
+    "test_feature_core.py": "f861d871f5c610fa38526da1d834bd62d3adb06a31bffc89b6cf688946ae4f19",
+    "test_flow_tracker.py": "14df708728bb060dc7ef3de5d37d4fe967e1148f9de0e8488bfb2485e65bd9bf",
+    "test_fundamental_adapter_parity.py": "c88c3693dfb4c2389436ddd511dcc21a0b04f1540c9f16cf461341b04ddde5eb",
+    "test_fundamental_reconstruction.py": "be030ad2cc86c3192a7d987cc2f1021728e242ab276b30add94a04bf328b33d9",
+    "test_gap12_metrics.py": "d6b14102d4cae5f265c27d79ebdf1b96858a263be13ff44da3ee7bb7f4ebf21a",
+    "test_general_discovery_union.py": "4a6da3a7bee13a012b7166b2715500223f94388473a18d4ac255b92159568eb6",
+    "test_generalized_selection_research.py": "4105cf8d7cfd008e326ac219759b04562e2a8c3ea41f1804c4a57858405107ed",
+    "test_historical_valuation_percentile.py": "32da927ac0739b49109d77d483f904e7cd9ddeb7b8e9fddb21baa27732443dae",
+    "test_ic_overlap.py": "7de9733e22694ba4d06effa1c99dce32235bbe7277e34fd765b72a2b5bea1919",
+    "test_identity_provenance.py": "4eedcd70e2da0d4a3b0166e3794ed8a285a21c63ac5c038cb371ee0b0b08637f",
+    "test_identity_verification.py": "b6002e51811c6ce0eac1e4882de2c0ca7ae495599eb77e8f9791067a926792c4",
+    "test_integrated_mvp_outputs.py": "fde7ece54e0d862bf1f49326cf7a207a0d8b1357f26aeeb5604fc7a23cf179c6",
+    "test_intraday_watch.py": "2cd7c319fc93890d8c414c7826072cc6d622d2a966ca798017f00f73ea227dca",
+    "test_io_safety.py": "150787bc895b98ce89d9a804fb2f0690a2121aba4e3db6c121137ae8c4dd84e7",
+    "test_liquidity_gate_bias_audit.py": "69e4a85bb0d7e9d70e20266aefeaa0915bfe9047d8e04b62c93f69f7cc55a44e",
+    "test_live_data_correctness.py": "0dfc9f3cdf27c51cb7df9cad02713eef1800e29a41e7ab0e82d2f74beffaee71",
+    "test_low_value_gate_ablation.py": "5785da3e0cbbc82f75f96cb39a36231e190a82126f93d900f6db9ba2ae0e471e",
+    "test_low_value_gate_attribution.py": "386350828c55e5eb635a1b80540b536c7e5679590ecb6f57c8ac839bcf8a1572",
+    "test_low_value_single_gate_ablation.py": "6f066bc0edd446d87ccd640348f3646a0c60ab2e9de85238bcbb33d69a714fbf",
+    "test_m0_baseline_review.py": "b64edad5f5ffd8883481f8acfba544548707ff44bd1c8fd683a847492d666449",
+    "test_m1_share_scope_and_entry_silent_gates.py": "95ea4b80ebfaced753eb61c29827b34fb829d14917aff65030fa012c067d180f",
+    "test_m2_failure_attribution.py": "d0abc9e48d304299d71f989647a7730069270553ec1069f39b6e9badfe1a71a3",
+    "test_m3_candidate_preflight.py": "f249a3f48caf946e710279bbc8777cbd867312a0225d49df4c864437bd2a4be7",
+    "test_m4_paired_validation.py": "579383511aea977e73fc26a939f2431ce8b0e8da377594bd91c11405adb353ed",
+    "test_m5_opt_in_cli_and_shadow_snapshot.py": "c0279133816065cde5e7a61826eba89a76c6a68f4c4142a2f02c48040015f1d7",
+    "test_modal_historical_dataset_contract.py": "d8d780cb21fbbeaa45b640493aacbfb260ac8eed388d91da0cb09decf5cea3ab",
+    "test_modular_refactor_closure.py": "ebf07f4fc77293a7440f3624f5b5be60b21e94ab31d2e85e8ddfae609c02f69a",
+    "test_mvp_full_scan_acceptance.py": "fc3c59e4c3cd54416c1f9810852a0e6e4aa15c6135083b0ec82db9831359c2a3",
+    "test_mvp_strategy_snapshot_audit.py": "0636dd36affabe79362afe667433bcbe1cfcaf20c7d0e08d418d0eb7f6bc5c71",
+    "test_mvp_v11_a0.py": "836af4abc9d172d7c0d5f87b8d14ab87300e1b5989e072b3cef8f924ee4a9f9f",
+    "test_mvp_v11_b0_parity.py": "afbd017e604e2205a1667258ee66eeae8b813e491b6582e31cf58dda579b0be6",
+    "test_mvp_v11_candidate_preflight.py": "b53e8b34c02cd00da4bfcb67b02b17579aa120acad6a693c0364f3f734cc134a",
+    "test_mvp_v11_comparison.py": "7c1aafdec9411b6acf1a1eaf4e1e133deedc259749c5ac692070a32c0275887f",
+    "test_mvp_v11_data_risk_audit.py": "09dba1d1418e7f83faf4e07a32b3a34ea2f44c09fde09c4bf16cd6655313beed",
+    "test_mvp_v11_dev_cli_entrypoint.py": "256d8263569822424c8c98b52c0a7427390f27a9a6663b599b346720268e12f6",
+    "test_mvp_v11_dev_integration.py": "37bce4e479f9d692f8fb5e2b311b7286bf0760b3c032f62016731025aac88651",
+    "test_mvp_v11_dev_return_experiment.py": "0a006376122d0832b0d70a61c49972f66f5f6a94ad701e30301e3ce516772240",
+    "test_mvp_v11_entry_candidates.py": "ee0e49ebbba2f864f79bc4a6cb5b621ae86db5fce676dd8cbbb1cac550b798b7",
+    "test_mvp_v11_event_exposure_preflight.py": "2452ab543dd05603777a0aee7483a9ab5ec878a94c51460cf765e535f0d4d37b",
+    "test_mvp_v11_sec_pit_audit.py": "c2023fd3b85a852ad76500623d5fa316361f558088a1fe47107c149608a58ae3",
+    "test_nonoperating_gain_defense.py": "8a8a2e87ed9864bacd831667b2371ce43fac6dd5182ccc1ce421f828a5432f38",
+    "test_observation_scan.py": "a62dc7eaa2ef5e6f01882158728e802abd0e8db792cb5b0b762ab6127161ccc6",
+    "test_parsed_cache_periodic_gate.py": "31899254428d0919a6eae0dd87f8c481ab2bd8747bc46c92cc7a5e0df660dd78",
+    "test_pe_cash_backing.py": "120fdd25d9d2d58bf43afa3cb927fd154e6f6b926c53154371a71886a46865cc",
+    "test_peer_valuation_core.py": "6e4a9f22ab0d898e35e0bfe0dc81640dbe4785f54b15ffea999d6e182b889b63",
+    "test_portfolio_viability_triage.py": "4b96d773162763cc78eb125044deb1324042e342fde0b545f03c1a044dc21887",
+    "test_pre_e01_correctness.py": "bb793c09f6a719dd8639aee7ff8bff01e462a9871b42076e9f2db6744727ab57",
+    "test_price_feature_core.py": "f75b592852dbd09e506d33bbc757c223e4a341a1fb92b24d70ac45c618635b16",
+    "test_refactor_baseline.py": "a16d7c90aa9b00532de3a9d63ec3c21605fec8548d206ec39c718ff4817cd50f",
+    "test_refactor_characterization.py": "8b71a55d98518163805f2276a83254063e75a469b62732ffce7efc5ea9c37cb4",
+    "test_refresh_sec_cache_retry.py": "94114ee35bf15a32cd76b4ad22158ff4234faffd34a4bd5ec48006cd772a5484",
+    "test_render_intraday_preview.py": "a36fd78fb4ac952d39293d8c17665df8c2c811cc06302d54e369cf9841371a29",
+    "test_replay_checkpoint.py": "bb26a9db1ae46e73699e8ea25ccf57c895f2e3e88bcf2e4632c9fdca66a3eb06",
+    "test_report_clarity.py": "9203952b08358757a0dff872ef2f6e6283f848220bb8808cca6d575787cac28d",
+    "test_report_review_optimizations.py": "acfe4b41288c7ae9861839f77cef882bee00dbad86c18b45f0582408439b3ab9",
+    "test_review_20261106_repairs.py": "d12b433ec1ffb62f1e2592898aab949a4d723b20df419e7920796ed3c836d8a5",
+    "test_review_p0_fixes.py": "5cebcc10ca7b80c2d641f1675b30540c51239223c6b27acb8d8dd86c57c467ec",
+    "test_review_selection_utility.py": "d8ed63b21e2b34e949395daa047ce7c824236164f81f94cfbdd1f870426099d0",
+    "test_review_special_validation.py": "031f6698f620ce97c464dde895bfae06f146516fb74000a4d23ea317091017e5",
+    "test_run_extended_replay_evaluation.py": "744a7b2ef4d7c52d316031ec4c9bdd8b4621e9caa4165ac071d3f719b76a55f6",
+    "test_scan_reporting_boundary.py": "4172d4f84c35df6718ed4835b0c9f945ea23581d109802c6e73837c661b337ad",
+    "test_scored_list_parity.py": "d96288d8fcfb4809ea0c4975891d4cb0ba7f0f2cf3d69a205788172dc9671127",
+    "test_scoring_triage_logic.py": "4827bd6e010a0993fcdaa43038e45c1a7df68271178db1efefe59b3df757fd45",
+    "test_sec_periodic_pending_hardening.py": "850ef4d6726ac4b99ddaf63b02497d1132ce0908733679e3ce2ecbcca9832c88",
+    "test_share_count_integrity.py": "9c6d1348b7c5c69577b0a25dfd20a1cf2445d66cac1876567eca968e0434b25f",
+    "test_smallcap_universe.py": "554d4ccc2043264d932f97f2104fdfac84a887f9e8b779a01609d0f98cad7485",
+    "test_split_adjustment.py": "a8cf9c2bd5d757a81e79a0c2e97015fef9cdb48f52cf8230636f2aace2194c78",
+    "test_strategy_filter_selection_core.py": "124d4937de3331962194c115b57eb45bedda8b6bb4864919d7ff09d822c2e101",
+    "test_strategy_rules_research_core.py": "f8c334704a6f7eb2275a7b7eacecf7de751e7c373cce47932f38494a3fcd759b",
+    "test_strategy_scoring_core.py": "2c96d30fd134cabd1c853724f77b63bcec0e4f8d433f462af104d1328d69f91f",
+    "test_style_mirror.py": "eedd97a43ea5dea5c70ce44ef1397904cfac44172d95ccfe0fb0274d379ec3dc",
+    "test_sweep_score_weights_parity.py": "5b6b678128822374bcaf970034b152ed3fa2779129d07980217f1c25a4bed770",
+    "test_theme_component_weights.py": "b823322ce0518273f68bf4451ee857e5f3c36912cafb06d6cb117e424d56cb6b",
+    "test_top15_stability_and_turnover.py": "fdad124db44d19083934967c98b60e02cd63b02530f534d4893c3a3ca53be6ca",
+    "test_trade_plan_guards.py": "2fb35a197f498447cfbaa478fd9ab9033f4654f0f7e3f8db708892d46de8099b",
+    "test_ttm_quarter_reconstruction.py": "a066bea2e0ff4e1c63c301feeb80d15a79c4cfac61d058bd8448aa26a99153e8",
+    "test_tune_parameters_constraints.py": "2877385b9147918154fe8c0218d5869b4e7afc1488eafa1c24de574aadf145d0",
+    "test_validate_growth_compounder_offense.py": "a178d5289d688b5482c7beb944d2ce375d69db6a223ae254943077fcc503f184",
+    "test_venture_config.py": "625f7e77d8bc7432198c42323817b563cea86adb40b77f52b25db68a61c20a12",
+    "test_watchlist_refresh_safe_merge.py": "f0da158558624c90ec7657baf06cb8fc947635fb321a78146c0e960e0d29a202"
+  },
+  "harness_sha256": "dbcdad07a79a8a4460e02cecac91d4eaa46083049e50ff838ca3a7e715041d85"
+}

@@ -1,0 +1,22 @@
+{
+  "pids": [
+    1305956,
+    1306265
+  ],
+  "processes_exited": true,
+  "old_app": {
+    "app_id": "ap-lYZbbgjyBCsLbMxkYImerD",
+    "description": "selection-cross-cycle-review",
+    "state": "stopped",
+    "tasks": "0",
+    "created_at": "2026-11-06 04:00:10+08:00",
+    "stopped_at": "2026-11-06 09:01:50+08:00"
+  },
+  "other_projects_untouched": true,
+  "supplement_app": "ap-453sNHJtF6vcWjQec2vOWo",
+  "supplement_app_state": "stopped",
+  "supplement_tasks": 0,
+  "reuse_check_app": "ap-p084Rnc3i3wA3mci7RgALo",
+  "reuse_check_exit_code": 0,
+  "all_supplement_scopes_reused": true
+}

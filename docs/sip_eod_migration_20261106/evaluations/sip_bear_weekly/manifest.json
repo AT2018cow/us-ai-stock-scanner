@@ -1,0 +1,240 @@
+{
+  "protocol": {
+    "registered_utc": "2026-11-05T20:00:10.586734+00:00",
+    "candidate": "remove_age_proxy_priority_penalty",
+    "candidate_rule": "assign_action_priorities_v2(pre_earnings_penalty=0); keep risk evidence and safety gates",
+    "primary_horizon": 60,
+    "horizons": [
+      20,
+      60,
+      120,
+      252
+    ],
+    "cap": 15,
+    "base_cost_per_side_bps": 15,
+    "stress_cost_per_side_bps": 30,
+    "random_seed": 61106,
+    "bootstrap_repeats": 2000,
+    "bootstrap_block": "ceil(horizon*7/5 / median calendar spacing)",
+    "min_delta": 0.005,
+    "ci": 0.95,
+    "candidate_limit": 1,
+    "adoption": "all criteria in implementation_review_plan section 4; no promotion if coverage or uncertainty fails",
+    "evidence_class": "retrospective; frozen/union universe approximation",
+    "weekly_transition": "previous daily state unavailable in monthly data; no reconstruction of downgrade alert-only slots"
+  },
+  "protocol_sha256": "493ff2cc7de3c1e40bad229a55c6e8c834901287a2aa7de664d1254898711e77",
+  "config_sha256": "d1a5dc413d097c90bbd6cec9a60ad79dbb907ca296fbb2e4773308a144bbe4d7",
+  "prefilter": {
+    "min_price": 1.0,
+    "min_dollar_volume": 2000000.0,
+    "feed": "sip"
+  },
+  "inputs": {
+    "research/sip_migration_20261106_v1/datasets/sip_bear_weekly_v1/dataset.csv": "05464e7f8e3fd0c193f305f2886c04136f1a81899a8015b3c41f17816449aa64"
+  },
+  "sources": {
+    "src/ai_value_scanner/__init__.py": "d540301cc526e55b27c1a2907a8d15c92380a29e8a795778d9415694dbc71294",
+    "src/ai_value_scanner/backtest.py": "7ddd07a2d68595c812c63765c585279879b777c0204b2b0da4d99052f3878000",
+    "src/ai_value_scanner/config.py": "5865d2b1242d08e886858819f90a9f2c18650b68c82ffc4502796a01156f4712",
+    "src/ai_value_scanner/decision/__init__.py": "d56104b62029f9adbadb51ada08e4c14132a96e533cacd51a1d64ce223c08c2d",
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/decision/attention.py": "6eac216b030db1b38fe8950070a0cf118b2710c33ffe741f86ee3619f859d63c",
+    "src/ai_value_scanner/decision/discovery.py": "586b4387f140300844ce6ddf33aa24c963395849c02d5a58ad27b78cd4b6f678",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/integrated.py": "c0127515f79f2fd44655a66ff2119ca7861784d4bb40949bc60a504c66931ef8",
+    "src/ai_value_scanner/decision/model.py": "1402d1304b15d541bcad02fc992753227a3a28fb704913bf28a47e40cf7274e5",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/review_context.py": "48283b7cf1922b24f46fa4fef73fdbc646044bd127f677ee39b520cd91195a67",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/decision/view_model.py": "82ed1f548e92ba9b6be43c85ec8f4e110ffaa08c8a2e385a7898e3fde421e03b",
+    "src/ai_value_scanner/evaluation/__init__.py": "7c87403f667d11268fbfc5fbeeada925d0d61b9cf95d52d81aae6fffe679313c",
+    "src/ai_value_scanner/evaluation/action.py": "12f8a9046c54b421a8915aa11334c735d82fa2195955ff436452fee22d1632a3",
+    "src/ai_value_scanner/evaluation/backtest.py": "cf5ce007a3f4330c949fea77ca81814e2715f61b6d271abffb8685bda272f6d8",
+    "src/ai_value_scanner/evaluation/company_quality.py": "9a3398ba749ffb9f991869582f4b956c24682a829b3c606639f42173dff448fc",
+    "src/ai_value_scanner/evaluation/entry_quality.py": "5ed8148b489c4dd71fa443e9c0ac14444d80e937bd5f82b7fe4071f4b19c6643",
+    "src/ai_value_scanner/evaluation/equity_continuity.py": "bb28578089d892bd65ac64bf85728eb55555ffc3382316217b891fd1acd4c38e",
+    "src/ai_value_scanner/features/__init__.py": "f0a7aebc8ac0493e8c161ab4f3e4e8ddb8c6ae7c973c889ee66c7538041bb4ed",
+    "src/ai_value_scanner/features/ai_link.py": "f7192f71245e3cba16c2c9cf0db34c1049c3b2212dd0c724cafe9d2965ec377f",
+    "src/ai_value_scanner/features/derived.py": "59c6adf1bf5bd0f1c3a7c0e8318514386178725f5ef0de5d7d12435b73f85525",
+    "src/ai_value_scanner/features/peer_valuation.py": "207f7bbaa5f36fc5860229a20e8428abe8e3b3e84cfa4273d6b81baa755a914a",
+    "src/ai_value_scanner/features/price.py": "63867b2bcd58ddebe3ec98430261b9de40830c6ada3331bea86f37ff7146d1b3",
+    "src/ai_value_scanner/features/valuation.py": "20a3d381563fc87daf2a03f6e35f626cf315ec74aec6a3a745eb365abf1105cd",
+    "src/ai_value_scanner/fundamentals/__init__.py": "1d612719193d7e2e4f93597ce220f4bb6be9b0a4d3c7d0dbc746d12498cc2744",
+    "src/ai_value_scanner/fundamentals/accounting.py": "7efcd9023f548701fd2867b88ec197c79de9388e7518c063c6ddef00cbbb6909",
+    "src/ai_value_scanner/fundamentals/edgartools_diagnostic.py": "6c402af5702c7be366d04bfd21b0b5a78feab6099ea076df073161cde5ff3132",
+    "src/ai_value_scanner/fundamentals/edgartools_fallback.py": "9a61193eea62df40c286fd1ede634167b3ba3c6d92389ad71ddc36ef2857cf94",
+    "src/ai_value_scanner/fundamentals/facts.py": "68785735b7c57fb997ffeeef6ab06d9a7b34ee63367bafa43d1df29efd1f01ee",
+    "src/ai_value_scanner/fundamentals/identity.py": "f32b2316ce8663aa92750dbf48efd4ff7ac748a700a8c138a58f1895a937efff",
+    "src/ai_value_scanner/fundamentals/provenance.py": "1ae085f0990cacb856a9d048d32d8d558e37f6b24c5948bfb6e7c2bfcc4809f7",
+    "src/ai_value_scanner/fundamentals/reconstruction.py": "ecd1a6138864c36228d7d9e52adfb15d101bddc319b94659690cba3bde693f68",
+    "src/ai_value_scanner/fundamentals/shares.py": "eaf99517f87030613211b1dc6de73d7abaa04582efef1321fd951e092790d2ae",
+    "src/ai_value_scanner/market_calendar.py": "5d3391c4787a298d685e4690a5decb8cc54bad4210044aefa601d662d3d01a50",
+    "src/ai_value_scanner/market_data.py": "34aac3999b023378e9e7e59d543350f3bb05a293b7090bf007f9935d0384ec01",
+    "src/ai_value_scanner/replay_checkpoint.py": "e943cd6b43a72d9afaf3da92b53f650f59240bea82c7a63fdcbe30b1be41e38e",
+    "src/ai_value_scanner/reporting/__init__.py": "b339ccdbb1e3bf4e935434b8acf034d68b80c486b88d1e555340290a74f6f4f4",
+    "src/ai_value_scanner/reporting/backtest.py": "37a8d40b34ac3ec9c6ad5eefc40f7dac8cd7b181b79daec40815eef21c4ded1e",
+    "src/ai_value_scanner/reporting/decision.py": "f05ada11d6172a8bbd89f8842006e2a6de55d97af4311370c2cc88285a66978f",
+    "src/ai_value_scanner/reporting/scan.py": "b81e50abc8454c7fddc0905fa3910380f6e10a0d603cac261943232b0393d13d",
+    "src/ai_value_scanner/reporting/snapshot.py": "86a12c3bf2d934b5c1d422be597a77b4bb8a6a2e8ffcd4591283dcf0165528dd",
+    "src/ai_value_scanner/research/__init__.py": "12e39151468cef8b3f1079a56adbc233d60d9443f8da73aba93f6289335d1156",
+    "src/ai_value_scanner/research/m0_baseline_review.py": "80d979b07ce69c1d13c572523efa67bc6e831ed39e71968864fdb9b97e9f7de1",
+    "src/ai_value_scanner/research/m2_failure_attribution.py": "14c4c7312af750b057fb665a26027cafcd2aa686ecea126ee478c8a64ac8b4f0",
+    "src/ai_value_scanner/research/m3_candidate_preflight.py": "e3b5840213e7bdbae0d94490d386ac12562c3ed76dc8c929b278494c6dc2439e",
+    "src/ai_value_scanner/research/m4_paired_validation.py": "da9ab180f8a85bf620b668978c30db555a0154f4bbb4bee355ceb00daad207c8",
+    "src/ai_value_scanner/research/mvp_v11.py": "eb58d0bd71a66235818c0878f13e000d435e9f3baeef8658aabe9fcbc15326b8",
+    "src/ai_value_scanner/research/mvp_v11_candidates.py": "9dd6c1cbf695ca09770fe16f59bcfa900fe24fa32c942259a607a7afe30174b7",
+    "src/ai_value_scanner/research/mvp_v11_comparison.py": "bef6f9e244f86debceb432f66c0fb5d901b821fee429eb96e80e6daa47fdc24a",
+    "src/ai_value_scanner/research/mvp_v11_dev_reports.py": "40b62bf743deb1d8c4883c2f7c6baca9c3dbeb1e1b631655a4114c824a2dfc26",
+    "src/ai_value_scanner/research/mvp_v11_score_masks.py": "8c2f7ff530a21e4c6a961b8d9310e375eb5da4ffaca530b2ac9d8a251eb57ce6",
+    "src/ai_value_scanner/research/review_utility.py": "674916ab4f84b2e49570b662d936c2007889e191f249bb64d9fff9b5381ddfa7",
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6",
+    "src/ai_value_scanner/scanner.py": "29408c0291de173d2f116223a0fe2208e4015f561a26972246f01f856fdbc4af",
+    "src/ai_value_scanner/strategy/__init__.py": "cb182307a92d04a8880a3c816cd71df5ed44372eceaf0c5fd5dc01e1762f0972",
+    "src/ai_value_scanner/strategy/filtering.py": "57b2cc4ddf0ac983571541b837f6c9ac82924315aa90767cf8ce0891206c7d42",
+    "src/ai_value_scanner/strategy/research.py": "2f8917aa3d3d8d346b03769be51f8b6d096357d1a91ca76ea6cf02cd810ffa3b",
+    "src/ai_value_scanner/strategy/rules.py": "c7a1af85c633e89f7debb459e95a2a682386e40192bfdad12641e3e36e34df85",
+    "src/ai_value_scanner/strategy/scoring.py": "f7377ecf2f3f7c6333339844c1d09c765a20bb42df6b43d174954245c74a62c4",
+    "src/ai_value_scanner/strategy/selection.py": "ce0c1915f53412aa4d22dd8eaa2ba01121970a23a3bb1da410da1d2580085352",
+    "src/ai_value_scanner/validation/__init__.py": "cba9b8c484b4a1b39f903ae9bff42a2bd00937fbec8651984e1a92e988f35926",
+    "src/ai_value_scanner/validation/snapshots.py": "782b9834bd182a1b801223c41831ddf7eff14c162e46186525793dd227f992b8",
+    "scripts/evaluate_current_top15.py": "bee8da523f91b5f996d11cb9bf2696560c4949b7bab585e84bdc86c36cef94f0"
+  },
+  "code_sha": "830702b73749c92be20f02a3463669f1b8e7dbd8",
+  "input_contracts": [
+    {
+      "dataset": "dataset.csv",
+      "status": "verified_label_contract",
+      "metadata_sha256": "a319bdc1d0b733d572232b8e4ce09b027089635109d058798584c9a42d1009b0",
+      "feed": "sip",
+      "cost": 0.003
+    }
+  ],
+  "n_rows": 35747,
+  "n_dates": 52,
+  "start": "2022-01-07",
+  "end": "2022-12-30",
+  "universe_sources": [
+    "union_superset_approx"
+  ],
+  "candidate_adopted": false,
+  "paired": {
+    "list": {
+      "n_paired_dates": 52,
+      "n_mature_dates": 52,
+      "mean_delta": 0.00020636755709465784,
+      "median_delta": 0.0,
+      "ci_low": -0.0042096310926094385,
+      "ci_high": 0.004464821088893895,
+      "block_dates": 12,
+      "top_contributor": "CF",
+      "leave_top_contributor_delta": -0.0013607639023146506,
+      "nonoverlap_n": 4,
+      "nonoverlap_delta": 0.0011723637097112304,
+      "pressure_groups": {
+        "bear2022": {
+          "n_dates": 52,
+          "mean_delta": 0.00020636755709465784,
+          "severe_delta": -0.0025641025641025645
+        },
+        "down": {
+          "n_dates": 44,
+          "mean_delta": -0.0007055452178889328,
+          "severe_delta": -0.0030303030303030307
+        },
+        "covid_shock": {
+          "n_dates": 0,
+          "mean_delta": null,
+          "severe_delta": null
+        }
+      },
+      "checks": {
+        "mean_delta": false,
+        "median_delta": false,
+        "stress_positive": true,
+        "full_severe_noninferior": true,
+        "all_mature_dates_complete": true,
+        "leave_top_contributor_positive": false,
+        "ci_positive": false,
+        "bear2022": true,
+        "down": false,
+        "covid_shock": false
+      },
+      "adopt": false
+    },
+    "usage": {
+      "n_paired_dates": 52,
+      "n_mature_dates": 52,
+      "mean_delta": 0.0011435947177230094,
+      "median_delta": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0027502124564379076,
+      "block_dates": 12,
+      "top_contributor": "CF",
+      "leave_top_contributor_delta": 0.00031163908811395055,
+      "nonoverlap_n": 4,
+      "nonoverlap_delta": 0.00024194930452418884,
+      "pressure_groups": {
+        "bear2022": {
+          "n_dates": 52,
+          "mean_delta": 0.0011435947177230094,
+          "severe_delta": -0.001282051282051283
+        },
+        "down": {
+          "n_dates": 44,
+          "mean_delta": 0.0002681040017425628,
+          "severe_delta": -0.001515151515151516
+        },
+        "covid_shock": {
+          "n_dates": 0,
+          "mean_delta": null,
+          "severe_delta": null
+        }
+      },
+      "checks": {
+        "mean_delta": false,
+        "median_delta": false,
+        "stress_positive": true,
+        "full_severe_noninferior": true,
+        "all_mature_dates_complete": true,
+        "leave_top_contributor_positive": true,
+        "ci_positive": false,
+        "bear2022": true,
+        "down": true,
+        "covid_shock": false
+      },
+      "adopt": false
+    }
+  },
+  "baseline_evidence": {
+    "list": {
+      "n_dates": 52,
+      "mean_excess": 0.017224328006769936,
+      "ci_low": -0.022155597524237475,
+      "ci_high": 0.05641799814821524,
+      "block_dates": 12,
+      "mean_exposure_matched_excess": 0.017224328006769936,
+      "interpretation": "retrospective benchmark-relative selection evidence, not prospective alpha proof"
+    },
+    "usage": {
+      "n_dates": 52,
+      "mean_excess": 0.013708348760809955,
+      "ci_low": -0.03304257002189919,
+      "ci_high": 0.06102017147449713,
+      "block_dates": 12,
+      "mean_exposure_matched_excess": 0.0035116271981401976,
+      "interpretation": "retrospective benchmark-relative selection evidence, not prospective alpha proof"
+    }
+  },
+  "caveats": [
+    "retrospective universe approximation",
+    "price returns, split adjusted; dividends excluded on both legs",
+    "monthly sampling does not validate daily S2 or previous-day downgrade alert slots",
+    "dates without benchmark SMA200/60d history remain logged but excluded from formal paired comparison",
+    "no annualized account return from overlapping cohorts",
+    "missing labels retained as unknown, not cash",
+    "Official SIP EOD mode: 2m dollar-volume floor uses consolidated volume; historical IEX figures are not liquidity-equivalent"
+  ],
+  "official_market_mode": "sip_eod"
+}

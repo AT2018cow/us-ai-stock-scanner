@@ -1,0 +1,25 @@
+{
+  "inputs": {
+    "research/sip_migration_20261106_v1/datasets/sip_bear_weekly_v1/dataset.csv": "05464e7f8e3fd0c193f305f2886c04136f1a81899a8015b3c41f17816449aa64",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_bear_weekly_v2/slots.csv": "29b1a50bfde7f95fdde1921ee55a5e297cfedfba7a699701523355b25bb1b70d",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_bear_weekly_v2/cohorts.csv": "c02fecaf9f69da2f1923f0ed4615370ce17fbf363f8f43f50f688f9e9a2ab666",
+    "research/sip_migration_20261106_v1/evaluations/evaluation_sip_bear_weekly_v2/manifest.json": "36b4d6bb58601d0e30fa5f460d5e9a19d76ffc08fe25e50612a2586f0f74605a"
+  },
+  "sources": {
+    "src/ai_value_scanner/research/selection_attribution.py": "4903a64d7cfe870b30f3de5f96a3c3d5975815e52ac03dc92a672caad780c9fa",
+    "scripts/complete_selection_review.py": "5a96304f4d8f67fa54fd3cb903fd2532398d792d92cf8d376d58ab2b9d08bc5c",
+    "src/ai_value_scanner/decision/quality.py": "f81b962dcaf6794abcb175ea463a1227fb286ef66522a3d4d2c4d9fe280018fe",
+    "src/ai_value_scanner/decision/entry.py": "36628815e5310a54f1ec508de5a11a4cb93fabb1f5441efde1d0b53d046bee5e",
+    "src/ai_value_scanner/decision/action.py": "690cbd0be7e6d41de3854651eb6b3852f893dcb65607221d61fea20c77e1e631",
+    "src/ai_value_scanner/decision/universe.py": "94b39245f394f1e6f3f0e338d981e02744c8a4a96c83565c74f0fd7905d792f1",
+    "src/ai_value_scanner/research/top15_backtest.py": "a60503fc1a8f8620dc2b2be84bbce3dd2534403af3a3c83837d8ebeb293663f6"
+  },
+  "protocol_sha256": "39357003b934371bf8d3eac1bd9f90e79cb7b84538f99d05d94c3be1dbe01eb7",
+  "elapsed_seconds": 71.232596864,
+  "smoke": false,
+  "tolerance": 0.01,
+  "evidence_class": "supplemental already-viewed retrospective diagnostics; original candidate result unchanged",
+  "new_strategy_candidates": 0,
+  "classification": "current SIC descriptions / SIC 2-digit; not historical GICS",
+  "weights": "deletion sensitivity leaves cash; no renormalization; original complete common dates retained"
+}

@@ -280,6 +280,7 @@ def default_low_coverage_soft_score_weights() -> dict[str, float]:
 @dataclass
 class ScanConfig:
     config_schema_version: int = 1
+    official_market_mode: str = 'snapshot'
     # Explicit identity for production two-style configs. None is valid for
     # theme/venture/calibration configs that are not one of the two AI styles.
     strategy_style: str | None = None
@@ -617,6 +618,8 @@ class ScanConfig:
 
         for name in ("alpaca_max_requests_per_sec", "sec_max_requests_per_sec"):
             require_number(name, minimum=0.000001)
+        if self.official_market_mode not in {'snapshot','sip_eod'}:
+            raise ValueError('official_market_mode must be snapshot or sip_eod')
         for name in (
             "min_price",
             "min_market_cap",
