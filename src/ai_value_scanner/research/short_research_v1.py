@@ -1378,11 +1378,17 @@ def evaluate_frozen_short_research(
     output_root: str | Path,
     *,
     scope: str = "full",
+    scan_entry_integration: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Lazy wrapper for the frozen-data evaluator (keeps import graph small)."""
     from .short_research_v1_eval import evaluate_frozen_short_research as _impl
 
-    return _impl(dataset_root, output_root, scope=scope)
+    return _impl(
+        dataset_root,
+        output_root,
+        scope=scope,
+        scan_entry_integration=scan_entry_integration,
+    )
 
 
 __all__ = [
