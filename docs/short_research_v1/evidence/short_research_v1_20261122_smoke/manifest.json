@@ -1,5 +1,5 @@
 {
-  "code_sha": "d923e6c096386521032299fb87e3578f54460728",
+  "code_sha": "1aedd4e6ef112e1fbce51cc7979fca488011f536",
   "created_at_utc": "2025-01-31T23:59:59+00:00",
   "inputs": {
     "sip_2016_2020_v1": {
@@ -27,18 +27,18 @@
     "members.csv": "d614ae42e6ad60384879a491e3984c8a14f85620849ef1e79bc15e1ebb8b9c8e",
     "paired_by_date.csv": "dbeeaf5b17330bed6021eae1f0bd86dae6a06ea6facd00aacfad6361df976d63",
     "protocol.json": "baf0383d318d1a07b2688cc45f32b8e9c85a73a29c9c0c09af8e396092f83ab7",
-    "report.md": "20fd6f706d622443a7229a818b74007b1e3660ddc2ba3776baae6fb3ab8f5eeb",
-    "scan_integration.json": "2582f07c8e3928d447082aeeff3e393957019be7aa3b56c35fbddfb96a2ce945",
+    "report.md": "7a978a29041bce25f662c40b38b653b223320881671eece436bf5f38870f5372",
+    "scan_integration.json": "5830e7a992ed666ac6c373e61b12607bcd41536747a454ab259ae5395aec3d8d",
     "short_candidates.csv": "8c8a26990c2d276d04f1bb59b64a7577e5d431613c3d3b22996466cb01c0c224",
     "short_research.json": "f4e6e9c75c5b5055af3c3217852432aaa8426ff438ead5c2e18032398d979369",
     "summary.csv": "571b57b06fcad2ba065dcda5f49fd5bae4fd30a4151df6454e7992408ba76248",
-    "validation.json": "b5391091be4e33821c806fd349669fbb4fb80e0aeb89e9d5384355d0074083a5",
+    "validation.json": "4b44db9036ab46905b815a3e69d70fcfb6883c9b8562a1fcb47deb3acb0fb4ed",
     "weekly_review_short_fragment.md": "44c645ebff077ae4b9d79ea96479685940719e057d0d9e734722811243e4785d"
   },
   "run_id": "smoke",
   "scope": "smoke",
   "source_files": {
-    "short_research_v1.py": "1625fd06a352cd67648b660889111f3dd2a369f07d32404c50510b4eb35a620d",
-    "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
+    "short_research_v1.py": "8d0d1f965c41d0705ad91bded63fdd2af5ec53d5350d4fd1ed8a1bf1a10e8404",
+    "short_research_v1_eval.py": "98ab70daec474d468f454f5e22880dd074d77a941d2336d1e2967a9f568829e6"
   }
 }

@@ -43,6 +43,137 @@
   },
   "ok": true,
   "s2_dates": 103,
+  "scan_entry_integration": {
+    "code_sha": "1aedd4e6ef112e1fbce51cc7979fca488011f536",
+    "core_failure": {
+      "decision_output_status": "failed",
+      "latest_pointer_exists": false,
+      "latest_pointer_status": "not_attempted"
+    },
+    "dataset": "sip_2021_2026_v1",
+    "evidence_type": "mocked_scan_entry_frozen_input",
+    "long_daily_symbols_identical": true,
+    "long_decisions_identical": true,
+    "long_legacy_csv_identical": true,
+    "long_weekly_symbols_identical": true,
+    "market_data_feed": "sip",
+    "off": {
+      "daily_symbols": [
+        "CRM",
+        "FLEX",
+        "CPRT",
+        "ANET",
+        "ISRG",
+        "WWD",
+        "PYPL",
+        "DIS",
+        "DRS",
+        "TDY",
+        "FTNT",
+        "KMI",
+        "EMR",
+        "OSPN",
+        "BL"
+      ],
+      "decision_output_status": "written",
+      "latest_pointer_status": "written",
+      "legacy_csv_sha256": {
+        "industry_trend": "649e34cad02ae9d7c70088071f61d461af2d38484276a11b51d21c65305692fb",
+        "momentum": "6e8ce71b9563ca574d5d0dd6b272e3ddc1d6f02c89ec14996f4f6a5c169cc1cb",
+        "ranked": "9ee0af0ed56238ce07d0fa15a4902c8905f1846b4e0ff97fce18df49862597ed",
+        "research_pool": "d34b6b3120e34a5ddfa575ec74fc0f28fb289a9b2988e6c9faea29f8c4f8d692"
+      },
+      "short_files_present": false,
+      "short_status": "disabled",
+      "weekly_symbols": [
+        "CRM",
+        "FLEX",
+        "CPRT",
+        "ANET",
+        "ISRG",
+        "WWD",
+        "PYPL",
+        "DIS",
+        "DRS",
+        "TDY",
+        "FTNT",
+        "KMI",
+        "EMR",
+        "OSPN",
+        "BL"
+      ]
+    },
+    "on": {
+      "daily_symbols": [
+        "CRM",
+        "FLEX",
+        "CPRT",
+        "ANET",
+        "ISRG",
+        "WWD",
+        "PYPL",
+        "DIS",
+        "DRS",
+        "TDY",
+        "FTNT",
+        "KMI",
+        "EMR",
+        "OSPN",
+        "BL"
+      ],
+      "decision_output_status": "written",
+      "latest_pointer_status": "written",
+      "legacy_csv_sha256": {
+        "industry_trend": "649e34cad02ae9d7c70088071f61d461af2d38484276a11b51d21c65305692fb",
+        "momentum": "6e8ce71b9563ca574d5d0dd6b272e3ddc1d6f02c89ec14996f4f6a5c169cc1cb",
+        "ranked": "9ee0af0ed56238ce07d0fa15a4902c8905f1846b4e0ff97fce18df49862597ed",
+        "research_pool": "d34b6b3120e34a5ddfa575ec74fc0f28fb289a9b2988e6c9faea29f8c4f8d692"
+      },
+      "short_files_present": true,
+      "short_report_section": true,
+      "short_selected_count": 1,
+      "short_status": "ready",
+      "weekly_symbols": [
+        "CRM",
+        "FLEX",
+        "CPRT",
+        "ANET",
+        "ISRG",
+        "WWD",
+        "PYPL",
+        "DIS",
+        "DRS",
+        "TDY",
+        "FTNT",
+        "KMI",
+        "EMR",
+        "OSPN",
+        "BL"
+      ]
+    },
+    "qqq_below_sma200": true,
+    "short_failure": {
+      "decision_output_status": "written",
+      "latest_pointer_status": "written",
+      "long_snapshot_published": true,
+      "reason_codes": [
+        "SHORT_RESEARCH_CALCULATION_FAILED"
+      ],
+      "short_status": "unavailable"
+    },
+    "signal_date": "2025-01-31",
+    "test_command": ".venv/bin/python -m unittest discover -s tests -p test_short_research_v1_scan.py",
+    "truncation": {
+      "csv_lines": 1,
+      "decision_output_status": "written",
+      "latest_pointer_status": "not_applicable",
+      "long_snapshot_published": true,
+      "reason_codes": [
+        "UNIVERSE_TRUNCATED_MAX_SYMBOLS"
+      ],
+      "short_status": "unavailable"
+    }
+  },
   "scope": "full",
   "verdict": {
     "reasons": [

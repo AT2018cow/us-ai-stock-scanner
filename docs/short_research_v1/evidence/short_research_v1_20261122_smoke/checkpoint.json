@@ -2,17 +2,18 @@
   "complete": true,
   "created_at_utc": "2025-01-31T23:59:59+00:00",
   "identity": {
-    "code_sha": "d923e6c096386521032299fb87e3578f54460728",
+    "code_sha": "1aedd4e6ef112e1fbce51cc7979fca488011f536",
     "contract_version": "short_research_v1",
     "inputs": {
       "sip_2016_2020_v1": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
       "sip_2021_2026_v1": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474"
     },
     "rule_version": "short_research_rules_v1",
+    "scan_entry_integration_sha256": "bf642f66b38d98818689fddb8b3bb903e145537eaa934c90bd6bbb9a344f0314",
     "scope": "smoke",
     "source_sha256": {
-      "short_research_v1.py": "1625fd06a352cd67648b660889111f3dd2a369f07d32404c50510b4eb35a620d",
-      "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
+      "short_research_v1.py": "8d0d1f965c41d0705ad91bded63fdd2af5ec53d5350d4fd1ed8a1bf1a10e8404",
+      "short_research_v1_eval.py": "98ab70daec474d468f454f5e22880dd074d77a941d2336d1e2967a9f568829e6"
     }
   }
 }

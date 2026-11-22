@@ -116,6 +116,7 @@
 
 - Evidence type: `frozen_input_adapter_simulation`
 - Statuses observed: ['no_candidates', 'ready']
+- Mocked scan entry: off/on long decisions identical=True · legacy CSV identical=True · on short status=ready · truncation status=unavailable · short-failure status=unavailable
 - A credentialed live SIP scan was not run here; the frozen adapter and snapshot/report contract are covered by tests and the commands file.
 
 ## 8. Honest limitations

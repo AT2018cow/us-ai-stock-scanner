@@ -1,5 +1,5 @@
 {
-  "code_sha": "d923e6c096386521032299fb87e3578f54460728",
+  "code_sha": "1aedd4e6ef112e1fbce51cc7979fca488011f536",
   "created_at_utc": "2026-10-30T23:59:59+00:00",
   "inputs": {
     "sip_2016_2020_v1": {
@@ -43,18 +43,18 @@
     "members.csv": "8d09cec76c93bddcef22c97fe9e8033301c780fa3e44a359323d97ced6934a1a",
     "paired_by_date.csv": "9bb52533bd6299a9f76b81cbbdce0b9c936f695fa15e88cfe1532a53d6a48a1d",
     "protocol.json": "1a736d05e8de042e6083e896a0424898f8bfc5e65909b593dd6bb8c104557506",
-    "report.md": "64ec1de5c81f0dc374e66a1989415df1ff057865475cb5b2663d7aa18f704945",
-    "scan_integration.json": "f16b6c61e7b7c5fd09f083bb9925526491b2efe990f06ecc7778c337d3feb67a",
+    "report.md": "a2ae0d430c96275b2e6cce5880c5c57299baf8b5d02ce0c5c57a927e3e001fd1",
+    "scan_integration.json": "5379a8698d11d288bab63fa47100ba06f70ba6f327b000428070b4745987547b",
     "short_candidates.csv": "0699da9d828988c033dd9c2a38e9b7166cb28e12b43abc51c86b197f0070d000",
     "short_research.json": "2f5a83fa0a087a1dd0df10379d29fd2c0889d198d34fb780c6ecf521a2427f6f",
     "summary.csv": "97ecdf775c73e34d438326b3cdb6a1f80e88e4af71a2abf3f260afda15ecf19f",
-    "validation.json": "281f2993929aec9e696e7b33d7de275ad13dd409f27e683a37c7bd3e0da07af3",
+    "validation.json": "fdf5c150514f1ce5b2bd15ccfd790883d109f5755dd5a3884a0eacf5391edd99",
     "weekly_review_short_fragment.md": "0091fbd2184aa3c73d2f5be68f063f04fd650a1a97f9f4ab56751d7993da0b54"
   },
   "run_id": "full",
   "scope": "full",
   "source_files": {
-    "short_research_v1.py": "1625fd06a352cd67648b660889111f3dd2a369f07d32404c50510b4eb35a620d",
-    "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
+    "short_research_v1.py": "8d0d1f965c41d0705ad91bded63fdd2af5ec53d5350d4fd1ed8a1bf1a10e8404",
+    "short_research_v1_eval.py": "98ab70daec474d468f454f5e22880dd074d77a941d2336d1e2967a9f568829e6"
   }
 }
