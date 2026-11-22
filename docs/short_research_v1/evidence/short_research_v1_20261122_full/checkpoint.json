@@ -2,7 +2,7 @@
   "complete": true,
   "created_at_utc": "2026-10-30T23:59:59+00:00",
   "identity": {
-    "code_sha": "7f411eadd3c8d23d92f9c3303a7dbc36908eee1f",
+    "code_sha": "d923e6c096386521032299fb87e3578f54460728",
     "contract_version": "short_research_v1",
     "inputs": {
       "sip_2016_2020_v1": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
@@ -13,7 +13,7 @@
     "rule_version": "short_research_rules_v1",
     "scope": "full",
     "source_sha256": {
-      "short_research_v1.py": "0bfd48dcfd4b11c8d24d77ba8b9a8f7f375412641dce2b5ab27fd947b9309ac8",
+      "short_research_v1.py": "1625fd06a352cd67648b660889111f3dd2a369f07d32404c50510b4eb35a620d",
       "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
     }
   }

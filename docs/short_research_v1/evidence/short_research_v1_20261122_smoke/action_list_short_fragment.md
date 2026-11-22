@@ -5,6 +5,7 @@
 - **Independence**: This is a fourth, separate research list. It does not change the long Top-15, Action states, Low-Value, Industry-Trend, Momentum, or Research Pool. It is not a trade instruction.
 - **Funnel**: input 564 → U0 436 → industry RS 231 → P/E 154 → U 146 → S0 44 → S1 8 → S2 2 → selected 2
 - **Status counts**: CONFIRMED 2 · INSUFFICIENT_DATA 290 · NO_SIGNAL 142 · SCOPE_EXCLUDED 128 · WATCH 2
+- **Reason counts**: AVG_DOLLAR_VOLUME_BELOW_MIN 92 · DOLLAR_VOLUME_BELOW_MIN 49 · DUPLICATE_CIK_LOWER_ADV 1 · FUNDAMENTAL_ASOF_INVALID 22 · FUNDAMENTAL_ASOF_MISSING 23 · FUNDAMENTAL_ASOF_STALE 18 · INDUSTRY_PEERS_INSUFFICIENT 205 · INDUSTRY_RS_MISSING 205 · OCF_DIRECTION_INVALID 34 · OCF_GROWTH_MISSING 34 · PE_PEERS_INSUFFICIENT 179 · PE_VALUATION_MISSING 282 · PRICE_BELOW_MIN 39 · PRICE_TO_SMA50_MISSING 2 · RETURN_60D_MISSING 3 · REVENUE_MISSING 38 · REVENUE_NONPOSITIVE 1 · REVENUE_YOY_MISSING 42 · SIC_FINANCIAL_EXCLUDED 41
 - **CSV**: [short_candidates.csv](./short_candidates.csv)
 
 | # | Symbol | SIC | RS60 vs peers | SMA50 | 20d | Rev YoY | OCF YoY | P/E pct | P/E prem | Borrow |

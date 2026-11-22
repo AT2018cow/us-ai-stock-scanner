@@ -2,8 +2,8 @@
 
 - Date: 2026-11-22
 - Status: implemented; frozen smoke and full evaluation complete; production configs remain disabled.
-- Implementation commit: `7f411eadd3c8d23d92f9c3303a7dbc36908eee1f` (`7f411ea`)
-- Evidence `manifest.json` code_sha: `7f411eadd3c8d23d92f9c3303a7dbc36908eee1f`
+- Implementation commit: `d923e6c096386521032299fb87e3578f54460728` (`d923e6c`)
+- Evidence `manifest.json` code_sha: `d923e6c096386521032299fb87e3578f54460728`
 - Contract: `short_research_v1` · Rule: `short_research_rules_v1`
 - Independent reviewer: Codex (V1-01 … V1-10)
 
@@ -67,8 +67,8 @@ Enablement is intentionally left to the user; production configs do not set `ena
 
 ## 3. Test result
 
-- `tests/test_short_research_v1.py`: **47 tests, OK**.
-- Full unittest suite: **1,430 tests, OK** (the repository's intentional theme-status message still prints, but the process exits 0).
+- `tests/test_short_research_v1.py`: **48 tests, OK**.
+- Full unittest suite: **1,431 tests, OK** (the repository's intentional theme-status message still prints, but the process exits 0).
 
 ## 4. Evidence
 

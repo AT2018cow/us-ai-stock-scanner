@@ -1,5 +1,5 @@
 {
-  "code_sha": "7f411eadd3c8d23d92f9c3303a7dbc36908eee1f",
+  "code_sha": "d923e6c096386521032299fb87e3578f54460728",
   "created_at_utc": "2026-10-30T23:59:59+00:00",
   "inputs": {
     "sip_2016_2020_v1": {
@@ -36,7 +36,7 @@
     }
   },
   "outputs": {
-    "action_list_short_fragment.md": "248c20b59660e4e713cafcf2c76a1d3e90df7625d3174943c49ffa6e62851b19",
+    "action_list_short_fragment.md": "0091fbd2184aa3c73d2f5be68f063f04fd650a1a97f9f4ab56751d7993da0b54",
     "casebook.csv": "fd8e1f249971fbbfb5f2c5b8b565cfe19f11df2563cc774b26d93c68d44936f0",
     "commands.md": "3482501f7b8d5e31b3994599aa9700d6cf119d76e48e70d96a62d75d82ea48ea",
     "coverage.csv": "e1ea916bb44ec20649a3722952c33b044cbc246fbc7e955224b67d8fa2ef5b6b",
@@ -45,16 +45,16 @@
     "protocol.json": "1a736d05e8de042e6083e896a0424898f8bfc5e65909b593dd6bb8c104557506",
     "report.md": "64ec1de5c81f0dc374e66a1989415df1ff057865475cb5b2663d7aa18f704945",
     "scan_integration.json": "f16b6c61e7b7c5fd09f083bb9925526491b2efe990f06ecc7778c337d3feb67a",
-    "short_candidates.csv": "03d57adae631dc8096d2b9bc9086e26a4900e58fb8e3ca575053df5afadf777c",
-    "short_research.json": "632e958c4c046aa829128cd131be07c43409db3d2f956c2682202657c4cef125",
+    "short_candidates.csv": "0699da9d828988c033dd9c2a38e9b7166cb28e12b43abc51c86b197f0070d000",
+    "short_research.json": "2f5a83fa0a087a1dd0df10379d29fd2c0889d198d34fb780c6ecf521a2427f6f",
     "summary.csv": "97ecdf775c73e34d438326b3cdb6a1f80e88e4af71a2abf3f260afda15ecf19f",
     "validation.json": "281f2993929aec9e696e7b33d7de275ad13dd409f27e683a37c7bd3e0da07af3",
-    "weekly_review_short_fragment.md": "248c20b59660e4e713cafcf2c76a1d3e90df7625d3174943c49ffa6e62851b19"
+    "weekly_review_short_fragment.md": "0091fbd2184aa3c73d2f5be68f063f04fd650a1a97f9f4ab56751d7993da0b54"
   },
   "run_id": "full",
   "scope": "full",
   "source_files": {
-    "short_research_v1.py": "0bfd48dcfd4b11c8d24d77ba8b9a8f7f375412641dce2b5ab27fd947b9309ac8",
+    "short_research_v1.py": "1625fd06a352cd67648b660889111f3dd2a369f07d32404c50510b4eb35a620d",
     "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
   }
 }
