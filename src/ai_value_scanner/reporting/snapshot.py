@@ -34,6 +34,12 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
+from ai_value_scanner.research.short_research_v1 import (
+    ShortResearchResult,
+    disabled_short_research_result,
+    short_candidates_csv,
+    short_research_json,
+)
 
 
 @dataclass(frozen=True)
@@ -54,9 +60,15 @@ class DecisionSnapshotPaths:
 # be byte-verified by the validator; older snapshots are validated structurally
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-06c"
-# New context is conditional; snapshots lacking it render identically.
-COMPATIBLE_RENDERER_REVISIONS = frozenset({REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-06a", "mvp_report_renderer_2026-11-06b"})
+REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-22b"
+LIST_CONTEXT_RENDERER_REVISIONS = frozenset({REPORT_RENDERER_REVISION})
+COMPATIBLE_RENDERER_REVISIONS = frozenset({
+    REPORT_RENDERER_REVISION,
+    "mvp_report_renderer_2026-11-06a",
+    "mvp_report_renderer_2026-11-06b",
+    "mvp_report_renderer_2026-11-06c",
+    "mvp_report_renderer_2026-11-22a",
+})
 
 
 def _safe_style(style: str | None) -> str:
@@ -273,6 +285,7 @@ def build_run_manifest(
     candidate_universe_summary: Mapping[str, Any] | None = None,
     discovery_source_summary: Mapping[str, Any] | None = None,
     state_change_alerts_summary: Mapping[str, Any] | None = None,
+    short_research_summary: Mapping[str, Any] | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
 ) -> dict[str, Any]:
@@ -342,6 +355,11 @@ def build_run_manifest(
             if state_change_alerts_summary is not None
             else {}
         ),
+        **(
+            {"short_research": dict(short_research_summary)}
+            if short_research_summary is not None
+            else {}
+        ),
     }
 
 
@@ -363,6 +381,7 @@ def write_decision_snapshot(
     discovery_source_rejections: Iterable[Mapping[str, Any]] = (),
     discovery_source_summary: Mapping[str, Any] | None = None,
     ticker_map_rows: Iterable[Mapping[str, Any]] | None = None,
+    short_research: ShortResearchResult | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
 ) -> DecisionSnapshotPaths:
@@ -408,12 +427,36 @@ def write_decision_snapshot(
             stock_decisions_to_jsonl(decisions_tuple),
             encoding="utf-8",
         )
+        short_result = short_research or disabled_short_research_result()
+        short_files_manifest: dict[str, Any] = {}
+        short_csv_rel: str | None = None
+        if short_result.enabled:
+            short_json_text = short_research_json(short_result)
+            short_csv_text = short_candidates_csv(short_result)
+            (tmp_root / "short_research.json").write_text(
+                short_json_text, encoding="utf-8"
+            )
+            (tmp_root / "short_candidates.csv").write_text(
+                short_csv_text, encoding="utf-8"
+            )
+            short_csv_rel = "./short_candidates.csv"
+            short_files_manifest = {
+                "json": "short_research.json",
+                "csv": "short_candidates.csv",
+                "json_sha256": hashlib.sha256(
+                    short_json_text.encode("utf-8")
+                ).hexdigest(),
+                "csv_sha256": hashlib.sha256(
+                    short_csv_text.encode("utf-8")
+                ).hexdigest(),
+            }
         streaks_by_symbol = compute_in_list_streaks(
             output_root,
             decision_date,
             strategy_style,
             [decision.symbol for decision in daily_tuple],
         )
+        legacy_lists_paused = (input_provenance or {}).get("legacy_lists_paused") is True
         (tmp_root / "action_list.md").write_text(
             render_action_list(
                 daily_tuple,
@@ -422,6 +465,9 @@ def write_decision_snapshot(
                 layout_version=layout_version,
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
+                legacy_lists_paused=legacy_lists_paused,
+                short_research=short_result if short_result.enabled else None,
+                short_csv_rel=short_csv_rel,
             ),
             encoding="utf-8",
         )
@@ -433,6 +479,9 @@ def write_decision_snapshot(
                 layout_version=layout_version,
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
+                legacy_lists_paused=legacy_lists_paused,
+                short_research=short_result if short_result.enabled else None,
+                short_csv_rel=short_csv_rel,
             ),
             encoding="utf-8",
         )
@@ -526,6 +575,19 @@ def write_decision_snapshot(
             candidate_universe_summary=candidate_universe_summary,
             discovery_source_summary=discovery_source_summary,
             state_change_alerts_summary=alert_summary,
+            short_research_summary={
+                "enabled": short_result.enabled,
+                "status": short_result.status,
+                "contract_version": short_result.contract_version,
+                "rule_version": short_result.rule_version,
+                "signal_date": short_result.signal_date,
+                "market_data_feed": short_result.market_data_feed,
+                "selected_count": short_result.selected_count,
+                "reason_codes": list(short_result.reason_codes),
+                "funnel": dict(short_result.funnel),
+                "status_counts": dict(short_result.status_counts),
+                "files": short_files_manifest,
+            },
             policy_version=policy_version,
             layout_version=layout_version,
         )

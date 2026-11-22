@@ -442,6 +442,7 @@ class ScanConfig:
     decision_policy_version: str = "v1"
     report_layout_version: str = "v1"
     enable_v2_shadow: bool = False
+    enable_short_research: bool = False
 
     @staticmethod
     def _matches_annotation(value: Any, annotation: Any) -> bool:
@@ -569,11 +570,29 @@ class ScanConfig:
             err("decision_policy_version", "must be 'v1' or 'v2'")
         if self.report_layout_version not in ("v1", "v2"):
             err("report_layout_version", "must be 'v1' or 'v2'")
+        if self.enable_short_research:
+            if self.official_market_mode != "sip_eod":
+                err(
+                    "enable_short_research",
+                    "requires official_market_mode='sip_eod' "
+                    "(completed-session SIP bars)",
+                )
+            if self.report_layout_version != "v2":
+                err(
+                    "enable_short_research",
+                    "requires report_layout_version='v2'",
+                )
+            if not self.use_adjusted_quality_metrics:
+                err(
+                    "enable_short_research",
+                    "requires use_adjusted_quality_metrics=true",
+                )
 
         for name in (
             "alpaca_cache_enabled",
             "archive_watchlist_snapshots",
             "enable_v2_shadow",
+            "enable_short_research",
             "require_positive_revenue",
             "require_positive_net_income",
             "require_positive_operating_cash_flow",

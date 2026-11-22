@@ -175,6 +175,14 @@ from ai_value_scanner.decision.universe import (
     classify_asset_mapping_universe,
     sample_limit_exclusions,
 )
+from ai_value_scanner.research.short_research_v1 import (
+    SHORT_RESEARCH_RULE_VERSION,
+    ShortResearchInputError,
+    build_short_cross_section,
+    build_short_feature_frame,
+    disabled_short_research_result,
+    unavailable_short_research_result,
+)
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
     load_previous_daily_symbols,
@@ -4287,6 +4295,8 @@ def _evaluate_existing_snapshot_reuse(
     policy_version: str,
     layout_version: str,
     market_mode: str | None = None,
+    short_research_enabled: bool = False,
+    short_rule_version: str = SHORT_RESEARCH_RULE_VERSION,
 ) -> tuple[str, str | None]:
     """Validate a same-session existing snapshot before reusing it (R04/R08).
 
@@ -4354,6 +4364,31 @@ def _evaluate_existing_snapshot_reuse(
             f"{manifest_entry!r} != current {expected_entry!r}; "
             "reusing it would mix evidence from different policy revisions",
         )
+    short_summary = manifest.get("short_research")
+    if not isinstance(short_summary, dict):
+        archived_enabled = False
+        archived_rule = None
+    else:
+        archived_enabled = bool(short_summary.get("enabled"))
+        archived_rule = short_summary.get("rule_version")
+    if archived_enabled != bool(short_research_enabled):
+        return (
+            "reused_version_mismatch",
+            "existing snapshot Short Research switch "
+            f"{archived_enabled} != configured {bool(short_research_enabled)}; "
+            "use a new --decision-output-root or the next session",
+        )
+    if short_research_enabled:
+        if str(archived_rule or "") != str(short_rule_version):
+            return (
+                "reused_version_mismatch",
+                "existing snapshot Short Research rule "
+                f"{archived_rule!r} != current {short_rule_version!r}; "
+                "use a new --decision-output-root or the next session",
+            )
+        for name in ("short_research.json", "short_candidates.csv"):
+            if not (root / name).is_file():
+                return "failed", f"existing short-research snapshot is missing {name}"
     return "reused", None
 
 
@@ -5067,6 +5102,90 @@ def run_scan_with_status(
         f"Per-channel output caps => low_value={top_n_low_value}, trend={top_n_trend}, momentum={top_n_momentum}",
     )
 
+    short_research_result = disabled_short_research_result()
+    short_signal_date: str | None = (
+        eod_session.isoformat() if eod_session else None
+    )
+    if config.enable_short_research:
+        short_reasons: list[str] = []
+        if config.official_market_mode != "sip_eod":
+            short_reasons.append("CONFIG_MARKET_MODE_NOT_SIP_EOD")
+        if config.report_layout_version != "v2":
+            short_reasons.append("CONFIG_REPORT_LAYOUT_NOT_V2")
+        if not config.use_adjusted_quality_metrics:
+            short_reasons.append("CONFIG_ADJUSTED_NET_INCOME_REQUIRED")
+        if config.max_symbols is not None:
+            short_reasons.append("UNIVERSE_TRUNCATED_MAX_SYMBOLS")
+        if float(config.min_price) > 5.0:
+            short_reasons.append("CONFIG_MIN_PRICE_STRICTER_THAN_SHORT_POOL")
+        if float(config.min_dollar_volume) > 2_000_000.0:
+            short_reasons.append(
+                "CONFIG_MIN_DOLLAR_VOLUME_STRICTER_THAN_SHORT_POOL"
+            )
+        if str(alpaca.feed).lower() != "sip":
+            short_reasons.append("MARKET_DATA_FEED_NOT_SIP")
+        if short_reasons:
+            short_research_result = unavailable_short_research_result(
+                short_reasons,
+                signal_date=short_signal_date,
+                market_data_feed=alpaca.feed,
+            )
+            log_status(
+                started_at,
+                "WARN",
+                "Short Research unavailable: " + ", ".join(short_reasons),
+            )
+        else:
+            try:
+                short_signal_date = short_signal_date or resolve_market_decision_date(
+                    df, benchmark_market_asof=qqq_market_asof
+                )
+                short_features = build_short_feature_frame(
+                    df,
+                    signal_date=short_signal_date,
+                    market_data_feed=alpaca.feed,
+                    watchlist_source=(
+                        "discovery_union"
+                        if discovery_source_summary is not None
+                        else "watchlist_csv"
+                    ),
+                )
+                short_research_result = build_short_cross_section(
+                    short_features,
+                    report_generated_at_utc=started_at,
+                )
+                log_status(
+                    started_at,
+                    "INFO",
+                    "Short Research: "
+                    f"status={short_research_result.status} "
+                    f"selected={short_research_result.selected_count} "
+                    f"funnel={dict(short_research_result.funnel)}",
+                )
+            except ShortResearchInputError as exc:
+                short_research_result = unavailable_short_research_result(
+                    exc.reason_codes,
+                    signal_date=short_signal_date,
+                    market_data_feed=alpaca.feed,
+                )
+                log_status(
+                    started_at,
+                    "WARN",
+                    "Short Research unavailable: " + str(exc),
+                )
+            except Exception as exc:  # isolate short-only failures
+                short_research_result = unavailable_short_research_result(
+                    ("SHORT_RESEARCH_CALCULATION_FAILED",),
+                    signal_date=short_signal_date,
+                    market_data_feed=alpaca.feed,
+                )
+                log_status(
+                    started_at,
+                    "WARN",
+                    "Short Research calculation failed without affecting the "
+                    f"long-only scan: {type(exc).__name__}: {exc}",
+                )
+
     ranked_frames: list[pd.DataFrame] = []
     filtered_counts: dict[str, int] = {}
     diagnostics_layer_summary: dict[str, dict[str, dict[str, float | int]]] = {}
@@ -5745,6 +5864,7 @@ def run_scan_with_status(
             "industry_trend_csv": str(trend_out_path),
             "momentum_csv": str(momentum_out_path),
             "research_pool_csv": str(research_pool_out_path),
+            "legacy_lists_paused": benchmark_trend_ok is False,
             "network_issue_flag": bool(
                 report.get("had_rate_limit_or_network_issue")
             ),
@@ -5781,6 +5901,8 @@ def run_scan_with_status(
                 policy_version=policy_version,
                 layout_version=layout_version,
                 market_mode=config.official_market_mode,
+                short_research_enabled=short_research_result.enabled,
+                short_rule_version=short_research_result.rule_version,
             )
             decision_output_status = reuse_status
             if reuse_error is not None:
@@ -5822,6 +5944,7 @@ def run_scan_with_status(
                     discovery_source_summary=discovery_source_summary,
                     input_provenance=input_prov_payload,
                     ticker_map_rows=ticker_map_rows_arg,
+                    short_research=short_research_result,
                     policy_version=policy_version,
                     layout_version=layout_version,
                 )
@@ -5983,6 +6106,14 @@ def run_scan_with_status(
         research_pool_path=research_pool_out_path,
         diagnostics_layer_summary=diagnostics_layer_summary,
         first_fail_concentration_summary=first_fail_concentration_summary,
+        legacy_lists_paused=benchmark_trend_ok is False,
+        short_research=short_research_result,
+        short_research_path=(
+            decision_snapshot_root / "short_candidates.csv"
+            if decision_snapshot_root is not None
+            and short_research_result.enabled
+            else None
+        ),
     )
     if decision_snapshot_root is not None:
         md_report += (

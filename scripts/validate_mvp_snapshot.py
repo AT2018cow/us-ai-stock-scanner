@@ -59,10 +59,17 @@ from ai_value_scanner.reporting.decision import (
 from ai_value_scanner.reporting.snapshot import (
     REPORT_RENDERER_REVISION,
     COMPATIBLE_RENDERER_REVISIONS,
+    LIST_CONTEXT_RENDERER_REVISIONS,
     build_state_change_alert_records,
     collect_detailed_report_symbols,
     compute_in_list_streaks,
     load_snapshot_decisions,
+)
+from ai_value_scanner.research.short_research_v1 import (
+    SHORT_CSV_COLUMNS,
+    SHORT_RESEARCH_CONTRACT_VERSION,
+    ShortResearchResult,
+    short_candidates_csv,
 )
 
 SUPPORTED_POLICY_VERSIONS = {"v1", "v2"}
@@ -169,6 +176,124 @@ def check_ticker_map_rows(root_path: str | Path, manifest: dict[str, Any]) -> li
             errors.append(f"ticker_map_rows row {index} has empty cik")
             break
     return errors
+
+
+def _load_short_research_for_validation(
+    root_path: Path,
+    manifest: dict[str, Any],
+    errors: list[str],
+) -> ShortResearchResult | None:
+    summary = manifest.get("short_research")
+    json_path = root_path / "short_research.json"
+    csv_path = root_path / "short_candidates.csv"
+    if summary is None:
+        if json_path.exists() or csv_path.exists():
+            errors.append(
+                "short-research files exist but run_manifest.json has no "
+                "short_research switch"
+            )
+        return None
+    if not isinstance(summary, dict):
+        errors.append("short_research manifest section must be an object")
+        return None
+    enabled = bool(summary.get("enabled"))
+    status = str(summary.get("status") or "")
+    if not enabled:
+        if status not in {"", "disabled"}:
+            errors.append(
+                f"short_research disabled switch has status {status!r}"
+            )
+        if json_path.exists() or csv_path.exists():
+            errors.append(
+                "short_research disabled snapshot must not contain short files"
+            )
+        return None
+    if status not in {"ready", "no_candidates", "unavailable"}:
+        errors.append(f"unsupported short_research status {status!r}")
+    for path in (json_path, csv_path):
+        if not path.is_file():
+            errors.append(f"missing short-research file: {path}")
+    if not json_path.is_file() or not csv_path.is_file():
+        return None
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"invalid short_research.json: {type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        errors.append("short_research.json must decode to an object")
+        return None
+    result = ShortResearchResult.from_payload(payload)
+    if result.contract_version != SHORT_RESEARCH_CONTRACT_VERSION:
+        errors.append(
+            f"unsupported short contract_version {result.contract_version!r}"
+        )
+    if str(summary.get("contract_version") or "") != result.contract_version:
+        errors.append("short contract_version does not match run_manifest.json")
+    if str(summary.get("rule_version") or "") != result.rule_version:
+        errors.append("short rule_version does not match run_manifest.json")
+    if result.status != status:
+        errors.append(
+            f"short status {result.status!r} != manifest {status!r}"
+        )
+    manifest_date = str(manifest.get("decision_date") or "")
+    if str(result.signal_date or "") != manifest_date:
+        errors.append(
+            f"short signal_date {result.signal_date!r} != manifest {manifest_date!r}"
+        )
+    if str(result.market_data_feed or "").lower() != "sip" and status in {
+        "ready",
+        "no_candidates",
+    }:
+        errors.append(
+            f"short market_data_feed {result.market_data_feed!r} is not sip"
+        )
+    selected = result.selected
+    if len(selected) > 5:
+        errors.append(f"short selected count {len(selected)} exceeds 5")
+    ranks = [candidate.rank for candidate in selected]
+    if ranks != list(range(1, len(selected) + 1)):
+        errors.append(f"short selected ranks are not contiguous: {ranks}")
+    symbols = [candidate.symbol for candidate in selected]
+    if len(symbols) != len(set(symbols)):
+        errors.append("short selected symbols contain duplicates")
+    if status == "ready" and not selected:
+        errors.append("short status ready but selected list is empty")
+    if status in {"no_candidates", "unavailable"} and selected:
+        errors.append(f"short status {status} must have an empty selected list")
+    if status == "unavailable" and not result.reason_codes:
+        errors.append("short status unavailable requires reason_codes")
+    if int(summary.get("selected_count", -1)) != len(selected):
+        errors.append("short selected_count does not match JSON selected list")
+    if str(summary.get("signal_date") or "") != str(result.signal_date or ""):
+        errors.append("short signal_date does not match run_manifest.json")
+    if str(summary.get("market_data_feed") or "").lower() != "sip" and status in {
+        "ready",
+        "no_candidates",
+    }:
+        errors.append("short manifest market_data_feed is not sip")
+    files = summary.get("files")
+    if not isinstance(files, dict):
+        errors.append("short manifest files section must be an object")
+        files = {}
+    if files.get("json") != "short_research.json":
+        errors.append("short manifest json filename mismatch")
+    if files.get("csv") != "short_candidates.csv":
+        errors.append("short manifest csv filename mismatch")
+    for key, path in (("json", json_path), ("csv", csv_path)):
+        recorded = str(files.get(f"{key}_sha256") or "")
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if recorded != actual:
+            errors.append(f"short {key} checksum mismatch")
+    actual_csv = csv_path.read_text(encoding="utf-8")
+    expected_csv = short_candidates_csv(result)
+    if actual_csv != expected_csv:
+        errors.append("short_candidates.csv does not match short_research.json")
+    header = actual_csv.splitlines()[0].split(",") if actual_csv.splitlines() else []
+    missing = [column for column in SHORT_CSV_COLUMNS if column not in header]
+    if missing:
+        errors.append("short_candidates.csv missing columns: " + ", ".join(missing))
+    return result
 
 
 def validate_snapshot(
@@ -291,6 +416,9 @@ def validate_snapshot(
     ):
         errors.append(f"unsupported entry_policy_version {manifest_entry_version!r}")
 
+    short_result = _load_short_research_for_validation(
+        root_path, manifest, errors
+    )
     errors.extend(check_ticker_map_rows(root_path, manifest))
     for decision in decisions:
         if decision.decision_date != manifest_date:
@@ -640,6 +768,12 @@ def validate_snapshot(
             manifest.get("strategy_style") or root_path.name,
             [decision.symbol for decision in daily],
         )
+        legacy_lists_paused = None
+        if renderer_revision in LIST_CONTEXT_RENDERER_REVISIONS:
+            provenance = manifest.get("input_provenance")
+            legacy_lists_paused = (
+                isinstance(provenance, dict) and provenance.get("legacy_lists_paused") is True
+            )
         expected_daily = render_action_list(
             daily,
             title="Daily Action List",
@@ -647,6 +781,11 @@ def validate_snapshot(
             layout_version=layout_version,
             all_decisions=decisions,
             streaks_by_symbol=streaks_by_symbol,
+            legacy_lists_paused=legacy_lists_paused,
+            short_research=short_result,
+            short_csv_rel=(
+                "./short_candidates.csv" if short_result is not None else None
+            ),
         )
         actual_daily = required["daily"].read_text(encoding="utf-8")
         if actual_daily != expected_daily:
@@ -659,6 +798,11 @@ def validate_snapshot(
             layout_version=layout_version,
             all_decisions=decisions,
             streaks_by_symbol=streaks_by_symbol,
+            legacy_lists_paused=legacy_lists_paused,
+            short_research=short_result,
+            short_csv_rel=(
+                "./short_candidates.csv" if short_result is not None else None
+            ),
         )
         actual_weekly = required["weekly"].read_text(encoding="utf-8")
         if actual_weekly != expected_weekly:

@@ -1,0 +1,930 @@
+"""Short Research v1 tests (offline synthetic + frozen smoke evidence)."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import math
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+
+import pandas as pd
+
+from ai_value_scanner.decision.entry import ENTRY_V2_POLICY_VERSION
+from ai_value_scanner.decision.model import (
+    ActionState,
+    EntryDecision,
+    EntryState,
+    EvidenceItem,
+    QualityDecision,
+    QualityGrade,
+    StockDecision,
+)
+from ai_value_scanner.decision.quality import QUALITY_V2_POLICY_VERSION
+from ai_value_scanner.reporting.snapshot import (
+    REPORT_RENDERER_REVISION,
+    write_decision_snapshot,
+)
+from ai_value_scanner.research.short_research_v1 import (
+    BORROW_EASY,
+    BORROW_HARD,
+    BORROW_NOT_SHORTABLE,
+    BORROW_UNKNOWN,
+    MAX_SHORT_CANDIDATES,
+    SHORT_RESEARCH_CONTRACT_VERSION,
+    SHORT_RESEARCH_RULE_VERSION,
+    ShortResearchInputError,
+    build_short_cross_section,
+    build_short_feature_frame,
+    evaluate_frozen_short_research,
+    render_short_research_section,
+    resolve_borrow_evidence,
+    short_candidates_csv,
+    unavailable_short_research_result,
+)
+from ai_value_scanner.research.short_research_v1_eval import (
+    _block_bootstrap,
+    _group_return,
+    _selected_members,
+    _settle_record,
+    _verdict,
+)
+
+DATE = "2025-01-31"
+FUND_ASOF = "2024-12-31"
+
+
+def _load_script(name: str):
+    module_path = Path(__file__).resolve().parents[1] / "scripts" / name
+    spec = importlib.util.spec_from_file_location(
+        "short_" + name.replace(".py", ""), module_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+validator = _load_script("validate_mvp_snapshot.py")
+
+
+def _row(
+    symbol: str,
+    cik: str,
+    *,
+    sic: str = "3674",
+    **overrides,
+) -> dict:
+    row = {
+        "signal_date": DATE,
+        "symbol": symbol,
+        "cik": cik,
+        "sic": sic,
+        "market_asof": DATE,
+        "fundamental_data_asof": FUND_ASOF,
+        "market_data_feed": "sip",
+        "watchlist_source": "test",
+        "price": 100.0,
+        "dollar_volume": 20_000_000.0,
+        "avg_dollar_volume_20d": 30_000_000.0,
+        "return_20d": -0.05,
+        "return_60d": -0.10,
+        "price_to_sma50": 0.95,
+        "revenue": 1_000_000_000.0,
+        "revenue_yoy": -0.05,
+        "operating_cash_flow_growth": -0.20,
+        "operating_cash_flow_growth_direction": "positive_base",
+        "adjusted_net_income": 100_000_000.0,
+        "pe": 20.0,
+        "shares_stale": False,
+        "company_name": f"{symbol} Inc.",
+        "sic_description": "Test Industry",
+        "regime": "up",
+        "relative_strength_60d_qqq": 0.0,
+    }
+    row.update(overrides)
+    return row
+
+
+def _base_frame() -> pd.DataFrame:
+    returns = [-0.08, 0.0, 0.04, 0.10, -0.12]
+    pes = [10.0, 12.0, 14.0, 16.0, 20.0]
+    return pd.DataFrame(
+        [
+            _row(symbol, str(index + 1), return_60d=returns[index], pe=pes[index])
+            for index, symbol in enumerate(("A", "B", "C", "D", "E"))
+        ]
+    )
+
+
+def _boundary_frame() -> pd.DataFrame:
+    returns = [-0.10, -0.08, -0.06, -0.12, -0.02]
+    pes = [10.0, 12.0, 16.0, 20.0, 24.0]
+    return pd.DataFrame(
+        [
+            _row(symbol, str(index + 1), return_60d=returns[index], pe=pes[index])
+            for index, symbol in enumerate(("A", "B", "C", "D", "E"))
+        ]
+    )
+
+
+def _three_sic_frame() -> pd.DataFrame:
+    rows: list[dict] = []
+    for group_index, (sic, symbols) in enumerate(
+        (
+            ("3674", ("A", "B", "C", "D", "E")),
+            ("7372", ("F", "G", "H", "I", "J")),
+            ("4911", ("K", "L", "M", "N", "O")),
+        )
+    ):
+        returns = [-0.10, -0.08, -0.06, -0.04, -0.02]
+        pes = [20.0, 24.0, 10.0, 12.0, 16.0]
+        for index, symbol in enumerate(symbols):
+            rows.append(
+                _row(
+                    symbol,
+                    str(group_index * 10 + index + 1),
+                    sic=sic,
+                    return_60d=returns[index],
+                    pe=pes[index],
+                )
+            )
+    return pd.DataFrame(rows)
+
+
+def _decision(symbol: str = "AAA") -> StockDecision:
+    quality = QualityDecision(
+        grade=QualityGrade.A,
+        score=0.80,
+        confidence=0.95,
+        component_scores={"profitability_cash": 0.8},
+        positives=(),
+        risks=(),
+        missing=(),
+        data_asof=FUND_ASOF,
+    )
+    entry = EntryDecision(
+        state=EntryState.ENTRY_READY,
+        score=0.90,
+        confidence=0.90,
+        positives=(),
+        risks=(),
+        market_asof=DATE,
+    )
+    return StockDecision(
+        schema_version="1",
+        symbol=symbol,
+        company_name=f"{symbol} Inc.",
+        decision_date=DATE,
+        generated_at_utc=f"{DATE}T12:00:00+00:00",
+        quality=quality,
+        entry=entry,
+        action_state=ActionState.PRIORITY_REVIEW,
+        priority=1,
+        rationale=(),
+        review_trigger="Review.",
+        source_lists=(),
+        provenance={
+            "quality_policy_version": QUALITY_V2_POLICY_VERSION,
+            "entry_policy_version": ENTRY_V2_POLICY_VERSION,
+            "decision_policy_version": "q=v2,e=v2,a=v2",
+        },
+        previous_action_state=None,
+        state_change_reason=None,
+    )
+
+
+def _write_snapshot(
+    root: str | Path,
+    short_result=None,
+    *,
+    legacy_lists_paused: bool = False,
+):
+    decision = _decision()
+    return write_decision_snapshot(
+        output_root=root,
+        strategy_style="production",
+        decisions=(decision,),
+        daily_attention=(decision,),
+        weekly_attention=(decision,),
+        generated_at_utc=decision.generated_at_utc,
+        decision_date=DATE,
+        config_fingerprint="fp",
+        input_provenance={"legacy_lists_paused": legacy_lists_paused},
+        short_research=short_result,
+        policy_version="v2",
+        layout_version="v2",
+    )
+
+
+class TestConfigContract(unittest.TestCase):
+    def test_default_is_disabled(self) -> None:
+        from ai_value_scanner.config import ScanConfig
+
+        self.assertFalse(ScanConfig().enable_short_research)
+
+    def test_enabled_requires_compatible_config(self) -> None:
+        from ai_value_scanner.config import ScanConfig
+
+        with self.assertRaises(ValueError) as ctx:
+            ScanConfig.from_dict(
+                {
+                    "enable_short_research": True,
+                    "official_market_mode": "snapshot",
+                }
+            )
+        self.assertIn("official_market_mode", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            ScanConfig.from_dict(
+                {
+                    "enable_short_research": True,
+                    "official_market_mode": "sip_eod",
+                    "report_layout_version": "v1",
+                }
+            )
+        self.assertIn("report_layout_version", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            ScanConfig.from_dict(
+                {
+                    "enable_short_research": True,
+                    "official_market_mode": "sip_eod",
+                    "report_layout_version": "v2",
+                    "use_adjusted_quality_metrics": False,
+                }
+            )
+        self.assertIn("use_adjusted_quality_metrics", str(ctx.exception))
+
+    def test_compatible_config_loads(self) -> None:
+        from ai_value_scanner.config import ScanConfig
+
+        config = ScanConfig.from_dict(
+            {
+                "enable_short_research": True,
+                "official_market_mode": "sip_eod",
+                "report_layout_version": "v2",
+                "use_adjusted_quality_metrics": True,
+            }
+        )
+        self.assertTrue(config.enable_short_research)
+
+    def test_bool_is_strict(self) -> None:
+        from ai_value_scanner.config import ScanConfig
+
+        with self.assertRaises(ValueError):
+            ScanConfig.from_dict({"enable_short_research": "false"})
+
+
+class TestInputContract(unittest.TestCase):
+    def test_mixed_feed_rejected(self) -> None:
+        frame = _base_frame()
+        frame.loc[0, "market_data_feed"] = "iex"
+        with self.assertRaises(ShortResearchInputError) as ctx:
+            build_short_cross_section(frame)
+        self.assertIn("MIXED_OR_UNKNOWN_FEED", ctx.exception.reason_codes)
+
+    def test_duplicate_date_symbol_rejected(self) -> None:
+        frame = _base_frame()
+        frame = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
+        with self.assertRaises(ShortResearchInputError) as ctx:
+            build_short_cross_section(frame)
+        self.assertIn("DUPLICATE_DATE_SYMBOL", ctx.exception.reason_codes)
+
+    def test_missing_columns_rejected(self) -> None:
+        frame = _base_frame().drop(columns=["pe"])
+        with self.assertRaises(ShortResearchInputError) as ctx:
+            build_short_cross_section(frame)
+        self.assertIn("MISSING_COLUMNS", ctx.exception.reason_codes)
+
+    def test_future_market_and_fundamental_dates_are_rejected_rows(self) -> None:
+        frame = _base_frame()
+        frame.loc[4, "market_asof"] = "2025-02-01"
+        frame.loc[3, "fundamental_data_asof"] = "2025-02-01"
+        result = build_short_cross_section(frame)
+        by_symbol = {record.symbol: record for record in result.records}
+        self.assertIn("MARKET_ASOF_MISMATCH", by_symbol["E"].reason_codes)
+        self.assertIn("FUNDAMENTAL_ASOF_FUTURE", by_symbol["D"].reason_codes)
+        self.assertEqual(by_symbol["E"].status, "SCOPE_EXCLUDED")
+        self.assertEqual(by_symbol["D"].status, "INSUFFICIENT_DATA")
+
+    def test_nonfinite_and_unknown_stale_reasons(self) -> None:
+        frame = _base_frame()
+        frame["shares_stale"] = frame["shares_stale"].astype(object)
+        frame.loc[0, "price"] = float("nan")
+        frame.loc[1, "shares_stale"] = "unknown"
+        result = build_short_cross_section(frame)
+        by_symbol = {record.symbol: record for record in result.records}
+        self.assertIn("PRICE_MISSING", by_symbol["A"].reason_codes)
+        self.assertIn("SHARES_STALE_UNKNOWN", by_symbol["B"].reason_codes)
+        self.assertEqual(by_symbol["B"].status, "INSUFFICIENT_DATA")
+
+    def test_returns_do_not_affect_selection(self) -> None:
+        frame = _base_frame()
+        with_labels = frame.copy()
+        with_labels["fwd_ret_20"] = [0.9, -0.8, 0.7, -0.6, 0.5]
+        with_labels["label_end_20"] = "2099-01-01"
+        first = build_short_cross_section(frame)
+        second = build_short_cross_section(with_labels)
+        self.assertEqual(
+            [(c.symbol, c.rank) for c in first.selected],
+            [(c.symbol, c.rank) for c in second.selected],
+        )
+        self.assertEqual(first.status_counts, second.status_counts)
+
+
+class TestPeerCalculations(unittest.TestCase):
+    def test_pe_and_industry_relative_values(self) -> None:
+        result = build_short_cross_section(_base_frame())
+        target = next(record for record in result.records if record.symbol == "E")
+        self.assertAlmostEqual(target.rs60_sic, -0.14, places=6)
+        self.assertEqual(target.industry_peer_count, 4)
+        self.assertEqual(target.pe_peer_count, 5)
+        self.assertAlmostEqual(target.pe_peer_median, 14.0, places=6)
+        self.assertAlmostEqual(target.pe_percentile, 1.0, places=6)
+        self.assertAlmostEqual(target.pe_premium, 20.0 / 14.0 - 1.0, places=6)
+        self.assertEqual(target.status, "CONFIRMED")
+
+    def test_insufficient_peers_are_insufficient_data(self) -> None:
+        frame = _base_frame().iloc[:4].copy()
+        result = build_short_cross_section(frame)
+        target = next(record for record in result.records if record.symbol == "D")
+        self.assertIsNone(target.rs60_sic)
+        self.assertIsNone(target.pe_percentile)
+        self.assertEqual(target.status, "INSUFFICIENT_DATA")
+        self.assertIn("INDUSTRY_PEERS_INSUFFICIENT", target.reason_codes)
+        self.assertIn("PE_PEERS_INSUFFICIENT", target.reason_codes)
+
+    def test_same_cik_share_classes_dedupe_by_adv_then_symbol(self) -> None:
+        frame = _base_frame()
+        extra = _row("A2", "1", avg_dollar_volume_20d=40_000_000.0, pe=20.0)
+        frame = pd.concat([frame, pd.DataFrame([extra])], ignore_index=True)
+        result = build_short_cross_section(frame)
+        by_symbol = {record.symbol: record for record in result.records}
+        self.assertEqual(by_symbol["A"].status, "SCOPE_EXCLUDED")
+        self.assertIn("DUPLICATE_CIK_LOWER_ADV", by_symbol["A"].reason_codes)
+        self.assertNotEqual(by_symbol["A2"].status, "SCOPE_EXCLUDED")
+
+    def test_pe_ties_use_average_rank(self) -> None:
+        frame = _base_frame()
+        frame["pe"] = 10.0
+        result = build_short_cross_section(frame)
+        target = next(record for record in result.records if record.symbol == "E")
+        self.assertAlmostEqual(target.pe_percentile, 0.6, places=6)
+        self.assertAlmostEqual(target.pe_premium, 0.0, places=6)
+
+    def test_input_order_does_not_change_selection(self) -> None:
+        frame = _base_frame()
+        shuffled = frame.sample(frac=1.0, random_state=7).reset_index(drop=True)
+        first = build_short_cross_section(frame)
+        second = build_short_cross_section(shuffled)
+        self.assertEqual(
+            [(c.symbol, c.rank) for c in first.selected],
+            [(c.symbol, c.rank) for c in second.selected],
+        )
+        self.assertEqual(first.status_counts, second.status_counts)
+
+
+class TestSelectionRules(unittest.TestCase):
+    def test_exact_boundaries_and_subset_chain(self) -> None:
+        result = build_short_cross_section(_boundary_frame())
+        target = next(record for record in result.records if record.symbol == "D")
+        self.assertIn("S0", target.signal_groups)
+        self.assertIn("S1", target.signal_groups)
+        self.assertIn("S2", target.signal_groups)
+        self.assertAlmostEqual(target.pe_percentile, 0.8, places=6)
+        self.assertAlmostEqual(target.pe_premium, 0.25, places=6)
+
+    def test_ocf_and_revenue_boundaries_inclusive(self) -> None:
+        frame = _boundary_frame()
+        frame.loc[3, "operating_cash_flow_growth"] = -0.10
+        frame.loc[3, "revenue_yoy"] = 0.0
+        result = build_short_cross_section(frame)
+        target = next(record for record in result.records if record.symbol == "D")
+        self.assertIn("S1", target.signal_groups)
+        self.assertIn("S2", target.signal_groups)
+
+    def test_return_20d_minus_20_is_watch_not_s0(self) -> None:
+        frame = _boundary_frame()
+        frame.loc[3, "return_20d"] = -0.20
+        result = build_short_cross_section(frame)
+        target = next(record for record in result.records if record.symbol == "D")
+        self.assertNotIn("S0", target.signal_groups)
+        self.assertEqual(target.status, "WATCH")
+
+    def test_sma50_equal_one_is_watch_not_s0(self) -> None:
+        frame = _boundary_frame()
+        frame.loc[3, "price_to_sma50"] = 1.0
+        result = build_short_cross_section(frame)
+        target = next(record for record in result.records if record.symbol == "D")
+        self.assertNotIn("S0", target.signal_groups)
+        self.assertEqual(target.status, "WATCH")
+
+    def test_no_candidates_status_and_empty_selection(self) -> None:
+        frame = _base_frame()
+        frame.loc[4, "revenue_yoy"] = 0.05
+        result = build_short_cross_section(frame)
+        self.assertEqual(result.status, "no_candidates")
+        self.assertEqual(result.selected, ())
+        self.assertEqual(result.funnel["s2_rows"], 0)
+
+    def test_top_five_cap_and_stable_order(self) -> None:
+        result = build_short_cross_section(_three_sic_frame())
+        self.assertEqual(result.status, "ready")
+        self.assertEqual(len(result.selected), MAX_SHORT_CANDIDATES)
+        self.assertEqual([c.rank for c in result.selected], [1, 2, 3, 4, 5])
+        keys = [(c.rs60_sic, c.symbol) for c in result.selected]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(result.funnel["s2_rows"], 6)
+
+
+class TestSettlementAndCosts(unittest.TestCase):
+    def _row_for_settlement(self, **overrides) -> dict:
+        row = {
+            "signal_date": DATE,
+            "symbol": "AAA",
+            "sic": "3674",
+            "fwd_ret_20": -0.203,
+            "label_end_20": "2025-03-03",
+            "qqq_return_20": -0.02,
+            "qqq_label_end_20": "2025-03-03",
+        }
+        row.update(overrides)
+        return row
+
+    def test_short_gross_and_cost_scenarios(self) -> None:
+        settled = _settle_record(self._row_for_settlement(), horizon=20, peer_median_by_key={})
+        self.assertAlmostEqual(settled["x_ratio"], 0.80, places=9)
+        self.assertAlmostEqual(settled["short_gross"], 0.20, places=9)
+        self.assertAlmostEqual(settled["short_cost_trade_only"], 0.1973, places=9)
+        self.assertAlmostEqual(settled["short_cost_base"], 0.191930, places=6)
+        self.assertEqual(settled["label_status"], "VALID")
+        self.assertEqual(settled["planned_entry_date"], "2025-02-03")
+
+    def test_cover_at_120(self) -> None:
+        settled = _settle_record(
+            self._row_for_settlement(fwd_ret_20=0.197),
+            horizon=20,
+            peer_median_by_key={},
+        )
+        self.assertAlmostEqual(settled["x_ratio"], 1.20, places=9)
+        self.assertAlmostEqual(settled["short_gross"], -0.20, places=9)
+        self.assertAlmostEqual(settled["short_cost_trade_only"], -0.2033, places=9)
+
+    def test_missing_or_wrong_endpoint_is_missing_not_imputed(self) -> None:
+        missing = _settle_record(
+            self._row_for_settlement(label_end_20=None),
+            horizon=20,
+            peer_median_by_key={},
+        )
+        self.assertEqual(missing["label_status"], "MISSING")
+        self.assertIsNone(missing["short_gross"])
+        wrong = _settle_record(
+            self._row_for_settlement(label_end_20="2025-03-04"),
+            horizon=20,
+            peer_median_by_key={},
+        )
+        self.assertEqual(wrong["label_status"], "MISSING")
+        self.assertIsNone(wrong["short_gross"])
+
+    def test_split_adjusted_label(self) -> None:
+        # 2:1 split: raw 100 -> post-split 55 is economically +10%; the frozen
+        # label is already split-adjusted (0.097 net of 30 bps roundtrip).
+        settled = _settle_record(
+            self._row_for_settlement(fwd_ret_20=0.097),
+            horizon=20,
+            peer_median_by_key={},
+        )
+        self.assertAlmostEqual(settled["x_ratio"], 1.10, places=9)
+        self.assertAlmostEqual(settled["short_gross"], -0.10, places=9)
+
+    def test_qqq_requires_exact_endpoint(self) -> None:
+        settled = _settle_record(
+            self._row_for_settlement(qqq_label_end_20="2025-03-04"),
+            horizon=20,
+            peer_median_by_key={},
+        )
+        self.assertFalse(settled["qqq_valid"])
+        self.assertIsNone(settled["qqq_long_gross"])
+
+
+class TestStatisticsHelpers(unittest.TestCase):
+    def test_block_bootstrap_parameters_and_missing_mask(self) -> None:
+        values = [0.01] * 130
+        values[0] = None
+        result = _block_bootstrap(values)
+        self.assertEqual(result["repeats"], 2000)
+        self.assertEqual(result["seed"], 61122)
+        self.assertEqual(result["block"], 6)
+        self.assertEqual(result["n"], 130)
+        self.assertEqual(result["valid"], 129)
+        self.assertIsNotNone(result["ci_low"])
+        self.assertIsNotNone(result["ci_high"])
+
+    def test_verdict_insufficient_and_failed_and_support(self) -> None:
+        insufficient = _verdict(
+            n_dates=10,
+            years=[2020, 2021],
+            s2_mean=0.1,
+            s2_s0=0.1,
+            s2_s1=0.1,
+            s2_s0_ci={"ci_low": 0.1},
+            yearly_s2_s0={2020: 0.1},
+            loo_s2_s0=0.1,
+            cost_means={},
+        )
+        self.assertEqual(insufficient["verdict"], "insufficient_evidence")
+        failed = _verdict(
+            n_dates=30,
+            years=[2020, 2021, 2022],
+            s2_mean=-0.01,
+            s2_s0=0.01,
+            s2_s1=0.01,
+            s2_s0_ci={"ci_low": 0.01},
+            yearly_s2_s0={2020: 0.1, 2021: 0.1},
+            loo_s2_s0=0.01,
+            cost_means={},
+        )
+        self.assertEqual(failed["verdict"], "signal_or_increment_failed")
+        supported = _verdict(
+            n_dates=30,
+            years=[2020, 2021, 2022],
+            s2_mean=0.05,
+            s2_s0=0.02,
+            s2_s1=0.01,
+            s2_s0_ci={"ci_low": 0.001},
+            yearly_s2_s0={2020: 0.1, 2021: 0.1},
+            loo_s2_s0=0.005,
+            cost_means={"base": 0.01},
+        )
+        self.assertEqual(supported["verdict"], "support_next_round")
+
+    def test_weights_and_cash_slots(self) -> None:
+        members = [{"short_gross_20": 0.10}, {"short_gross_20": -0.10}]
+        self.assertAlmostEqual(
+            _group_return(members, weight=0.5, column="short_gross_20"),
+            0.0,
+        )
+        self.assertIsNone(
+            _group_return(
+                [{"short_gross_20": None}], weight=1.0, column="short_gross_20"
+            )
+        )
+        self.assertEqual(
+            _group_return([], weight=0.2, column="short_gross_20"), 0.0
+        )
+
+
+class TestBorrowEvidence(unittest.TestCase):
+    def _raw(self, **overrides) -> dict:
+        raw = {
+            "source": "alpaca",
+            "environment": "paper",
+            "observed_at_utc": "2025-01-31T22:00:00+00:00",
+            "shortable": True,
+            "easy_to_borrow": True,
+        }
+        raw.update(overrides)
+        return raw
+
+    def _resolve(self, raw, **overrides):
+        return resolve_borrow_evidence(
+            raw,
+            signal_date=DATE,
+            report_generated_at_utc="2025-02-01T02:00:00+00:00",
+            **overrides,
+        )
+
+    def test_trusted_statuses(self) -> None:
+        self.assertEqual(self._resolve(self._raw()).status, BORROW_EASY)
+        self.assertEqual(
+            self._resolve(
+                self._raw(easy_to_borrow=False, hard_to_borrow=True)
+            ).status,
+            BORROW_HARD,
+        )
+        self.assertEqual(
+            self._resolve(self._raw(shortable=False)).status,
+            BORROW_NOT_SHORTABLE,
+        )
+
+    def test_untrusted_inputs_are_unknown(self) -> None:
+        self.assertEqual(self._resolve({}).status, BORROW_UNKNOWN)
+        self.assertEqual(
+            self._resolve(self._raw(observed_at_utc="2025-01-30T22:00:00+00:00")).status,
+            BORROW_UNKNOWN,
+        )
+        self.assertEqual(
+            self._resolve(self._raw(observed_at_utc="2025-02-02T00:00:00+00:00")).status,
+            BORROW_UNKNOWN,
+        )
+        self.assertEqual(
+            self._resolve(self._raw(source="other"), expected_source="alpaca").status,
+            BORROW_UNKNOWN,
+        )
+        self.assertEqual(
+            self._resolve(
+                self._raw(easy_to_borrow=True, hard_to_borrow=True)
+            ).status,
+            BORROW_UNKNOWN,
+        )
+        self.assertEqual(
+            self._resolve(
+                self._raw(shortable=None, easy_to_borrow=None, hard_to_borrow=None)
+            ).status,
+            BORROW_UNKNOWN,
+        )
+
+    def test_borrow_does_not_change_selection(self) -> None:
+        frame = _base_frame()
+        plain = build_short_cross_section(frame)
+        with_borrow = build_short_cross_section(
+            frame,
+            borrow_by_symbol={"E": self._raw()},
+            report_generated_at_utc="2025-02-01T02:00:00+00:00",
+        )
+        self.assertEqual(
+            [(c.symbol, c.rank) for c in plain.selected],
+            [(c.symbol, c.rank) for c in with_borrow.selected],
+        )
+        target = next(c for c in with_borrow.selected if c.symbol == "E")
+        self.assertEqual(target.borrow.status, BORROW_EASY)
+
+
+class TestSnapshotIntegration(unittest.TestCase):
+    def test_ready_snapshot_files_report_and_validator(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, short)
+            self.assertTrue((paths.root / "short_research.json").is_file())
+            self.assertTrue((paths.root / "short_candidates.csv").is_file())
+            report = paths.action_list_md.read_text(encoding="utf-8")
+            self.assertIn("## Short Research", report)
+            self.assertIn("[short_candidates.csv](./short_candidates.csv)", report)
+            manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
+            self.assertTrue(manifest["short_research"]["enabled"])
+            self.assertEqual(manifest["short_research"]["status"], "ready")
+            result = validator.validate_snapshot(paths.root)
+            self.assertTrue(result["ok"], result["errors"])
+
+    def test_no_candidates_and_unavailable_and_disabled(self) -> None:
+        no_candidates = build_short_cross_section(
+            _base_frame().assign(revenue_yoy=0.05)
+        )
+        unavailable = unavailable_short_research_result(
+            ("TEST_UNAVAILABLE",), signal_date=DATE, market_data_feed="sip"
+        )
+        for result, status, has_file in (
+            (no_candidates, "no_candidates", True),
+            (unavailable, "unavailable", True),
+            (None, "disabled", False),
+        ):
+            with self.subTest(status=status):
+                with tempfile.TemporaryDirectory() as td:
+                    paths = _write_snapshot(td, result)
+                    manifest = json.loads(
+                        paths.run_manifest_json.read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(manifest["short_research"]["status"], status)
+                    self.assertEqual(
+                        (paths.root / "short_candidates.csv").is_file(),
+                        has_file,
+                    )
+                    report = paths.action_list_md.read_text(encoding="utf-8")
+                    if status == "disabled":
+                        self.assertNotIn("## Short Research", report)
+                    else:
+                        self.assertIn("## Short Research", report)
+                    validation = validator.validate_snapshot(paths.root)
+                    self.assertTrue(validation["ok"], validation["errors"])
+
+    def test_five_cap_csv_and_report(self) -> None:
+        short = build_short_cross_section(_three_sic_frame())
+        self.assertEqual(len(short.selected), 5)
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, short)
+            csv_lines = paths.root.joinpath("short_candidates.csv").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            self.assertEqual(len(csv_lines), 6)  # header + 5
+            report = paths.action_list_md.read_text(encoding="utf-8")
+            self.assertIn("## Short Research (5)", report)
+
+    def test_short_failure_isolated_from_long_snapshot(self) -> None:
+        bad = _base_frame()
+        bad.loc[0, "market_data_feed"] = "iex"
+        with self.assertRaises(ShortResearchInputError) as ctx:
+            build_short_cross_section(bad)
+        unavailable = unavailable_short_research_result(
+            ctx.exception.reason_codes, signal_date=DATE, market_data_feed="iex"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, unavailable)
+            self.assertTrue(paths.decisions_jsonl.is_file())
+            self.assertTrue(paths.action_list_md.is_file())
+            self.assertIn("#1 AAA", paths.action_list_md.read_text(encoding="utf-8"))
+            validation = validator.validate_snapshot(paths.root)
+            self.assertTrue(validation["ok"], validation["errors"])
+
+    def test_qqq_paused_long_report_and_short_list_coexist(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, short, legacy_lists_paused=True)
+            report = paths.action_list_md.read_text(encoding="utf-8")
+            self.assertIn("Legacy lists paused", report)
+            self.assertIn("## Short Research (1)", report)
+            self.assertIn("| 1 | E |", report)
+
+    def test_long_decisions_unchanged_by_short_enable(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        with tempfile.TemporaryDirectory() as td:
+            off = _write_snapshot(Path(td) / "off", None)
+            on = _write_snapshot(Path(td) / "on", short)
+            self.assertEqual(
+                off.decisions_jsonl.read_bytes(),
+                on.decisions_jsonl.read_bytes(),
+            )
+            off_manifest = json.loads(
+                off.run_manifest_json.read_text(encoding="utf-8")
+            )
+            on_manifest = json.loads(
+                on.run_manifest_json.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                off_manifest["daily_symbols"], on_manifest["daily_symbols"]
+            )
+            self.assertEqual(
+                off_manifest["weekly_symbols"], on_manifest["weekly_symbols"]
+            )
+            off_prefix = off.action_list_md.read_text().split(
+                "## Short Research", 1
+            )[0]
+            on_prefix = on.action_list_md.read_text().split(
+                "## Short Research", 1
+            )[0]
+            # The enabled report adds the Short Research jump link, but the
+            # long card body and order before the section are unchanged.
+            self.assertIn("#1 AAA", off_prefix)
+            self.assertIn("#1 AAA", on_prefix)
+
+    def test_adapter_is_read_only_and_whitelisted(self) -> None:
+        frame = _base_frame()
+        frame["long_only_score"] = 1.23
+        before = frame.copy(deep=True)
+        adapted = build_short_feature_frame(
+            frame,
+            signal_date=DATE,
+            market_data_feed="sip",
+            watchlist_source="test",
+        )
+        pd.testing.assert_frame_equal(frame, before)
+        self.assertNotIn("long_only_score", adapted.columns)
+        self.assertIn("signal_date", adapted.columns)
+        self.assertIn("market_data_feed", adapted.columns)
+
+
+class TestReuseAndValidation(unittest.TestCase):
+    def test_reuse_switch_and_rule_mismatch(self) -> None:
+        from ai_value_scanner.scanner import _evaluate_existing_snapshot_reuse
+
+        short = build_short_cross_section(_base_frame())
+        with tempfile.TemporaryDirectory() as td:
+            off = _write_snapshot(Path(td) / "off", None)
+            status, error = _evaluate_existing_snapshot_reuse(
+                off.root,
+                decision_date=DATE,
+                strategy_style="production",
+                policy_version="v2",
+                layout_version="v2",
+                market_mode="snapshot",
+                short_research_enabled=True,
+            )
+            self.assertEqual(status, "reused_version_mismatch")
+            self.assertIn("Short Research switch", error or "")
+
+            on = _write_snapshot(Path(td) / "on", short)
+            status, error = _evaluate_existing_snapshot_reuse(
+                on.root,
+                decision_date=DATE,
+                strategy_style="production",
+                policy_version="v2",
+                layout_version="v2",
+                market_mode="snapshot",
+                short_research_enabled=True,
+                short_rule_version="other_rule",
+            )
+            self.assertEqual(status, "reused_version_mismatch")
+            self.assertIn("Short Research rule", error or "")
+
+    def test_validator_rejects_tampered_short_files_and_report(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        for target in ("short_research.json", "short_candidates.csv", "action_list.md"):
+            with self.subTest(target=target):
+                with tempfile.TemporaryDirectory() as td:
+                    paths = _write_snapshot(td, short)
+                    path = paths.root / target
+                    original = path.read_text(encoding="utf-8")
+                    path.write_text(original + "\nTAMPER\n", encoding="utf-8")
+                    result = validator.validate_snapshot(paths.root)
+                    self.assertFalse(result["ok"])
+
+    def test_missing_short_file_fails_validation(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, short)
+            (paths.root / "short_candidates.csv").unlink()
+            result = validator.validate_snapshot(paths.root)
+            self.assertFalse(result["ok"])
+
+    def test_historical_snapshot_without_short_field_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, None)
+            manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
+            manifest.pop("short_research", None)
+            paths.run_manifest_json.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            result = validator.validate_snapshot(paths.root)
+            self.assertTrue(result["ok"], result["errors"])
+
+    def test_snapshot_immutability(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, None)
+            before = paths.action_list_md.read_bytes()
+            with self.assertRaises(FileExistsError):
+                _write_snapshot(td, None)
+            self.assertEqual(paths.action_list_md.read_bytes(), before)
+
+    def test_renderer_revision_bumped(self) -> None:
+        self.assertEqual(
+            REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-22b"
+        )
+
+
+class TestFrozenSmokeEvaluation(unittest.TestCase):
+    def test_smoke_evaluation_reproducible_and_reusable(self) -> None:
+        dataset_root = Path("outputs/review_followup_20261106/datasets")
+        if not dataset_root.is_dir():
+            self.skipTest("frozen short-research datasets are not available")
+        with tempfile.TemporaryDirectory() as td:
+            first = evaluate_frozen_short_research(
+                dataset_root, Path(td) / "a", scope="smoke"
+            )
+            second = evaluate_frozen_short_research(
+                dataset_root, Path(td) / "b", scope="smoke"
+            )
+            self.assertFalse(first["reused"])
+            self.assertEqual(first["verdict"], second["verdict"])
+            for name in (
+                "coverage.csv",
+                "paired_by_date.csv",
+                "summary.csv",
+                "members.csv",
+                "short_research.json",
+                "short_candidates.csv",
+                "report.md",
+                "validation.json",
+            ):
+                self.assertEqual(
+                    (Path(td) / "a" / name).read_bytes(),
+                    (Path(td) / "b" / name).read_bytes(),
+                    name,
+                )
+            checksums = (Path(td) / "a" / "SHA256SUMS").read_text(
+                encoding="utf-8"
+            )
+            for line in checksums.splitlines():
+                digest, filename = line.split("  ", 1)
+                actual = hashlib.sha256(
+                    (Path(td) / "a" / filename).read_bytes()
+                ).hexdigest()
+                self.assertEqual(digest, actual)
+            reused = evaluate_frozen_short_research(
+                dataset_root, Path(td) / "a", scope="smoke"
+            )
+            self.assertTrue(reused["reused"])
+
+    def test_checkpoint_rejects_identity_mismatch(self) -> None:
+        dataset_root = Path("outputs/review_followup_20261106/datasets")
+        if not dataset_root.is_dir():
+            self.skipTest("frozen short-research datasets are not available")
+        with tempfile.TemporaryDirectory() as td:
+            evaluate_frozen_short_research(dataset_root, td, scope="smoke")
+            checkpoint_path = Path(td) / "checkpoint.json"
+            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            checkpoint["identity"]["inputs"]["sip_2016_2020_v1"] = "bad"
+            checkpoint_path.write_text(
+                json.dumps(checkpoint), encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                evaluate_frozen_short_research(dataset_root, td, scope="smoke")
+
+
+if __name__ == "__main__":
+    unittest.main()

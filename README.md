@@ -27,9 +27,9 @@
 Action List 用于快速决定“今天 / 本周该研究谁”；Detailed Report 用于解释完整财务、
 估值、量价、风险、数据新鲜度、provenance 和状态变化原因。两者必须由同一套底层判断生成。
 
-现有 `Low-Value`、`Industry-Trend`、`Momentum` 和 `Research Pool`
-继续保留，作为迁移期的证据来源和兼容输出；长期用户界面将逐步围绕
-**Quality × Entry → Action List → Detailed Report** 统一。
+`Low-Value`、`Industry-Trend` 和 `Momentum` 是同一次扫描生成的并行研究清单。
+`Research Pool` 是宽口径发现池。Action List 对通过价格和流动性预筛的完整候选池独立评估，
+这些清单的成员身份只用作来源说明。各输出的用途与大盘过滤差异见[清单与 Action List](#52-清单与-action-list)。
 
 项目默认只扫描本地 watchlist，不执行全市场无约束遍历。
 
@@ -167,6 +167,7 @@ outputs/decisions/
 - snapshot `decision_date` 绑定到实际市场 session（优先 QQQ market-as-of），不是扫描机器的 UTC 日历日期；
 - `action_list.md` 是 Daily Action List，优先显示当前 `PRIORITY_REVIEW` 和状态变化；
 - `weekly_review.md` 是较完整但仍 capped 的 Weekly Review List；
+- 新生成的 v2 日报和周报在页首说明并行清单和 Action List 的关系。大盘门槛触发时明确标记三张清单暂停；
 - `detailed/*.md` 只解释同一个 `StockDecision`，不重新计算状态；
 - 默认 attention cap 为 15，可用 `--decision-attention-cap` 调整；
 - `--max-symbols` 的试运行会写到 `outputs/decision_samples/`，避免污染正式 prospective archive；
@@ -289,6 +290,17 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 - **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。
 - 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
 
+#### （6）Short Research v1（做空研究，默认关闭）
+
+- **开关**：`enable_short_research`（严格布尔值，默认 `false`）。生产配置与现有 cron 保持关闭；启用由用户另行确认。
+- **兼容条件**：显式启用时必须同时满足 `official_market_mode="sip_eod"`、`report_layout_version="v2"`、`use_adjusted_quality_metrics=true`，且不得使用 `--max-symbols` 截断同行池；行情预筛门槛不得严于 §3.1 的 `price>=5` / `dollar_volume>=2M`。不匹配时短名单记为 `unavailable` 并记录理由码。
+- **入口**：沿用现有 `python run_scan.py --config ...` 与 cron，不新增扫描命令或参数。短名单在旧三张清单和 Research Pool 分流之前，从同一次收盘 SIP 扫描的完整预筛截面独立计算；多头 Top-15、Action 状态、旧三张清单和 Research Pool 的成员与排序不受影响。
+- **规则**：SIC 同行相对强弱（至少 4 家其他公司）→ 同行 P/E 分位/溢价（至少 5 家含目标）→ S0（弱于同行且低于 SMA50、20 日跌幅未超过 20%）→ S1（营收不增且 OCF 同比 <= -10%）→ S2（P/E 分位 >= 0.80 且溢价 >= 25%）。最多展示 5 只 `CONFIRMED`；`WATCH`、`NO_SIGNAL`、`INSUFFICIENT_DATA` 给计数和理由。金融/保险/多数 REIT（SIC 6000–6999）排除。
+- **输出**：同一快照原子发布 `short_research.json`（权威记录）和 `short_candidates.csv`；`run_manifest.json` 记录开关、合同/规则版本、状态、漏斗、理由计数与文件校验值。日报和周报在多头名单之外单列 **Short Research** 区块与相对 CSV 链接。
+- **状态**：`disabled`（开关关闭，无短名单文件）、`ready`（1–5 只）、`no_candidates`（筛选完成但无 S2）、`unavailable`（输入契约/范围/计算失败，CSV 仅表头并记录稳定理由码）。
+- **借券**：默认 `UNKNOWN`；仅当来源、环境和观察时间可核对，且观察发生在信号日纽约收盘后、报告生成前、距生成不超过 24 小时时展示券商借券状态。历史回放全部 `UNKNOWN`；不新增券商请求，数量与费率留空。
+- **历史评估**：内部可导入入口 `ai_value_scanner.research.short_research_v1.evaluate_frozen_short_research(dataset_root, output_root, scope="smoke"|"full")`，复用 `outputs/review_followup_20261106/datasets` 四套冻结 SIP 截面；证据与限制见 `docs/short_research_v1/evidence/`。
+
 ### 3.5 官方配置：生产策略与档案
 
 **生产入口只有一个：`configs/config.production.json`**（每日 cron / 正式扫描 / 正式报告使用）。它当前使用**防守档 `risk_off` 的参数**，并以档案身份 `strategy_style="production"` 写入快照与指针：
@@ -404,20 +416,19 @@ python scripts/build_smallcap_universe.py --config configs/config.production.jso
 5. 合并 watchlist 属性，执行三通道筛选与打分
 6. 写出 CSV/JSON/Markdown，并打印控制台简表
 
-### 5.2 三张清单（并行）
+### 5.2 清单与 Action List
 
-- `Low-Value`：价值与质量因子主导，输出 `triage_label=keep/watch/drop`
-- `Industry-Trend`：趋势相关约束与趋势权重打分，`triage_label=trend`
-- `Momentum`：动量约束与动量权重打分，`triage_label=momentum`
+| 输出 | 用途 | 和 Action List 的关系 |
+| --- | --- | --- |
+| **Action List** | 日常人工复核入口 | 从通过价格、流动性和数据准入的候选池计算 Company Quality 与 Entry Quality，并生成日报及周报 |
+| **Low-Value** | 复核估值与财务质量 | 并行研究清单，入选记录可作个股来源说明 |
+| **Industry-Trend** | 观察产业趋势与主题联动 | 并行研究清单，便于复核行业背景 |
+| **Momentum** | 观察价格动量与强势走势 | 并行研究清单，便于复核量价结构 |
+| **做空研究（后续计划）** | 从财务恶化、同行估值溢价和弱势走势发现下行研究候选 | 计划在同一次收盘 SIP 扫描中独立输出，使用完整预筛特征，单列借券证据。采用独立的入选规则、排序及名额 |
 
-三张清单是并行结果，不是子集关系。
+生产配置下，QQQ 收盘跌破200日均线时，Low-Value、Industry-Trend 和 Momentum 共用的门槛会让三张清单同时为空。Action List 此时按防御条件继续逐股评估。个股除通过常规入场检查外，还需满足过去60个交易日至少跑赢 QQQ 5个百分点、过去20个交易日收益非负，才可能标为 `ENTRY_READY`。未来做空研究将使用自己的入选条件，独立于这个多头清单开关。
 
-生产使用口径：
-- `Low-Value` 是核心生产清单，适合优先人工复核。
-- `Industry-Trend` 用于观察产业趋势和主题联动，可能包含估值已经偏高的强势股。
-- `Momentum` 用于观察价格动量，可能包含并不低估的股票。
-- `Research Pool` 是宽口径研究扩展池，会保留 `theme_only` 等候选，不能作为自动投资结论。
-- 当 `Low-Value` 入选数量很少时，通常表示当前参数下没有足够多股票同时满足估值、质量、价格行为和主题关联要求，不应简单理解为程序异常。
+`Research Pool` 另作宽口径发现池，保留 `theme_only` 等候选。日常先看 Action List，按需要查看并行清单和 Research Pool。
 
 ### 5.3 AI 关联度评分
 
@@ -763,7 +774,7 @@ python run_scan.py --help
 - `<scope>` 为 `full` 或 `sample<max_symbols>`
 
 基于主文件会生成：
-- Low-Value 核心清单：`..._ranked.csv`
+- Low-Value 价值研究清单：`..._ranked.csv`
 - Low-Value 分通道清单：`..._ranked_core_ai.csv`、`..._ranked_ai_enabler.csv`、`..._ranked_ai_peripheral.csv`
 - Industry-Trend 辅助清单：`..._ranked_industry_trend.csv` 及其分通道文件
 - Momentum 辅助清单：`..._ranked_momentum.csv` 及其分通道文件
@@ -779,7 +790,7 @@ python run_scan.py --help
 - 数据质量周检：`outputs/ttm_population_validation*.md` + `*_coverage.csv`
   （680 家公司逐项覆盖矩阵）
 
-控制台结束时会打印完整入选股票简表。`Low-Value` 简表是核心生产清单；`Industry-Trend`、`Momentum` 和 `Research Pool` 简表用于辅助人工研究。
+控制台结束时会打印并行清单和研究池的入选简表。日常人工复核使用正式快照中的 `action_list.md` 及 `weekly_review.md`。
 
 关键研究解释字段：
 - `research_priority`：研究优先级，取值为 `research_now`、`watch_for_pullback`、`left_side_watch`、`theme_only`、`avoid_for_now`。

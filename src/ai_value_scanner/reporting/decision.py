@@ -9,6 +9,24 @@ from ai_value_scanner.decision.view_model import (
     build_stock_card_view_model,
     sanitize_relative_display,
 )
+from ai_value_scanner.research.short_research_v1 import (
+    ShortResearchResult,
+    render_short_research_section,
+)
+
+
+def render_scan_list_context(*, legacy_lists_paused: bool = False) -> list[str]:
+    lines = [
+        "- **How to read the lists** · The Action List prioritizes the eligible scan pool by "
+        "Company Quality and Entry Quality. Low-Value, Industry-Trend and Momentum run separately "
+        "and provide source tags."
+    ]
+    if legacy_lists_paused:
+        lines.append(
+            "- **Legacy lists paused** · The benchmark closed below its configured moving average. "
+            "All three screens share this gate. The Action List applies stricter defensive entry rules to individual stocks."
+        )
+    return lines
 
 
 def _display(value: object | None) -> str:
@@ -244,6 +262,9 @@ def render_action_list(
     all_decisions: Iterable[StockDecision] | None = None,
     detailed_subdir: str = "detailed",
     streaks_by_symbol: Mapping[str, int] | None = None,
+    legacy_lists_paused: bool | None = None,
+    short_research: ShortResearchResult | None = None,
+    short_csv_rel: str | None = None,
 ) -> str:
     """Render the compact attention surface from canonical StockDecision objects."""
     if layout_version == "v2":
@@ -254,6 +275,9 @@ def render_action_list(
             all_decisions=all_decisions,
             detailed_subdir=detailed_subdir,
             streaks_by_symbol=streaks_by_symbol,
+            legacy_lists_paused=legacy_lists_paused,
+            short_research=short_research,
+            short_csv_rel=short_csv_rel,
         )
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
@@ -578,6 +602,9 @@ def render_action_list_v2(
     all_decisions: Iterable[StockDecision] | None = None,
     detailed_subdir: str = "detailed",
     streaks_by_symbol: Mapping[str, int] | None = None,
+    legacy_lists_paused: bool | None = None,
+    short_research: ShortResearchResult | None = None,
+    short_csv_rel: str | None = None,
 ) -> str:
     """Clean, mobile-first Analyst Brief (v2) for the Daily/Weekly Action List.
 
@@ -598,18 +625,23 @@ def render_action_list_v2(
         f"[{card.rank}.{card.symbol}](#card-{card.symbol.lower()})"
         for card in snapshot.primary_cards
     )
+    sections_line = (
+        "- **Sections**: [Priority Review](#priority-review) "
+        "· [Watch Pullback](#watch-pullback) "
+        "· [Watch Breakout](#watch-breakout) "
+        "· [Growth Leaders (Offense)](#growth-leaders-offense) "
+        "· [Secondary Radar](#secondary-radar) "
+        "· [Attention Changes](#attention-changes)"
+    )
+    if short_research is not None:
+        sections_line += " · [Short Research](#short-research)"
     lines = [
         '<a id="top"></a>',
         f"# {snapshot.title} (v2)",
         "",
         f"- **Date**: {snapshot.decision_date} (`{cadence_display}`) "
         f"· **Shortlist**: {len(primary)} ({_v2_counts_line(primary)})",
-        "- **Sections**: [Priority Review](#priority-review) "
-        "· [Watch Pullback](#watch-pullback) "
-        "· [Watch Breakout](#watch-breakout) "
-        "· [Growth Leaders (Offense)](#growth-leaders-offense) "
-        "· [Secondary Radar](#secondary-radar) "
-        "· [Attention Changes](#attention-changes)",
+        sections_line,
     ]
     if snapshot.concentration_summary_line:
         lines.insert(
@@ -617,6 +649,8 @@ def render_action_list_v2(
         )
     if any(card.decision.provenance.get('market_data_mode')=='sip_eod' for card in snapshot.primary_cards):
         lines.append('- **Market data**: SIP completed-session daily bars; full-market dollar volume. Intraday IEX monitoring is provisional.')
+    if legacy_lists_paused is not None:
+        lines.extend(render_scan_list_context(legacy_lists_paused=legacy_lists_paused))
     if cadence == "weekly" and any(
         card.decision.provenance.get("review_context_version") for card in snapshot.primary_cards
     ):
@@ -813,6 +847,13 @@ def render_action_list_v2(
                 "recorded in `state_change_alerts.jsonl` in this snapshot.*"
             )
         lines.extend(["", "[↑ Top](#top)", ""])
+    if short_research is not None:
+        lines.extend(
+            render_short_research_section(
+                short_research,
+                csv_rel_path=short_csv_rel or "./short_candidates.csv",
+            )
+        )
     return "\n".join(lines)
 
 

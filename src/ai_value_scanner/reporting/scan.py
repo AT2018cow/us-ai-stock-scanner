@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from ai_value_scanner.config import ScanConfig
+from ai_value_scanner.reporting.decision import render_scan_list_context
 
 
 def write_csv_atomic(df: "pd.DataFrame", path: str | Path) -> None:
@@ -99,6 +100,9 @@ def build_run_report_markdown(
     research_pool_path: Path | None = None,
     diagnostics_layer_summary: dict[str, dict[str, dict[str, float | int]]] | None = None,
     first_fail_concentration_summary: dict[str, dict[str, Any]] | None = None,
+    legacy_lists_paused: bool = False,
+    short_research: Any | None = None,
+    short_research_path: Path | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# AI Value Scan Report")
@@ -112,6 +116,7 @@ def build_run_report_markdown(
     lines.append(f"- Started UTC: {started_at.isoformat()}")
     lines.append(f"- Finished UTC: {finished_at.isoformat()}")
     lines.append(f"- Elapsed seconds: {(finished_at - started_at).total_seconds():.2f}")
+    lines.extend(render_scan_list_context(legacy_lists_paused=legacy_lists_paused))
     lines.append("")
     lines.append("## Funnel")
     lines.append("")
@@ -220,6 +225,17 @@ def build_run_report_markdown(
                     f"risks={str(row.get('research_risks', ''))}"
                 )
         lines.append("")
+    if short_research is not None:
+        from ai_value_scanner.research.short_research_v1 import (
+            render_short_research_scan_context,
+        )
+
+        lines.extend(
+            render_short_research_scan_context(
+                short_research,
+                csv_path=short_research_path,
+            )
+        )
     lines.append("## Artifacts")
     lines.append("")
     lines.append(f"- ranked csv: {paths['ranked_csv']}")
@@ -245,6 +261,11 @@ def build_run_report_markdown(
             lines.append(f"- left_side_watch: {priority_counts.get('left_side_watch', 0)}")
             lines.append(f"- theme_only: {priority_counts.get('theme_only', 0)}")
             lines.append(f"- avoid_for_now: {priority_counts.get('avoid_for_now', 0)}")
+    if short_research is not None:
+        lines.append(f"- short research status: {short_research.status}")
+        lines.append(f"- short research selected: {short_research.selected_count}")
+    if short_research_path is not None:
+        lines.append(f"- short research csv: {short_research_path}")
     lines.append(f"- network issues observed: {'YES' if network_issue_flag else 'NO'}")
     if market_data_provenance:
         stale_used = bool(market_data_provenance.get("stale_market_data_fallback_used"))
