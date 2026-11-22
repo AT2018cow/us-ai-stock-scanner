@@ -1,0 +1,2 @@
+case_type,signal_date,symbol,status,label_status,note
+synthetic_missing_label,n/a,n/a,INSUFFICIENT_DATA,False,synthetic casebook entry; no historical example available

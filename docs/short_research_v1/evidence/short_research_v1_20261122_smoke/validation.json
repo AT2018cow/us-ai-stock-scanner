@@ -1,0 +1,43 @@
+{
+  "failures": [],
+  "funnel_totals": {
+    "industry_rs_rows": 871,
+    "input_rows": 2445,
+    "pe_eligible_rows": 1083,
+    "pe_rows": 520,
+    "s0_rows": 171,
+    "s1_rows": 18,
+    "s2_rows": 4,
+    "selected_rows": 4,
+    "u0_rows": 1506,
+    "u0_unique_rows": 1503,
+    "u_rows": 493
+  },
+  "input_identities": {
+    "sip_2016_2020_v1": {
+      "dataset_sha256": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+      "dates": 60,
+      "rows": 31516
+    },
+    "sip_2021_2026_v1": {
+      "dataset_sha256": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+      "dates": 70,
+      "rows": 49015
+    }
+  },
+  "label_checks": {
+    "all_valid_exit_labels_match_planned_sessions": true,
+    "label_mismatch_count": 0,
+    "missing_labels_kept_as_missing": true,
+    "no_imputed_returns": true
+  },
+  "ok": true,
+  "s2_dates": 3,
+  "scope": "smoke",
+  "verdict": {
+    "reasons": [
+      "fewer than 24 mature complete dates"
+    ],
+    "verdict": "insufficient_evidence"
+  }
+}

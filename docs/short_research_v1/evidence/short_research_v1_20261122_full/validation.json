@@ -1,0 +1,54 @@
+{
+  "failures": [],
+  "funnel_totals": {
+    "industry_rs_rows": 54083,
+    "input_rows": 128139,
+    "pe_eligible_rows": 69495,
+    "pe_rows": 32949,
+    "s0_rows": 8692,
+    "s1_rows": 734,
+    "s2_rows": 165,
+    "selected_rows": 163,
+    "u0_rows": 95945,
+    "u0_unique_rows": 95743,
+    "u_rows": 31134
+  },
+  "input_identities": {
+    "sip_2016_2020_v1": {
+      "dataset_sha256": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+      "dates": 60,
+      "rows": 31516
+    },
+    "sip_2021_2026_v1": {
+      "dataset_sha256": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+      "dates": 70,
+      "rows": 49015
+    },
+    "sip_bear_weekly_v1": {
+      "dataset_sha256": "d2fd0dc9b7a21d170c36125ed505e34721d4d145722c77fdee883ff82be87436",
+      "dates": 52,
+      "rows": 35747
+    },
+    "sip_covid_weekly_v1": {
+      "dataset_sha256": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+      "dates": 21,
+      "rows": 11861
+    }
+  },
+  "label_checks": {
+    "all_valid_exit_labels_match_planned_sessions": true,
+    "label_mismatch_count": 0,
+    "missing_labels_kept_as_missing": true,
+    "no_imputed_returns": true
+  },
+  "ok": true,
+  "s2_dates": 103,
+  "scope": "full",
+  "verdict": {
+    "reasons": [
+      "S2 absolute short gross return is not positive",
+      "S2-S0 paired difference is not positive"
+    ],
+    "verdict": "signal_or_increment_failed"
+  }
+}

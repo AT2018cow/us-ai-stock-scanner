@@ -2,6 +2,8 @@
 
 - Date: 2026-11-22
 - Status: implemented; frozen smoke and full evaluation complete; production configs remain disabled.
+- Implementation commit: `7f411eadd3c8d23d92f9c3303a7dbc36908eee1f` (`7f411ea`)
+- Evidence `manifest.json` code_sha: `7f411eadd3c8d23d92f9c3303a7dbc36908eee1f`
 - Contract: `short_research_v1` · Rule: `short_research_rules_v1`
 - Independent reviewer: Codex (V1-01 … V1-10)
 

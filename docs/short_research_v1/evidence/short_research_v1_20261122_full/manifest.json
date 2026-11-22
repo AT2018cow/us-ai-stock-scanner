@@ -1,0 +1,60 @@
+{
+  "code_sha": "7f411eadd3c8d23d92f9c3303a7dbc36908eee1f",
+  "created_at_utc": "2026-10-30T23:59:59+00:00",
+  "inputs": {
+    "sip_2016_2020_v1": {
+      "dataset_sha256": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+      "dates": 60,
+      "frequency": "monthly",
+      "metadata_sha256": "a196d75050daba5cb5dbc8027a26741578b32dc538028e806a4a673094e605f5",
+      "rows": 31516,
+      "success_sha256": "f8fd83374ff94cfcc2303c598886dd4b6d8d1ad63f20b0f79897c96d62309dfb"
+    },
+    "sip_2021_2026_v1": {
+      "dataset_sha256": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+      "dates": 70,
+      "frequency": "monthly",
+      "metadata_sha256": "8ec7161e1734907792a2bd348a7f8388d5b495eeedd6624d6024eb0b74f1ac25",
+      "rows": 49015,
+      "success_sha256": "137375c590e880f00847f7e87c09b9def7b7c879573ac9ae0bc64c79dedd81ef"
+    },
+    "sip_bear_weekly_v1": {
+      "dataset_sha256": "d2fd0dc9b7a21d170c36125ed505e34721d4d145722c77fdee883ff82be87436",
+      "dates": 52,
+      "frequency": "weekly",
+      "metadata_sha256": "9ca1b97544350bd6ceda467c46c2168edfeb56e5eea6f104b1a234797004efc8",
+      "rows": 35747,
+      "success_sha256": "45f0b4668e3d041c5aa87151996b75cae59919713fd91b5bc95f7970d3ccc4bb"
+    },
+    "sip_covid_weekly_v1": {
+      "dataset_sha256": "9518f538d0db3e67a6e059c37f46bb70c9b2e10aa928d5194e24e48e5f8a002c",
+      "dates": 21,
+      "frequency": "weekly",
+      "metadata_sha256": "7a13f871c36cf0eb283e4ee9e535ba68d19168f15e62d3b1f50127dc2e67a26f",
+      "rows": 11861,
+      "success_sha256": "36b55822d41976995e30c7233a01365b719266eb2c9d37287dc001268129db27"
+    }
+  },
+  "outputs": {
+    "action_list_short_fragment.md": "248c20b59660e4e713cafcf2c76a1d3e90df7625d3174943c49ffa6e62851b19",
+    "casebook.csv": "fd8e1f249971fbbfb5f2c5b8b565cfe19f11df2563cc774b26d93c68d44936f0",
+    "commands.md": "3482501f7b8d5e31b3994599aa9700d6cf119d76e48e70d96a62d75d82ea48ea",
+    "coverage.csv": "e1ea916bb44ec20649a3722952c33b044cbc246fbc7e955224b67d8fa2ef5b6b",
+    "members.csv": "8d09cec76c93bddcef22c97fe9e8033301c780fa3e44a359323d97ced6934a1a",
+    "paired_by_date.csv": "9bb52533bd6299a9f76b81cbbdce0b9c936f695fa15e88cfe1532a53d6a48a1d",
+    "protocol.json": "1a736d05e8de042e6083e896a0424898f8bfc5e65909b593dd6bb8c104557506",
+    "report.md": "64ec1de5c81f0dc374e66a1989415df1ff057865475cb5b2663d7aa18f704945",
+    "scan_integration.json": "f16b6c61e7b7c5fd09f083bb9925526491b2efe990f06ecc7778c337d3feb67a",
+    "short_candidates.csv": "03d57adae631dc8096d2b9bc9086e26a4900e58fb8e3ca575053df5afadf777c",
+    "short_research.json": "632e958c4c046aa829128cd131be07c43409db3d2f956c2682202657c4cef125",
+    "summary.csv": "97ecdf775c73e34d438326b3cdb6a1f80e88e4af71a2abf3f260afda15ecf19f",
+    "validation.json": "281f2993929aec9e696e7b33d7de275ad13dd409f27e683a37c7bd3e0da07af3",
+    "weekly_review_short_fragment.md": "248c20b59660e4e713cafcf2c76a1d3e90df7625d3174943c49ffa6e62851b19"
+  },
+  "run_id": "full",
+  "scope": "full",
+  "source_files": {
+    "short_research_v1.py": "0bfd48dcfd4b11c8d24d77ba8b9a8f7f375412641dce2b5ab27fd947b9309ac8",
+    "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "bootstrap": {
+    "block_months": 6,
+    "repeats": 2000,
+    "seed": 61122
+  },
+  "contract_version": "short_research_v1",
+  "cost_scenarios": {
+    "base": {
+      "borrow": 0.05,
+      "dividend": 0.02,
+      "per_side": 0.0015
+    },
+    "stress": {
+      "borrow": 0.15,
+      "dividend": 0.04,
+      "per_side": 0.003
+    },
+    "trade_only": {
+      "borrow": 0.0,
+      "dividend": 0.0,
+      "per_side": 0.0015
+    }
+  },
+  "excluded_sic_range": [
+    6000,
+    6999
+  ],
+  "fundamental_asof_max_days": 180,
+  "horizons": [
+    20,
+    60
+  ],
+  "label_contract": "exchange_calendar_endpoints_v3",
+  "label_cutoff": "2026-11-05",
+  "max_candidates": 5,
+  "min_avg_dollar_volume_20d": 10000000.0,
+  "min_dollar_volume": 2000000.0,
+  "min_industry_peers_excluding_target": 4,
+  "min_pe_peers_including_target": 5,
+  "min_price": 5.0,
+  "roundtrip_cost": 0.003,
+  "rule_version": "short_research_rules_v1",
+  "scope": "full",
+  "signal_rules": {
+    "S0": "rs60_sic < 0 and price_to_sma50 < 1.0 and return_20d > -0.20",
+    "S1": "S0 and revenue_yoy <= 0 and operating_cash_flow_growth <= -0.10",
+    "S2": "S1 and pe_percentile >= 0.80 and pe_premium >= 0.25"
+  },
+  "smoke_dates": [
+    "2016-01-29",
+    "2020-03-31",
+    "2022-06-30",
+    "2025-01-31"
+  ]
+}

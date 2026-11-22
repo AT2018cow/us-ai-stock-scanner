@@ -1,0 +1,44 @@
+{
+  "code_sha": "7f411eadd3c8d23d92f9c3303a7dbc36908eee1f",
+  "created_at_utc": "2025-01-31T23:59:59+00:00",
+  "inputs": {
+    "sip_2016_2020_v1": {
+      "dataset_sha256": "0944488aa43c0cd96e36697df0859c09d6d5bc7971b198c40f591f01e890cb07",
+      "dates": 60,
+      "frequency": "monthly",
+      "metadata_sha256": "a196d75050daba5cb5dbc8027a26741578b32dc538028e806a4a673094e605f5",
+      "rows": 31516,
+      "success_sha256": "f8fd83374ff94cfcc2303c598886dd4b6d8d1ad63f20b0f79897c96d62309dfb"
+    },
+    "sip_2021_2026_v1": {
+      "dataset_sha256": "aaaca3090da010e21627f73ae15553fa45764bd1533c753c5f7d8eb0bac5e474",
+      "dates": 70,
+      "frequency": "monthly",
+      "metadata_sha256": "8ec7161e1734907792a2bd348a7f8388d5b495eeedd6624d6024eb0b74f1ac25",
+      "rows": 49015,
+      "success_sha256": "137375c590e880f00847f7e87c09b9def7b7c879573ac9ae0bc64c79dedd81ef"
+    }
+  },
+  "outputs": {
+    "action_list_short_fragment.md": "a8f9315d75dc1448059caee02d289b1f2d89c92a6c89f0d2676725f420073269",
+    "casebook.csv": "0bd8c8c398153b05145c13e5147f87bb128a679965d7378b75bf1e50796a9ab2",
+    "commands.md": "3585fa654f73043492af8db675eb528c2ff4767064ca2b222305ef1898b7fd9b",
+    "coverage.csv": "63abfc5304b88af6d859034cb7d804e13e19389cf27895c2debe0dd087dd3f38",
+    "members.csv": "d614ae42e6ad60384879a491e3984c8a14f85620849ef1e79bc15e1ebb8b9c8e",
+    "paired_by_date.csv": "dbeeaf5b17330bed6021eae1f0bd86dae6a06ea6facd00aacfad6361df976d63",
+    "protocol.json": "baf0383d318d1a07b2688cc45f32b8e9c85a73a29c9c0c09af8e396092f83ab7",
+    "report.md": "20fd6f706d622443a7229a818b74007b1e3660ddc2ba3776baae6fb3ab8f5eeb",
+    "scan_integration.json": "2582f07c8e3928d447082aeeff3e393957019be7aa3b56c35fbddfb96a2ce945",
+    "short_candidates.csv": "ee29750b91ae6acd3b80e86167113e8dd00def18f3c1f3c0e8ff2e79431d20c7",
+    "short_research.json": "bd0bdeb995896829095da22bedc3803a2feaa1ac396542012318c3689d8717f5",
+    "summary.csv": "571b57b06fcad2ba065dcda5f49fd5bae4fd30a4151df6454e7992408ba76248",
+    "validation.json": "b5391091be4e33821c806fd349669fbb4fb80e0aeb89e9d5384355d0074083a5",
+    "weekly_review_short_fragment.md": "a8f9315d75dc1448059caee02d289b1f2d89c92a6c89f0d2676725f420073269"
+  },
+  "run_id": "smoke",
+  "scope": "smoke",
+  "source_files": {
+    "short_research_v1.py": "0bfd48dcfd4b11c8d24d77ba8b9a8f7f375412641dce2b5ab27fd947b9309ac8",
+    "short_research_v1_eval.py": "7f5911dbf92cc30f990d0111926e6042b33887388fd9dd9b8c324a74f2f645ec"
+  }
+}

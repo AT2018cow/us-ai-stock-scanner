@@ -1,0 +1,43 @@
+{
+  "empty_case": {
+    "dataset": "sip_2016_2020_v1",
+    "frequency": "monthly",
+    "industry_rs_rows": 0,
+    "input_rows": 476,
+    "pe_eligible_rows": 0,
+    "pe_rows": 0,
+    "s0_rows": 0,
+    "s1_rows": 0,
+    "s2_rows": 0,
+    "selected_rows": 0,
+    "signal_date": "2016-01-29",
+    "status": "no_candidates",
+    "u0_rows": 0,
+    "u0_unique_rows": 0,
+    "u_rows": 0
+  },
+  "evidence_type": "frozen_input_adapter_simulation",
+  "failures": [],
+  "non_empty_case": {
+    "dataset": "sip_2016_2020_v1",
+    "frequency": "monthly",
+    "industry_rs_rows": 151,
+    "input_rows": 477,
+    "pe_eligible_rows": 266,
+    "pe_rows": 98,
+    "s0_rows": 21,
+    "s1_rows": 3,
+    "s2_rows": 1,
+    "selected_rows": 1,
+    "signal_date": "2016-05-31",
+    "status": "ready",
+    "u0_rows": 336,
+    "u0_unique_rows": 335,
+    "u_rows": 91
+  },
+  "note": "No credentialed SIP/SEC scan was run in this environment. The frozen cross-section was passed through build_short_cross_section and the same snapshot/report contract; the live scanner adapter is covered by unit tests and the documented command.",
+  "statuses": [
+    "no_candidates",
+    "ready"
+  ]
+}

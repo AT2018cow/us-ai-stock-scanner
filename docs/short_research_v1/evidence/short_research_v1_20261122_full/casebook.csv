@@ -1,0 +1,3 @@
+case_type,signal_date,symbol,status,label_status,note
+confirmed_not_selected_cap,2024-04-30,KNX,CONFIRMED,True,CONFIRMED but outside the five-slot list
+selected_group_member_missing_label,2026-10-30,ADBE,NO_SIGNAL,False,missing endpoint kept as missing; no substitution
