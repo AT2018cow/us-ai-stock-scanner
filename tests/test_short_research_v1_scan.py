@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timezone
+from functools import lru_cache
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -88,6 +89,7 @@ class _FakeMonitor:
         }
 
 
+@lru_cache(maxsize=1)
 def _load_frame() -> tuple[pd.DataFrame, dict[str, dict]]:
     frame = pd.read_csv(
         DATASET,
@@ -133,9 +135,9 @@ def _load_frame() -> tuple[pd.DataFrame, dict[str, dict]]:
     return frame, features
 
 
-def _fake_price_dimension(price, bars):
+def _fake_price_dimension(bars, features):
     symbol = bars[0].get("symbol") if bars else None
-    return FEATURES.get(symbol, {})
+    return features.get(symbol, {})
 
 
 def _fake_score_rank(frame, *args, **kwargs):
@@ -178,10 +180,11 @@ def _fake_filters(frame, steps, channel, config):
 
 
 def _fake_diag(diagnostics):
+    count = diagnostics[0]["before"]
     return {
         "base_hard": {
-            "before": len(FRAME),
-            "remaining": len(FRAME),
+            "before": count,
+            "remaining": count,
             "removed": 0,
             "pass_rate": 1.0,
         }
@@ -203,9 +206,6 @@ def _fake_triage(frame, rules):
     return out
 
 
-FRAME, FEATURES = _load_frame()
-
-
 def _run_scan(
     root: Path,
     *,
@@ -217,6 +217,7 @@ def _run_scan(
     real_legacy_filters: bool = False,
     allow_existing: bool = False,
 ):
+    frame, features = _load_frame()
     config = ScanConfig(
         output_dir=str(root / "outputs"),
         strategy_style="production",
@@ -242,16 +243,16 @@ def _run_scan(
         )
         patch_scanner(
             "load_watchlist_scores",
-            lambda cfg: pd.DataFrame({"symbol": FRAME["symbol"].tolist()}),
+            lambda cfg: pd.DataFrame({"symbol": frame["symbol"].tolist()}),
         )
         patch_scanner(
             "collect_candidates_with_universe_audit",
             lambda *args, **kwargs: (
-                FRAME.copy(),
+                frame.copy(),
                 [],
                 {
-                    "tradable_mapped_symbols": len(FRAME),
-                    "post_sample_symbols": len(FRAME),
+                    "tradable_mapped_symbols": len(frame),
+                    "post_sample_symbols": len(frame),
                 },
             ),
         )
@@ -261,7 +262,7 @@ def _run_scan(
                 {"symbol": frame["symbol"].tolist()}
             ),
         )
-        patch_scanner("price_dimension_from_bars", _fake_price_dimension)
+        patch_scanner("price_dimension_from_bars", lambda price, bars: _fake_price_dimension(bars, features))
         patch_scanner("bars_market_asof", lambda bars: DATE)
         patch_scanner("bars_return_from_lookback", lambda bars, days: 0.05)
         patch_scanner("bars_close_from_lookback", lambda bars, days: 90.0)
