@@ -342,6 +342,7 @@ class TestPeerCalculations(unittest.TestCase):
         result = build_short_cross_section(_base_frame())
         target = next(record for record in result.records if record.symbol == "E")
         self.assertAlmostEqual(target.rs60_sic, -0.14, places=6)
+        self.assertAlmostEqual(target.peer_median_return_60d, 0.02, places=6)
         self.assertEqual(target.industry_peer_count, 4)
         self.assertEqual(target.pe_peer_count, 5)
         self.assertAlmostEqual(target.pe_peer_median, 14.0, places=6)
@@ -711,8 +712,17 @@ class TestSnapshotIntegration(unittest.TestCase):
                 encoding="utf-8"
             ).splitlines()
             self.assertEqual(len(csv_lines), 6)  # header + 5
+            self.assertIn("peer_median_return_60d", csv_lines[0])
             report = paths.action_list_md.read_text(encoding="utf-8")
             self.assertIn("## Short Research (5)", report)
+
+    def test_report_shows_reason_counts_when_rows_are_excluded(self) -> None:
+        frame = _base_frame()
+        frame.loc[0, "price"] = 1.0
+        short = build_short_cross_section(frame)
+        text = "\n".join(render_short_research_section(short))
+        self.assertIn("**Reason counts**", text)
+        self.assertIn("PRICE_BELOW_MIN", text)
 
     def test_short_failure_isolated_from_long_snapshot(self) -> None:
         bad = _base_frame()

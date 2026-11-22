@@ -177,6 +177,7 @@ class ShortCandidate:
     price_to_sma50: float | None
     relative_strength_60d_qqq: float | None
     rs60_sic: float | None
+    peer_median_return_60d: float | None
     industry_peer_count: int | None
     revenue: float | None
     revenue_yoy: float | None
@@ -219,6 +220,7 @@ class ShortCandidate:
             "price_to_sma50": self.price_to_sma50,
             "relative_strength_60d_qqq": self.relative_strength_60d_qqq,
             "rs60_sic": self.rs60_sic,
+            "peer_median_return_60d": self.peer_median_return_60d,
             "industry_peer_count": self.industry_peer_count,
             "revenue": self.revenue,
             "revenue_yoy": self.revenue_yoy,
@@ -265,6 +267,7 @@ class ShortCandidate:
             price_to_sma50=_num(raw.get("price_to_sma50")),
             relative_strength_60d_qqq=_num(raw.get("relative_strength_60d_qqq")),
             rs60_sic=_num(raw.get("rs60_sic")),
+            peer_median_return_60d=_num(raw.get("peer_median_return_60d")),
             industry_peer_count=_int(raw.get("industry_peer_count")),
             revenue=_num(raw.get("revenue")),
             revenue_yoy=_num(raw.get("revenue_yoy")),
@@ -678,6 +681,7 @@ def _candidate_from_row(
     rank: int | None,
     borrow: BorrowEvidence,
     rs60_sic: float | None,
+    peer_median_return_60d: float | None,
     industry_peer_count: int | None,
     pe_peer_count: int | None,
     pe_peer_median: float | None,
@@ -704,6 +708,7 @@ def _candidate_from_row(
         price_to_sma50=_num(row.get("price_to_sma50")),
         relative_strength_60d_qqq=_num(row.get("relative_strength_60d_qqq")),
         rs60_sic=rs60_sic,
+        peer_median_return_60d=peer_median_return_60d,
         industry_peer_count=industry_peer_count,
         revenue=_num(row.get("revenue")),
         revenue_yoy=_num(row.get("revenue_yoy")),
@@ -989,6 +994,12 @@ def build_short_cross_section(
                 rank=rank_by_index.get(idx),
                 borrow=borrow,
                 rs60_sic=rs60_by_index.get(idx),
+                peer_median_return_60d=(
+                    float(row["return_60d"]) - rs60_by_index[idx]
+                    if idx in rs60_by_index
+                    and _num(row.get("return_60d")) is not None
+                    else None
+                ),
                 industry_peer_count=peer_count_by_index.get(idx),
                 pe_peer_count=pe_info[0],
                 pe_peer_median=pe_info[1],
@@ -1133,6 +1144,7 @@ def short_candidate_rows(result: ShortResearchResult) -> list[dict[str, Any]]:
                 "market_asof": candidate.market_asof,
                 "return_60d": candidate.return_60d,
                 "rs60_sic": candidate.rs60_sic,
+                "peer_median_return_60d": candidate.peer_median_return_60d,
                 "industry_peer_count": candidate.industry_peer_count,
                 "price_to_sma50": candidate.price_to_sma50,
                 "return_20d": candidate.return_20d,
@@ -1169,6 +1181,7 @@ SHORT_CSV_COLUMNS: tuple[str, ...] = (
     "market_asof",
     "return_60d",
     "rs60_sic",
+    "peer_median_return_60d",
     "industry_peer_count",
     "price_to_sma50",
     "return_20d",
@@ -1262,6 +1275,13 @@ def render_short_research_section(
             "- **Status counts**: "
             + " · ".join(
                 f"{key} {value}" for key, value in sorted(result.status_counts.items())
+            )
+        )
+    if result.reason_counts:
+        lines.append(
+            "- **Reason counts**: "
+            + " · ".join(
+                f"{key} {value}" for key, value in sorted(result.reason_counts.items())
             )
         )
     lines.append(
