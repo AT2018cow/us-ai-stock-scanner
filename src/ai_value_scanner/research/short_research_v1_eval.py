@@ -545,6 +545,7 @@ def evaluate_frozen_short_research(
     output_root: str | Path,
     *,
     scope: str = "full",
+    scan_entry_integration: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if scope not in {"smoke", "full"}:
         raise ValueError("scope must be 'smoke' or 'full'")
@@ -578,6 +579,17 @@ def evaluate_frozen_short_research(
             name: identity.dataset_sha256
             for name, identity in identities.items()
         },
+        "scan_entry_integration_sha256": (
+            _sha256_text(
+                json.dumps(
+                    scan_entry_integration,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            if scan_entry_integration is not None
+            else None
+        ),
     }
     checkpoint_path = output_root / "checkpoint.json"
     if checkpoint_path.is_file():
@@ -1130,6 +1142,8 @@ def evaluate_frozen_short_research(
         "statuses": sorted({row["status"] for row in coverage_rows}),
         "failures": failures,
     }
+    if scan_entry_integration is not None:
+        scan_integration["mocked_scan_entry"] = dict(scan_entry_integration)
     _json_dump(scan_integration_path, scan_integration)
     if non_empty is not None:
         demo_frame = frames[non_empty["dataset"]].loc[
@@ -1280,6 +1294,7 @@ def evaluate_frozen_short_research(
             "no_imputed_returns": True,
         },
         "verdict": verdict,
+        "scan_entry_integration": dict(scan_entry_integration or {}),
     }
     _json_dump(validation_path, validation)
 
@@ -1678,6 +1693,16 @@ def _render_report(
         f"- Evidence type: `{scan_integration.get('evidence_type')}`"
     )
     lines.append(f"- Statuses observed: {scan_integration.get('statuses')}")
+    mocked = scan_integration.get("mocked_scan_entry")
+    if isinstance(mocked, dict):
+        lines.append(
+            "- Mocked scan entry: "
+            f"off/on long decisions identical={mocked.get('long_decisions_identical')} "
+            f"· legacy CSV identical={mocked.get('long_legacy_csv_identical')} "
+            f"· on short status={mocked.get('on', {}).get('short_status')} "
+            f"· truncation status={mocked.get('truncation', {}).get('short_status')} "
+            f"· short-failure status={mocked.get('short_failure', {}).get('short_status')}"
+        )
     lines.append(
         "- A credentialed live SIP scan was not run here; the frozen adapter "
         "and snapshot/report contract are covered by tests and the commands file."

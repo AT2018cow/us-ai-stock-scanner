@@ -28,6 +28,7 @@ No new scan/cron command or flag was added. `run_scan.py` and the existing cron 
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p test_short_research_v1.py
+.venv/bin/python -m unittest discover -s tests -p test_short_research_v1_scan.py
 .venv/bin/python -m unittest discover -s tests
 ```
 
@@ -68,7 +69,8 @@ Enablement is intentionally left to the user; production configs do not set `ena
 ## 3. Test result
 
 - `tests/test_short_research_v1.py`: **48 tests, OK**.
-- Full unittest suite: **1,431 tests, OK** (the repository's intentional theme-status message still prints, but the process exits 0).
+- `tests/test_short_research_v1_scan.py`: **5 tests, OK** (mocked SIP/SEC through the real `run_scan_with_status`).
+- Full unittest suite: **1,436 tests, OK** (the repository's intentional theme-status message still prints, but the process exits 0).
 
 ## 4. Evidence
 
@@ -86,7 +88,7 @@ Both evidence directories contain:
 
 `protocol.json`, `manifest.json`, `commands.md`, `report.md`, `validation.json`, `SHA256SUMS`, `coverage.csv`, `paired_by_date.csv`, `summary.csv`, `members.csv`, `casebook.csv`, `scan_integration.json`, `short_research.json`, `short_candidates.csv`, `action_list_short_fragment.md`, `weekly_review_short_fragment.md`, `checkpoint.json`.
 
-`sha256sum -c SHA256SUMS` passes in both directories; no local absolute paths are present.
+`scan_integration.json` includes both the frozen adapter simulation and the mocked `run_scan_with_status` off/on, truncation, short-failure and core-failure evidence. `sha256sum -c SHA256SUMS` passes in both directories; no local absolute paths are present.
 
 ## 5. Frozen input identities
 
@@ -125,13 +127,13 @@ All four match `success.json`, metadata SHA256, and the `parity.inputs` hashes i
 | V1-05 comparison/statistics | k=min(5,n_S0,n_S1,n_S2), 1/k weights, fixed-5 cash slots, paired masks, block bootstrap 2,000/seed 61,122/block 6, segments, concentration/contribution helpers; smoke/full `coverage.csv`, `paired_by_date.csv`, `summary.csv`. |
 | V1-06 borrow | Trusted same-day metadata, bare cache, stale/future, source/environment mismatch, conflicting flags, no-selection-change test in `TestBorrowEvidence`; all historical rows `UNKNOWN`. |
 | V1-07 reproducibility | Two smoke runs byte-identical for coverage/paired/summary/members/JSON/CSV/report/validation; `SHA256SUMS` verified; checkpoint identity mismatch rejected and matching checkpoint reused in `TestFrozenSmokeEvaluation`. |
-| V1-08 same-scan/isolation | Read-only whitelist adapter, short on/off snapshots with identical `decisions.jsonl` and long daily/weekly symbols, QQQ-paused report with non-empty short section, in `TestSnapshotIntegration`; live credentialed scan not run (documented limitation). |
-| V1-09 files/empty/fault isolation | ready/no_candidates/unavailable/disabled snapshots, CSV header-only empty cases, five-cap CSV, short failure converted to unavailable while long snapshot publishes, in `TestSnapshotIntegration`. |
+| V1-08 same-scan/isolation | Mocked SIP/SEC adapter through the real `run_scan_with_status` on the frozen 2025-01-31 complete cross-section: off/on runs have identical canonical long decisions, daily/weekly symbols, long report body and legacy ranked/trend/momentum/research-pool CSV bytes; enabled run publishes short files/report; QQQ below SMA200 still yields a non-empty short list. Tests in `tests/test_short_research_v1_scan.py`; live credentialed scan not run (documented limitation). |
+| V1-09 files/empty/fault isolation | ready/no_candidates/unavailable/disabled snapshots, CSV header-only empty cases, five-cap CSV, short module failure converted to unavailable while the long snapshot publishes, `max_symbols` truncation marked unavailable, and core snapshot failure leaves `latest_production.json` absent with `decision_output_status=failed` / `latest_pointer_status=not_attempted`; tests in both short-research test modules. |
 | V1-10 compatibility/immutability | Switch/rule-version reuse mismatch, same-identity reuse, missing/tampered JSON/CSV/report rejection, historical snapshot without field, immutable rerun `FileExistsError`, renderer revision bump, in `TestReuseAndValidation`. |
 
 ## 8. Known limitations
 
-- No credentialed live SIP/SEC scan was run here. The frozen adapter simulation and unit tests cover the contract; Codex should run the documented live command if credentials are available.
+- No credentialed live SIP/SEC scan was run here. A mocked SIP/SEC adapter through the real `run_scan_with_status` covers off/on isolation, QQQ-paused behavior, sample truncation, short-module failure and core-publication failure; Codex should run the documented live command if credentials are available.
 - All historical borrow statuses are `UNKNOWN`; no historical borrow database or extra broker requests were used.
 - Intraperiod maximum adverse excursion is not verified without raw frozen daily paths; period-end adverse-up is reported instead.
 - Monthly inputs are largely `union_superset_approx`; overlapping forward labels are aggregated by date, not treated as independent samples.
