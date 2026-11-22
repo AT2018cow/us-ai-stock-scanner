@@ -9,6 +9,7 @@ and latest-pointer code are the production implementations.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import tempfile
@@ -24,6 +25,8 @@ import pandas as pd
 from ai_value_scanner import scanner as sc
 from ai_value_scanner.decision.model import stock_decisions_from_jsonl
 from ai_value_scanner.scanner import ScanConfig, run_scan_with_status
+from ai_value_scanner.research.short_research_v1 import build_short_cross_section
+from ai_value_scanner.reporting import short_research as archive, snapshot
 
 DATE = "2025-01-31"
 FIXED_NOW = datetime(2025, 2, 1, 2, 0, 0, tzinfo=timezone.utc)
@@ -211,6 +214,8 @@ def _run_scan(
     short_failure: bool = False,
     snapshot_failure: bool = False,
     eod_available: bool = True,
+    real_legacy_filters: bool = False,
+    allow_existing: bool = False,
 ):
     config = ScanConfig(
         output_dir=str(root / "outputs"),
@@ -268,8 +273,9 @@ def _run_scan(
         patch_scanner(
             "compute_peer_relative_valuation", lambda frame, **kwargs: {}
         )
-        patch_scanner("build_filter_steps", lambda *args, **kwargs: [])
-        patch_scanner("apply_scored_or_hard_filters", _fake_filters)
+        if not real_legacy_filters:
+            patch_scanner("build_filter_steps", lambda *args, **kwargs: [])
+            patch_scanner("apply_scored_or_hard_filters", _fake_filters)
         patch_scanner("summarize_first_fail_reasons", _fake_first_fail)
         patch_scanner("summarize_diagnostics_by_layer", _fake_diag)
         patch_scanner("first_fail_concentration", _fake_concentration)
@@ -309,6 +315,7 @@ def _run_scan(
                 decision_output_root=str(root / "decisions"),
                 scan_config_path="mock.json",
                 freshness_now_utc=FIXED_NOW,
+                allow_existing_decision_snapshot=allow_existing,
             )
 
 
@@ -374,8 +381,8 @@ def build_scan_entry_evidence() -> dict:
     """Build compact V1-08/V1-09 evidence from the mocked scan entry."""
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
-        off = _run_scan(base / "off", enable_short=False)
-        on = _run_scan(base / "on", enable_short=True)
+        off = _run_scan(base / "off", enable_short=False, real_legacy_filters=True)
+        on = _run_scan(base / "on", enable_short=True, real_legacy_filters=True)
         truncation = _run_scan(
             base / "truncation", enable_short=True, max_symbols=100
         )
@@ -411,6 +418,10 @@ def build_scan_entry_evidence() -> dict:
         core_failure_pointer = (
             base / "core_failure" / "decisions" / "latest_production.json"
         )
+        legacy_rows = {}
+        for name, path in on_legacy.items():
+            with path.open(encoding="utf-8") as handle:
+                legacy_rows[name] = sum(1 for _ in csv.DictReader(handle))
         return {
             "evidence_type": "mocked_scan_entry_frozen_input",
             "code_sha": _git_sha(),
@@ -418,6 +429,7 @@ def build_scan_entry_evidence() -> dict:
             "signal_date": DATE,
             "market_data_feed": "sip",
             "qqq_below_sma200": "Legacy lists paused" in on_report,
+            "legacy_csv_rows": legacy_rows,
             "off": {
                 "decision_output_status": off.decision_output_status,
                 "latest_pointer_status": off.latest_pointer_status,
@@ -644,6 +656,71 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 ),
             )
 
+
+    def test_benchmark_gate_with_real_filters_and_offline_short_parity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            status = _run_scan(root, enable_short=True, real_legacy_filters=True)
+            for name, path in _legacy_files(root).items():
+                if name != "research_pool":
+                    with path.open(encoding="utf-8") as handle:
+                        self.assertEqual(list(csv.DictReader(handle)), [], name)
+            manifest = _manifest(Path(status.decision_snapshot_root))
+            self.assertTrue(manifest["daily_symbols"])
+            archive = json.loads(
+                (Path(status.decision_snapshot_root) / "short_research.json").read_text()
+            )
+            frozen = pd.read_csv(DATASET, dtype={"cik": str, "sic": str}, low_memory=False)
+            offline = build_short_cross_section(frozen.loc[frozen["signal_date"].eq(DATE)])
+            self.assertGreater(offline.selected_count, 0)
+            self.assertEqual(
+                [row["symbol"] for row in archive["selected"]],
+                [row.symbol for row in offline.selected],
+            )
+
+    def test_same_day_compatibility_report_uses_the_archive(self) -> None:
+        for initially_unavailable in (True, False):
+            with self.subTest(initially_unavailable=initially_unavailable), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                first = _run_scan(root, enable_short=True, short_failure=initially_unavailable)
+                archived = Path(first.decision_snapshot_root) / "short_research.json"
+                before = archived.read_bytes()
+                rerun = _run_scan(
+                    root, enable_short=True, short_failure=not initially_unavailable, allow_existing=True
+                )
+                status = "unavailable" if initially_unavailable else "ready"
+                self.assertEqual(rerun.decision_output_status, "reused")
+                self.assertEqual(archived.read_bytes(), before)
+                self.assertIn(f"- short research status: {status}", rerun.report_path.read_text())
+
+    def test_short_csv_serialization_failure_preserves_formal_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            snapshot, "short_candidates_csv", side_effect=ValueError("synthetic serialization failure")
+        ):
+            status = _run_scan(Path(td), enable_short=True)
+            self.assertEqual(status.decision_output_status, "written")
+            self.assertEqual(status.latest_pointer_status, "written")
+            root = Path(status.decision_snapshot_root)
+            self.assertEqual(_manifest(root)["short_research"]["status"], "unavailable")
+            self.assertIn("SHORT_RESEARCH_PRESENTATION_FAILED", (root / "action_list.md").read_text())
+            self.assertEqual(len((root / "short_candidates.csv").read_text().splitlines()), 1)
+            self.assertIn("- short research status: unavailable", status.report_path.read_text())
+
+    def test_persistent_short_renderer_failure_preserves_formal_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            snapshot, "render_short_research_section", side_effect=ValueError("short renderer failure")
+        ), patch.object(
+            archive, "render_short_research_section", side_effect=ValueError("still broken on reload")
+        ):
+            status = _run_scan(Path(td), enable_short=True)
+            self.assertEqual(status.decision_output_status, "written")
+            self.assertEqual(status.latest_pointer_status, "written")
+            root = Path(status.decision_snapshot_root)
+            result = archive.load_short_snapshot(root, _manifest(root))
+            self.assertEqual(result.status, "unavailable")
+            self.assertEqual(result.selected_count, 0)
+            self.assertIn("SHORT_RESEARCH_PRESENTATION_FAILED", result.reason_codes)
+            self.assertIn("- short research status: unavailable", status.report_path.read_text())
 
     def test_scan_entry_evidence_mapping(self) -> None:
         evidence = build_scan_entry_evidence()

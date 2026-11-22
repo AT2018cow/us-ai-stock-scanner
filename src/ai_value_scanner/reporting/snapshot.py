@@ -34,11 +34,22 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
+from ai_value_scanner.reporting.short_research import (
+    SHORT_CSV,
+    SHORT_CSV_LINK,
+    SHORT_JSON,
+    load_short_snapshot,
+    short_snapshot_summary,
+)
 from ai_value_scanner.research.short_research_v1 import (
+    SHORT_CSV_COLUMNS,
     ShortResearchResult,
     disabled_short_research_result,
+    render_short_research_section,
+    render_unavailable_short_research_section,
     short_candidates_csv,
     short_research_json,
+    unavailable_short_research_result,
 )
 
 
@@ -61,7 +72,10 @@ class DecisionSnapshotPaths:
 # with an explicit warning instead of pretending their stored files match the
 # current renderer.
 REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-22b"
-LIST_CONTEXT_RENDERER_REVISIONS = frozenset({REPORT_RENDERER_REVISION})
+LIST_CONTEXT_RENDERER_REVISIONS = frozenset({
+    "mvp_report_renderer_2026-11-22a",
+    REPORT_RENDERER_REVISION,
+})
 COMPATIBLE_RENDERER_REVISIONS = frozenset({
     REPORT_RENDERER_REVISION,
     "mvp_report_renderer_2026-11-06a",
@@ -428,27 +442,36 @@ def write_decision_snapshot(
             encoding="utf-8",
         )
         short_result = short_research or disabled_short_research_result()
-        short_files_manifest: dict[str, Any] = {}
-        short_csv_rel: str | None = None
+        short_files_manifest: dict[str, str] = {}
+        short_section = None
         if short_result.enabled:
-            short_json_text = short_research_json(short_result)
-            short_csv_text = short_candidates_csv(short_result)
-            (tmp_root / "short_research.json").write_text(
-                short_json_text, encoding="utf-8"
-            )
-            (tmp_root / "short_candidates.csv").write_text(
-                short_csv_text, encoding="utf-8"
-            )
-            short_csv_rel = "./short_candidates.csv"
+            try:
+                short_json_text = short_research_json(short_result)
+                short_csv_text = short_candidates_csv(short_result)
+                short_section = render_short_research_section(short_result)
+            except Exception:
+                short_result = unavailable_short_research_result(
+                    ("SHORT_RESEARCH_PRESENTATION_FAILED",),
+                    signal_date=str(decision_date),
+                    market_data_feed=short_result.market_data_feed,
+                    funnel={**short_result.funnel, "selected_rows": 0},
+                    reason_counts=short_result.reason_counts,
+                    status_counts=short_result.status_counts,
+                    generated_at_utc=generated_at_utc,
+                )
+                short_json_text = json.dumps(
+                    short_result.to_payload(), ensure_ascii=False, sort_keys=True, indent=2,
+                ) + "\n"
+                short_csv_text = ",".join(SHORT_CSV_COLUMNS) + "\n"
+                short_section = render_unavailable_short_research_section(short_result)
+            # Filesystem errors remain core snapshot failures.
+            (tmp_root / SHORT_JSON).write_text(short_json_text, encoding="utf-8")
+            (tmp_root / SHORT_CSV).write_text(short_csv_text, encoding="utf-8")
             short_files_manifest = {
-                "json": "short_research.json",
-                "csv": "short_candidates.csv",
-                "json_sha256": hashlib.sha256(
-                    short_json_text.encode("utf-8")
-                ).hexdigest(),
-                "csv_sha256": hashlib.sha256(
-                    short_csv_text.encode("utf-8")
-                ).hexdigest(),
+                "json": SHORT_JSON,
+                "csv": SHORT_CSV,
+                "json_sha256": sha256_hex(short_json_text.encode("utf-8")),
+                "csv_sha256": sha256_hex(short_csv_text.encode("utf-8")),
             }
         streaks_by_symbol = compute_in_list_streaks(
             output_root,
@@ -467,7 +490,8 @@ def write_decision_snapshot(
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
                 short_research=short_result if short_result.enabled else None,
-                short_csv_rel=short_csv_rel,
+                short_csv_rel=SHORT_CSV_LINK,
+                short_section=short_section,
             ),
             encoding="utf-8",
         )
@@ -481,7 +505,8 @@ def write_decision_snapshot(
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
                 short_research=short_result if short_result.enabled else None,
-                short_csv_rel=short_csv_rel,
+                short_csv_rel=SHORT_CSV_LINK,
+                short_section=short_section,
             ),
             encoding="utf-8",
         )
@@ -575,19 +600,7 @@ def write_decision_snapshot(
             candidate_universe_summary=candidate_universe_summary,
             discovery_source_summary=discovery_source_summary,
             state_change_alerts_summary=alert_summary,
-            short_research_summary={
-                "enabled": short_result.enabled,
-                "status": short_result.status,
-                "contract_version": short_result.contract_version,
-                "rule_version": short_result.rule_version,
-                "signal_date": short_result.signal_date,
-                "market_data_feed": short_result.market_data_feed,
-                "selected_count": short_result.selected_count,
-                "reason_codes": list(short_result.reason_codes),
-                "funnel": dict(short_result.funnel),
-                "status_counts": dict(short_result.status_counts),
-                "files": short_files_manifest,
-            },
+            short_research_summary=short_snapshot_summary(short_result, short_files_manifest),
             policy_version=policy_version,
             layout_version=layout_version,
         )
@@ -601,6 +614,9 @@ def write_decision_snapshot(
             + "\n",
             encoding="utf-8",
         )
+
+        if short_result.enabled:
+            load_short_snapshot(tmp_root, manifest)
 
         # mkdtemp is private while staging; published reports inherit their
         # parent directory's access policy, as the previous mkdir path did.

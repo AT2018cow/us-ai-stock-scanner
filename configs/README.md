@@ -11,7 +11,7 @@
 
 | 文件 | `strategy_style` | 状态 | 用途 |
 |---|---|---|---|
-| `config.production.json` | `production` | ✅ **唯一生产入口** | cron / 正式扫描 / 正式报告；有效参数与 `config.risk_off.json` 逐字段一致（漂移测试保证） |
+| `config.production.json` | `production` | ✅ **唯一生产入口** | cron / 正式扫描 / 正式报告，沿用 `risk_off` 的选股参数并启用做空研究输出 |
 | `config.risk_off.json` | `risk_off` | ✅ 生产档案（模板） | 防守档：低吸回调 + 质量硬门槛 + QQQ 深度熊市熔断；保留用于回放/研究/复现 |
 | `config.risk_on.json` | `risk_on` | 🧪 研究/观察 | 进攻档：双动量结构（QQQ 绝对动量开关 + momentum 清单）；**不在生产路径** |
 | `config.strict_candidate.json` | — | 候选 | 基于 strict-list 复核参数，不自动使用 |
@@ -36,7 +36,7 @@
 
 ## 4. 变更纪律
 
-1. `config.production.json` 的有效参数必须与 `config.risk_off.json` 保持一致；`tests/test_config_validation.py` 会强制。改一个必须同步另一个（生产身份 `production` 除外）。
+1. `config.production.json` 与 `config.risk_off.json` 共用选股和数据参数。`tests/test_config_validation.py` 校验差异限于 `strategy_style` 和 `enable_short_research` 两项，其中后者仅在生产配置开启。
 2. 不要新增 `strategy_style` 之外的风格标签；新增风格需同时更新 `src/ai_value_scanner/config.py` 的校验与 `src/ai_value_scanner/strategy/filtering.py` 的 `STYLE_STRUCTURAL_STEP_NAMES`。
 3. `configs/archive/` 只读，不修改、不运行。
 4. 生产命令统一使用 `--config configs/config.production.json`；研究/回放命令可显式使用 `config.risk_off.json`（档案）。

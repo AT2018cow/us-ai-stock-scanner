@@ -68,7 +68,7 @@ def _decisions(policy_version: str):
     )
 
 
-def _write(tmp: str, decisions, *, policy: str, layout: str):
+def _write(tmp: str, decisions, *, policy: str, layout: str, input_provenance=None):
     daily = tuple(decisions)
     return write_decision_snapshot(
         output_root=tmp,
@@ -79,18 +79,43 @@ def _write(tmp: str, decisions, *, policy: str, layout: str):
         generated_at_utc="2026-10-18T12:00:00+00:00",
         decision_date="2026-10-09",
         config_fingerprint="cfg",
+        input_provenance=input_provenance,
         policy_version=policy,
         layout_version=layout,
     )
 
 
 class VersionAwareValidatorTests(unittest.TestCase):
+    def test_v2_snapshot_replays_frozen_legacy_list_pause_notice(self) -> None:
+        decisions = _decisions("v2")
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write(
+                tmp, decisions, policy="v2", layout="v2",
+                input_provenance={"legacy_lists_paused": True},
+            )
+            for report in (paths.action_list_md, paths.weekly_review_md):
+                text = report.read_text(encoding="utf-8")
+                self.assertIn("Low-Value, Industry-Trend and Momentum", text)
+                self.assertIn("Legacy lists paused", text)
+                self.assertIn("PRIORITY_REVIEW", text)
+            result = validate_snapshot(paths.root)
+            self.assertTrue(result["ok"], result["errors"])
+            manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
+            manifest["input_provenance"]["legacy_lists_paused"] = False
+            paths.run_manifest_json.write_text(json.dumps(manifest), encoding="utf-8")
+            result = validate_snapshot(paths.root)
+            self.assertFalse(result["ok"])
+            self.assertTrue(any("action_list.md does not match" in error for error in result["errors"]))
+
     def test_v2_snapshot_with_b_promotion_passes(self) -> None:
         decisions = _decisions("v2")
         self.assertEqual(decisions[0].quality.grade.value, "B")
         self.assertEqual(decisions[0].action_state.value, "PRIORITY_REVIEW")
         with tempfile.TemporaryDirectory() as tmp:
             paths = _write(tmp, decisions, policy="v2", layout="v2")
+            text = paths.action_list_md.read_text(encoding="utf-8")
+            self.assertIn("How to read the lists", text)
+            self.assertNotIn("Legacy lists paused", text)
             result = validate_snapshot(paths.root)
             self.assertTrue(result["ok"], result["errors"])
 

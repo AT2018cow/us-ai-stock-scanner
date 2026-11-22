@@ -8,16 +8,17 @@ segments, concentration, and evidence publication.
 
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
+import logging
 import math
+import os
+import tempfile
 import warnings
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,8 @@ from ai_value_scanner.evaluation.backtest import holding_session_dates
 
 from .short_research_v1 import (
     MAX_SHORT_CANDIDATES,
+    OPTIONAL_COLUMNS,
+    REQUIRED_COLUMNS,
     ROUNDTRIP_COST,
     SHORT_RESEARCH_CONTRACT_VERSION,
     SHORT_RESEARCH_RULE_VERSION,
@@ -54,6 +57,17 @@ SMOKE_DATES: tuple[str, ...] = (
     "2025-01-31",
 )
 HORIZONS: tuple[int, ...] = (20, 60)
+LABEL_CUTOFF = "2026-11-05"
+MISSING_SCENARIOS = {"missing_low": -0.50, "missing_high": 0.50}
+GROUPS = ("S0", "S1", "S2")
+OUTPUT_FILES = frozenset({
+    "coverage.csv", "paired_by_date.csv", "summary.csv", "members.csv",
+    "casebook.csv", "report.md", "validation.json", "protocol.json",
+    "scan_integration.json", "short_research.json", "short_candidates.csv",
+    "action_list_short_fragment.md", "weekly_review_short_fragment.md",
+    "commands.md", "source_coverage.csv", "industry_stats.csv", "concentration.csv",
+})
+
 BOOTSTRAP_REPEATS = 2000
 BOOTSTRAP_SEED = 61122
 BOOTSTRAP_BLOCK_MONTHS = 6
@@ -62,10 +76,23 @@ COST_SCENARIOS: dict[str, tuple[float, float, float]] = {
     "base": (0.0015, 0.05, 0.02),
     "stress": (0.0030, 0.15, 0.04),
 }
+MEMBER_VALUE_COLUMNS = (
+    "short_gross", *(f"short_cost_{scenario}" for scenario in COST_SCENARIOS),
+    "period_end_adverse_up", "breakeven_borrow", "peer_median_long_gross",
+    "peer_relative_long", "qqq_long_gross",
+)
+MEMBER_COLUMNS = (
+    "dataset", "frequency", "signal_date", "horizon", "group", "view",
+    "rank", "symbol", "cik", "sic", "regime", "watchlist_source",
+    "weight", "status", "label_status", "label_reasons", "mature",
+    "date_complete", "entry_date", "exit_date", *MEMBER_VALUE_COLUMNS,
+    "peer_count", "peer_pool",
+)
 DEFAULT_OUTPUT_ROOT = "outputs/short_research_v1"
 DEFAULT_EVIDENCE_ROOT = "docs/short_research_v1/evidence"
 
 _STRING_COLUMNS = ("symbol", "cik", "sic", "market_data_feed", "watchlist_source")
+LOGGER = logging.getLogger(__name__)
 
 
 def _sha256_file(path: Path) -> str:
@@ -85,20 +112,6 @@ def _json_dump(path: Path, payload: Any) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
-
-def _csv_text(rows: Sequence[Mapping[str, Any]], columns: Sequence[str]) -> str:
-    buffer = io.StringIO()
-    writer = csv.DictWriter(
-        buffer,
-        fieldnames=list(columns),
-        lineterminator="\n",
-        extrasaction="ignore",
-    )
-    writer.writeheader()
-    for row in rows:
-        writer.writerow({column: row.get(column, "") for column in columns})
-    return buffer.getvalue()
 
 
 def _fmt(value: Any) -> str:
@@ -131,6 +144,11 @@ def _pct(value: Any) -> str:
     return "n/a" if number is None else f"{number * 100:+.1f}%"
 
 
+def _pct_exact(value: Any) -> str:
+    number = _num(value)
+    return "n/a" if number is None else f"{number * 100:+.3f}%"
+
+
 def _pct_plain(value: Any) -> str:
     number = _num(value)
     return "n/a" if number is None else f"{number * 100:.1f}%"
@@ -155,6 +173,9 @@ class DatasetIdentity:
     dataset_sha256: str
     metadata_sha256: str
     success_sha256: str
+    splits_sha256: str
+    generation_config: str
+    config_reference_sha256: str
     frequency: str
     meta: Mapping[str, Any]
 
@@ -184,7 +205,8 @@ def load_frozen_dataset(dataset_root: str | Path, name: str) -> DatasetIdentity:
     dataset_path = root / "dataset.csv"
     meta_path = root / "dataset.meta.json"
     success_path = root / "success.json"
-    for path in (dataset_path, meta_path, success_path):
+    splits_path = root / "dataset.splits.json"
+    for path in (dataset_path, meta_path, success_path, splits_path):
         if not path.is_file():
             raise FileNotFoundError(f"missing frozen input: {path}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -192,6 +214,13 @@ def load_frozen_dataset(dataset_root: str | Path, name: str) -> DatasetIdentity:
     dataset_sha = _sha256_file(dataset_path)
     meta_sha = _sha256_file(meta_path)
     success_sha = _sha256_file(success_path)
+    splits_sha = _sha256_file(splits_path)
+    if splits_sha != meta.get("source_splits_sha256"):
+        raise ValueError(f"{splits_path}: frozen split hash mismatch")
+    config_ref = Path(str(meta.get("scan_config") or "")).name
+    if config_ref != "config.risk_off.json":
+        raise ValueError(f"{meta_path}: unexpected source scan configuration")
+    config_reference = Path(__file__).resolve().parents[3] / "configs" / config_ref
     if str(success.get("sha256")) != dataset_sha:
         raise ValueError(f"{dataset_path}: success.json sha256 mismatch")
     if str(success.get("metadata_sha256")) != meta_sha:
@@ -214,7 +243,7 @@ def load_frozen_dataset(dataset_root: str | Path, name: str) -> DatasetIdentity:
             raise ValueError(f"{success_path}: manifest success hash mismatch")
     required_meta = {
         "label_contract": "exchange_calendar_endpoints_v3",
-        "label_cutoff": "2026-11-05",
+        "label_cutoff": LABEL_CUTOFF,
         "entry_price_mode": "next_open",
         "exit_price_mode": "close",
         "roundtrip_cost": ROUNDTRIP_COST,
@@ -234,6 +263,9 @@ def load_frozen_dataset(dataset_root: str | Path, name: str) -> DatasetIdentity:
         dataset_sha256=dataset_sha,
         metadata_sha256=meta_sha,
         success_sha256=success_sha,
+        splits_sha256=splits_sha,
+        generation_config=config_ref,
+        config_reference_sha256=_sha256_file(config_reference),
         frequency=str(meta.get("rebalance_frequency") or ""),
         meta=meta,
     )
@@ -248,120 +280,24 @@ def load_frozen_dataset_frame(
         identity.path,
         dtype={column: str for column in _STRING_COLUMNS},
         low_memory=False,
+        keep_default_na=False,
+        na_values=[""],
     )
     if frame.empty:
         raise ValueError(f"{identity.path}: empty dataset")
     frame["signal_date"] = frame["signal_date"].astype(str)
     if frame.duplicated(["signal_date", "symbol"]).any():
         raise ValueError(f"{identity.path}: duplicate signal_date x symbol")
-    feeds = {
-        str(value).strip().lower()
-        for value in frame["market_data_feed"].dropna().unique()
-    }
-    if feeds != {"sip"}:
-        raise ValueError(f"{identity.path}: mixed/unknown feed {sorted(feeds)}")
+    if not frame["market_data_feed"].astype("string").str.strip().str.lower().fillna("").eq("sip").all():
+        raise ValueError(f"{identity.path}: mixed or unknown market data feed")
+    if len(frame) != identity.rows or frame["signal_date"].nunique() != identity.dates:
+        raise ValueError(f"{identity.path}: frozen row/date count mismatch")
     return frame, identity
 
 
 def _planned_endpoints(signal_date: str, horizon: int) -> tuple[str, str]:
     entry, exit_ = holding_session_dates(signal_date, horizon)
     return entry.date().isoformat(), exit_.date().isoformat()
-
-
-def _settle_record(
-    row: Mapping[str, Any],
-    *,
-    horizon: int,
-    peer_median_by_key: Mapping[tuple[str, str, int], tuple[float | None, int]],
-) -> dict[str, Any]:
-    signal_date = str(row["signal_date"])
-    symbol = str(row["symbol"])
-    planned_entry, planned_exit = _planned_endpoints(signal_date, horizon)
-    label_end = _text(row.get(f"label_end_{horizon}"))
-    fwd = _num(row.get(f"fwd_ret_{horizon}"))
-    qqq = _num(row.get(f"qqq_return_{horizon}"))
-    qqq_end = _text(row.get(f"qqq_label_end_{horizon}"))
-    reason: list[str] = []
-    valid = True
-    if fwd is None:
-        valid = False
-        reason.append("MISSING_FORWARD_RETURN")
-    if label_end is None:
-        valid = False
-        reason.append("MISSING_EXIT_LABEL")
-    elif label_end != planned_exit:
-        valid = False
-        reason.append("EXIT_LABEL_NOT_PLANNED_SESSION")
-    x = None
-    if fwd is not None:
-        x = 1.0 + fwd + ROUNDTRIP_COST
-        if not math.isfinite(x) or x <= 0:
-            valid = False
-            reason.append("INVALID_RESTORED_PRICE_RATIO")
-    if not valid:
-        x = None
-    short_gross = 1.0 - x if x is not None else None
-    long_gross = x - 1.0 if x is not None else None
-    holding_days = None
-    if label_end is not None:
-        try:
-            holding_days = max(
-                1,
-                (date.fromisoformat(label_end) - date.fromisoformat(planned_entry)).days,
-            )
-        except ValueError:
-            holding_days = None
-    costs: dict[str, float | None] = {}
-    for scenario, (per_side, borrow, dividend) in COST_SCENARIOS.items():
-        if x is None or holding_days is None:
-            costs[scenario] = None
-            continue
-        value = (
-            1.0
-            - x
-            - per_side * (1.0 + x)
-            - (borrow + dividend) * holding_days / 365.0
-        )
-        costs[scenario] = value if math.isfinite(value) else None
-    qqq_valid = (
-        qqq is not None
-        and label_end is not None
-        and qqq_end is not None
-        and qqq_end == label_end
-    )
-    qqq_long_gross = qqq + ROUNDTRIP_COST if qqq_valid else None
-    peer_median, peer_count = peer_median_by_key.get(
-        (signal_date, str(row.get("sic") or ""), horizon),
-        (None, 0),
-    )
-    peer_relative_long = (
-        long_gross - peer_median
-        if long_gross is not None and peer_median is not None
-        else None
-    )
-    return {
-        "planned_entry_date": planned_entry,
-        "planned_exit_date": planned_exit,
-        "label_end": label_end,
-        "label_status": "VALID" if valid else "MISSING",
-        "label_reasons": "|".join(reason),
-        "fwd_ret": fwd,
-        "x_ratio": x,
-        "short_gross": short_gross,
-        "long_gross": long_gross,
-        "holding_days": holding_days,
-        "short_cost_trade_only": costs["trade_only"],
-        "short_cost_base": costs["base"],
-        "short_cost_stress": costs["stress"],
-        "qqq_valid": qqq_valid,
-        "qqq_long_gross": qqq_long_gross,
-        "peer_median_long_gross": peer_median,
-        "peer_count": peer_count,
-        "peer_relative_long": peer_relative_long,
-        "period_end_adverse_up": (
-            max(0.0, long_gross) if long_gross is not None else None
-        ),
-    }
 
 
 def _text(value: Any) -> str | None:
@@ -384,28 +320,68 @@ def _peer_medians(
     settled: pd.DataFrame,
     *,
     horizon: int,
-) -> dict[tuple[str, str, str, int], tuple[float | None, int]]:
-    """Same-day, same-dataset U0 peer median long gross return, excluding target."""
-    result: dict[tuple[str, str, str, int], tuple[float | None, int]] = {}
+) -> dict[tuple[str, str, str, str, int], tuple[float | None, int, int]]:
+    """Exact leave-one-out medians, keyed by the target as well as its cohort."""
+    result = {}
     u0 = settled.loc[~settled["scope_excluded"]]
-    for (dataset, signal_date, sic), group in u0.groupby(
-        ["dataset", "signal_date", "sic"], sort=True
-    ):
-        valid = group.loc[
-            group[f"long_gross_{horizon}"].notna(), ["symbol", f"long_gross_{horizon}"]
-        ]
-        if len(valid) < 4:
-            continue
-        for _, row in valid.iterrows():
-            others = valid.loc[
-                valid["symbol"] != row["symbol"], f"long_gross_{horizon}"
-            ]
-            if len(others) >= 4:
-                result[(str(dataset), str(signal_date), str(sic), horizon)] = (
-                    float(others.median()),
-                    int(len(others)),
-                )
+    column = f"long_gross_{horizon}"
+    for key, group in u0.groupby(["dataset", "signal_date", "sic"], sort=False):
+        valid = group.loc[group[column].notna()].sort_values(column)
+        values = valid[column].to_numpy(dtype=float)
+        positions = {symbol: index for index, symbol in enumerate(valid["symbol"])}
+        for symbol in group["symbol"]:
+            excluded = positions.get(symbol, len(values))
+            count = len(values) - int(excluded < len(values))
+            median = None
+            if count >= 4:
+                left, right = (count - 1) // 2, count // 2
+                median = (
+                    values[left + int(left >= excluded)] +
+                    values[right + int(right >= excluded)]
+                ) / 2
+            result[(*key, symbol, horizon)] = (median, count, len(group) - 1)
     return result
+
+
+def _settle_labels(records: pd.DataFrame, horizon: int) -> None:
+    endpoints = {day: _planned_endpoints(day, horizon) for day in records["signal_date"].unique()}
+    entry = records["signal_date"].map(lambda day: endpoints[day][0])
+    exit_ = records["signal_date"].map(lambda day: endpoints[day][1])
+    days = (pd.to_datetime(exit_) - pd.to_datetime(entry)).dt.days.clip(lower=1)
+    mature = exit_ <= LABEL_CUTOFF
+    fwd = pd.to_numeric(records[f"fwd_ret_{horizon}"], errors="coerce")
+    label = records[f"label_end_{horizon}"]
+    ratio = 1.0 + fwd + ROUNDTRIP_COST
+    valid = mature & label.eq(exit_) & np.isfinite(ratio) & ratio.gt(0)
+    qqq_ratio = 1.0 + pd.to_numeric(
+        records[f"qqq_return_{horizon}"], errors="coerce"
+    ) + ROUNDTRIP_COST
+    qqq_valid = mature & records[f"qqq_label_end_{horizon}"].eq(exit_) & (
+        np.isfinite(qqq_ratio) & qqq_ratio.gt(0)
+    )
+    c, _, dividend = COST_SCENARIOS["base"]
+    values = {
+        "planned_entry": entry, "planned_exit": exit_, "mature": mature,
+        "label_valid": valid, "x_ratio": ratio.where(valid),
+        "holding_days": days, "qqq_valid": qqq_valid,
+        "label_reason": np.select(
+            [~mature, ~np.isfinite(fwd), label.isna(), ~label.eq(exit_), ~valid],
+            ["NOT_MATURE", "MISSING_FORWARD_RETURN", "MISSING_EXIT_LABEL",
+             "EXIT_LABEL_NOT_PLANNED_SESSION", "INVALID_RESTORED_PRICE_RATIO"],
+            default="",
+        ),
+        "short_gross": (1.0 - ratio).where(valid),
+        "long_gross": (ratio - 1.0).where(valid),
+        "qqq_long_gross": (qqq_ratio - 1.0).where(qqq_valid),
+        "period_end_adverse_up": (ratio - 1.0).clip(lower=0).where(valid),
+        "breakeven_borrow": ((1.0 - ratio - c * (1.0 + ratio)) * 365 / days - dividend).where(valid),
+    }
+    for scenario, (c, borrow, dividend) in COST_SCENARIOS.items():
+        values[f"short_cost_{scenario}"] = (
+            1.0 - ratio - c * (1.0 + ratio) - (borrow + dividend) * days / 365
+        ).where(valid)
+    for key, value in values.items():
+        records[f"{key}_{horizon}"] = value
 
 
 def _selected_members(
@@ -496,7 +472,7 @@ def _verdict(
     s2_s0_ci: Mapping[str, Any],
     yearly_s2_s0: Mapping[int, float | None],
     loo_s2_s0: float | None,
-    cost_means: Mapping[str, float | None],
+    missing_scenarios: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     if n_dates < 24:
         return {
@@ -508,6 +484,15 @@ def _verdict(
             "verdict": "insufficient_evidence",
             "reasons": ["fewer than three calendar years"],
         }
+    for metric, baseline in (("s2_mean", s2_mean), ("s2_minus_s0_mean", s2_s0)):
+        if baseline is not None and any(
+            _num(value) is not None and np.sign(value) != np.sign(baseline)
+            for value in missing_scenarios.get(metric, {}).values()
+        ):
+            return {
+                "verdict": "insufficient_evidence",
+                "reasons": [f"mature missing slots change the sign of {metric}"],
+            }
     failed: list[str] = []
     if s2_mean is None or s2_mean <= 0:
         failed.append("S2 absolute short gross return is not positive")
@@ -518,11 +503,6 @@ def _verdict(
     if failed:
         return {"verdict": "signal_or_increment_failed", "reasons": failed}
     insufficient: list[str] = []
-    for name, value in cost_means.items():
-        if value is None:
-            continue
-        if s2_mean is not None and value * s2_mean < 0:
-            insufficient.append(f"{name} cost scenario changes the S2 sign")
     ci_low = _num(s2_s0_ci.get("ci_low"))
     if ci_low is None or ci_low <= 0:
         insufficient.append("S2-S0 bootstrap lower bound is not positive")
@@ -551,7 +531,6 @@ def evaluate_frozen_short_research(
         raise ValueError("scope must be 'smoke' or 'full'")
     dataset_root = Path(dataset_root)
     output_root = Path(output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
     identities: dict[str, DatasetIdentity] = {}
     frames: dict[str, pd.DataFrame] = {}
     names = DATASET_NAMES if scope == "full" else MONTHLY_DATASETS
@@ -564,56 +543,43 @@ def evaluate_frozen_short_research(
         identities[name] = identity
         frames[name] = frame
 
+    inputs = {
+        name: {
+            "dataset_sha256": identity.dataset_sha256,
+            "metadata_sha256": identity.metadata_sha256,
+            "success_sha256": identity.success_sha256,
+            "splits_sha256": identity.splits_sha256,
+            "generation_config": identity.generation_config,
+            "config_reference_sha256": identity.config_reference_sha256,
+            "rows": identity.rows,
+            "dates": identity.dates,
+            "frequency": identity.frequency,
+        }
+        for name, identity in identities.items()
+    }
+    package = Path(__file__).resolve().parents[1]
+    source_files = {
+        rel: _sha256_file(package / rel) for rel in (
+            "research/short_research_v1.py", "research/short_research_v1_eval.py",
+            "evaluation/backtest.py", "market_calendar.py",
+        )
+    }
     checkpoint_identity = {
         "contract_version": SHORT_RESEARCH_CONTRACT_VERSION,
         "rule_version": SHORT_RESEARCH_RULE_VERSION,
         "scope": scope,
         "code_sha": _git_sha(),
-        "source_sha256": {
-            "short_research_v1.py": _sha256_file(
-                Path(__file__).with_name("short_research_v1.py")
-            ),
-            "short_research_v1_eval.py": _sha256_file(Path(__file__)),
-        },
-        "inputs": {
-            name: identity.dataset_sha256
-            for name, identity in identities.items()
-        },
+        "source_sha256": source_files,
+        "inputs": inputs,
         "scan_entry_integration_sha256": (
-            _sha256_text(
-                json.dumps(
-                    scan_entry_integration,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-            )
-            if scan_entry_integration is not None
-            else None
+            _sha256_text(json.dumps(scan_entry_integration, ensure_ascii=False, sort_keys=True))
+            if scan_entry_integration is not None else None
         ),
     }
-    checkpoint_path = output_root / "checkpoint.json"
-    if checkpoint_path.is_file():
-        existing_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-        if existing_checkpoint.get("identity") != checkpoint_identity:
-            raise ValueError(
-                "short-research checkpoint identity mismatch; use a new output "
-                "directory or reproduce the exact protocol/input/code identity"
-            )
-        if (output_root / "SHA256SUMS").is_file() and (
-            output_root / "validation.json"
-        ).is_file():
-            validation = json.loads(
-                (output_root / "validation.json").read_text(encoding="utf-8")
-            )
-            return {
-                "output_root": str(output_root),
-                "scope": scope,
-                "reused": True,
-                "verdict": validation.get("verdict"),
-                "files": sorted(
-                    path.name for path in output_root.iterdir() if path.is_file()
-                ),
-            }
+    if output_root.is_dir() and any(output_root.iterdir()):
+        return _reuse_evaluation(output_root, checkpoint_identity)
+    if output_root.exists() and not output_root.is_dir():
+        raise ValueError(f"short-research output is not a directory: {output_root}")
 
     records: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
@@ -624,7 +590,7 @@ def evaluate_frozen_short_research(
         for signal_date, group in frame.groupby("signal_date", sort=True):
             try:
                 result = build_short_cross_section(
-                    group,
+                    group.loc[:, group.columns.intersection((*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS))],
                     report_generated_at_utc=f"{signal_date}T23:59:59+00:00",
                 )
             except ShortResearchInputError as exc:
@@ -636,7 +602,9 @@ def evaluate_frozen_short_research(
                         "detail": str(exc),
                     }
                 )
-                continue
+                raise ValueError(
+                    f"invalid frozen cross-section {name} {signal_date}: {exc}"
+                ) from exc
             for record in result.records:
                 item = record.to_dict()
                 item["dataset"] = name
@@ -665,6 +633,8 @@ def evaluate_frozen_short_research(
                     "status": result.status,
                 }
             )
+
+        LOGGER.info("Selected %s frozen cross-sections (%d rows)", name, len(frame))
 
     if not records:
         raise RuntimeError("no short-research records produced from frozen inputs")
@@ -695,337 +665,132 @@ def evaluate_frozen_short_research(
         validate="many_to_one",
     )
 
-    settled = records_df.copy()
+    settled = records_df
     for horizon in HORIZONS:
-        planned = {
-            signal_date: _planned_endpoints(str(signal_date), horizon)
-            for signal_date in settled["signal_date"].unique()
-        }
-        settled[f"planned_entry_{horizon}"] = settled["signal_date"].map(
-            lambda value: planned[str(value)][0]
-        )
-        settled[f"planned_exit_{horizon}"] = settled["signal_date"].map(
-            lambda value: planned[str(value)][1]
-        )
-        settled[f"label_valid_{horizon}"] = (
-            settled[f"fwd_ret_{horizon}"].notna()
-            & settled[f"label_end_{horizon}"].notna()
-            & (
-                settled[f"label_end_{horizon}"].astype(str)
-                == settled[f"planned_exit_{horizon}"]
-            )
-        )
-        settled[f"x_{horizon}"] = np.where(
-            settled[f"label_valid_{horizon}"],
-            1.0
-            + pd.to_numeric(settled[f"fwd_ret_{horizon}"], errors="coerce")
-            + ROUNDTRIP_COST,
-            np.nan,
-        )
-        settled[f"x_{horizon}"] = pd.to_numeric(
-            settled[f"x_{horizon}"], errors="coerce"
-        )
-        settled.loc[
-            ~np.isfinite(settled[f"x_{horizon}"]) | (settled[f"x_{horizon}"] <= 0),
-            f"label_valid_{horizon}",
-        ] = False
-        settled[f"short_gross_{horizon}"] = np.where(
-            settled[f"label_valid_{horizon}"],
-            1.0 - settled[f"x_{horizon}"],
-            np.nan,
-        )
-        settled[f"long_gross_{horizon}"] = np.where(
-            settled[f"label_valid_{horizon}"],
-            settled[f"x_{horizon}"] - 1.0,
-            np.nan,
-        )
-        settled[f"holding_days_{horizon}"] = [
-            (
-                max(
-                    1,
-                    (
-                        date.fromisoformat(str(label_end))
-                        - date.fromisoformat(str(planned_entry))
-                    ).days,
-                )
-                if _text(label_end) is not None
-                and _text(planned_entry) is not None
-                else np.nan
-            )
-            for label_end, planned_entry in zip(
-                settled[f"label_end_{horizon}"],
-                settled[f"planned_entry_{horizon}"],
-            )
-        ]
-        for scenario, (per_side, borrow, dividend) in COST_SCENARIOS.items():
-            settled[f"short_cost_{scenario}_{horizon}"] = (
-                1.0
-                - settled[f"x_{horizon}"]
-                - per_side * (1.0 + settled[f"x_{horizon}"])
-                - (borrow + dividend)
-                * pd.to_numeric(settled[f"holding_days_{horizon}"], errors="coerce")
-                / 365.0
-            )
-            settled.loc[
-                ~settled[f"label_valid_{horizon}"],
-                f"short_cost_{scenario}_{horizon}",
-            ] = np.nan
-        settled[f"qqq_valid_{horizon}"] = (
-            settled[f"qqq_return_{horizon}"].notna()
-            & settled[f"qqq_label_end_{horizon}"].notna()
-            & (
-                settled[f"qqq_label_end_{horizon}"].astype(str)
-                == settled[f"label_end_{horizon}"].astype(str)
-            )
-        )
-        settled[f"qqq_long_gross_{horizon}"] = np.where(
-            settled[f"qqq_valid_{horizon}"],
-            pd.to_numeric(settled[f"qqq_return_{horizon}"], errors="coerce")
-            + ROUNDTRIP_COST,
-            np.nan,
-        )
-        settled[f"period_end_adverse_up_{horizon}"] = np.where(
-            settled[f"label_valid_{horizon}"],
-            np.maximum(0.0, settled[f"long_gross_{horizon}"]),
-            np.nan,
-        )
-
-    # Peer medians are computed per date/SIC from U0 rows with valid labels.
-    for horizon in HORIZONS:
+        _settle_labels(settled, horizon)
         peer_map = _peer_medians(settled, horizon=horizon)
-        settled[f"peer_median_long_gross_{horizon}"] = [
-            peer_map.get(
-                (
-                    str(row["dataset"]),
-                    str(row["signal_date"]),
-                    str(row["sic"]),
-                    horizon,
-                ),
-                (None, 0),
-            )[0]
-            for _, row in settled.iterrows()
+        peers = [
+            peer_map.get((*key, horizon), (None, 0, 0))
+            for key in settled[["dataset", "signal_date", "sic", "symbol"]].itertuples(
+                index=False, name=None
+            )
         ]
-        settled[f"peer_count_{horizon}"] = [
-            peer_map.get(
-                (
-                    str(row["dataset"]),
-                    str(row["signal_date"]),
-                    str(row["sic"]),
-                    horizon,
-                ),
-                (None, 0),
-            )[1]
-            for _, row in settled.iterrows()
-        ]
+        settled[f"peer_median_long_gross_{horizon}"] = [row[0] for row in peers]
+        settled[f"peer_count_{horizon}"] = [row[1] for row in peers]
+        settled[f"peer_pool_{horizon}"] = [row[2] for row in peers]
         settled[f"peer_relative_long_{horizon}"] = (
-            settled[f"long_gross_{horizon}"]
-            - settled[f"peer_median_long_gross_{horizon}"]
+            settled[f"long_gross_{horizon}"] - settled[f"peer_median_long_gross_{horizon}"]
         )
 
-    paired_rows: list[dict[str, Any]] = []
-    coverage_detail: list[dict[str, Any]] = []
-    for dataset in frames:
+    LOGGER.info("Settled the %d selected-study input rows at %s sessions", len(settled), HORIZONS)
+
+    paired_rows = []
+    coverage_detail = []
+    for (dataset, signal_date), date_rows in settled.groupby(["dataset", "signal_date"], sort=False):
         frequency = "weekly" if dataset in WEEKLY_DATASETS else "monthly"
-        dates = sorted(frames[dataset]["signal_date"].unique())
-        for signal_date in dates:
-            date_rows = settled.loc[
-                (settled["dataset"] == dataset)
-                & (settled["signal_date"] == signal_date)
-            ]
-            for horizon in HORIZONS:
-                groups = {
-                    group: date_rows.loc[
-                        date_rows["signal_groups"].map(
-                            lambda values: group in values
-                        )
-                    ]
-                    for group in ("S0", "S1", "S2")
+        ranks = {
+            group: _selected_members(
+                date_rows.loc[date_rows["signal_groups"].map(lambda values: group in values)],
+                limit=MAX_SHORT_CANDIDATES,
+            )
+            for group in GROUPS
+        }
+        n_s0, n_s1, n_s2 = (len(ranks[group]) for group in GROUPS)
+        k = min(n_s0, n_s1, n_s2)
+        k_financial = min(n_s0, n_s1)
+        regime = set(date_rows["regime"])
+        regime = regime.pop() if len(regime) == 1 else "unknown"
+        for horizon in HORIZONS:
+            mature = bool(date_rows[f"mature_{horizon}"].iloc[0])
+            coverage = {
+                "dataset": dataset, "frequency": frequency, "signal_date": signal_date,
+                "horizon": horizon, "mature": mature, "regime": regime,
+                "k": k, "k_financial": k_financial,
+                **{f"n_{group.lower()}": int(date_rows["signal_groups"].map(
+                    lambda values: group in values
+                ).sum()) for group in GROUPS},
+            }
+            paired = dict(coverage)
+            for group, n in zip(GROUPS, (n_s0, n_s1, n_s2)):
+                coverage[f"fixed_deployment_{group.lower()}"] = n / MAX_SHORT_CANDIDATES
+            for view, ledger_view, limit, view_groups in (
+                ("same", "same_slot", k, GROUPS),
+                ("fixed", "fixed_5", MAX_SHORT_CANDIDATES, GROUPS),
+                ("financial", "financial_matched", k_financial, GROUPS[:2]),
+            ):
+                weight = 1 / limit if limit else 0.0
+                active = {group: ranks[group][:limit] for group in view_groups}
+                gross = {
+                    group: _group_return(
+                        members, weight=weight, column=f"short_gross_{horizon}"
+                    ) if mature else None
+                    for group, members in active.items()
                 }
-                k = min(
-                    MAX_SHORT_CANDIDATES,
-                    len(groups["S0"]),
-                    len(groups["S1"]),
-                    len(groups["S2"]),
+                complete = mature and bool(limit) and all(
+                    value is not None for value in gross.values()
                 )
-                coverage = {
-                    "dataset": dataset,
-                    "frequency": frequency,
-                    "signal_date": signal_date,
-                    "horizon": horizon,
-                    "k": k,
-                    "n_s0": len(groups["S0"]),
-                    "n_s1": len(groups["S1"]),
-                    "n_s2": len(groups["S2"]),
-                    "fixed_deployment_s0": min(5, len(groups["S0"])) / 5.0,
-                    "fixed_deployment_s1": min(5, len(groups["S1"])) / 5.0,
-                    "fixed_deployment_s2": min(5, len(groups["S2"])) / 5.0,
-                }
-                for view, limit, weight in (
-                    ("same_slot", k, 1.0 / k if k else 0.0),
-                    ("fixed_5", 5, 1.0 / 5.0),
-                ):
-                    for group in ("S0", "S1", "S2"):
-                        members = _selected_members(groups[group], limit=limit)
-                        for rank, member in enumerate(members, start=1):
-                            members_rows.append(
-                                {
-                                    "dataset": dataset,
-                                    "frequency": frequency,
-                                    "signal_date": signal_date,
-                                    "horizon": horizon,
-                                    "group": group,
-                                    "view": view,
-                                    "rank": rank,
-                                    "symbol": member["symbol"],
-                                    "sic": member["sic"],
-                                    "weight": weight,
-                                    "status": member["status"],
-                                    "label_status": (
-                                        "VALID"
-                                        if bool(member[f"label_valid_{horizon}"])
-                                        else "MISSING"
-                                    ),
-                                    "label_reasons": "",
-                                    "entry_date": member[f"planned_entry_{horizon}"],
-                                    "exit_date": member[f"planned_exit_{horizon}"],
-                                    "short_gross": _fmt(
-                                        member[f"short_gross_{horizon}"]
-                                    ),
-                                    "short_cost_base": _fmt(
-                                        member[f"short_cost_base_{horizon}"]
-                                    ),
-                                }
+                paired[f"{view}_complete"] = complete
+                for group, members in active.items():
+                    key = f"{group.lower()}_{view}"
+                    paired[key] = gross[group]
+                    paired[f"{key}_deployment"] = len(members) / MAX_SHORT_CANDIDATES
+                    coverage[f"{ledger_view}_{group}_return"] = gross[group]
+                    coverage[f"{ledger_view}_{group}_missing"] = sum(
+                        not member[f"label_valid_{horizon}"] for member in members
+                    ) if mature else 0
+                    for scenario in COST_SCENARIOS:
+                        paired[f"{key}_{scenario}"] = _group_return(
+                            members, weight=weight, column=f"short_cost_{scenario}_{horizon}"
+                        ) if complete else None
+                    for scenario, missing_return in MISSING_SCENARIOS.items():
+                        paired[f"{key}_{scenario}"] = sum(
+                            weight * (
+                                float(member[f"short_gross_{horizon}"])
+                                if member[f"label_valid_{horizon}"] else missing_return
                             )
-                        value = _group_return(
-                            members,
-                            weight=weight,
-                            column=f"short_gross_{horizon}",
-                        )
-                        coverage[f"{view}_{group}_return"] = _fmt(value)
-                    for group in ("S0", "S1", "S2"):
-                        value = _group_return(
-                            _selected_members(groups[group], limit=limit),
-                            weight=weight,
-                            column=f"short_gross_{horizon}",
-                        )
-                        coverage[f"{view}_{group}_return"] = _fmt(value)
-                coverage_detail.append(coverage)
-                same = {
-                    group: _num(coverage.get(f"same_slot_{group}_return"))
-                    for group in ("S0", "S1", "S2")
-                }
-                fixed = {
-                    group: _num(coverage.get(f"fixed_5_{group}_return"))
-                    for group in ("S0", "S1", "S2")
-                }
-                complete_same = k > 0 and all(
-                    same[group] is not None for group in same
-                )
-                complete_fixed = all(
-                    fixed[group] is not None for group in fixed
-                )
-                paired = {
-                    "dataset": dataset,
-                    "frequency": frequency,
-                    "signal_date": signal_date,
-                    "horizon": horizon,
-                    "k": k,
-                    "same_complete": complete_same,
-                    "fixed_complete": complete_fixed,
-                    "s0_same": same["S0"],
-                    "s1_same": same["S1"],
-                    "s2_same": same["S2"],
-                    "s1_minus_s0_same": (
-                        same["S1"] - same["S0"]
-                        if complete_same
-                        else None
-                    ),
-                    "s2_minus_s1_same": (
-                        same["S2"] - same["S1"]
-                        if complete_same
-                        else None
-                    ),
-                    "s2_minus_s0_same": (
-                        same["S2"] - same["S0"]
-                        if complete_same
-                        else None
-                    ),
-                    "s0_fixed": fixed["S0"],
-                    "s1_fixed": fixed["S1"],
-                    "s2_fixed": fixed["S2"],
-                    "s1_minus_s0_fixed": (
-                        fixed["S1"] - fixed["S0"]
-                        if complete_fixed
-                        else None
-                    ),
-                    "s2_minus_s1_fixed": (
-                        fixed["S2"] - fixed["S1"]
-                        if complete_fixed
-                        else None
-                    ),
-                    "s2_minus_s0_fixed": (
-                        fixed["S2"] - fixed["S0"]
-                        if complete_fixed
-                        else None
-                    ),
-                }
-                paired_rows.append(paired)
+                            for member in members
+                        ) if mature and limit else None
+                    for rank, member in enumerate(members, start=1):
+                        members_rows.append({
+                            "dataset": dataset, "frequency": frequency, "signal_date": signal_date,
+                            "horizon": horizon, "group": group, "view": ledger_view,
+                            "rank": rank, "symbol": member["symbol"], "cik": member["cik"],
+                            "sic": member["sic"], "regime": member["regime"],
+                            "watchlist_source": member["watchlist_source"],
+                            "weight": weight, "status": member["status"],
+                            "label_status": "VALID" if member[f"label_valid_{horizon}"]
+                            else "MISSING" if mature else "NOT_MATURE",
+                            "label_reasons": member[f"label_reason_{horizon}"],
+                            "mature": mature, "date_complete": complete,
+                            "entry_date": member[f"planned_entry_{horizon}"],
+                            "exit_date": member[f"planned_exit_{horizon}"],
+                            **{
+                                column: _num(member[f"{column}_{horizon}"])
+                                for column in MEMBER_VALUE_COLUMNS
+                            },
+                            "peer_count": int(member[f"peer_count_{horizon}"]),
+                            "peer_pool": int(member[f"peer_pool_{horizon}"]),
+                        })
+                for a, b in (("S1", "S0"), ("S2", "S1"), ("S2", "S0")):
+                    if a not in active:
+                        continue
+                    delta_key = f"{a.lower()}_minus_{b.lower()}_{view}"
+                    paired[delta_key] = gross[a] - gross[b] if complete else None
+                    for scenario in (*COST_SCENARIOS, *MISSING_SCENARIOS):
+                        av = paired[f"{a.lower()}_{view}_{scenario}"]
+                        bv = paired[f"{b.lower()}_{view}_{scenario}"]
+                        paired[f"{delta_key}_{scenario}"] = av - bv if av is not None and bv is not None else None
+            paired_rows.append(paired)
+            coverage_detail.append(coverage)
 
     paired_df = pd.DataFrame(paired_rows)
     coverage_df = pd.DataFrame(coverage_detail)
+    members_df = pd.DataFrame(members_rows, columns=MEMBER_COLUMNS)
+    summary_rows = _summarize_cohorts(paired_df)
 
-    summary_rows: list[dict[str, Any]] = []
-    segments = _segment_masks(paired_df, frames)
-    for segment_name, mask in segments.items():
-        subset = paired_df.loc[mask]
-        if subset.empty:
-            continue
-        for horizon in HORIZONS:
-            h = subset.loc[subset["horizon"] == horizon]
-            if h.empty:
-                continue
-            for view in ("same", "fixed"):
-                complete = h.loc[h[f"{view}_complete"]]
-                row: dict[str, Any] = {
-                    "segment": segment_name,
-                    "horizon": horizon,
-                    "view": view,
-                    "n_dates": int(len(complete)),
-                    "n_s0": int(h["k"].gt(0).sum()) if view == "same" else int(len(h)),
-                    "deployment_mean": (
-                        float(h["k"].clip(upper=5).div(5).mean())
-                        if view == "same"
-                        else float(
-                            (
-                                h["s0_fixed"].notna()
-                                | h["s1_fixed"].notna()
-                                | h["s2_fixed"].notna()
-                            ).mean()
-                        )
-                    ),
-                }
-                for group in ("s0", "s1", "s2"):
-                    row[f"{group}_mean"] = _mean(complete[f"{group}_{view}"])
-                    row[f"{group}_hit_rate"] = _share(
-                        value is not None and value > 0
-                        for value in complete[f"{group}_{view}"]
-                    )
-                for delta in ("s1_minus_s0", "s2_minus_s1", "s2_minus_s0"):
-                    row[f"{delta}_mean"] = _mean(
-                        complete[f"{delta}_{view}"]
-                    )
-                    row[f"{delta}_positive_ratio"] = _share(
-                        value is not None and value > 0
-                        for value in complete[f"{delta}_{view}"]
-                    )
-                summary_rows.append(row)
-
-    # Main monthly ALL 20d same-slot series for bootstrap/verdict.
-    monthly = paired_df.loc[
-        paired_df["frequency"] == "monthly",
-        ["signal_date", "horizon", "same_complete", "s2_minus_s0_same", "s2_same"],
-    ].drop_duplicates(["signal_date", "horizon"])
-    monthly_20 = monthly.loc[monthly["horizon"] == 20].copy()
+    monthly_20 = paired_df.loc[
+        paired_df["frequency"].eq("monthly") & paired_df["horizon"].eq(20)
+    ].copy()
     start_period = pd.Period("2016-01", freq="M")
     monthly_20["calendar_index"] = monthly_20["signal_date"].map(
         lambda value: pd.Period(str(value), freq="M").ordinal
@@ -1071,11 +836,14 @@ def evaluate_frozen_short_research(
         ]
         yearly[year] = _mean(values)
     loo_delta = _contribution_loo(settled, paired_df)
-    cost_means = {
-        "trade_only": _cost_scenario_mean(settled, "trade_only", 20),
-        "base": _cost_scenario_mean(settled, "base", 20),
-        "stress": _cost_scenario_mean(settled, "stress", 20),
+    missing_scenarios = {
+        metric: {
+            scenario: main.get(f"{metric}_{scenario}")
+            for scenario in MISSING_SCENARIOS
+        }
+        for metric in ("s2_mean", "s2_minus_s0_mean")
     }
+    cost_means = {scenario: main.get(f"s2_mean_{scenario}") for scenario in COST_SCENARIOS}
     verdict = _verdict(
         n_dates=int(main.get("n_dates", 0) or 0),
         years=years,
@@ -1085,313 +853,409 @@ def evaluate_frozen_short_research(
         s2_s0_ci=delta_ci,
         yearly_s2_s0=yearly,
         loo_s2_s0=loo_delta,
-        cost_means=cost_means,
+        missing_scenarios=missing_scenarios,
     )
 
-    # Evidence files.
-    out = output_root
-    out.mkdir(parents=True, exist_ok=True)
-    coverage_path = out / "coverage.csv"
-    paired_path = out / "paired_by_date.csv"
-    summary_path = out / "summary.csv"
-    members_path = out / "members.csv"
-    casebook_path = out / "casebook.csv"
-    report_path = out / "report.md"
-    validation_path = out / "validation.json"
-    protocol_path = out / "protocol.json"
-    manifest_path = out / "manifest.json"
-    commands_path = out / "commands.md"
-    scan_integration_path = out / "scan_integration.json"
-    short_json_path = out / "short_research.json"
-    short_csv_path = out / "short_candidates.csv"
-    daily_fragment_path = out / "action_list_short_fragment.md"
-    weekly_fragment_path = out / "weekly_review_short_fragment.md"
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output_root.name}.", dir=output_root.parent) as staging:
+        # Evidence files.
+        out = Path(staging) / "evaluation"
+        out.mkdir()
+        coverage_path = out / "coverage.csv"
+        paired_path = out / "paired_by_date.csv"
+        summary_path = out / "summary.csv"
+        members_path = out / "members.csv"
+        casebook_path = out / "casebook.csv"
+        report_path = out / "report.md"
+        validation_path = out / "validation.json"
+        protocol_path = out / "protocol.json"
+        manifest_path = out / "manifest.json"
+        commands_path = out / "commands.md"
+        scan_integration_path = out / "scan_integration.json"
+        short_json_path = out / "short_research.json"
+        short_csv_path = out / "short_candidates.csv"
+        daily_fragment_path = out / "action_list_short_fragment.md"
+        weekly_fragment_path = out / "weekly_review_short_fragment.md"
 
-    coverage_df.to_csv(coverage_path, index=False)
-    paired_df.to_csv(paired_path, index=False)
-    pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
-    pd.DataFrame(members_rows).to_csv(members_path, index=False)
+        coverage_df.to_csv(coverage_path, index=False)
+        paired_df.to_csv(paired_path, index=False)
+        pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+        members_df.to_csv(members_path, index=False)
+        _industry_statistics(members_df, paired_df).to_csv(out / "industry_stats.csv", index=False)
+        _concentration(members_df).to_csv(out / "concentration.csv", index=False)
+        source_coverage = settled.groupby(
+            ["dataset", "frequency", "watchlist_source"], dropna=False, sort=True
+        ).agg(
+            rows=("symbol", "size"), dates=("signal_date", "nunique"),
+            selected=("selected", "sum"), label_20_valid=("label_valid_20", "sum"),
+            label_60_valid=("label_valid_60", "sum"),
+        ).reset_index()
+        source_coverage.to_csv(out / "source_coverage.csv", index=False)
 
-    casebook = _casebook(settled)
-    pd.DataFrame(casebook).to_csv(casebook_path, index=False)
+        casebook = _casebook(settled, members_df)
+        pd.DataFrame(casebook).to_csv(casebook_path, index=False)
 
-    # Frozen-input scan integration evidence: one non-empty and one empty
-    # cross-section rendered through the same contract (not a credentialed scan).
-    non_empty = next(
-        (
-            row
-            for row in coverage_rows
-            if row["status"] == "ready" and row["selected_rows"] > 0
-        ),
-        None,
-    )
-    empty = next(
-        (row for row in coverage_rows if row["status"] == "no_candidates"),
-        None,
-    )
-    scan_integration = {
-        "evidence_type": "frozen_input_adapter_simulation",
-        "note": (
-            "No credentialed SIP/SEC scan was run in this environment. The "
-            "frozen cross-section was passed through build_short_cross_section "
-            "and the same snapshot/report contract; the live scanner adapter is "
-            "covered by unit tests and the documented command."
-        ),
-        "non_empty_case": non_empty,
-        "empty_case": empty,
-        "statuses": sorted({row["status"] for row in coverage_rows}),
-        "failures": failures,
-    }
-    if scan_entry_integration is not None:
-        scan_integration["mocked_scan_entry"] = dict(scan_entry_integration)
-    _json_dump(scan_integration_path, scan_integration)
-    if non_empty is not None:
-        demo_frame = frames[non_empty["dataset"]].loc[
-            frames[non_empty["dataset"]]["signal_date"] == non_empty["signal_date"]
-        ]
-        demo_result = build_short_cross_section(
-            demo_frame,
-            report_generated_at_utc=(
-                f"{non_empty['signal_date']}T23:59:59+00:00"
+        # Frozen-input scan integration evidence: one non-empty and one empty
+        # cross-section rendered through the same contract (not a credentialed scan).
+        non_empty = next(
+            (
+                row
+                for row in coverage_rows
+                if row["status"] == "ready" and row["selected_rows"] > 0
             ),
+            None,
         )
-    else:
-        demo_result = unavailable_short_research_result(
-            ("NO_NON_EMPTY_FROZEN_CASE",),
-            signal_date=SMOKE_DATES[0],
-            market_data_feed="sip",
+        empty = next(
+            (row for row in coverage_rows if row["status"] == "no_candidates"),
+            None,
         )
-    short_json_path.write_text(short_research_json(demo_result), encoding="utf-8")
-    short_csv_path.write_text(short_candidates_csv(demo_result), encoding="utf-8")
-    fragment = "\n".join(render_short_research_section(demo_result)) + "\n"
-    daily_fragment_path.write_text(fragment, encoding="utf-8")
-    weekly_fragment_path.write_text(fragment, encoding="utf-8")
-
-    protocol = {
-        "contract_version": SHORT_RESEARCH_CONTRACT_VERSION,
-        "rule_version": SHORT_RESEARCH_RULE_VERSION,
-        "scope": scope,
-        "smoke_dates": list(SMOKE_DATES),
-        "horizons": list(HORIZONS),
-        "max_candidates": MAX_SHORT_CANDIDATES,
-        "min_price": 5.0,
-        "min_dollar_volume": 2_000_000.0,
-        "min_avg_dollar_volume_20d": 10_000_000.0,
-        "min_industry_peers_excluding_target": 4,
-        "min_pe_peers_including_target": 5,
-        "excluded_sic_range": [6000, 6999],
-        "fundamental_asof_max_days": 180,
-        "signal_rules": {
-            "S0": "rs60_sic < 0 and price_to_sma50 < 1.0 and return_20d > -0.20",
-            "S1": "S0 and revenue_yoy <= 0 and operating_cash_flow_growth <= -0.10",
-            "S2": "S1 and pe_percentile >= 0.80 and pe_premium >= 0.25",
-        },
-        "cost_scenarios": {
-            key: {"per_side": value[0], "borrow": value[1], "dividend": value[2]}
-            for key, value in COST_SCENARIOS.items()
-        },
-        "bootstrap": {
-            "repeats": BOOTSTRAP_REPEATS,
-            "seed": BOOTSTRAP_SEED,
-            "block_months": BOOTSTRAP_BLOCK_MONTHS,
-        },
-        "roundtrip_cost": ROUNDTRIP_COST,
-        "label_contract": "exchange_calendar_endpoints_v3",
-        "label_cutoff": "2026-11-05",
-    }
-    _json_dump(protocol_path, protocol)
-
-    manifest = {
-        "run_id": out.name,
-        "scope": scope,
-        "created_at_utc": (
-            f"{max(str(row['signal_date']) for row in coverage_rows)}T23:59:59+00:00"
-        ),
-        "code_sha": _git_sha(),
-        "source_files": {
-            "short_research_v1.py": _sha256_file(
-                Path(__file__).with_name("short_research_v1.py")
+        scan_integration = {
+            "evidence_type": "frozen_input_adapter_simulation",
+            "note": (
+                "No credentialed SIP/SEC scan was run in this environment. The "
+                "frozen cross-section was passed through build_short_cross_section "
+                "and the same snapshot/report contract; the live scanner adapter is "
+                "covered by unit tests and the documented command."
             ),
-            "short_research_v1_eval.py": _sha256_file(Path(__file__)),
-        },
-        "inputs": {
-            name: {
-                "dataset_sha256": identity.dataset_sha256,
-                "metadata_sha256": identity.metadata_sha256,
-                "success_sha256": identity.success_sha256,
-                "rows": identity.rows,
-                "dates": identity.dates,
-                "frequency": identity.frequency,
-            }
-            for name, identity in identities.items()
-        },
-        "outputs": {},
-    }
-    for path in (
-        coverage_path,
-        paired_path,
-        summary_path,
-        members_path,
-        casebook_path,
-        report_path,
-        validation_path,
-        protocol_path,
-        scan_integration_path,
-        short_json_path,
-        short_csv_path,
-        daily_fragment_path,
-        weekly_fragment_path,
-    ):
-        manifest["outputs"][path.name] = _sha256_file(path) if path.exists() else None
-    _json_dump(manifest_path, manifest)
-
-    commands = _commands_text(scope, output_root)
-    commands_path.write_text(commands, encoding="utf-8")
-
-    label_mismatch = int(
-        (
-            settled["label_end_20"].notna()
-            & settled["fwd_ret_20"].notna()
-            & (
-                settled["label_end_20"].astype(str)
-                != settled["planned_exit_20"].astype(str)
+            "non_empty_case": non_empty,
+            "empty_case": empty,
+            "statuses": sorted({row["status"] for row in coverage_rows}),
+            "failures": failures,
+        }
+        if scan_entry_integration is not None:
+            scan_integration["mocked_scan_entry"] = dict(scan_entry_integration)
+        _json_dump(scan_integration_path, scan_integration)
+        if non_empty is not None:
+            demo_frame = frames[non_empty["dataset"]].loc[
+                frames[non_empty["dataset"]]["signal_date"] == non_empty["signal_date"]
+            ]
+            demo_result = build_short_cross_section(
+                demo_frame.loc[:, demo_frame.columns.intersection((*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS))],
+                report_generated_at_utc=(
+                    f"{non_empty['signal_date']}T23:59:59+00:00"
+                ),
             )
-        ).sum()
-    )
-    validation = {
-        "ok": (not failures) and label_mismatch == 0,
-        "scope": scope,
-        "input_identities": {
-            name: {
-                "rows": identity.rows,
-                "dates": identity.dates,
-                "dataset_sha256": identity.dataset_sha256,
-            }
-            for name, identity in identities.items()
-        },
-        "funnel_totals": {
-            key: int(sum(row.get(key, 0) for row in coverage_rows))
-            for key in (
-                "input_rows",
-                "u0_rows",
-                "u0_unique_rows",
-                "industry_rs_rows",
-                "pe_eligible_rows",
-                "pe_rows",
-                "u_rows",
-                "s0_rows",
-                "s1_rows",
-                "s2_rows",
-                "selected_rows",
+        else:
+            demo_result = unavailable_short_research_result(
+                ("NO_NON_EMPTY_FROZEN_CASE",),
+                signal_date=SMOKE_DATES[0],
+                market_data_feed="sip",
             )
-        },
-        "s2_dates": int(sum(1 for row in coverage_rows if row["s2_rows"] > 0)),
-        "failures": failures,
-        "label_checks": {
-            "all_valid_exit_labels_match_planned_sessions": label_mismatch == 0,
-            "label_mismatch_count": label_mismatch,
-            "missing_labels_kept_as_missing": True,
-            "no_imputed_returns": True,
-        },
-        "verdict": verdict,
-        "scan_entry_integration": dict(scan_entry_integration or {}),
-    }
-    _json_dump(validation_path, validation)
+        short_json_path.write_text(short_research_json(demo_result), encoding="utf-8")
+        short_csv_path.write_text(short_candidates_csv(demo_result), encoding="utf-8")
+        fragment = "\n".join(render_short_research_section(demo_result)) + "\n"
+        daily_fragment_path.write_text(fragment, encoding="utf-8")
+        weekly_fragment_path.write_text(fragment, encoding="utf-8")
 
-    report = _render_report(
-        scope=scope,
-        identities=identities,
-        coverage_rows=coverage_rows,
-        paired_df=paired_df,
-        summary_rows=summary_rows,
-        main=main,
-        delta_ci=delta_ci,
-        s2_ci=s2_ci,
-        yearly=yearly,
-        loo_delta=loo_delta,
-        cost_means=cost_means,
-        verdict=verdict,
-        failures=failures,
-        casebook=casebook,
-        scan_integration=scan_integration,
-    )
-    report_path.write_text(report, encoding="utf-8")
+        protocol = {
+            "contract_version": SHORT_RESEARCH_CONTRACT_VERSION,
+            "rule_version": SHORT_RESEARCH_RULE_VERSION,
+            "scope": scope,
+            "smoke_dates": list(SMOKE_DATES),
+            "horizons": list(HORIZONS),
+            "max_candidates": MAX_SHORT_CANDIDATES,
+            "min_price": 5.0,
+            "min_dollar_volume": 2_000_000.0,
+            "min_avg_dollar_volume_20d": 10_000_000.0,
+            "min_industry_peers_excluding_target": 4,
+            "min_pe_peers_including_target": 5,
+            "excluded_sic_range": [6000, 6999],
+            "fundamental_asof_max_days": 180,
+            "signal_rules": {
+                "S0": "rs60_sic < 0 and price_to_sma50 < 1.0 and return_20d > -0.20",
+                "S1": "S0 and revenue_yoy <= 0 and operating_cash_flow_growth <= -0.10",
+                "S2": "S1 and pe_percentile >= 0.80 and pe_premium >= 0.25",
+            },
+            "cost_scenarios": {
+                key: {"per_side": value[0], "borrow": value[1], "dividend": value[2]}
+                for key, value in COST_SCENARIOS.items()
+            },
+            "bootstrap": {
+                "repeats": BOOTSTRAP_REPEATS,
+                "seed": BOOTSTRAP_SEED,
+                "block_months": BOOTSTRAP_BLOCK_MONTHS,
+            },
+            "roundtrip_cost": ROUNDTRIP_COST,
+            "label_contract": "exchange_calendar_endpoints_v3",
+            "label_cutoff": LABEL_CUTOFF,
+            "missing_slot_scenarios": MISSING_SCENARIOS,
+        }
+        _json_dump(protocol_path, protocol)
 
-    # Recompute output hashes after report/validation/commands exist.
-    manifest["outputs"] = {
-        path.name: _sha256_file(path)
-        for path in (
-            coverage_path,
-            paired_path,
-            summary_path,
-            members_path,
-            casebook_path,
-            report_path,
-            validation_path,
-            protocol_path,
-            commands_path,
-            scan_integration_path,
-            short_json_path,
-            short_csv_path,
-            daily_fragment_path,
-            weekly_fragment_path,
+        manifest = {
+            "run_id": output_root.name,
+            "scope": scope,
+            "dataset_root": _portable_path(dataset_root),
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "code_sha": checkpoint_identity["code_sha"],
+            "source_files": source_files,
+            "inputs": inputs,
+            "outputs": {},
+        }
+        commands_path.write_text(
+            _commands_text(
+                scope, dataset_root, output_root,
+                with_scan_entry=scan_entry_integration is not None,
+            ),
+            encoding="utf-8",
         )
-        if path.exists()
-    }
-    _json_dump(manifest_path, manifest)
 
-    _json_dump(
-        checkpoint_path,
-        {
+        endpoint_mismatches = {
+            horizon: (
+                settled[f"label_end_{horizon}"].notna()
+                & settled[f"fwd_ret_{horizon}"].notna()
+                & settled[f"label_end_{horizon}"].ne(settled[f"planned_exit_{horizon}"])
+            )
+            for horizon in HORIZONS
+        }
+        input_label_mismatches = {
+            str(horizon): int(mismatch.sum()) for horizon, mismatch in endpoint_mismatches.items()
+        }
+        valid_label_mismatches = sum(
+            int((mismatch & settled[f"label_valid_{horizon}"]).sum())
+            for horizon, mismatch in endpoint_mismatches.items()
+        )
+        validation = {
+            "ok": (not failures) and valid_label_mismatches == 0,
+            "scope": scope,
+            "input_identities": {
+                name: {
+                    "rows": identity.rows,
+                    "dates": identity.dates,
+                    "dataset_sha256": identity.dataset_sha256,
+                }
+                for name, identity in identities.items()
+            },
+            "funnel_totals": {
+                key: int(sum(row.get(key, 0) for row in coverage_rows))
+                for key in (
+                    "input_rows",
+                    "u0_rows",
+                    "u0_unique_rows",
+                    "industry_rs_rows",
+                    "pe_eligible_rows",
+                    "pe_rows",
+                    "u_rows",
+                    "s0_rows",
+                    "s1_rows",
+                    "s2_rows",
+                    "selected_rows",
+                )
+            },
+            "s2_dates": int(sum(1 for row in coverage_rows if row["s2_rows"] > 0)),
+            "failures": failures,
+            "label_checks": {
+                "all_valid_exit_labels_match_planned_sessions": valid_label_mismatches == 0,
+                "label_mismatch_count": sum(input_label_mismatches.values()),
+                "input_label_mismatch_by_horizon": input_label_mismatches,
+                "valid_label_endpoint_mismatch_count": valid_label_mismatches,
+                "missing_labels_kept_as_missing": True,
+                "no_imputed_returns": True,
+            },
+            "verdict": verdict,
+            "paired_bootstrap": delta_ci,
+            "s2_bootstrap": s2_ci,
+            "missing_slot_scenarios": missing_scenarios,
+            "memo": "Missing-slot scenarios only use mature dates. Main estimates use complete cohorts.",
+            "scan_entry_integration": dict(scan_entry_integration or {}),
+        }
+        _json_dump(validation_path, validation)
+
+        report = _render_report(
+            scope=scope,
+            identities=identities,
+            coverage_rows=coverage_rows,
+            summary_rows=summary_rows,
+            main=main,
+            delta_ci=delta_ci,
+            s2_ci=s2_ci,
+            yearly=yearly,
+            loo_delta=loo_delta,
+            cost_means=cost_means,
+            verdict=verdict,
+            failures=failures,
+            casebook=casebook,
+            scan_integration=scan_integration,
+        )
+        report_path.write_text(report, encoding="utf-8")
+
+        manifest["outputs"] = {name: _sha256_file(out / name) for name in sorted(OUTPUT_FILES)}
+        _json_dump(manifest_path, manifest)
+        _json_dump(out / "checkpoint.json", {
             "identity": checkpoint_identity,
             "complete": True,
             "created_at_utc": manifest["created_at_utc"],
-        },
-    )
-    files = [
-        coverage_path,
-        paired_path,
-        summary_path,
-        members_path,
-        casebook_path,
-        report_path,
-        validation_path,
-        protocol_path,
-        manifest_path,
-        commands_path,
-        scan_integration_path,
-        short_json_path,
-        short_csv_path,
-        daily_fragment_path,
-        weekly_fragment_path,
-        checkpoint_path,
-    ]
-    checksum_lines = "".join(
-        f"{_sha256_file(path)}  {path.name}\n" for path in files if path.exists()
-    )
-    (out / "SHA256SUMS").write_text(checksum_lines, encoding="utf-8")
+        })
+        files = sorted(OUTPUT_FILES | {"checkpoint.json", "manifest.json"})
+        (out / "SHA256SUMS").write_text(
+            "".join(f"{_sha256_file(out / name)}  {name}\n" for name in files),
+            encoding="utf-8",
+        )
+        _reuse_evaluation(out, checkpoint_identity)
+        if output_root.exists() and any(output_root.iterdir()):
+            return _reuse_evaluation(output_root, checkpoint_identity)
+        try:
+            os.rename(out, output_root)
+        except OSError:
+            if output_root.is_dir() and any(output_root.iterdir()):
+                return _reuse_evaluation(output_root, checkpoint_identity)
+            raise
+        return {
+            "output_root": str(output_root),
+            "scope": scope,
+            "reused": False,
+            "verdict": verdict,
+            "coverage_rows": len(coverage_rows),
+            "paired_rows": len(paired_rows),
+            "summary_rows": len(summary_rows),
+            "files": [*files, "SHA256SUMS"],
+        }
+
+
+def _reuse_evaluation(root: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        checkpoint = json.loads((root / "checkpoint.json").read_text(encoding="utf-8"))
+        if checkpoint.get("identity") != identity or checkpoint.get("complete") is not True:
+            raise ValueError("checkpoint identity mismatch")
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        checksums = dict(
+            (filename, digest)
+            for digest, filename in (
+                line.split("  ", 1)
+                for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+            )
+        )
+        if set(checksums) != OUTPUT_FILES | {"checkpoint.json", "manifest.json"}:
+            raise ValueError("checksum file does not cover all evaluation artifacts")
+        if manifest["outputs"] != {name: checksums[name] for name in OUTPUT_FILES}:
+            raise ValueError("manifest output hash mismatch")
+        if manifest["inputs"] != identity["inputs"] or manifest["source_files"] != identity["source_sha256"]:
+            raise ValueError("manifest input or source identity mismatch")
+        for name, digest in checksums.items():
+            if _sha256_file(root / name) != digest:
+                raise ValueError(f"evaluation artifact hash mismatch: {name}")
+        validation = json.loads((root / "validation.json").read_text(encoding="utf-8"))
+        if validation.get("ok") is not True:
+            raise ValueError("evaluation output did not pass validation")
+    except (OSError, ValueError, KeyError, AttributeError) as exc:
+        raise ValueError(
+            f"Cannot reuse short-research evaluation at {root}: {exc}. Use a new output directory."
+        ) from exc
     return {
-        "output_root": str(out),
-        "scope": scope,
-        "reused": False,
-        "verdict": verdict,
-        "coverage_rows": len(coverage_rows),
-        "paired_rows": len(paired_rows),
-        "summary_rows": len(summary_rows),
-        "files": [path.name for path in files] + ["SHA256SUMS"],
+        "output_root": str(root),
+        "scope": identity["scope"],
+        "reused": True,
+        "verdict": validation["verdict"],
+        "files": sorted([*checksums, "SHA256SUMS"]),
     }
 
 
-def _cost_scenario_mean(
-    settled: pd.DataFrame,
-    scenario: str,
-    horizon: int,
-) -> float | None:
-    column = f"short_cost_{scenario}_{horizon}"
-    values = settled.loc[
-        settled["selected"] & settled[column].notna(), column
-    ]
-    return _mean(values)
+def _summarize_cohorts(paired: pd.DataFrame) -> list[dict[str, Any]]:
+    rows = []
+    for name, mask in _segment_masks(paired).items():
+        for horizon, cohort in paired.loc[mask].groupby("horizon", sort=True):
+            for view in ("same", "fixed", "financial"):
+                group_keys = ("s0", "s1") if view == "financial" else ("s0", "s1", "s2")
+                complete = cohort.loc[cohort[f"{view}_complete"]]
+                row = {
+                    "segment": name, "horizon": horizon, "view": view,
+                    "n_signal_dates": int(len(cohort)), "n_mature_dates": int(cohort["mature"].sum()),
+                    "n_dates": int(len(complete)),
+                }
+                for group in group_keys:
+                    values = complete[f"{group}_{view}"]
+                    row[f"{group}_mean"] = _mean(values)
+                    row[f"{group}_hit_rate"] = _share(values > 0)
+                    deployment = cohort[f"{group}_{view}_deployment"]
+                    row[f"{group}_deployment_mean"] = float(deployment.mean())
+                    row[f"{group}_empty_rate"] = float(deployment.eq(0).mean())
+                    for scenario in COST_SCENARIOS:
+                        row[f"{group}_mean_{scenario}"] = _mean(complete[f"{group}_{view}_{scenario}"])
+                    for scenario in MISSING_SCENARIOS:
+                        row[f"{group}_mean_{scenario}"] = _mean(cohort[f"{group}_{view}_{scenario}"])
+                for a, b in (("s1", "s0"), ("s2", "s1"), ("s2", "s0")):
+                    if a not in group_keys:
+                        continue
+                    delta = f"{a}_minus_{b}"
+                    values = complete[f"{delta}_{view}"]
+                    row[f"{delta}_mean"] = _mean(values)
+                    row[f"{delta}_positive_ratio"] = _share(values > 0)
+                    for scenario in COST_SCENARIOS:
+                        row[f"{delta}_mean_{scenario}"] = _mean(complete[f"{delta}_{view}_{scenario}"])
+                    for scenario in MISSING_SCENARIOS:
+                        row[f"{delta}_mean_{scenario}"] = _mean(cohort[f"{delta}_{view}_{scenario}"])
+                rows.append(row)
+    return rows
+
+
+def _industry_statistics(members: pd.DataFrame, paired: pd.DataFrame) -> pd.DataFrame:
+    book = ["frequency", "horizon", "view", "group"]
+    columns = [*book, "sic"]
+    eligible = members.loc[members["date_complete"].eq(True)]
+    cohort = pd.concat([eligible, eligible.assign(sic="ALL")], ignore_index=True)
+    cohort["down"] = cohort["short_gross"].gt(0)
+    cohort["underperformed_peers"] = cohort["peer_relative_long"].lt(0).where(
+        cohort["peer_relative_long"].notna()
+    )
+    cohort["peer_missing_fraction"] = 1.0 - cohort["peer_count"].div(
+        cohort["peer_pool"].replace(0, np.nan)
+    )
+    cohort["weighted_gross"] = cohort["short_gross"] * cohort["weight"]
+    cohort["weighted_base"] = cohort["short_cost_base"] * cohort["weight"]
+    active = cohort.groupby(columns, dropna=False).agg(
+        members=("symbol", "size"), active_dates=("signal_date", "nunique"),
+        gross_sum=("weighted_gross", "sum"), base_sum=("weighted_base", "sum"),
+        price_down_rate=("down", "mean"),
+        peer_observed_members=("peer_relative_long", "count"),
+        peer_underperformance_rate=("underperformed_peers", "mean"),
+        peer_relative_long_mean=("peer_relative_long", "mean"),
+        peer_count_mean=("peer_count", "mean"),
+        peer_missing_fraction_mean=("peer_missing_fraction", "mean"),
+        qqq_long_gross_mean=("qqq_long_gross", "mean"),
+        terminal_adverse_p90=("period_end_adverse_up", lambda values: values.quantile(0.90)),
+        terminal_adverse_max=("period_end_adverse_up", "max"),
+        breakeven_borrow_median=("breakeven_borrow", "median"),
+    ).reset_index()
+    date_counts = []
+    for view, ledger_view, groups in (
+        ("same", "same_slot", GROUPS),
+        ("fixed", "fixed_5", GROUPS),
+        ("financial", "financial_matched", GROUPS[:2]),
+    ):
+        counts = paired.groupby(["frequency", "horizon"])[f"{view}_complete"].sum()
+        for group in groups:
+            date_counts.append(counts.rename("dates").reset_index().assign(view=ledger_view, group=group))
+    denominators = pd.concat(date_counts, ignore_index=True)
+    # Every SIC contributes to the original portfolio. Missing sector exposures
+    # and whole cash dates contribute zero on complete comparison dates.
+    statistics = denominators.assign(sic="ALL").merge(active, on=columns, how="left")
+    sectors = active.loc[active["sic"].ne("ALL")].merge(denominators, on=book, how="left")
+    statistics = pd.concat([statistics, sectors], ignore_index=True)
+    for column in ("members", "active_dates", "peer_observed_members"):
+        statistics[column] = statistics[column].fillna(0).astype(int)
+    dates = statistics["dates"].replace(0, np.nan)
+    statistics["gross_mean"] = statistics.pop("gross_sum").astype(float).fillna(0.0).div(dates)
+    statistics["base_net_mean"] = statistics.pop("base_sum").astype(float).fillna(0.0).div(dates)
+    return statistics.sort_values(columns, ignore_index=True)
+
+
+def _concentration(members: pd.DataFrame) -> pd.DataFrame:
+    keys = ["frequency", "horizon", "view", "group"]
+    mature = members.loc[members["mature"].eq(True)].copy()
+    mature["weighted_gross"] = mature["weight"] * mature["short_gross"].where(
+        mature["date_complete"].eq(True)
+    )
+    totals = mature.groupby(keys)["weight"].transform("sum")
+    mature["slot_share"] = mature["weight"] / totals
+    rows = []
+    for column in ("cik", "sic"):
+        grouped = mature.groupby([*keys, column], sort=True).agg(
+            slots=("symbol", "size"), dates=("signal_date", "nunique"), share=("slot_share", "sum"),
+            known_contribution_slots=("weighted_gross", "count"),
+            weighted_gross_sum=("weighted_gross", lambda values: values.sum(min_count=1)),
+        ).reset_index().rename(columns={column: "key"})
+        rows.append(grouped.assign(kind=column))
+    return pd.concat(rows, ignore_index=True)
 
 
 def _contribution_loo(
@@ -1406,7 +1270,7 @@ def _contribution_loo(
     ]
     if monthly.empty:
         return None
-    contribution_by_symbol: Counter[str] = Counter()
+    contribution_by_company: Counter[str] = Counter()
     per_date: dict[tuple[str, str], dict[str, float]] = {}
     for row in monthly.itertuples(index=False):
         date_rows = settled.loc[
@@ -1429,16 +1293,18 @@ def _contribution_loo(
                 if value is None:
                     valid = False
                     break
-                net[member.symbol] = net.get(member.symbol, 0.0) + sign * value / k
+                net[member.cik] = net.get(member.cik, 0.0) + sign * value / k
             if not valid:
                 break
         if not valid:
             continue
         per_date[(str(row.dataset), str(row.signal_date))] = net
-        contribution_by_symbol.update(net)
+        contribution_by_company.update(net)
     if not per_date:
         return None
-    largest = contribution_by_symbol.most_common(1)[0][0]
+    largest, contribution = contribution_by_company.most_common(1)[0]
+    if contribution <= 0:
+        return _mean(monthly["s2_minus_s0_same"])
     deltas: list[float] = []
     for (dataset, signal_date), net in per_date.items():
         base = paired_df.loc[
@@ -1454,73 +1320,64 @@ def _contribution_loo(
     return _mean(deltas)
 
 
-def _segment_masks(
-    paired_df: pd.DataFrame,
-    frames: Mapping[str, pd.DataFrame],
-) -> dict[str, pd.Series]:
-    masks: dict[str, pd.Series] = {}
-    index = paired_df.index
-    masks["ALL"] = pd.Series(True, index=index)
-    masks["ALL_MONTHLY"] = paired_df["frequency"] == "monthly"
-    masks["ALL_WEEKLY"] = paired_df["frequency"] == "weekly"
-    masks["COVID_2020_02_03"] = (
-        (paired_df["frequency"] == "weekly")
-        & paired_df["signal_date"].astype(str).between("2020-02-01", "2020-03-31")
-    )
-    masks["COVID_2020_04_06"] = (
-        (paired_df["frequency"] == "weekly")
-        & paired_df["signal_date"].astype(str).between("2020-04-01", "2020-06-30")
-    )
-    masks["BEAR_2022"] = paired_df["signal_date"].astype(str).str[:4] == "2022"
-    for year in sorted({str(value)[:4] for value in paired_df["signal_date"]}):
-        masks[f"YEAR_{year}"] = paired_df["signal_date"].astype(str).str[:4] == year
+def _segment_masks(paired: pd.DataFrame) -> dict[str, pd.Series]:
+    monthly = paired["frequency"].eq("monthly")
+    weekly = paired["frequency"].eq("weekly")
+    dates = paired["signal_date"]
+    covid = paired["dataset"].eq("sip_covid_weekly_v1")
+    masks = {
+        "ALL_MONTHLY": monthly,
+        "ALL_WEEKLY": weekly,
+        "COVID_2020_02_03": covid & dates.between("2020-02-01", "2020-03-31"),
+        "COVID_2020_04_06": covid & dates.between("2020-04-01", "2020-06-30"),
+        "BEAR_2022": paired["dataset"].eq("sip_bear_weekly_v1"),
+    }
+    for year in sorted(dates.str[:4].unique()):
+        masks[f"YEAR_{year}"] = monthly & dates.str.startswith(year)
+        masks[f"WEEKLY_YEAR_{year}"] = weekly & dates.str.startswith(year)
+    for regime in sorted(paired["regime"].unique()):
+        matches = paired["regime"].eq(regime)
+        masks[f"MONTHLY_REGIME_{regime}"] = monthly & matches
+        masks[f"WEEKLY_REGIME_{regime}"] = weekly & matches
     return masks
 
 
-def _casebook(settled: pd.DataFrame) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    non_selected = settled.loc[
-        (settled["status"] == "CONFIRMED") & (~settled["selected"])
+def _casebook(settled: pd.DataFrame, members: pd.DataFrame) -> list[dict[str, Any]]:
+    rows = []
+    outside_cap = settled.loc[
+        settled["status"].eq("CONFIRMED") & ~settled["selected"]
     ]
-    if not non_selected.empty:
-        row = non_selected.iloc[0]
-        rows.append(
-            {
-                "case_type": "confirmed_not_selected_cap",
-                "signal_date": row["signal_date"],
-                "symbol": row["symbol"],
-                "status": row["status"],
-                "label_status": row.get("label_valid_20"),
-                "note": "CONFIRMED but outside the five-slot list",
-            }
-        )
-    missing = settled.loc[
-        settled["signal_groups"].map(lambda values: bool(values))
-        & (~settled["label_valid_20"].astype(bool))
-    ]
+    if not outside_cap.empty:
+        row = outside_cap.iloc[0]
+        rows.append({
+            "case_type": "confirmed_not_selected_cap",
+            "signal_date": row["signal_date"], "symbol": row["symbol"],
+            "status": row["status"], "label_status": bool(row["label_valid_20"]),
+            "note": "CONFIRMED outside the five-slot list",
+        })
+    else:
+        rows.append({
+            "case_type": "synthetic_not_selected_cap",
+            "signal_date": "n/a", "symbol": "n/a", "status": "CONFIRMED",
+            "label_status": "n/a", "note": "Synthetic sixth-ranked name remains outside the list",
+        })
+
+    missing = members.loc[members["label_status"].eq("MISSING")]
     if not missing.empty:
         row = missing.iloc[0]
-        rows.append(
-            {
-                "case_type": "selected_group_member_missing_label",
-                "signal_date": row["signal_date"],
-                "symbol": row["symbol"],
-                "status": row["status"],
-                "label_status": row.get("label_valid_20"),
-                "note": "missing endpoint kept as missing; no substitution",
-            }
-        )
-    if not rows:
-        rows.append(
-            {
-                "case_type": "synthetic_missing_label",
-                "signal_date": "n/a",
-                "symbol": "n/a",
-                "status": "INSUFFICIENT_DATA",
-                "label_status": False,
-                "note": "synthetic casebook entry; no historical example available",
-            }
-        )
+        rows.append({
+            "case_type": "selected_group_member_missing_label",
+            "signal_date": row["signal_date"], "symbol": row["symbol"],
+            "status": row["status"], "label_status": row["label_status"],
+            "note": f"{row['horizon']}d {row['label_reasons']}, kept at original rank",
+        })
+    else:
+        rows.append({
+            "case_type": "synthetic_missing_label",
+            "signal_date": "n/a", "symbol": "n/a", "status": "CONFIRMED",
+            "label_status": "MISSING",
+            "note": "Synthetic mature missing label retains its slot and excludes the primary comparison",
+        })
     return rows
 
 
@@ -1536,27 +1393,47 @@ def _git_sha() -> str | None:
 
 
 def _portable_path(path: str | Path) -> str:
-    raw = Path(path)
+    resolved = Path(path).resolve()
+    repo_root = Path(__file__).resolve().parents[3]
     try:
-        return str(raw.resolve().relative_to(Path.cwd().resolve()))
+        return str(resolved.relative_to(repo_root))
     except ValueError:
-        return str(raw)
+        return str(resolved)
 
 
-def _commands_text(scope: str, output_root: str | Path) -> str:
-    portable = _portable_path(output_root)
+def _commands_text(
+    scope: str,
+    dataset_root: Path,
+    output_root: Path,
+    *,
+    with_scan_entry: bool,
+) -> str:
+    evidence_input = (
+        'scan_entry = json.loads((recorded_run / "scan_integration.json").read_text('
+        'encoding="utf-8"))["mocked_scan_entry"]\n'
+        if with_scan_entry else "scan_entry = None\n"
+    )
     return (
         "# Short Research v1 reproduction\n\n"
+        "Run from the repository root. For a fresh output, keep recorded_run "
+        "pointing at this evidence bundle and choose a new output_root.\n\n"
         "```bash\n"
         ".venv/bin/python -m unittest discover -s tests -p test_short_research_v1.py\n"
         ".venv/bin/python -m unittest discover -s tests\n"
         "```\n\n"
         "Frozen evaluation (importable entry; no new scan/cron CLI):\n\n"
         "```bash\n"
-        f".venv/bin/python - <<'PY'\n"
+        ".venv/bin/python - <<'PY'\n"
+        "import json\n"
+        "from pathlib import Path\n"
         "from ai_value_scanner.research.short_research_v1 import evaluate_frozen_short_research\n"
-        f"evaluate_frozen_short_research('outputs/review_followup_20261106/datasets', "
-        f"{portable!r}, scope='{scope}')\n"
+        f"dataset_root = Path({_portable_path(dataset_root)!r})\n"
+        f"recorded_run = Path({_portable_path(output_root)!r})\n"
+        "output_root = recorded_run\n"
+        f"{evidence_input}"
+        "print(evaluate_frozen_short_research(\n"
+        f"    dataset_root, output_root, scope={scope!r}, scan_entry_integration=scan_entry,\n"
+        "))\n"
         "PY\n"
         "```\n"
     )
@@ -1567,7 +1444,6 @@ def _render_report(
     scope: str,
     identities: Mapping[str, DatasetIdentity],
     coverage_rows: Sequence[Mapping[str, Any]],
-    paired_df: pd.DataFrame,
     summary_rows: Sequence[Mapping[str, Any]],
     main: Mapping[str, Any],
     delta_ci: Mapping[str, Any],
@@ -1633,11 +1509,14 @@ def _render_report(
                 ["S2 mean short gross", _pct(main.get("s2_mean"))],
                 ["S1-S0", _pct(main.get("s1_minus_s0_mean"))],
                 ["S2-S1", _pct(main.get("s2_minus_s1_mean"))],
-                ["S2-S0", _pct(main.get("s2_minus_s0_mean"))],
+                ["S2-S0", _pct_exact(main.get("s2_minus_s0_mean"))],
                 ["S2-S0 95% CI", f"[{_pct(delta_ci.get('ci_low'))}, {_pct(delta_ci.get('ci_high'))}]"],
                 ["S2 95% CI", f"[{_pct(s2_ci.get('ci_low'))}, {_pct(s2_ci.get('ci_high'))}]"],
                 ["S2-S0 positive date ratio", _pct_plain(main.get("s2_minus_s0_positive_ratio"))],
-                ["base cost S2 mean", _pct(cost_means.get("base"))],
+                ["trade-only S2 mean", _pct_exact(cost_means.get("trade_only"))],
+                ["base cost S2 mean", _pct_exact(cost_means.get("base"))],
+                ["S2-S0 with mature missing slots at -50%", _pct_exact(main.get("s2_minus_s0_mean_missing_low"))],
+                ["S2-S0 with mature missing slots at +50%", _pct_exact(main.get("s2_minus_s0_mean_missing_high"))],
                 ["stress cost S2 mean", _pct(cost_means.get("stress"))],
                 ["leave-one-company-out S2-S0", _pct(loo_delta)],
             ],
@@ -1671,7 +1550,13 @@ def _render_report(
             segment_rows,
         )
     )
-    lines.extend(["", "## 5. Casebook", ""])
+    lines.extend([
+        "", "- Separate financial matched comparison (S1 vs S0) is in the 'financial' rows of summary.csv.",
+        "- Industry and group-total diagnostics are in industry_stats.csv. Gross and base net are weighted portfolio contributions averaged across complete dates, including cash. Hit rates, peer coverage and tails use observed members.",
+
+        "- See source_coverage.csv for universe coverage and concentration.csv for company/industry allocation.",
+        "", "## 5. Casebook", "",
+    ])
     lines.append(
         _md_table(
             ["case", "date", "symbol", "status", "label", "note"],
@@ -1723,7 +1608,9 @@ def _render_report(
             "- Labels are overlapping forward returns; date-level aggregation is used, not independent-row inference.",
             "- Borrow evidence is `UNKNOWN` for all historical rows; no historical borrow database exists.",
             "- Costs are assumptions, not observed borrow fees or locates.",
-            "- Period-end adverse-up is reported; intraperiod maximum adverse excursion is not verified without raw frozen daily paths.",
+            "- Period-end adverse-up is reported. No matching complete raw daily path was verified for this run.",
+            "- Generation config name is archived in the input metadata. The config reference hash identifies the repository copy used to verify checkpoint identity.",
+
             "- Retrospective results do not promote production behavior and are not OOS.",
             "",
         ]

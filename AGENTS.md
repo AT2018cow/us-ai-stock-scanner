@@ -187,9 +187,10 @@ Common commands:
   command above; cadence: README §13.2) and that no stale `ai_value_scan_*` files sit
   at the `outputs/` root (tidy one-liner: README §8.1).
 
-Production entry: `configs/config.production.json` — identity `production`, effective
-parameters mirror the `risk_off` defense profile (drift-tested). Snapshots before
-2026-10-20 remain under `outputs/decisions/<date>/risk_off/` and are never modified.
+Production entry: `configs/config.production.json` — identity `production`.
+Selection and data parameters mirror the `risk_off` defense profile (drift-tested).
+Production enables the separate Short Research report. Snapshots before 2026-10-20
+remain under `outputs/decisions/<date>/risk_off/` and are never modified.
 Full config map and naming rules: `configs/README.md`.
 
 Tests use stdlib `unittest`, not pytest. CI runs the same unittest command on pull

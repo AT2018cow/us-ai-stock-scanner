@@ -9,10 +9,8 @@ from ai_value_scanner.decision.view_model import (
     build_stock_card_view_model,
     sanitize_relative_display,
 )
-from ai_value_scanner.research.short_research_v1 import (
-    ShortResearchResult,
-    render_short_research_section,
-)
+from ai_value_scanner.reporting.short_research import render_short_snapshot_section
+from ai_value_scanner.research.short_research_v1 import ShortResearchResult
 
 
 def render_scan_list_context(*, legacy_lists_paused: bool = False) -> list[str]:
@@ -265,6 +263,7 @@ def render_action_list(
     legacy_lists_paused: bool | None = None,
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
+    short_section: list[str] | None = None,
 ) -> str:
     """Render the compact attention surface from canonical StockDecision objects."""
     if layout_version == "v2":
@@ -278,6 +277,7 @@ def render_action_list(
             legacy_lists_paused=legacy_lists_paused,
             short_research=short_research,
             short_csv_rel=short_csv_rel,
+            short_section=short_section,
         )
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
@@ -605,6 +605,7 @@ def render_action_list_v2(
     legacy_lists_paused: bool | None = None,
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
+    short_section: list[str] | None = None,
 ) -> str:
     """Clean, mobile-first Analyst Brief (v2) for the Daily/Weekly Action List.
 
@@ -849,7 +850,7 @@ def render_action_list_v2(
         lines.extend(["", "[↑ Top](#top)", ""])
     if short_research is not None:
         lines.extend(
-            render_short_research_section(
+            short_section if short_section is not None else render_short_snapshot_section(
                 short_research,
                 csv_rel_path=short_csv_rel or "./short_candidates.csv",
             )

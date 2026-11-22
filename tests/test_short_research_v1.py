@@ -6,11 +6,13 @@ import hashlib
 import importlib.util
 import json
 import math
+import subprocess
 import sys
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -46,11 +48,16 @@ from ai_value_scanner.research.short_research_v1 import (
     short_candidates_csv,
     unavailable_short_research_result,
 )
+from ai_value_scanner.research import short_research_v1_eval as evaluator
 from ai_value_scanner.research.short_research_v1_eval import (
+    DatasetIdentity,
+    MEMBER_COLUMNS,
     _block_bootstrap,
     _group_return,
     _selected_members,
-    _settle_record,
+    _settle_labels,
+    _peer_medians,
+    _planned_endpoints,
     _verdict,
 )
 
@@ -301,16 +308,32 @@ class TestInputContract(unittest.TestCase):
             build_short_cross_section(frame)
         self.assertIn("MISSING_COLUMNS", ctx.exception.reason_codes)
 
-    def test_future_market_and_fundamental_dates_are_rejected_rows(self) -> None:
+    def test_future_market_and_fundamental_dates_reject_cross_section(self) -> None:
         frame = _base_frame()
         frame.loc[4, "market_asof"] = "2025-02-01"
         frame.loc[3, "fundamental_data_asof"] = "2025-02-01"
-        result = build_short_cross_section(frame)
-        by_symbol = {record.symbol: record for record in result.records}
-        self.assertIn("MARKET_ASOF_MISMATCH", by_symbol["E"].reason_codes)
-        self.assertIn("FUNDAMENTAL_ASOF_FUTURE", by_symbol["D"].reason_codes)
-        self.assertEqual(by_symbol["E"].status, "SCOPE_EXCLUDED")
-        self.assertEqual(by_symbol["D"].status, "INSUFFICIENT_DATA")
+        with self.assertRaises(ShortResearchInputError) as caught:
+            build_short_cross_section(frame)
+        self.assertEqual(
+            set(caught.exception.reason_codes), {"MARKET_ASOF_FUTURE", "FUNDAMENTAL_ASOF_FUTURE"}
+        )
+
+    def test_unknown_feed_in_one_row_and_missing_adapter_input(self) -> None:
+        frame = _base_frame()
+        frame.loc[4, "market_data_feed"] = None
+        with self.assertRaises(ShortResearchInputError) as caught:
+            build_short_cross_section(frame)
+        self.assertIn("MIXED_OR_UNKNOWN_FEED", caught.exception.reason_codes)
+        adapted = build_short_feature_frame(
+            frame.drop(columns="pe"), signal_date=DATE,
+            market_data_feed="sip", watchlist_source="fixture",
+        )
+        with self.assertRaises(ShortResearchInputError) as caught:
+            build_short_cross_section(adapted)
+        self.assertIn("MISSING_COLUMNS", caught.exception.reason_codes)
+        older = build_short_cross_section(_base_frame().assign(market_asof="2025-01-30"))
+        self.assertEqual(older.status, "no_candidates")
+        self.assertEqual(older.reason_counts["MARKET_ASOF_MISMATCH"], 5)
 
     def test_nonfinite_and_unknown_stale_reasons(self) -> None:
         frame = _base_frame()
@@ -444,6 +467,20 @@ class TestSelectionRules(unittest.TestCase):
 
 
 class TestSettlementAndCosts(unittest.TestCase):
+    @staticmethod
+    def _settle_record(row, *, horizon):
+        frame = pd.DataFrame([row])
+        _settle_labels(frame, horizon)
+        suffix = f"_{horizon}"
+        result = {
+            column[:-len(suffix)]: (None if pd.isna(value) else value)
+            for column, value in frame.iloc[0].items() if column.endswith(suffix)
+        }
+        result["label_status"] = (
+            "VALID" if result["label_valid"] else "MISSING" if result["mature"] else "NOT_MATURE"
+        )
+        return result
+
     def _row_for_settlement(self, **overrides) -> dict:
         row = {
             "signal_date": DATE,
@@ -458,56 +495,62 @@ class TestSettlementAndCosts(unittest.TestCase):
         return row
 
     def test_short_gross_and_cost_scenarios(self) -> None:
-        settled = _settle_record(self._row_for_settlement(), horizon=20, peer_median_by_key={})
+        settled = self._settle_record(self._row_for_settlement(), horizon=20)
         self.assertAlmostEqual(settled["x_ratio"], 0.80, places=9)
         self.assertAlmostEqual(settled["short_gross"], 0.20, places=9)
         self.assertAlmostEqual(settled["short_cost_trade_only"], 0.1973, places=9)
         self.assertAlmostEqual(settled["short_cost_base"], 0.191930, places=6)
         self.assertEqual(settled["label_status"], "VALID")
-        self.assertEqual(settled["planned_entry_date"], "2025-02-03")
+        self.assertEqual(settled["planned_entry"], "2025-02-03")
 
     def test_cover_at_120(self) -> None:
-        settled = _settle_record(
+        settled = self._settle_record(
             self._row_for_settlement(fwd_ret_20=0.197),
             horizon=20,
-            peer_median_by_key={},
         )
         self.assertAlmostEqual(settled["x_ratio"], 1.20, places=9)
         self.assertAlmostEqual(settled["short_gross"], -0.20, places=9)
         self.assertAlmostEqual(settled["short_cost_trade_only"], -0.2033, places=9)
 
     def test_missing_or_wrong_endpoint_is_missing_not_imputed(self) -> None:
-        missing = _settle_record(
+        missing = self._settle_record(
             self._row_for_settlement(label_end_20=None),
             horizon=20,
-            peer_median_by_key={},
         )
         self.assertEqual(missing["label_status"], "MISSING")
         self.assertIsNone(missing["short_gross"])
-        wrong = _settle_record(
+        wrong = self._settle_record(
             self._row_for_settlement(label_end_20="2025-03-04"),
             horizon=20,
-            peer_median_by_key={},
         )
         self.assertEqual(wrong["label_status"], "MISSING")
         self.assertIsNone(wrong["short_gross"])
 
+    def test_valid_looking_label_after_cutoff_is_immature(self) -> None:
+        signal = "2026-10-30"
+        _, end = _planned_endpoints(signal, 20)
+        row = self._row_for_settlement(
+            signal_date=signal, label_end_20=end, qqq_label_end_20=end,
+        )
+        settled = self._settle_record(row, horizon=20)
+        self.assertEqual(settled["label_status"], "NOT_MATURE")
+        self.assertIsNone(settled["short_gross"])
+        self.assertFalse(settled["qqq_valid"])
+
     def test_split_adjusted_label(self) -> None:
         # 2:1 split: raw 100 -> post-split 55 is economically +10%; the frozen
         # label is already split-adjusted (0.097 net of 30 bps roundtrip).
-        settled = _settle_record(
+        settled = self._settle_record(
             self._row_for_settlement(fwd_ret_20=0.097),
             horizon=20,
-            peer_median_by_key={},
         )
         self.assertAlmostEqual(settled["x_ratio"], 1.10, places=9)
         self.assertAlmostEqual(settled["short_gross"], -0.10, places=9)
 
     def test_qqq_requires_exact_endpoint(self) -> None:
-        settled = _settle_record(
+        settled = self._settle_record(
             self._row_for_settlement(qqq_label_end_20="2025-03-04"),
             horizon=20,
-            peer_median_by_key={},
         )
         self.assertFalse(settled["qqq_valid"])
         self.assertIsNone(settled["qqq_long_gross"])
@@ -536,7 +579,7 @@ class TestStatisticsHelpers(unittest.TestCase):
             s2_s0_ci={"ci_low": 0.1},
             yearly_s2_s0={2020: 0.1},
             loo_s2_s0=0.1,
-            cost_means={},
+            missing_scenarios={},
         )
         self.assertEqual(insufficient["verdict"], "insufficient_evidence")
         failed = _verdict(
@@ -548,7 +591,7 @@ class TestStatisticsHelpers(unittest.TestCase):
             s2_s0_ci={"ci_low": 0.01},
             yearly_s2_s0={2020: 0.1, 2021: 0.1},
             loo_s2_s0=0.01,
-            cost_means={},
+            missing_scenarios={},
         )
         self.assertEqual(failed["verdict"], "signal_or_increment_failed")
         supported = _verdict(
@@ -560,9 +603,24 @@ class TestStatisticsHelpers(unittest.TestCase):
             s2_s0_ci={"ci_low": 0.001},
             yearly_s2_s0={2020: 0.1, 2021: 0.1},
             loo_s2_s0=0.005,
-            cost_means={"base": 0.01},
+            missing_scenarios={},
         )
         self.assertEqual(supported["verdict"], "support_next_round")
+
+    def test_mature_sensitivity_takes_precedence_and_peer_keys_include_target(self) -> None:
+        result = _verdict(
+            n_dates=30, years=[2020, 2021, 2022], s2_mean=-0.01, s2_s0=-0.01,
+            s2_s1=0.01, s2_s0_ci={"ci_low": -0.1}, yearly_s2_s0={}, loo_s2_s0=None,
+            missing_scenarios={"s2_mean": {"missing_high": 0.10}},
+        )
+        self.assertEqual(result["verdict"], "insufficient_evidence")
+        frame = pd.DataFrame({
+            "dataset": "d", "signal_date": DATE, "sic": "3571", "scope_excluded": False,
+            "symbol": list("ABCDE"), "long_gross_20": [-0.3, -0.1, 0, 0.2, 0.5],
+        })
+        peers = _peer_medians(frame, horizon=20)
+        self.assertEqual(peers["d", DATE, "3571", "A", 20], (0.1, 4, 4))
+        self.assertEqual(peers["d", DATE, "3571", "E", 20], (-0.05, 4, 4))
 
     def test_weights_and_cash_slots(self) -> None:
         members = [{"short_gross_20": 0.10}, {"short_gross_20": -0.10}]
@@ -852,9 +910,10 @@ class TestReuseAndValidation(unittest.TestCase):
 
     def test_historical_snapshot_without_short_field_validates(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            paths = _write_snapshot(td, None)
+            paths = _write_snapshot(td, None, legacy_lists_paused=True)
             manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
             manifest.pop("short_research", None)
+            manifest["report_renderer_revision"] = "mvp_report_renderer_2026-11-22a"
             paths.run_manifest_json.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
                 + "\n",
@@ -862,6 +921,39 @@ class TestReuseAndValidation(unittest.TestCase):
             )
             result = validator.validate_snapshot(paths.root)
             self.assertTrue(result["ok"], result["errors"])
+
+    def test_corrupt_short_archive_blocks_reuse_and_latest(self) -> None:
+        from ai_value_scanner.scanner import (
+            _evaluate_existing_snapshot_reuse, write_latest_decision_pointer,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            paths = _write_snapshot(td, build_short_cross_section(_base_frame()))
+            args = dict(
+                decision_date=DATE, strategy_style="production",
+                policy_version="v2", layout_version="v2",
+            )
+            latest = write_latest_decision_pointer(td, **args)
+            original = latest.read_bytes()
+            json_path = paths.root / "short_research.json"
+            payload = json.loads(json_path.read_text())
+            payload["schema_version"] = "unknown"
+            json_path.write_text(json.dumps(payload))
+            manifest = json.loads(paths.run_manifest_json.read_text())
+            manifest["short_research"]["files"]["json_sha256"] = hashlib.sha256(
+                json_path.read_bytes()
+            ).hexdigest()
+            paths.run_manifest_json.write_text(json.dumps(manifest))
+            self.assertFalse(validator.validate_snapshot(paths.root)["ok"])
+            status, _ = _evaluate_existing_snapshot_reuse(
+                paths.root, short_research_enabled=True, **args,
+            )
+            self.assertEqual(status, "failed")
+            with self.assertRaisesRegex(ValueError, "unknown Short Research"):
+                write_latest_decision_pointer(td, **args)
+            (paths.root / "short_candidates.csv").unlink()
+            with self.assertRaises(FileNotFoundError):
+                write_latest_decision_pointer(td, **args)
+            self.assertEqual(latest.read_bytes(), original)
 
     def test_snapshot_immutability(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -871,10 +963,119 @@ class TestReuseAndValidation(unittest.TestCase):
                 _write_snapshot(td, None)
             self.assertEqual(paths.action_list_md.read_bytes(), before)
 
+    def test_rejects_archived_candidates_outside_filing_window(self) -> None:
+        result = build_short_cross_section(_base_frame())
+        for filing in ("2025-02-01", "2024-08-03", None, "bad-date"):
+            with self.subTest(filing=filing), tempfile.TemporaryDirectory() as td:
+                tampered = replace(
+                    result, selected=(replace(result.selected[0], fundamental_data_asof=filing),),
+                )
+                with self.assertRaisesRegex(ValueError, "Short Research filing date"):
+                    _write_snapshot(td, tampered)
+
+    def test_rejects_completed_snapshots_with_conflicting_s2_funnel(self) -> None:
+        ready = build_short_cross_section(_base_frame())
+        empty = build_short_cross_section(_base_frame().assign(price_to_sma50=1.1))
+        for result in (ready, empty):
+            with self.subTest(status=result.status), tempfile.TemporaryDirectory() as td:
+                contradictory = replace(result, funnel={**result.funnel, "s2_rows": 3})
+                with self.assertRaisesRegex(ValueError, "conflicts with S2 count"):
+                    _write_snapshot(td, contradictory)
+
     def test_renderer_revision_bumped(self) -> None:
         self.assertEqual(
             REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-22b"
         )
+
+
+class TestFrozenEvaluationEdges(unittest.TestCase):
+    @staticmethod
+    def _labeled_frame(**changes) -> pd.DataFrame:
+        frame = _base_frame().assign(**changes)
+        for horizon in (20, 60):
+            _, end = _planned_endpoints(DATE, horizon)
+            frame[f"fwd_ret_{horizon}"] = -0.203
+            frame[f"label_end_{horizon}"] = end
+            frame[f"qqq_return_{horizon}"] = -0.01
+            frame[f"qqq_label_end_{horizon}"] = end
+        return frame
+
+    @staticmethod
+    def _evaluate(frame: pd.DataFrame, root: Path) -> dict:
+        name = "sip_2021_2026_v1"
+        identity = DatasetIdentity(
+            name=name, path=root / "dataset.csv", rows=len(frame), dates=1,
+            dataset_sha256="fixture", metadata_sha256="fixture",
+            success_sha256="fixture", splits_sha256="fixture",
+            generation_config="config.risk_off.json", config_reference_sha256="fixture",
+            frequency="monthly", meta={},
+        )
+        with patch.object(evaluator, "MONTHLY_DATASETS", (name,)), patch.object(
+            evaluator, "load_frozen_dataset_frame", return_value=(frame, identity)
+        ):
+            return evaluate_frozen_short_research("unused", root, scope="smoke")
+
+    def test_wrong_endpoint_leaves_missing_slot_and_publishes_run(self) -> None:
+        for symbol in ("D", "E"):
+            with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as td:
+                frame = self._labeled_frame()
+                frame.loc[frame["symbol"].eq(symbol), "label_end_60"] = DATE
+                root = Path(td)
+                self._evaluate(frame, root)
+                validation = json.loads((root / "validation.json").read_text())
+                self.assertTrue(validation["ok"])
+                self.assertEqual(validation["label_checks"]["input_label_mismatch_by_horizon"], {"20": 0, "60": 1})
+                self.assertTrue(validation["label_checks"]["all_valid_exit_labels_match_planned_sessions"])
+                days = pd.read_csv(root / "paired_by_date.csv").set_index("horizon")
+                self.assertTrue(days.loc[20, "same_complete"])
+                self.assertEqual(bool(days.loc[60, "same_complete"]), symbol == "D")
+                if symbol == "E":
+                    rows = pd.read_csv(root / "members.csv")
+                    kept = rows.loc[rows["symbol"].eq("E") & rows["horizon"].eq(60)]
+                    self.assertGreater(len(kept), 0)
+                    self.assertTrue(kept["label_status"].eq("MISSING").all())
+                    self.assertTrue(kept["label_reasons"].eq("EXIT_LABEL_NOT_PLANNED_SESSION").all())
+                    self.assertTrue(kept["short_gross"].isna().all())
+
+    def test_all_cash_run_writes_headers_and_zero_fixed_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            result = self._evaluate(self._labeled_frame(price_to_sma50=1.1), root)
+            self.assertEqual(result["verdict"]["verdict"], "insufficient_evidence")
+            members = pd.read_csv(root / "members.csv")
+            self.assertTrue(members.empty)
+            self.assertEqual(list(members.columns), list(MEMBER_COLUMNS))
+            self.assertTrue(pd.read_csv(root / "concentration.csv").empty)
+            stats = pd.read_csv(root / "industry_stats.csv")
+            fixed = stats.loc[stats["view"].eq("fixed_5")]
+            self.assertEqual(len(fixed), 6)
+            self.assertTrue(fixed["dates"].eq(1).all())
+            self.assertTrue(fixed["active_dates"].eq(0).all())
+            self.assertTrue(fixed["gross_mean"].eq(0).all())
+            self.assertTrue(fixed["base_net_mean"].eq(0).all())
+            self.assertTrue(stats.loc[stats["view"].eq("same_slot"), "gross_mean"].isna().all())
+
+    def test_industry_returns_keep_member_weights_and_cash_dates(self) -> None:
+        members = pd.DataFrame([{
+            "dataset": "monthly", "frequency": "monthly", "signal_date": DATE,
+            "horizon": 20, "view": "fixed_5", "group": "S2", "sic": "3674",
+            "symbol": "E", "date_complete": True, "weight": 0.2, "short_gross": 0.20,
+            "short_cost_base": 0.19, "peer_count": 4, "peer_pool": 4,
+        }], columns=MEMBER_COLUMNS)
+        paired = pd.DataFrame({
+            "frequency": "monthly", "horizon": 20,
+            "fixed_complete": [True, True, False],
+            "same_complete": [True, False, False],
+            "financial_complete": [True, False, False],
+        })
+        stats = evaluator._industry_statistics(members, paired)
+        fixed_s2 = stats.loc[stats["view"].eq("fixed_5") & stats["group"].eq("S2")]
+        self.assertEqual(set(fixed_s2["sic"]), {"ALL", "3674"})
+        self.assertTrue(fixed_s2["dates"].eq(2).all())
+        self.assertTrue(fixed_s2["active_dates"].eq(1).all())
+        for row in fixed_s2.itertuples():
+            self.assertAlmostEqual(row.gross_mean, 0.020)
+            self.assertAlmostEqual(row.base_net_mean, 0.019)
 
 
 class TestFrozenSmokeEvaluation(unittest.TestCase):
@@ -919,6 +1120,31 @@ class TestFrozenSmokeEvaluation(unittest.TestCase):
                 dataset_root, Path(td) / "a", scope="smoke"
             )
             self.assertTrue(reused["reused"])
+            paired = Path(td) / "a" / "paired_by_date.csv"
+            paired.unlink()
+            with self.assertRaisesRegex(ValueError, "paired_by_date.csv"):
+                evaluate_frozen_short_research(dataset_root, Path(td) / "a", scope="smoke")
+
+    def test_generated_command_reuses_run_with_custom_root_and_scan_evidence(self) -> None:
+        original = Path("outputs/review_followup_20261106/datasets").resolve()
+        if not original.is_dir():
+            self.skipTest("frozen short-research datasets are not available")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dataset_root = root / "custom frozen inputs"
+            dataset_root.mkdir()
+            for name in evaluator.MONTHLY_DATASETS:
+                (dataset_root / name).symlink_to(original / name, target_is_directory=True)
+            out = root / "run"
+            result = evaluate_frozen_short_research(
+                dataset_root, out, scope="smoke", scan_entry_integration={"seed": "scan fixture"}
+            )
+            self.assertFalse(result["reused"])
+            command = (out / "commands.md").read_text().split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+            reused = subprocess.run(
+                [sys.executable, "-"], input=command, capture_output=True, text=True, check=True,
+            )
+            self.assertIn("'reused': True", reused.stdout)
 
     def test_checkpoint_rejects_identity_mismatch(self) -> None:
         dataset_root = Path("outputs/review_followup_20261106/datasets")

@@ -183,6 +183,7 @@ from ai_value_scanner.research.short_research_v1 import (
     disabled_short_research_result,
     unavailable_short_research_result,
 )
+from ai_value_scanner.reporting.short_research import SHORT_CSV, load_short_snapshot
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
     load_previous_daily_symbols,
@@ -4364,13 +4365,11 @@ def _evaluate_existing_snapshot_reuse(
             f"{manifest_entry!r} != current {expected_entry!r}; "
             "reusing it would mix evidence from different policy revisions",
         )
-    short_summary = manifest.get("short_research")
-    if not isinstance(short_summary, dict):
-        archived_enabled = False
-        archived_rule = None
-    else:
-        archived_enabled = bool(short_summary.get("enabled"))
-        archived_rule = short_summary.get("rule_version")
+    try:
+        archived_short = load_short_snapshot(root, manifest)
+    except (OSError, ValueError) as exc:
+        return "failed", f"invalid archived Short Research: {exc}"
+    archived_enabled = archived_short.enabled
     if archived_enabled != bool(short_research_enabled):
         return (
             "reused_version_mismatch",
@@ -4378,17 +4377,13 @@ def _evaluate_existing_snapshot_reuse(
             f"{archived_enabled} != configured {bool(short_research_enabled)}; "
             "use a new --decision-output-root or the next session",
         )
-    if short_research_enabled:
-        if str(archived_rule or "") != str(short_rule_version):
-            return (
-                "reused_version_mismatch",
-                "existing snapshot Short Research rule "
-                f"{archived_rule!r} != current {short_rule_version!r}; "
-                "use a new --decision-output-root or the next session",
-            )
-        for name in ("short_research.json", "short_candidates.csv"):
-            if not (root / name).is_file():
-                return "failed", f"existing short-research snapshot is missing {name}"
+    if short_research_enabled and archived_short.rule_version != short_rule_version:
+        return (
+            "reused_version_mismatch",
+            f"existing snapshot Short Research rule {archived_short.rule_version!r} "
+            f"!= current {short_rule_version!r}; "
+            "use a new --decision-output-root or the next session",
+        )
     return "reused", None
 
 
@@ -4438,6 +4433,7 @@ def write_latest_decision_pointer(
             + ", ".join(missing)
         )
     manifest = load_snapshot_manifest(snap_paths.root)
+    load_short_snapshot(snap_paths.root, manifest)
     identity = snapshot_identity(manifest)
     if identity["decision_date"] != date_token:
         raise ValueError(
@@ -5779,6 +5775,8 @@ def run_scan_with_status(
         # New opt-in field must not change v1 fingerprints when absent.
         if config_identity.get("discovery_source_files") is None:
             config_identity.pop("discovery_source_files", None)
+        if not config.enable_short_research:
+            config_identity.pop("enable_short_research", None)
         config_payload = json.dumps(
             config_identity,
             ensure_ascii=False,
@@ -5968,6 +5966,15 @@ def run_scan_with_status(
                     "MVP decision snapshot failed without affecting legacy outputs: "
                     f"{decision_output_error}",
                 )
+        if decision_snapshot_root is not None and config.enable_short_research:
+            short_research_result = load_short_snapshot(
+                decision_snapshot_root, load_snapshot_manifest(decision_snapshot_root)
+            )
+            log_status(
+                started_at, "INFO",
+                f"Published Short Research: {short_research_result.status} "
+                f"selected={short_research_result.selected_count}",
+            )
         if decision_snapshot_root is not None and config.max_symbols is None:
             try:
                 latest_pointer_path = write_latest_decision_pointer(
@@ -6109,7 +6116,7 @@ def run_scan_with_status(
         legacy_lists_paused=benchmark_trend_ok is False,
         short_research=short_research_result,
         short_research_path=(
-            decision_snapshot_root / "short_candidates.csv"
+            decision_snapshot_root / SHORT_CSV
             if decision_snapshot_root is not None
             and short_research_result.enabled
             else None
@@ -6338,6 +6345,8 @@ def main() -> None:
         config.decision_policy_version = args.decision_policy_version
     if args.report_layout_version is not None:
         config.report_layout_version = args.report_layout_version
+        if args.report_layout_version == "v1":
+            config.enable_short_research = False
     if args.enable_v2_shadow:
         config.enable_v2_shadow = True
 

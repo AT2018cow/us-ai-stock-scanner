@@ -1,11 +1,12 @@
 # Short Research v1 — implementation and evidence index
 
 - Date: 2026-11-22
-- Status: implemented; frozen smoke and full evaluation complete; production configs remain disabled.
+- Status: implemented and enabled in `configs/config.production.json`. The frozen results below record the original evaluation and rollout state.
 - Implementation commit: `1aedd4e6ef112e1fbce51cc7979fca488011f536` (`1aedd4e`)
 - Evidence `manifest.json` code_sha: `1aedd4e6ef112e1fbce51cc7979fca488011f536`
 - Contract: `short_research_v1` · Rule: `short_research_rules_v1`
 - Independent reviewer: Codex (V1-01 … V1-10)
+- The frozen outputs linked below are the original implementation evidence. See the [independent acceptance and repair record](independent_acceptance_20261122.md) for the review findings and corrected results.
 
 ## 1. Code locations
 
@@ -64,7 +65,7 @@ A credentialed live SIP/SEC scan was **not** run in this environment. The frozen
 .venv/bin/python run_scan.py --config configs/config.production.json
 ```
 
-Enablement is intentionally left to the user; production configs do not set `enable_short_research`.
+The production config sets `enable_short_research` to `true`. The frozen research profile uses the code default `false`.
 
 ## 3. Test result
 

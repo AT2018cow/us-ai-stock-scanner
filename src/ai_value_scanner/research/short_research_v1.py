@@ -375,34 +375,12 @@ def build_short_feature_frame(
     The adapter copies only contract columns; it never mutates the scanner
     frame and never applies long-only financial, ranking, theme, or QQQ gates.
     """
-    columns = (
-        "symbol",
-        "cik",
-        "sic",
-        "market_asof",
-        "fundamental_data_asof",
-        "price",
-        "dollar_volume",
-        "avg_dollar_volume_20d",
-        "return_20d",
-        "return_60d",
-        "price_to_sma50",
-        "revenue",
-        "revenue_yoy",
-        "operating_cash_flow_growth",
-        "operating_cash_flow_growth_direction",
-        "adjusted_net_income",
-        "pe",
-        "shares_stale",
-        "company_name",
-        "sic_description",
-        "regime",
-        "relative_strength_60d_qqq",
+    context_columns = {"signal_date", "market_data_feed", "watchlist_source"}
+    columns = tuple(
+        column for column in (*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS)
+        if column not in context_columns and column in frame.columns
     )
-    work = frame.copy()
-    adapted = pd.DataFrame(index=work.index)
-    for column in columns:
-        adapted[column] = work[column] if column in work.columns else np.nan
+    adapted = frame.loc[:, list(columns)].copy()
     adapted["signal_date"] = str(signal_date)
     adapted["market_data_feed"] = str(market_data_feed)
     adapted["watchlist_source"] = str(watchlist_source)
@@ -562,19 +540,15 @@ def _normalize_features(
     assert signal_date is not None
     signal_iso = signal_date.isoformat()
 
-    feeds = {
-        str(value).strip().lower()
-        for value in work["market_data_feed"].dropna().tolist()
-        if str(value).strip()
-    }
-    if feeds != {"sip"}:
+    feeds = work["market_data_feed"].map(lambda value: (_text(value) or "").lower())
+    if not feeds.eq("sip").all():
         raise ShortResearchInputError(
             ("MIXED_OR_UNKNOWN_FEED",),
-            f"expected sip only, got {sorted(feeds)}",
+            f"expected sip for every row, got {sorted(set(feeds))}",
         )
 
     work["signal_date"] = signal_iso
-    work["symbol"] = work["symbol"].map(lambda value: str(value or "").strip().upper())
+    work["symbol"] = work["symbol"].map(lambda value: (_text(value) or "").upper())
     work["cik"] = work["cik"].map(_canonical_cik)
     work["sic"] = work["sic"].map(_canonical_sic)
     work["company_name"] = work.get("company_name", pd.Series("", index=work.index)).fillna("").astype(str)
@@ -585,6 +559,17 @@ def _normalize_features(
 
     work["market_asof_date"] = work["market_asof"].map(_parse_date)
     work["fundamental_data_asof_date"] = work["fundamental_data_asof"].map(_parse_date)
+
+    future_codes = [
+        code
+        for column, code in (
+            ("market_asof_date", "MARKET_ASOF_FUTURE"),
+            ("fundamental_data_asof_date", "FUNDAMENTAL_ASOF_FUTURE"),
+        )
+        if any(asof is not None and asof > signal_date for asof in work[column])
+    ]
+    if future_codes:
+        raise ShortResearchInputError(future_codes, "future-dated input in cross-section")
 
     numeric_columns = (
         "price",
@@ -635,9 +620,7 @@ def _normalize_features(
             _reason(reasons, index, "FUNDAMENTAL_ASOF_MISSING")
         else:
             age = (signal_date - fundamental_date).days
-            if age < 0:
-                _reason(reasons, index, "FUNDAMENTAL_ASOF_FUTURE")
-            elif age > MAX_FUNDAMENTAL_ASOF_DAYS:
+            if age > MAX_FUNDAMENTAL_ASOF_DAYS:
                 _reason(reasons, index, "FUNDAMENTAL_ASOF_STALE")
             else:
                 fundamental_ok = True
@@ -1224,6 +1207,7 @@ def short_research_json(result: ShortResearchResult) -> str:
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
+        allow_nan=False,
     ) + "\n"
 
 
@@ -1235,12 +1219,9 @@ def _fmt_num(value: float | None, digits: int = 2) -> str:
     return "n/a" if value is None else f"{value:.{digits}f}"
 
 
-def render_short_research_section(
-    result: ShortResearchResult,
-    *,
-    csv_rel_path: str = "./short_candidates.csv",
+def _short_section_header(
+    result: ShortResearchResult, csv_rel_path: str
 ) -> list[str]:
-    """Render the independent Short Research block from one result object."""
     lines = [
         '<a id="short-research"></a>',
         f"## Short Research ({result.selected_count})",
@@ -1288,17 +1269,33 @@ def render_short_research_section(
         f"- **CSV**: [short_candidates.csv]({csv_rel_path})"
     )
     lines.append("")
+    return lines
+
+
+def render_unavailable_short_research_section(
+    result: ShortResearchResult,
+    *,
+    csv_rel_path: str = "./short_candidates.csv",
+) -> list[str]:
+    return [
+        *_short_section_header(result, csv_rel_path),
+        "- The short-research cross-section was unavailable; no "
+        "candidate list was produced. The long-only report is unaffected.",
+        "",
+    ]
+
+
+def render_short_research_section(
+    result: ShortResearchResult,
+    *,
+    csv_rel_path: str = "./short_candidates.csv",
+) -> list[str]:
+    """Render the independent Short Research block from one result object."""
+    if result.status == STATUS_UNAVAILABLE:
+        return render_unavailable_short_research_section(result, csv_rel_path=csv_rel_path)
+    lines = _short_section_header(result, csv_rel_path)
     if result.status == STATUS_DISABLED:
         lines.extend(["- Short Research is disabled for this run.", ""])
-        return lines
-    if result.status == STATUS_UNAVAILABLE:
-        lines.extend(
-            [
-                "- The short-research cross-section was unavailable; no "
-                "candidate list was produced. The long-only report is unaffected.",
-                "",
-            ]
-        )
         return lines
     if result.status == STATUS_NO_CANDIDATES:
         lines.extend(

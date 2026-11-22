@@ -28,6 +28,8 @@ This directory separates **active product/architecture contracts and current pha
   - `growth_compounder_offense_validation_spec.md` — Spec for pre-registered Bull-Market Offense & Slow-Growth De-Crowding Validation (`C1`/`C2`/`C3` vs Gates G1–G4).
   - `report_growth_compounder_offense_track_spec.md` — Spec for Report Layout v2 `Growth Compounder Leaders (Bull Offense Track)` section (dedup vs Secondary Radar + drawdown caveat).
   - `regime_indicator_validation_spec.md` — Spec for E4a Trailing Regime-Indicator Separation Audit (`R0`/`R1`/`R2`; `S0`/`T1`/`T2`/`T3` gates; executed 2026-10-18, verdict `NO-GO`).
+  - [做空研究 v1 实施与验证规范](agent_specs/short_research_v1_implementation_and_validation_spec.md) — 沿用扫描入口，定义第四张并行清单及其与 Action List 的关系、同日快照、冻结回测和独立验收。
+  - [做空研究 v1 独立验收](short_research_v1/independent_acceptance_20261122.md) — 冻结结果复算、扫描与快照复验、阻断项及修复验收条件。
 - 配置地图与命名约定：`../configs/README.md` — `production` / `risk_off` / `risk_on` 档案、快照身份与路径、变更纪律。
 
 ## 2. Active Policy & Operational Specs

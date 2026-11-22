@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ai_value_scanner.config import ScanConfig, load_config
 import ai_value_scanner.config as config_module
@@ -122,7 +124,24 @@ class TestProductionIdentity(unittest.TestCase):
         )
         self.assertEqual(production.pop("strategy_style"), "production")
         self.assertEqual(risk_off.pop("strategy_style"), "risk_off")
+        self.assertIs(production.pop("enable_short_research"), True)
+        self.assertIs(risk_off.pop("enable_short_research"), False)
         self.assertEqual(production, risk_off)
+
+    def test_production_scan_cli_respects_legacy_report_layout(self) -> None:
+        args = ["run_scan.py", "--config", str(self.ROOT / "config.production.json")]
+        for layout, extra_args in (("v2", []), ("v1", ["--report-layout-version", "v1"])):
+            with (
+                self.subTest(layout=layout),
+                patch.object(sys, "argv", args + extra_args),
+                patch.object(scanner_module, "run_scan") as scan,
+                patch.object(scanner_module, "archive_watchlist_snapshot", return_value=None),
+            ):
+                scanner_module.main()
+                scan.assert_called_once()
+                config = scan.call_args.args[0]
+                self.assertEqual(config.report_layout_version, layout)
+                self.assertEqual(config.enable_short_research, layout == "v2")
 
     def test_production_config_must_declare_production_style(self) -> None:
         payload = json.loads(
