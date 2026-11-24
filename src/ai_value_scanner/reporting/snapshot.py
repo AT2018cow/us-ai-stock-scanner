@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
 import hashlib
 import json
 import os
@@ -19,6 +19,7 @@ from ai_value_scanner.decision.attention import (
     STATE_CHANGE_ALERTS_POLICY_VERSION,
     select_state_change_alerts,
 )
+from ai_value_scanner.decision.review import FollowedPrior
 from ai_value_scanner.decision.model import (
     DECISION_SCHEMA_VERSION,
     StockDecision,
@@ -26,6 +27,7 @@ from ai_value_scanner.decision.model import (
     stock_decisions_to_jsonl,
 )
 from ai_value_scanner.decision.view_model import build_snapshot_view_model
+from ai_value_scanner.market_calendar import latest_completed_session, session_open_utc
 from ai_value_scanner.fundamentals.provenance import (
     canonical_json_bytes,
     sha256_hex,
@@ -385,6 +387,8 @@ def write_decision_snapshot(
     discovery_source_summary: Mapping[str, Any] | None = None,
     ticker_map_rows: Iterable[Mapping[str, Any]] | None = None,
     short_research: ShortResearchResult | None = None,
+    followed_stocks: Iterable[Mapping[str, Any]] | None = None,
+    followed_prior: Mapping[str, FollowedPrior] | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
     validate_attention_cap: int | None = None,
@@ -403,6 +407,7 @@ def write_decision_snapshot(
     decisions_tuple = tuple(decisions)
     daily_tuple = tuple(daily_attention)
     weekly_tuple = tuple(weekly_attention)
+    followed_rows = None if followed_stocks is None else tuple(dict(row) for row in followed_stocks)
     universe_exclusions_tuple = tuple(dict(row) for row in universe_exclusions)
     discovery_memberships_tuple = tuple(dict(row) for row in discovery_memberships)
     discovery_rejections_tuple = tuple(dict(row) for row in discovery_source_rejections)
@@ -495,6 +500,8 @@ def write_decision_snapshot(
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,
+                followed_stocks=followed_rows,
+                followed_unavailable=(input_provenance or {}).get("review_watchlist_error"),
             ),
             encoding="utf-8",
         )
@@ -511,6 +518,8 @@ def write_decision_snapshot(
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,
+                followed_stocks=followed_rows,
+                followed_unavailable=(input_provenance or {}).get("review_watchlist_error"),
             ),
             encoding="utf-8",
         )
@@ -547,25 +556,15 @@ def write_decision_snapshot(
                 _mappings_to_jsonl(discovery_rejections_tuple), encoding="utf-8"
             )
 
-        detailed_symbols = {
-            decision.symbol: decision
-            for decision in (*weekly_tuple, *daily_tuple)
-        }
-        if layout_version == "v2":
-            # Radar / offense / alert cards link detailed reports too.
-            by_symbol_all = {decision.symbol: decision for decision in decisions_tuple}
-            for symbol in collect_detailed_report_symbols(
-                daily=daily_tuple,
-                weekly=weekly_tuple,
-                decisions=decisions_tuple,
-                layout_version=layout_version,
-            ):
-                if symbol in by_symbol_all:
-                    detailed_symbols.setdefault(symbol, by_symbol_all[symbol])
+        by_symbol_all = {decision.symbol: decision for decision in decisions_tuple}
+        detailed_symbols = collect_detailed_report_symbols(
+            daily=daily_tuple, weekly=weekly_tuple, decisions=decisions_tuple,
+            layout_version=layout_version, followed_stocks=followed_rows,
+        )
         for symbol in sorted(detailed_symbols):
             (detailed_dir / f"{symbol}.md").write_text(
                 render_detailed_report(
-                    detailed_symbols[symbol],
+                    by_symbol_all[symbol],
                     layout_version=layout_version,
                 ),
                 encoding="utf-8",
@@ -609,6 +608,9 @@ def write_decision_snapshot(
             layout_version=layout_version,
         )
         manifest["in_list_streaks"] = streaks_by_symbol
+        if followed_rows is not None:
+            manifest["followed_stocks"] = followed_rows
+            manifest["followed_prior"] = {symbol: asdict(prior) for symbol, prior in (followed_prior or {}).items()}
         (tmp_root / "run_manifest.json").write_text(
             json.dumps(
                 manifest,
@@ -690,6 +692,7 @@ def collect_detailed_report_symbols(
     weekly: Iterable[StockDecision],
     decisions: Iterable[StockDecision],
     layout_version: str,
+    followed_stocks: Iterable[Mapping[str, Any]] | None = None,
 ) -> set[str]:
     """All symbols whose detailed page is linked from the snapshot reports.
 
@@ -701,6 +704,7 @@ def collect_detailed_report_symbols(
     weekly_tuple = tuple(weekly)
     decisions_tuple = tuple(decisions)
     symbols = {decision.symbol for decision in (*weekly_tuple, *daily_tuple)}
+    symbols.update(row["symbol"] for row in followed_stocks or () if row["detail"])
     if layout_version != "v2":
         return symbols
     by_symbol = {decision.symbol: decision for decision in decisions_tuple}
@@ -790,6 +794,39 @@ def load_snapshot_decisions(path: str | Path) -> tuple[StockDecision, ...]:
     if not target.exists():
         return ()
     return stock_decisions_from_jsonl(target.read_text(encoding="utf-8"))
+
+
+def iter_ready_history(
+    root: Path, decision_date: str, style: str | None, *, observed_at: datetime
+) -> Iterable[tuple[str, dict[str, StockDecision] | None]]:
+    """Yield exact previous sessions in order. Close the streak at an archive gap."""
+    from ai_value_scanner.validation.decision_snapshot import require_valid_snapshot
+
+    session = date.fromisoformat(decision_date)
+    while True:
+        session = latest_completed_session(session_open_utc(session))
+        token = session.isoformat()
+        paths = decision_snapshot_paths(root, token, strategy_style=style)
+        try:
+            manifest = load_snapshot_manifest(paths.root)
+            generated = datetime.fromisoformat(str(manifest["generated_at_utc"]).replace("Z", "+00:00"))
+            if (
+                manifest.get("decision_date") != token
+                or manifest.get("strategy_style") != style
+                or generated > observed_at
+            ):
+                raise ValueError("incompatible prior session")
+            require_valid_snapshot(paths.root, attention_cap=max(
+                1, len(manifest["daily_symbols"]), len(manifest["weekly_symbols"]),
+            ))
+            records = load_snapshot_decisions(paths.root)
+            prior = {decision.symbol: decision for decision in records if decision.decision_date == token}
+            if not prior or len(prior) != len(records) or len(records) != manifest["counts"]["decisions"]:
+                raise ValueError("inconsistent prior decisions")
+        except (OSError, ValueError, TypeError, KeyError):
+            yield token, None
+            return
+        yield token, prior
 
 
 def load_previous_snapshot(

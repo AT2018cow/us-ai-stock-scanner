@@ -708,8 +708,12 @@ def recompute_v2_decisions(
                     message="; ".join(notes),
                 ),
             )
+        # The archive's review evidence describes its original policy.
         remapped.append(
-            replace(adjusted, action_state=action, rationale=rationale)
+            replace(
+                adjusted, action_state=action, rationale=rationale,
+                review_conditions=(), ready_age=None,
+            )
         )
     return assign_action_priorities_v2(remapped)
 

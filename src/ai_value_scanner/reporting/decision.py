@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from html import escape
 
-from ai_value_scanner.decision.model import EvidenceItem, StockDecision
+from ai_value_scanner.decision.model import EvidenceItem, ReviewCondition, StockDecision
 from ai_value_scanner.decision.view_model import (
     StockCardViewModel,
     build_snapshot_view_model,
     build_stock_card_view_model,
+    format_metric_value,
     sanitize_relative_display,
 )
 from ai_value_scanner.reporting.revisions import (
@@ -218,6 +220,122 @@ def _next_review_lines(decision: StockDecision) -> list[str]:
     return lines
 
 
+_READY_AGE_REASONS = {
+    "archive_boundary": "archive starts in this Ready spell",
+    "missing_prior_session": "prior trading session missing or unavailable",
+    "security_missing_in_prior_snapshot": "security absent from prior snapshot",
+    "security_identity_unverified_or_changed": "security identity changed or could not be verified",
+    "feed_or_policy_changed": "feed or decision policy changed",
+    "feed_or_policy_unverified": "feed or decision policy could not be verified",
+    "prior_entry_data_unavailable": "prior Entry data unavailable",
+}
+
+
+def _ready_age_text(decision: StockDecision) -> str:
+    age = decision.ready_age
+    if age is None:
+        return "not recorded"
+    if age.first_ready_session is not None:
+        return f"{age.sessions} trading session(s) · confirmed {age.first_ready_session}"
+    if age.sessions:
+        reason = _READY_AGE_REASONS.get(age.reason, age.reason)
+        return f"at least {age.sessions} trading session(s) · observed since {age.observed_since} · {reason}"
+    if age.reason.startswith("ready_reset_to_"):
+        return f"reset this session · {decision.entry.state.value}"
+    if age.reason == "current_entry_data_unavailable":
+        return "unavailable for this session"
+    return "inactive"
+
+
+def _review_observed(condition: ReviewCondition) -> str:
+    if condition.route == "quality_b_route" and isinstance(condition.observed, (int, float)):
+        return f"{condition.observed:.4g}"
+    return format_metric_value(condition.metric, condition.observed)
+
+
+def _review_lines(decision: StockDecision, *, compact: bool) -> list[str]:
+    if not decision.review_conditions and decision.ready_age is None:
+        return []
+    lines = [f"- **Ready age** · {_ready_age_text(decision)}"]
+    if compact:
+        conditions = [item for item in decision.review_conditions if item.blocking]
+        if not conditions and decision.quality.grade.value == "B":
+            conditions = [item for item in decision.review_conditions if item.route == "quality_b_route"]
+        for item in conditions[:3]:
+            lines.append(f"- **{_plain(item.label)}** · {_review_observed(item)} / {_plain(item.target)} · {item.status}")
+        return lines
+    if decision.review_conditions:
+        lines.extend([
+            "", "| Condition | Direction | Observed | Comparison | Target | Margin¹ | Result | As of | Evidence |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ])
+        for item in decision.review_conditions:
+            margin = None if item.margin is None else f"{item.margin:+.6g}"
+            status = f"{item.status} (blocking)" if item.blocking else item.status
+            cells = (item.label, item.direction, _review_observed(item), item.comparison, item.target,
+                     margin, status, item.data_asof, item.reason)
+            lines.append("| " + " | ".join(_tcell(value) for value in cells) + " |")
+        lines.extend(["", "¹ Margin uses the underlying metric unit (decimal values for percentages)."])
+    lines.append("")
+    return lines
+
+
+FOLLOWED_OUTCOMES = {
+    "trend_damaged": "trend damaged",
+    "quality_weakened": "Company Quality grade weakened",
+    "quality_data_unavailable": "Company Quality could no longer be rated",
+    "entry_data_unavailable": "Entry data became unavailable",
+    "left_daily_hard_damage": "left daily list after hard damage",
+    "left_daily_ranking_cutoff": "left daily list at the ranking cutoff",
+    "left_daily_ineligible": "left daily list after loss of eligibility or end of grace",
+    "grace_retained": "retained for one session under S2 grace",
+    "entered_daily": "entered daily list",
+    "off_daily_capacity": "eligible for Priority Review · no slot under daily list retention and ranking",
+}
+
+
+def _followed_stock_lines(
+    followed_stocks: Iterable[Mapping[str, object]] | None,
+    detailed_subdir: str,
+    decisions: Iterable[StockDecision],
+    unavailable: str | None = None,
+) -> list[str]:
+    if unavailable is not None:
+        return ["## Followed Stocks", "", f"- Unavailable · `{unavailable}`", ""]
+    if followed_stocks is None:
+        return []
+    by_symbol = {decision.symbol: decision for decision in decisions}
+    lines = ["## Followed Stocks", ""]
+    for row in followed_stocks:
+        symbol = row["symbol"]
+        if row["detail"]:
+            link = f"[{symbol}](./{detailed_subdir.strip('/')}/{symbol}.md)"
+            state = f"{row['action']} · {row['entry']} · Quality {row['quality']} · rank {row['priority']}"
+            state += " · on daily list" if row["in_daily"] else " · off daily list"
+        else:
+            link = f"**{symbol}**"
+            if row["status"] == "excluded":
+                state = f"[Excluded](./universe_exclusions.jsonl) · `{row['exclusion_reason']}`"
+            elif row["status"] == "missing_from_scan":
+                state = "Missing from scan · no decision or exclusion record"
+            else:
+                state = "Security identity changed or could not be verified"
+            aliases = row.get("same_issuer_symbols", [])
+            if aliases:
+                state += " · same issuer seen under " + ", ".join(aliases)
+        outcomes = [FOLLOWED_OUTCOMES[code] for code in row["changes"]]
+        if outcomes:
+            state += " · " + " · ".join(outcomes)
+        reason = escape(_plain(row["reason"]), quote=False)
+        lines.append(f"- {link} · {state} · Following since {str(row['added_at_utc'])[:10]} · {reason}")
+        decision = by_symbol.get(symbol) if row["detail"] else None
+        if decision is not None and not row["in_daily"]:
+            lines.extend(f"  {line}" for line in _review_lines(decision, compact=True))
+    if len(lines) == 2:
+        lines.append("- No followed securities as of this snapshot.")
+    return [*lines, ""]
+
+
 def _applicability_lines(decision: StockDecision) -> list[str]:
     lines = ["- " + _APPLICABILITY_CAVEAT]
     unverified = (
@@ -276,6 +394,8 @@ def render_action_list(
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
     short_section: list[str] | None = None,
+    followed_stocks: Iterable[Mapping[str, object]] | None = None,
+    followed_unavailable: str | None = None,
 ) -> str:
     """Render the compact attention surface from canonical StockDecision objects."""
     if layout_version == "v2":
@@ -291,10 +411,13 @@ def render_action_list(
             short_research=short_research,
             short_csv_rel=short_csv_rel,
             short_section=short_section,
+            followed_stocks=followed_stocks,
+            followed_unavailable=followed_unavailable,
         )
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
     materialized = tuple(decisions)
+    universe = all_decisions if all_decisions is not None else materialized
     lines = [f"# {title}", ""]
     if cadence:
         lines.extend(
@@ -306,6 +429,7 @@ def render_action_list(
         )
     if not materialized:
         lines.extend(["- no decisions", ""])
+        lines.extend(_followed_stock_lines(followed_stocks, detailed_subdir, universe, followed_unavailable))
         return "\n".join(lines)
     if not cadence:
         lines.extend(
@@ -344,9 +468,11 @@ def render_action_list(
         )
         lines.extend(["", "### Next review", ""])
         lines.extend(_next_review_lines(decision))
+        lines.extend(_review_lines(decision, compact=True))
         lines.extend(["", "### Data & detail", ""])
         lines.extend(_data_state_lines(decision))
         lines.append("")
+    lines.extend(_followed_stock_lines(followed_stocks, detailed_subdir, universe, followed_unavailable))
     return "\n".join(lines)
 
 
@@ -439,6 +565,7 @@ def render_detailed_report(
     if decision.entry.state.value == "INSUFFICIENT_DATA":
         lines.append("- Entry market evidence is itself insufficient (see Entry state).")
     lines.extend(["", "## Next Review Conditions", "", *_next_review_lines(decision)])
+    lines.extend(_review_lines(decision, compact=False))
     lines.extend(
         [
             "",
@@ -576,6 +703,7 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
         f"- **Fundamental Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
         f"- **Next Step**: {_plain(card.next_trigger_inline)}",
     ]
+    lines.extend(_review_lines(card.decision, compact=True))
     if card.decision.provenance.get("review_context_version"):
         previous = card.decision.previous_action_state
         if previous is not None and previous.value != card.action_state:
@@ -661,6 +789,8 @@ def render_action_list_v2(
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
     short_section: list[str] | None = None,
+    followed_stocks: Iterable[Mapping[str, object]] | None = None,
+    followed_unavailable: str | None = None,
 ) -> str:
     """Clean, mobile-first Analyst Brief (v2) for the Daily/Weekly Action List.
 
@@ -938,6 +1068,7 @@ def render_action_list_v2(
         lines.extend(["## Additional Research", "", *research_lines])
         if legacy_lists_paused is not None and universe is not None:
             lines.extend(_render_topic_screens(universe, paused=legacy_lists_paused))
+    lines.extend(_followed_stock_lines(followed_stocks, detailed_subdir, universe or primary, followed_unavailable))
     if short_research is not None:
         if short_section is None:
             renderer = (
@@ -1016,6 +1147,7 @@ def render_detailed_report_v2(
             f"- **Next Step**: {_plain(card.next_trigger_inline)}",
             f"- **What to Watch**: {_plain(card.entry_blockers_inline)}",
             "",
+            *_review_lines(decision, compact=False),
             '<a id="company-quality--6-pillar-scorecard"></a>',
             "## Company Quality — 6-Pillar Scorecard",
             "",

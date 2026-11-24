@@ -313,6 +313,9 @@ class TestRenderPreview(unittest.TestCase):
             self.assertEqual(metadata["provisional_market_data_feed"], "iex")
             self.assertEqual(metadata["quotes"]["QQQ"]["timestamp"], "2026-11-05T15:00:00+00:00")
             self.assertEqual(metadata["updated_count"], 3)
+            detail = (out / "detailed_v2" / "AAA.md").read_text(encoding="utf-8")
+            self.assertTrue(detail.startswith("> **Provisional IEX preview.**"))
+            self.assertNotIn("Priority Review requires a confirmed Ready state", detail)
             self.assertIn("confirm_1_2_safe_v1", json.dumps(metadata))
 
     def test_streaks_are_computed_only_for_the_daily_list(self) -> None:

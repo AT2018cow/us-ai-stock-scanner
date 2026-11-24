@@ -216,6 +216,7 @@ def _run_scan(
     eod_available: bool = True,
     real_legacy_filters: bool = False,
     allow_existing: bool = False,
+    review_watchlist: Path | None = None,
 ):
     frame, features = _load_frame()
     config = ScanConfig(
@@ -229,6 +230,7 @@ def _run_scan(
         min_price=5.0,
         min_dollar_volume=2_000_000.0,
         watchlist_csv_path="unused.csv",
+        review_watchlist_csv=str(review_watchlist) if review_watchlist is not None else None,
         alpaca_cache_enabled=False,
         max_symbols=max_symbols,
         benchmark_trend_filter_symbol="QQQ",
@@ -511,6 +513,71 @@ def build_scan_entry_evidence() -> dict:
 
 
 class ScanEntryShortResearchTests(unittest.TestCase):
+    def test_watchlist_errors_do_not_block_sip_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = root / "missing.csv"
+            invalid = root / "invalid.csv"
+            invalid.write_text("symbol,cik,added_at_utc,reason\nAAPL,320193,2025-01-01T20:00:00,review\n")
+            for path, reason in ((missing, "watchlist_unreadable"), (invalid, "watchlist_invalid")):
+                with self.subTest(reason=reason):
+                    result = _run_scan(root / reason, enable_short=False, review_watchlist=path)
+                    self.assertEqual(result.decision_output_status, "written")
+                    archive_root = Path(result.decision_snapshot_root)
+                    self.assertEqual(_manifest(archive_root)["input_provenance"]["review_watchlist_error"], reason)
+                    self.assertIn(f"Unavailable · `{reason}`", (archive_root / "action_list.md").read_text())
+
+    def test_scan_freezes_followed_off_list_report_and_reuses_it_without_csv(self) -> None:
+        from ai_value_scanner.validation.decision_snapshot import validate_snapshot
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            baseline = _run_scan(root / "baseline", enable_short=False)
+            baseline_root = Path(baseline.decision_snapshot_root)
+            off_list = next(
+                decision for decision in snapshot.load_snapshot_decisions(baseline_root)
+                if decision.provenance.get("cik") and not (baseline_root / "detailed" / f"{decision.symbol}.md").is_file()
+            )
+            csv_path = root / "review.csv"
+            csv_path.write_text(
+                "symbol,cik,added_at_utc,reason\n"
+                f"{off_list.symbol},{off_list.provenance['cik']},2025-01-01T20:00:00Z,Follow cash flow\n"
+                "ZZZNOASSET,123,2025-01-01T20:00:00Z,Keep an eye on listing\n",
+                encoding="utf-8",
+            )
+            status = _run_scan(root / "followed", enable_short=False, review_watchlist=csv_path)
+            archive_root = Path(status.decision_snapshot_root)
+            frozen = _manifest(archive_root)
+            for key in ("daily_symbols", "weekly_symbols", "counts"):
+                self.assertEqual(frozen[key], _manifest(baseline_root)[key])
+            self.assertEqual(frozen["input_provenance"]["review_watchlist_sha256"], _sha256(csv_path))
+            rows = {row["symbol"]: row for row in frozen["followed_stocks"]}
+            self.assertTrue(rows[off_list.symbol]["detail"])
+            self.assertFalse(rows[off_list.symbol]["in_daily"])
+            self.assertEqual(rows["ZZZNOASSET"]["status"], "missing_from_scan")
+            for name in ("action_list.md", "weekly_review.md"):
+                contents = (archive_root / name).read_text(encoding="utf-8")
+                self.assertIn(f"[{off_list.symbol}](./detailed/{off_list.symbol}.md)", contents)
+                self.assertIn("Follow cash flow", contents)
+            detail = archive_root / "detailed" / f"{off_list.symbol}.md"
+            self.assertIn("Ready age", detail.read_text(encoding="utf-8"))
+            initial = {path: _sha256(path) for path in archive_root.rglob("*") if path.is_file()}
+            csv_path.unlink()
+            retry = _run_scan(root / "followed", enable_short=False, review_watchlist=csv_path, allow_existing=True)
+            self.assertEqual(retry.decision_output_status, "reused")
+            self.assertEqual({path: _sha256(path) for path in initial}, initial)
+            manifest_path = archive_root / "run_manifest.json"
+            manifest_bytes = manifest_path.read_bytes()
+            rows[off_list.symbol]["changes"] = ["left_daily_hard_damage", "grace_retained"]
+            manifest_path.write_text(json.dumps(frozen))
+            invalid = validate_snapshot(archive_root)
+            self.assertTrue(any("followed-stock outcome conflicts" in error for error in invalid["errors"]))
+            manifest_path.write_bytes(manifest_bytes)
+            detail.unlink()
+            validation = validate_snapshot(archive_root)
+            self.assertFalse(validation["ok"])
+            self.assertTrue(any(f"missing detailed report for {off_list.symbol}" in error for error in validation["errors"]))
+
     @classmethod
     def setUpClass(cls) -> None:
         if not DATASET.is_file():

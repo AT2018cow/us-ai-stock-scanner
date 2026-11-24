@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 import hashlib
 import fcntl
 import tempfile
@@ -14,6 +15,7 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+from itertools import chain
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from datetime import date as date_module
@@ -168,6 +170,14 @@ from ai_value_scanner.decision.discovery import (
     assert_memberships_asof,
     load_discovery_sources,
 )
+from ai_value_scanner.decision.review import (
+    REVIEW_EVIDENCE_VERSION,
+    build_followed_rows,
+    build_ready_ages,
+    freeze_followed_prior,
+    load_followed_securities,
+    with_review_evidence,
+)
 from ai_value_scanner.decision.universe import (
     apply_price_liquidity_prefilter,
     attach_watchlist_provenance,
@@ -190,6 +200,7 @@ from ai_value_scanner.validation.decision_snapshot import (
 )
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
+    iter_ready_history,
     load_previous_daily_symbols,
     load_previous_snapshot,
     load_snapshot_manifest,
@@ -5810,9 +5821,10 @@ def run_scan_with_status(
             }
         )
         config_identity = vars(config).copy()
-        # New opt-in field must not change v1 fingerprints when absent.
-        if config_identity.get("discovery_source_files") is None:
-            config_identity.pop("discovery_source_files", None)
+        # Preserve existing fingerprints when the optional inputs are absent.
+        for field in ("discovery_source_files", "review_watchlist_csv"):
+            if config_identity.get(field) is None:
+                config_identity.pop(field, None)
         if not config.enable_short_research:
             config_identity.pop("enable_short_research", None)
         config_payload = json.dumps(
@@ -5867,14 +5879,13 @@ def run_scan_with_status(
             min_price=config.min_price,
             min_dollar_volume=config.min_dollar_volume,
         )
+        previous_daily_symbols = load_previous_daily_symbols(
+            snapshot_root, decision_date, strategy_style=config.strategy_style,
+        )
         daily_attention = select_daily_attention(
             decisions,
             cap=decision_attention_cap,
-            previous_daily_symbols=load_previous_daily_symbols(
-                snapshot_root,
-                decision_date,
-                strategy_style=config.strategy_style,
-            ),
+            previous_daily_symbols=previous_daily_symbols,
         )
         weekly_attention = select_weekly_attention(
             decisions,
@@ -5972,6 +5983,55 @@ def run_scan_with_status(
                     raise ValueError(decision_output_error or "snapshot reuse rejected")
         else:
             try:
+                followed_stocks = None
+                followed_prior = None
+                history = iter(iter_ready_history(
+                    snapshot_root, decision_date, config.strategy_style, observed_at=finished_at,
+                ))
+                first_prior = next(history) if config.review_watchlist_csv is not None else None
+                if eod_session or config.review_watchlist_csv is not None:
+                    age_history = history if first_prior is None else chain((first_prior,), history)
+                    ages = build_ready_ages(decisions, age_history) if eod_session else {}
+                    incumbents = set(previous_daily_symbols or ())
+                    decisions = [
+                        with_review_evidence(decision, ages.get(decision.symbol), previous_daily=incumbents)
+                        for decision in decisions
+                    ]
+                    reviewed = decisions_by_symbol(decisions)
+                    daily_attention = [reviewed[item.symbol] for item in daily_attention]
+                    weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
+                    input_prov_payload["review_evidence_version"] = REVIEW_EVIDENCE_VERSION
+                if config.review_watchlist_csv is not None:
+                    try:
+                        entries, watchlist_digest = load_followed_securities(
+                            Path(config.review_watchlist_csv), asof=finished_at,
+                        )
+                    except (OSError, ValueError, csv.Error) as exc:
+                        reason = "watchlist_unreadable" if isinstance(exc, OSError) else "watchlist_invalid"
+                        input_prov_payload["review_watchlist_error"] = reason
+                        log_status(started_at, "WARN", "Followed Stocks unavailable: " + reason)
+                    else:
+                        prior_session, prior = first_prior
+                        frozen_prior = {}
+                        if prior is not None:
+                            prior_manifest_path = decision_snapshot_paths(
+                                snapshot_root, prior_session, strategy_style=config.strategy_style,
+                            ).run_manifest_json
+                            try:
+                                prior_bytes = prior_manifest_path.read_bytes()
+                                earlier = json.loads(prior_bytes)
+                                frozen_prior = freeze_followed_prior(entries, prior, earlier["daily_symbols"])
+                            except (OSError, KeyError, TypeError, ValueError):
+                                frozen_prior = {}
+                            else:
+                                input_prov_payload["review_watchlist_prior_session"] = prior_session
+                                input_prov_payload["review_watchlist_prior_manifest_sha256"] = hashlib.sha256(prior_bytes).hexdigest()
+                        followed_prior = frozen_prior
+                        followed_stocks = build_followed_rows(
+                            entries, decisions, frozen_prior,
+                            (item.symbol for item in daily_attention), universe_exclusions,
+                        )
+                        input_prov_payload["review_watchlist_sha256"] = watchlist_digest
                 decision_paths = write_decision_snapshot(
                     output_root=snapshot_root,
                     strategy_style=config.strategy_style,
@@ -5990,6 +6050,8 @@ def run_scan_with_status(
                     input_provenance=input_prov_payload,
                     ticker_map_rows=ticker_map_rows_arg,
                     short_research=short_research_result,
+                    followed_stocks=followed_stocks,
+                    followed_prior=followed_prior,
                     policy_version=policy_version,
                     layout_version=layout_version,
                     validate_attention_cap=(

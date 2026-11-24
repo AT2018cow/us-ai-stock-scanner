@@ -157,7 +157,13 @@ def build_provisional_decisions(
         except (TypeError, ValueError, OverflowError) as exc:
             skipped.append(f"{decision.symbol}:{type(exc).__name__}")
             continue
-        provisional[decision.symbol] = replace(decision, entry=entry, action_state=action)
+        # The provisional observation starts no official Ready spell.
+        provisional[decision.symbol] = replace(
+            decision, entry=entry, action_state=action,
+            review_conditions=(), ready_age=None,
+            review_trigger=None,
+            provenance={**decision.provenance, "market_data_feed": "iex", "market_data_mode": "intraday_preview"},
+        )
     return provisional, skipped
 
 
@@ -311,7 +317,10 @@ def render_preview(
         if decision is None:
             continue
         (detailed_dir / f"{symbol}.md").write_text(
-            render_detailed_report(
+            ("> **Provisional IEX preview.** Entry uses an intraday observation.\n\n"
+             if symbol in provisional
+             else "> **Archived baseline.** Entry retains the source snapshot evidence.\n\n")
+            + render_detailed_report(
                 decision,
                 layout_version="v2",
                 back_link="../action_list_v2.md",

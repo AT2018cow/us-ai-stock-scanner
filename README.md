@@ -191,6 +191,27 @@ outputs/decisions/
 legacy CSV可能已经写出，不能仅凭CSV存在认定正式名单发布成功。旧快照和来源/版本
 检查不会被自动覆盖；同日独立验证请使用新的`--decision-output-root`。
 
+**复核条件与信号年龄。** 新正式快照在 `decisions.jsonl` 中冻结 `review_conditions`
+和 `ready_age`。日报和周报显示关键门检，详报列出观察值、阈值、余量、数据时点和原因。
+例如 v2 的 B 级股票需要 Quality 分数至少 0.68、置信度至少 0.80，且已确认
+`ENTRY_READY`、Entry 分数至少 0.80，才符合 `PRIORITY_REVIEW`。`[LIST Nd]` 仍表示
+连续在日报上。Ready 年龄从收盘确认日计第 1 个交易日。前一交易日有同一证券、同 feed、同策略版本的
+有效非 Ready 决策时，才可确认这轮 Ready 的起始日。遇到缺失、校验失败的归档或身份断点时显示“至少 N 个交易日”。当日行情证据缺失或过期时，Ready 年龄标为不可用。
+旧归档未记录这些新字段，原文件保留。
+
+**自选股。** 在扫描配置中可选填 `"review_watchlist_csv": "data/local_review_watchlist.csv"`，
+并使用以下 UTF-8 CSV 格式。`added_at_utc` 需要带时区，`cik` 使用 SEC 公司标识。
+
+```csv
+symbol,cik,added_at_utc,reason
+AAPL,0000320193,2026-11-23T15:00:00Z,跟踪自由现金流和入场结构
+```
+
+日报和周报的 **Followed Stocks** 按 `symbol + cik` 匹配原决策。匹配成功时即使退榜也有详报链接，
+并提示排名截断、S2 宽限、趋势损坏或评级下降。被排除时保留排除原因，缺数时标明缺少扫描记录。
+发现同 CIK 的其他 ticker 只做提示。自选股不改变候选池、原排名或 Top-15。清单计算采用生成时已加入的
+记录，输入哈希、前一有效交易日的跟踪依据和结果随快照归档。同日复用继续读已归档的结果。自选 CSV 无法读取或内容无效时，正式榜单照常发布，自选板块及 manifest 保留错误原因。填写 `reason` 时请考虑它会出现在报告里。
+
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
 启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard

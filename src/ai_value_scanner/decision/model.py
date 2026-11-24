@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 import json
 from typing import Any, Iterable, Literal, Mapping
@@ -103,6 +103,46 @@ class EntryDecision:
 
 
 @dataclass(frozen=True)
+class ReviewCondition:
+    route: str
+    direction: str
+    metric: str
+    label: str
+    observed: float | str | None
+    comparison: str | None
+    target: str
+    margin: float | None
+    status: str
+    data_asof: str | None
+    reason: str
+    blocking: bool = False
+
+    def __post_init__(self) -> None:
+        if self.direction not in {"qualify", "maintain", "invalidate"}:
+            raise ValueError(f"unsupported review direction: {self.direction!r}")
+        if self.status not in {"PASS", "BLOCK", "WARN", "UNKNOWN", "NOT_APPLICABLE"}:
+            raise ValueError(f"unsupported review status: {self.status!r}")
+
+
+@dataclass(frozen=True)
+class ReadyAge:
+    sessions: int
+    observed_since: str | None
+    first_ready_session: str | None
+    reason: str
+
+    def __post_init__(self) -> None:
+        if type(self.sessions) is not int or self.sessions < 0:
+            raise ValueError("Ready age must be a nonnegative session count")
+        if bool(self.sessions) != bool(self.observed_since) or (
+            self.first_ready_session is not None and self.first_ready_session != self.observed_since
+        ):
+            raise ValueError("Ready age has inconsistent observation dates")
+        if (self.first_ready_session is not None) != (self.reason == "observed_transition"):
+            raise ValueError("an exact Ready age requires an observed transition")
+
+
+@dataclass(frozen=True)
 class StockDecision:
     schema_version: str
     symbol: str
@@ -119,6 +159,8 @@ class StockDecision:
     provenance: dict[str, str | int | float | bool | None]
     previous_action_state: ActionState | None = None
     state_change_reason: str | None = None
+    review_conditions: tuple[ReviewCondition, ...] = ()
+    ready_age: ReadyAge | None = None
 
 
 def _evidence_to_dict(item: EvidenceItem) -> dict[str, Any]:
@@ -215,6 +257,11 @@ def stock_decision_to_dict(decision: StockDecision) -> dict[str, Any]:
             else decision.previous_action_state.value
         ),
         "state_change_reason": decision.state_change_reason,
+        **(
+            {"review_conditions": [asdict(condition) for condition in decision.review_conditions]}
+            if decision.review_conditions else {}
+        ),
+        **({"ready_age": asdict(decision.ready_age)} if decision.ready_age is not None else {}),
     }
 
 
@@ -303,6 +350,8 @@ def stock_decision_from_dict(payload: Mapping[str, Any]) -> StockDecision:
             if payload.get("state_change_reason") is None
             else str(payload["state_change_reason"])
         ),
+        review_conditions=tuple(ReviewCondition(**item) for item in payload.get("review_conditions", [])),
+        ready_age=ReadyAge(**payload["ready_age"]) if payload.get("ready_age") is not None else None,
     )
 
 

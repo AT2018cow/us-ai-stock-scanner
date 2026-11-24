@@ -293,6 +293,7 @@ class ScanConfig:
     alpaca_cache_ttl_snapshots_sec: int = 21600
     alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
+    review_watchlist_csv: str | None = None
     # Opt-in, frozen multi-source discovery CSVs. None preserves exact legacy mode.
     # Example: {"us_core": "path.csv", "thematic": "path.csv", "manual": "path.csv"}
     discovery_source_files: dict[str, str] | None = None
@@ -770,6 +771,10 @@ class ScanConfig:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 err(name, "must be a non-empty string")
+        if self.review_watchlist_csv is not None and (
+            not isinstance(self.review_watchlist_csv, str) or not self.review_watchlist_csv.strip()
+        ):
+            err("review_watchlist_csv", "must be null or a non-empty string")
         if self.discovery_source_files is not None:
             files = self.discovery_source_files
             if not isinstance(files, dict) or not files:

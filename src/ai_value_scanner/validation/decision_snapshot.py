@@ -4,6 +4,8 @@ from collections import Counter
 import hashlib
 import json
 import re
+from datetime import date, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,14 @@ from ai_value_scanner.decision.quality import (
     QUALITY_V2_POLICY_VERSION,
 )
 from ai_value_scanner.decision.model import ActionState, EntryState, QualityGrade
+from ai_value_scanner.decision.review import (
+    REVIEW_EVIDENCE_VERSION,
+    FollowedPrior,
+    FollowedSecurity,
+    build_followed_rows,
+    with_review_evidence,
+)
+from ai_value_scanner.market_calendar import latest_completed_session, session_open_utc
 from ai_value_scanner.decision.universe import (
     ACTIVE_ASSET_MISSING,
     ASSET_STAGE,
@@ -80,6 +90,19 @@ KNOWN_ENTRY_POLICY_VERSIONS = {
     ENTRY_POLICY_VERSION,
     ENTRY_V2_POLICY_VERSION,
 }
+
+
+@cache
+def _ready_age_interval_matches(sessions: int, observed_since: str, decision_date: str) -> bool:
+    first = date.fromisoformat(observed_since)
+    last = date.fromisoformat(decision_date)
+    if sessions < 1 or sessions > (last - first).days + 1:
+        return False
+    for _ in range(sessions - 1):
+        last = latest_completed_session(session_open_utc(last))
+        if last < first:
+            return False
+    return last == first
 
 
 def _parse_stage_versions(token: str) -> tuple[str, str, str] | None:
@@ -240,6 +263,43 @@ def validate_snapshot(
     priorities = sorted(decision.priority for decision in decisions)
     if priorities and priorities != list(range(1, len(priorities) + 1)):
         errors.append("decision priorities are not contiguous from 1..N")
+
+    run_inputs = manifest.get("input_provenance")
+    run_inputs = run_inputs if isinstance(run_inputs, dict) else {}
+    review_version = run_inputs.get("review_evidence_version")
+    if review_version not in (None, REVIEW_EVIDENCE_VERSION):
+        errors.append(f"unsupported review_evidence_version {review_version!r}")
+    if review_version is None and any(decision.review_conditions or decision.ready_age is not None for decision in decisions):
+        errors.append("decision review fields require a review_evidence_version")
+    if review_version == REVIEW_EVIDENCE_VERSION:
+        for decision in decisions:
+            previous_daily = [decision.symbol] if any(
+                item.route == "daily_retention" for item in decision.review_conditions
+            ) else ()
+            expected = with_review_evidence(decision, decision.ready_age, previous_daily=previous_daily)
+            if decision.review_conditions != expected.review_conditions or decision.review_trigger != expected.review_trigger:
+                errors.append(f"{decision.symbol}: review conditions do not match canonical decision evidence")
+            age = decision.ready_age
+            if run_inputs.get("market_data_mode") == "sip_eod" and age is None:
+                errors.append(f"{decision.symbol}: missing Ready age for SIP review")
+            if age is None:
+                continue
+            entry_unavailable = (
+                decision.entry.state is EntryState.INSUFFICIENT_DATA
+                or decision.entry.market_asof != decision.decision_date
+            )
+            should_count = decision.entry.state is EntryState.ENTRY_READY and not entry_unavailable
+            try:
+                valid_dates = age.observed_since is None or (
+                    _ready_age_interval_matches(age.sessions, age.observed_since, decision.decision_date)
+                )
+            except (TypeError, ValueError):
+                valid_dates = False
+            if (
+                bool(age.sessions) != should_count or not valid_dates
+                or (age.reason == "current_entry_data_unavailable") != entry_unavailable
+            ):
+                errors.append(f"{decision.symbol}: Ready age conflicts with Entry state or observation date")
 
     manifest_date = str(manifest.get("decision_date", ""))
     policy_version = str(manifest.get("decision_policy_version", "v1"))
@@ -641,6 +701,54 @@ def validate_snapshot(
         if symbol in decision_by_symbol
     )
 
+    followed_stocks = None
+    followed_error = run_inputs.get("review_watchlist_error")
+    if followed_error is not None and (
+        followed_error not in ("watchlist_unreadable", "watchlist_invalid")
+        or "followed_stocks" in manifest or "review_watchlist_sha256" in run_inputs
+    ):
+        errors.append("invalid unavailable review watchlist evidence")
+        followed_error = None
+    if "followed_stocks" in manifest:
+        try:
+            rows = manifest["followed_stocks"]
+            if not isinstance(rows, list) or not re.fullmatch(r"[a-f0-9]{64}", run_inputs.get("review_watchlist_sha256", "")):
+                raise ValueError("expected followed rows and an input SHA256")
+            entries = [FollowedSecurity(**{key: row[key] for key in FollowedSecurity.__dataclass_fields__}) for row in rows]
+            generated = datetime.fromisoformat(manifest["generated_at_utc"])
+            if len({entry.symbol for entry in entries}) != len(entries) or any(
+                datetime.fromisoformat(entry.added_at_utc) > generated for entry in entries
+            ):
+                raise ValueError("followed securities must be unique and known as of generation")
+            frozen_exclusions = universe_exclusions
+            if candidate_universe is None:
+                frozen_exclusions = [json.loads(line) for line in (root_path / "universe_exclusions.jsonl").read_text(
+                    encoding="utf-8",
+                ).splitlines() if line.strip()]
+            prior_rows = manifest["followed_prior"]
+            prior_session = run_inputs.get("review_watchlist_prior_session")
+            prior_sha = run_inputs.get("review_watchlist_prior_manifest_sha256")
+            if not isinstance(prior_rows, dict) or not set(prior_rows).issubset(entry.symbol for entry in entries):
+                raise ValueError("unexpected followed prior evidence")
+            if prior_session is None:
+                if prior_rows or prior_sha is not None:
+                    raise ValueError("prior observations require a prior session and manifest SHA256")
+            elif (
+                prior_session != latest_completed_session(session_open_utc(date.fromisoformat(manifest_date))).isoformat()
+                or not re.fullmatch(r"[a-f0-9]{64}", prior_sha or "")
+            ):
+                raise ValueError("expected prior trading session and manifest SHA256")
+            previous = {symbol: FollowedPrior(**prior) for symbol, prior in prior_rows.items()}
+            expected_rows = build_followed_rows(entries, decisions, previous, daily_symbols, frozen_exclusions)
+            for row, expected_row in zip(rows, expected_rows, strict=True):
+                if row != expected_row:
+                    raise ValueError(f"{row['symbol']}: followed-stock outcome conflicts with snapshot evidence")
+            followed_stocks = rows
+        except (OSError, KeyError, TypeError, ValueError, AttributeError) as exc:
+            errors.append(f"invalid followed_stocks: {exc}")
+    elif "review_watchlist_sha256" in run_inputs or "followed_prior" in manifest:
+        errors.append("snapshot is missing followed_stocks for the archived review watchlist")
+
     if versions_supported and render_mode == "exact":
         actual_daily = required["daily"].read_text(encoding="utf-8")
         actual_weekly = required["weekly"].read_text(encoding="utf-8")
@@ -684,6 +792,8 @@ def validate_snapshot(
             streaks_by_symbol=streaks_by_symbol,
             legacy_lists_paused=legacy_lists_paused,
             renderer_revision=renderer_revision,
+            followed_stocks=followed_stocks,
+            followed_unavailable=followed_error,
             short_research=short_result,
             short_csv_rel=(
                 "./short_candidates.csv" if short_result is not None else None
@@ -701,6 +811,8 @@ def validate_snapshot(
             streaks_by_symbol=streaks_by_symbol,
             legacy_lists_paused=legacy_lists_paused,
             renderer_revision=renderer_revision,
+            followed_stocks=followed_stocks,
+            followed_unavailable=followed_error,
             short_research=short_result,
             short_csv_rel=(
                 "./short_candidates.csv" if short_result is not None else None
@@ -714,6 +826,7 @@ def validate_snapshot(
             weekly=weekly,
             decisions=decisions,
             layout_version=layout_version,
+            followed_stocks=followed_stocks,
         )
         for symbol in sorted(detail_symbols):
             path = required["detailed"] / f"{symbol}.md"
