@@ -161,6 +161,7 @@ class StockDecision:
     state_change_reason: str | None = None
     review_conditions: tuple[ReviewCondition, ...] = ()
     ready_age: ReadyAge | None = None
+    swing_review: dict[str, Any] | None = None
 
 
 def _evidence_to_dict(item: EvidenceItem) -> dict[str, Any]:
@@ -262,6 +263,7 @@ def stock_decision_to_dict(decision: StockDecision) -> dict[str, Any]:
             if decision.review_conditions else {}
         ),
         **({"ready_age": asdict(decision.ready_age)} if decision.ready_age is not None else {}),
+        **({"swing_review": decision.swing_review} if decision.swing_review is not None else {}),
     }
 
 
@@ -281,6 +283,11 @@ def stock_decision_from_dict(payload: Mapping[str, Any]) -> StockDecision:
         raise TypeError("entry must be an object")
 
     previous_action = payload.get("previous_action_state")
+    swing_review = payload.get("swing_review")
+    if swing_review is not None:
+        from ai_value_scanner.swing.setups import validate_close_context
+
+        validate_close_context(swing_review, str(payload["decision_date"]))
     return StockDecision(
         schema_version=schema_version,
         symbol=str(payload["symbol"]),
@@ -352,6 +359,7 @@ def stock_decision_from_dict(payload: Mapping[str, Any]) -> StockDecision:
         ),
         review_conditions=tuple(ReviewCondition(**item) for item in payload.get("review_conditions", [])),
         ready_age=ReadyAge(**payload["ready_age"]) if payload.get("ready_age") is not None else None,
+        swing_review=swing_review,
     )
 
 

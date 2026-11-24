@@ -50,6 +50,7 @@ def main(argv=None) -> int:
     listing.add_argument("--parent", help="Filter by the parent snapshot, observation, or paper ID")
     listing.add_argument("--kind", choices=(
         "snapshot", "receipt", "observation", "protocol", "review", "setup", "paper", "paper_fill", "paper_exit", "outcome",
+        "opening_review",
     ))
     args = parser.parse_args(argv)
     try:

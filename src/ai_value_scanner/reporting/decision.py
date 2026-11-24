@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import date
 from html import escape
 
 from ai_value_scanner.decision.model import EvidenceItem, ReviewCondition, StockDecision
@@ -280,6 +281,77 @@ def _review_lines(decision: StockDecision, *, compact: bool) -> list[str]:
     return lines
 
 
+def _swing_lines(decision: StockDecision, *, compact: bool) -> list[str]:
+    review = decision.swing_review
+    if review is None:
+        return []
+    labels = {
+        "confirmed": "Confirmed", "watching": "Watching", "invalidated": "Invalidated",
+        "insufficient": "Evidence unavailable",
+    }
+    lines = [] if compact else ["", "## SIP Close Swing Review", ""]
+    for key, title in (("breakout", "Breakout"), ("pullback", "Pullback reclaim")):
+        item = review["patterns"][key]
+        state = item["state"]
+        line = f"- **{title}** · {labels[state['status']]} · `{state['reason']}`"
+        if state["confirmed"]:
+            line += f" · confirmed {state['confirmed']}"
+        if state["ended"]:
+            line += f" · ended {state['ended']}"
+        if state["stop"] is not None:
+            line += f" · S {state['stop']:.2f}"
+        if state["resistance"]:
+            line += f" · R {state['resistance']['price']:.2f}"
+        elif state["status"] == "confirmed":
+            line += " · R unavailable"
+        lines.append(line)
+        if compact:
+            continue
+        if state["reference_price"] is not None:
+            lines.append(f"  - Confirmation close {state['reference_price']:.2f}.")
+        if state["resistance"]:
+            ref = state["resistance"]
+            lines.append(
+                f"  - Resistance formed {ref['formed_session']} and confirmed {ref['confirmed_session']} · `{ref['source']}`."
+            )
+        if item["space"]:
+            space = item["space"]
+            upside = f"{space['upside']:.2f}" if space["upside"] is not None else "n/a"
+            ratio = f"{space['reward_risk']:.2f}" if space["reward_risk"] is not None else "n/a"
+            lines.append(f"  - Close {space['price']:.2f} · P−S {space['risk']:.2f} · R−P {upside} · reward/risk {ratio} · `{space['status']}`.")
+    if not compact:
+        weekly = review["weekly"]
+        if weekly:
+            change = f"{weekly['change']:+.2%}" if weekly["change"] is not None else "n/a"
+            lines.append(f"- Completed week ending {weekly['completed_week_end']} · close {weekly['close']:.2f} · weekly change {change}.")
+        fundamental_day = review.get("fundamental_asof")
+        age = ""
+        if fundamental_day:
+            try:
+                age_days = (date.fromisoformat(decision.decision_date) - date.fromisoformat(fundamental_day)).days
+                if age_days >= 0:
+                    age = f" · {age_days} calendar days old"
+            except ValueError:
+                pass
+        lines.append(f"- Latest filing {_plain(review.get('latest_filing_date'))} · fundamental evidence as of {_plain(fundamental_day)}{age}.")
+    calendar = review.get("calendar") or {}
+    events = calendar.get("events") or []
+    if events:
+        for event in events[:1] if compact else events:
+            lines.append(
+                f"- **Scheduled event** · {escape(_plain(event['event_type']))} · {_plain(event['event_date'])}"
+                f" · {event['session']} · {event['certainty']}"
+                + ("" if compact else f" · first known {event['first_known_at_utc']} · {escape(_plain(event['source']))}")
+            )
+    else:
+        lines.append("- **Scheduled event** · unknown")
+    if not compact:
+        for event in calendar.get("elapsed_events", ()):
+            lines.append(f"- **Elapsed event window** · {escape(_plain(event['event_type']))} · {event['event_date']} · {event['session']}")
+        lines.append("")
+    return lines
+
+
 FOLLOWED_OUTCOMES = {
     "trend_damaged": "trend damaged",
     "quality_weakened": "Company Quality grade weakened",
@@ -469,6 +541,7 @@ def render_action_list(
         lines.extend(["", "### Next review", ""])
         lines.extend(_next_review_lines(decision))
         lines.extend(_review_lines(decision, compact=True))
+        lines.extend(_swing_lines(decision, compact=True))
         lines.extend(["", "### Data & detail", ""])
         lines.extend(_data_state_lines(decision))
         lines.append("")
@@ -566,6 +639,7 @@ def render_detailed_report(
         lines.append("- Entry market evidence is itself insufficient (see Entry state).")
     lines.extend(["", "## Next Review Conditions", "", *_next_review_lines(decision)])
     lines.extend(_review_lines(decision, compact=False))
+    lines.extend(_swing_lines(decision, compact=False))
     lines.extend(
         [
             "",
@@ -704,6 +778,7 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
         f"- **Next Step**: {_plain(card.next_trigger_inline)}",
     ]
     lines.extend(_review_lines(card.decision, compact=True))
+    lines.extend(_swing_lines(card.decision, compact=True))
     if card.decision.provenance.get("review_context_version"):
         previous = card.decision.previous_action_state
         if previous is not None and previous.value != card.action_state:
@@ -1148,6 +1223,7 @@ def render_detailed_report_v2(
             f"- **What to Watch**: {_plain(card.entry_blockers_inline)}",
             "",
             *_review_lines(decision, compact=False),
+            *_swing_lines(decision, compact=False),
             '<a id="company-quality--6-pillar-scorecard"></a>',
             "## Company Quality — 6-Pillar Scorecard",
             "",

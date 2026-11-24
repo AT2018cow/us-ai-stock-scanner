@@ -264,6 +264,7 @@ class Ledger:
                 "entry_gates": [asdict(gate) for gate in decision.entry.gate_results],
                 "review_conditions": [asdict(condition) for condition in decision.review_conditions],
                 "ready_age": asdict(decision.ready_age) if decision.ready_age else None,
+                **({"swing_review": decision.swing_review} if decision.swing_review is not None else {}),
             }
             append(db, evidence_id("observation", snapshot_id, symbol), "observation", snapshot_id, observation, now)
         return snapshot_id

@@ -16,7 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from itertools import chain
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from datetime import date as date_module
 from pathlib import Path
@@ -175,9 +175,12 @@ from ai_value_scanner.decision.review import (
     build_followed_rows,
     build_ready_ages,
     freeze_followed_prior,
+    issuer_cik,
     load_followed_securities,
     with_review_evidence,
 )
+from ai_value_scanner.swing.events import known_events, load_calendar
+from ai_value_scanner.swing.setups import SWING_REVIEW_VERSION, evaluate_close as evaluate_swing_close
 from ai_value_scanner.decision.universe import (
     apply_price_liquidity_prefilter,
     attach_watchlist_provenance,
@@ -4334,6 +4337,7 @@ def _evaluate_existing_snapshot_reuse(
     market_mode: str | None = None,
     short_research_enabled: bool = False,
     short_rule_version: str = SHORT_RESEARCH_RULE_VERSION,
+    swing_review_enabled: bool = False,
 ) -> tuple[str, str | None]:
     """Validate a same-session existing snapshot before reusing it (R04/R08).
 
@@ -4405,6 +4409,15 @@ def _evaluate_existing_snapshot_reuse(
         archived_short = load_short_snapshot(root, manifest)
     except (OSError, ValueError) as exc:
         return "failed", f"invalid archived Short Research: {exc}"
+    inputs = manifest.get("input_provenance") or {}
+    archived_swing = inputs.get("swing_review_version")
+    expected_swing = SWING_REVIEW_VERSION if swing_review_enabled else None
+    if archived_swing != expected_swing:
+        return (
+            "reused_version_mismatch",
+            f"existing snapshot Swing Review version {archived_swing!r} != configured {expected_swing!r}; "
+            "use a new --decision-output-root or the next session",
+        )
     archived_enabled = archived_short.enabled
     if archived_enabled != bool(short_research_enabled):
         return (
@@ -5831,11 +5844,13 @@ def run_scan_with_status(
         )
         config_identity = vars(config).copy()
         # Preserve existing fingerprints when the optional inputs are absent.
-        for field in ("discovery_source_files", "review_watchlist_csv"):
+        for field in ("discovery_source_files", "review_watchlist_csv", "swing_event_calendar_csv"):
             if config_identity.get(field) is None:
                 config_identity.pop(field, None)
         if not config.enable_short_research:
             config_identity.pop("enable_short_research", None)
+        if not config.enable_swing_review:
+            config_identity.pop("enable_swing_review", None)
         config_payload = json.dumps(
             config_identity,
             ensure_ascii=False,
@@ -5960,6 +5975,7 @@ def run_scan_with_status(
                 market_mode=config.official_market_mode,
                 short_research_enabled=short_research_result.enabled,
                 short_rule_version=short_research_result.rule_version,
+                swing_review_enabled=config.enable_swing_review,
             )
             decision_output_status = reuse_status
             if reuse_error is not None:
@@ -5998,7 +6014,7 @@ def run_scan_with_status(
                 history = iter(iter_ready_history(
                     snapshot_root, decision_date, config.strategy_style, observed_at=finished_at,
                 ))
-                first_prior = next(history) if config.review_watchlist_csv is not None else None
+                first_prior = next(history) if config.review_watchlist_csv is not None or config.enable_swing_review else None
                 if eod_session or config.review_watchlist_csv is not None:
                     age_history = history if first_prior is None else chain((first_prior,), history)
                     ages = build_ready_ages(decisions, age_history) if eod_session else {}
@@ -6011,6 +6027,53 @@ def run_scan_with_status(
                     daily_attention = [reviewed[item.symbol] for item in daily_attention]
                     weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
                     input_prov_payload["review_evidence_version"] = REVIEW_EVIDENCE_VERSION
+                if config.enable_swing_review and eod_session:
+                    calendar = {}
+                    calendar_issue = "event_calendar_not_configured"
+                    if config.swing_event_calendar_csv:
+                        try:
+                            calendar, calendar_hash = load_calendar(Path(config.swing_event_calendar_csv))
+                        except (OSError, ValueError, csv.Error):
+                            calendar_issue = "event_calendar_unavailable"
+                        else:
+                            input_prov_payload["swing_event_calendar_sha256"] = calendar_hash
+                            calendar_issue = None
+                    swing_splits = {}
+                    bad_splits = {}
+                    split_issue = None
+                    try:
+                        swing_splits = alpaca.get_corporate_action_splits(
+                            [item.symbol for item in decisions], bars_start_iso,
+                            (eod_session + timedelta(days=30)).isoformat(), invalid_events=bad_splits,
+                        )
+                    except Exception as exc:
+                        split_issue = "split_evidence_unavailable"
+                        log_status(started_at, "WARN", "Swing split evidence unavailable: " + type(exc).__name__)
+                    prior_by_symbol = first_prior[1] or {}
+                    reviewed = {}
+                    for decision in decisions:
+                        cik = issuer_cik(decision.provenance.get("cik"))
+                        previous_decision = prior_by_symbol.get(decision.symbol)
+                        prior_swing = None
+                        if cik and previous_decision and issuer_cik(previous_decision.provenance.get("cik")) == cik:
+                            prior_swing = previous_decision.swing_review
+                        invalid = any(not day or day <= decision_date for day in bad_splits.get(decision.symbol, ()))
+                        issue = "invalid_split_evidence" if invalid else split_issue
+                        context = evaluate_swing_close(
+                            bars_map.get(decision.symbol, ()), eod_session,
+                            splits=swing_splits.get(decision.symbol, ()), prior=prior_swing, issue=issue,
+                        )
+                        context["calendar"] = known_events(
+                            calendar, decision.symbol, cik, decision_day=eod_session,
+                            asof=finished_at, unavailable=calendar_issue,
+                        )
+                        context["latest_filing_date"] = decision.provenance.get("fundamental_latest_periodic_filing_date")
+                        context["fundamental_asof"] = decision.quality.data_asof
+                        reviewed[decision.symbol] = replace(decision, swing_review=context)
+                    decisions = list(reviewed.values())
+                    daily_attention = [reviewed[item.symbol] for item in daily_attention]
+                    weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
+                    input_prov_payload["swing_review_version"] = SWING_REVIEW_VERSION
                 if config.review_watchlist_csv is not None:
                     try:
                         entries, watchlist_digest = load_followed_securities(

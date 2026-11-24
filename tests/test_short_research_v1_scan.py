@@ -64,7 +64,7 @@ class _FakeAlpaca:
             for symbol in symbols
         }
 
-    def get_corporate_action_splits(self, symbols, start, end):
+    def get_corporate_action_splits(self, symbols, start, end, *, invalid_events=None):
         return {}
 
     def get_assets(self, status="active"):
@@ -217,6 +217,7 @@ def _run_scan(
     real_legacy_filters: bool = False,
     allow_existing: bool = False,
     review_watchlist: Path | None = None,
+    enable_swing: bool = False,
 ):
     frame, features = _load_frame()
     config = ScanConfig(
@@ -231,6 +232,7 @@ def _run_scan(
         min_dollar_volume=2_000_000.0,
         watchlist_csv_path="unused.csv",
         review_watchlist_csv=str(review_watchlist) if review_watchlist is not None else None,
+        enable_swing_review=enable_swing,
         alpaca_cache_enabled=False,
         max_symbols=max_symbols,
         benchmark_trend_filter_symbol="QQQ",
@@ -513,6 +515,42 @@ def build_scan_entry_evidence() -> dict:
 
 
 class ScanEntryShortResearchTests(unittest.TestCase):
+    def test_sip_scan_freezes_same_shape_as_offline_replay(self):
+        from ai_value_scanner.swing.setups import evaluate_close, previous_session
+        from ai_value_scanner.validation.decision_snapshot import validate_snapshot
+
+        current = date.fromisoformat(DATE)
+        days = [current]
+        for _ in range(20):
+            days.append(previous_session(days[-1]))
+        bars = [
+            {"t": day.isoformat(), "o": 103, "h": 105, "l": 100, "c": 103, "v": 100}
+            for day in reversed(days[1:])
+        ]
+        bars.append({"t": DATE, "o": 106, "h": 108, "l": 104, "c": 106, "v": 150})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            _FakeAlpaca, "get_daily_bars",
+            lambda self, symbols, start, chunk: {symbol: [{**bar, "symbol": symbol} for bar in bars] for symbol in symbols},
+        ):
+            baseline = _run_scan(Path(tmp) / "baseline", enable_short=False)
+            result = _run_scan(Path(tmp) / "swing", enable_short=False, enable_swing=True)
+            root = Path(result.decision_snapshot_root)
+            self.assertEqual(result.decision_output_status, "written")
+            report = (root / "action_list.md").read_text(encoding="utf-8")
+            self.assertIn("Breakout** · Confirmed", report)
+            for key in ("daily_symbols", "weekly_symbols", "counts"):
+                self.assertEqual(_manifest(root)[key], _manifest(Path(baseline.decision_snapshot_root))[key])
+            for archive, enabled in ((root, False), (Path(baseline.decision_snapshot_root), True)):
+                self.assertEqual(sc._evaluate_existing_snapshot_reuse(
+                    archive, decision_date=DATE, strategy_style="production", policy_version="v2",
+                    layout_version="v2", market_mode="sip_eod", swing_review_enabled=enabled,
+                )[0], "reused_version_mismatch")
+            for decision in snapshot.load_snapshot_decisions(root):
+                inline = decision.swing_review
+                self.assertEqual(inline["patterns"], evaluate_close(bars, current)["patterns"])
+                self.assertEqual(inline["calendar"]["status"], "unknown")
+            self.assertTrue(validate_snapshot(root)["ok"])
+
     def test_watchlist_errors_do_not_block_sip_publication(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

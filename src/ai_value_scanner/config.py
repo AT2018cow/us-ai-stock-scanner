@@ -294,6 +294,8 @@ class ScanConfig:
     alpaca_cache_ttl_bars_sec: int = 21600
     watchlist_csv_path: str = "data/ai_watchlist.csv"
     review_watchlist_csv: str | None = None
+    enable_swing_review: bool = False
+    swing_event_calendar_csv: str | None = None
     # Opt-in, frozen multi-source discovery CSVs. None preserves exact legacy mode.
     # Example: {"us_core": "path.csv", "thematic": "path.csv", "manual": "path.csv"}
     discovery_source_files: dict[str, str] | None = None
@@ -775,6 +777,14 @@ class ScanConfig:
             not isinstance(self.review_watchlist_csv, str) or not self.review_watchlist_csv.strip()
         ):
             err("review_watchlist_csv", "must be null or a non-empty string")
+        if type(self.enable_swing_review) is not bool:
+            err("enable_swing_review", "must be a boolean")
+        if self.enable_swing_review and self.official_market_mode != "sip_eod":
+            err("enable_swing_review", "requires completed-session SIP bars")
+        if self.swing_event_calendar_csv is not None and (
+            not isinstance(self.swing_event_calendar_csv, str) or not self.swing_event_calendar_csv.strip()
+        ):
+            err("swing_event_calendar_csv", "must be null or a non-empty string")
         if self.discovery_source_files is not None:
             files = self.discovery_source_files
             if not isinstance(files, dict) or not files:

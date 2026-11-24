@@ -217,6 +217,11 @@ AAPL,0000320193,2026-11-23T15:00:00Z,跟踪自由现金流和入场结构
 台账保存原榜单顺序、榜外机会、人工复核和纸面路径，支持重复导入和追加修订。
 命令、输入字段和结果口径见 [前向观察与纸面记录](docs/forward_observation_ledger.md)。
 
+**收盘形态和开盘卡。** SIP 配置可选启用 `enable_swing_review`，在同一决策快照中
+保存突破、回踩收复、价位、已知事件与周线证据。使用 `scripts/swing_review.py`
+复算冻结日线，或从收盘计划和下一交易日可观察报价生成开盘卡。
+规则与输入格式见 [收盘形态与开盘复核](docs/swing_setup_opening_review.md)。
+
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
 启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard
