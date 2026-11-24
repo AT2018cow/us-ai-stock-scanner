@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from ai_value_scanner.fundamentals.provenance import sha256_hex
 from ai_value_scanner.reporting.revisions import (
-    DOWNSIDE_SCOPE_RENDERER_REVISION,
+    DOWNSIDE_SCOPE_RENDERER_REVISIONS,
     GROUPED_RESEARCH_RENDERER_REVISIONS,
     REPORT_RENDERER_REVISION,
 )
@@ -70,7 +70,7 @@ def _fold_short_section(
     if renderer_revision not in GROUPED_RESEARCH_RENDERER_REVISIONS:
         return body
     scope = []
-    if renderer_revision == DOWNSIDE_SCOPE_RENDERER_REVISION:
+    if renderer_revision in DOWNSIDE_SCOPE_RENDERER_REVISIONS:
         scope.append(
             "- **Scope** · For research only. This screen runs independently of Topic Screens. "
             "The long Action List selects and ranks its own candidates."

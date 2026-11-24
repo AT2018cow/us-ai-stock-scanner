@@ -218,6 +218,7 @@ def _run_scan(
     allow_existing: bool = False,
     review_watchlist: Path | None = None,
     enable_swing: bool = False,
+    enable_medium: bool = False,
 ):
     frame, features = _load_frame()
     config = ScanConfig(
@@ -233,6 +234,7 @@ def _run_scan(
         watchlist_csv_path="unused.csv",
         review_watchlist_csv=str(review_watchlist) if review_watchlist is not None else None,
         enable_swing_review=enable_swing,
+        enable_medium_review=enable_medium,
         alpaca_cache_enabled=False,
         max_symbols=max_symbols,
         benchmark_trend_filter_symbol="QQQ",
@@ -516,12 +518,14 @@ def build_scan_entry_evidence() -> dict:
 
 class ScanEntryShortResearchTests(unittest.TestCase):
     def test_sip_scan_freezes_same_shape_as_offline_replay(self):
+        from ai_value_scanner.decision.medium_term import build_medium_reviews, classifications_asof, market_profile
+        from ai_value_scanner.swing.events import timestamp
         from ai_value_scanner.swing.setups import evaluate_close, previous_session
         from ai_value_scanner.validation.decision_snapshot import validate_snapshot
 
         current = date.fromisoformat(DATE)
         days = [current]
-        for _ in range(20):
+        for _ in range(70):
             days.append(previous_session(days[-1]))
         bars = [
             {"t": day.isoformat(), "o": 103, "h": 105, "l": 100, "c": 103, "v": 100}
@@ -533,11 +537,16 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             lambda self, symbols, start, chunk: {symbol: [{**bar, "symbol": symbol} for bar in bars] for symbol in symbols},
         ):
             baseline = _run_scan(Path(tmp) / "baseline", enable_short=False)
-            result = _run_scan(Path(tmp) / "swing", enable_short=False, enable_swing=True)
+            result = _run_scan(Path(tmp) / "swing", enable_short=False, enable_swing=True, enable_medium=True)
             root = Path(result.decision_snapshot_root)
             self.assertEqual(result.decision_output_status, "written")
             report = (root / "action_list.md").read_text(encoding="utf-8")
             self.assertIn("Breakout** · Confirmed", report)
+            self.assertIn("20–60 session context", report)
+            from ai_value_scanner.reporting.revisions import MEDIUM_FINANCIAL_RENDERER_REVISION, REPORT_RENDERER_REVISION
+            from ai_value_scanner.reporting.decision import render_detailed_report
+            self.assertEqual(_manifest(root)["report_renderer_revision"], MEDIUM_FINANCIAL_RENDERER_REVISION)
+            self.assertEqual(_manifest(Path(baseline.decision_snapshot_root))["report_renderer_revision"], REPORT_RENDERER_REVISION)
             for key in ("daily_symbols", "weekly_symbols", "counts"):
                 self.assertEqual(_manifest(root)[key], _manifest(Path(baseline.decision_snapshot_root))[key])
             for archive, enabled in ((root, False), (Path(baseline.decision_snapshot_root), True)):
@@ -545,10 +554,28 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                     archive, decision_date=DATE, strategy_style="production", policy_version="v2",
                     layout_version="v2", market_mode="sip_eod", swing_review_enabled=enabled,
                 )[0], "reused_version_mismatch")
-            for decision in snapshot.load_snapshot_decisions(root):
+            decisions = snapshot.load_snapshot_decisions(root)
+            cutoff = timestamp(_manifest(root)["generated_at_utc"])
+            frozen_classifications = [
+                {"cik": item.provenance.get("cik"), "sic": item.provenance.get("sic"),
+                 "known_at_utc": cutoff.isoformat()} for item in decisions
+            ]
+            profile = market_profile(bars, current)
+            expected = build_medium_reviews(
+                decisions, {item.symbol:profile for item in decisions}, profile,
+                classifications_asof(frozen_classifications, cutoff),
+                session=DATE, classification_asof=cutoff.isoformat(),
+                classification_source="sec_sic_as_observed_in_scan",
+            )
+            for decision in decisions:
                 inline = decision.swing_review
                 self.assertEqual(inline["patterns"], evaluate_close(bars, current)["patterns"])
                 self.assertEqual(inline["calendar"]["status"], "unknown")
+                self.assertEqual(decision.medium_review, expected[decision.symbol])
+                self.assertIn("20–60 session context", render_detailed_report(
+                    decision, layout_version="v2", renderer_revision=MEDIUM_FINANCIAL_RENDERER_REVISION))
+                self.assertNotIn("20–60 session context", render_detailed_report(
+                    decision, layout_version="v2", renderer_revision=REPORT_RENDERER_REVISION))
             self.assertTrue(validate_snapshot(root)["ok"])
 
     def test_watchlist_errors_do_not_block_sip_publication(self) -> None:

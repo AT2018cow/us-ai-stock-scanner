@@ -222,6 +222,10 @@ AAPL,0000320193,2026-11-23T15:00:00Z,跟踪自由现金流和入场结构
 复算冻结日线，或从收盘计划和下一交易日可观察报价生成开盘卡。
 规则与输入格式见 [收盘形态与开盘复核](docs/swing_setup_opening_review.md)。
 
+**中线与财务覆盖。** SIP 配置可选启用 `enable_medium_review`，展示基于当时可知 SIC 的
+同行强弱、完整周线与 60 日相对 QQQ。财务影子支持定期申报和同期同单位复核，并提供三源发现池审计。
+配置和手算样本见 [财务覆盖、发现池与中线视图](docs/medium_term_coverage_review.md)。
+
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
 启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard

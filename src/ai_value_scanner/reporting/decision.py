@@ -13,6 +13,7 @@ from ai_value_scanner.decision.view_model import (
     sanitize_relative_display,
 )
 from ai_value_scanner.reporting.revisions import (
+    MEDIUM_FINANCIAL_RENDERER_REVISION,
     GROUPED_RESEARCH_RENDERER_REVISIONS,
     REPORT_RENDERER_REVISION,
 )
@@ -352,6 +353,69 @@ def _swing_lines(decision: StockDecision, *, compact: bool) -> list[str]:
     return lines
 
 
+def _medium_lines(decision: StockDecision, *, compact: bool) -> list[str]:
+    review = decision.medium_review
+    if review is None:
+        return []
+
+    def pct(value) -> str:
+        return "unavailable" if value is None else f"{value:+.2%}"
+
+    lines = [] if compact else ["", "## Midterm and SIC Peer Context", ""]
+    weekly = review["completed_week"]
+    lines.append(
+        f"- **20–60 session context** · SIC {review['sic2'] or 'unknown'} · "
+        f"completed weekly close vs 10-week SMA {pct(weekly['relative_to_sma10'] if weekly else None)} · "
+        f"60d vs QQQ {pct(review['relative_to_qqq_60d'])}"
+    )
+    if review["divergence"]:
+        lines.append("- Short setup confirmed while the last completed weekly close is below its 10-week SMA.")
+    if compact:
+        return lines
+    lines.extend([
+        "", "| Window | Stock vs peers | Peers vs QQQ | Positive peers | Valid / eligible issuers | Coverage | Evidence gap |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ])
+    for horizon in ("5", "20"):
+        item = review["horizons"][horizon]
+        lines.append(
+            f"| {horizon}d | {pct(item['stock_minus_peer'])} | {pct(item['peer_minus_qqq'])} | "
+            f"{pct(item['peer_positive_share'])} | {item['effective_peers']} / {item['eligible_peers']} | "
+            f"{pct(item['coverage'])} | {_tcell(item['reason'])} |"
+        )
+    lines.extend(["", f"- SIC observed by {review['classification_asof']} · {review['classification_source']}.", ""])
+    return lines
+
+
+def _financial_review_lines(decision: StockDecision) -> list[str]:
+    from ai_value_scanner.fundamentals.coverage import business_context
+
+    review = decision.financial_review
+    lines = []
+    if review:
+        lines.extend([
+            "", "## Exact Filing Research", "",
+            f"- {review['form']} · accession {review['accession']} · period ended {review['period_end']} · {review['currency']}.",
+            f"- Shadow coverage status `{review['status']}` · reason `{review['reason'] or 'same_period_core_recovered'}`.",
+        ])
+        labels = (
+            ("fcf_per_current_share", "FCF per period-end share"),
+            ("dilution_yoy", "Share change vs year-ago period"),
+            ("nonoperating_gain", "Disclosed nonoperating gain"),
+            ("enterprise_value_to_normalized_ebitda", "EV / normalized EBITDA"),
+        )
+        for field, label in labels:
+            value = review["metrics"][field]
+            shown = "unavailable" if value is None else f"{value:+.2%}" if field == "dilution_yoy" else f"{value:,.2f}"
+            lines.append(f"- {label} · {shown}")
+        lines.append("")
+    if review is not None or decision.medium_review is not None:
+        context = review["business_context"] if review else business_context(decision.provenance.get("sic"))
+        if context["review_metrics"]:
+            lines.extend(["", f"- **Specialist financial review** · `{context['model']}` · {', '.join(context['review_metrics'])}.", ""])
+    return lines
+
+
 FOLLOWED_OUTCOMES = {
     "trend_damaged": "trend damaged",
     "quality_weakened": "Company Quality grade weakened",
@@ -542,6 +606,8 @@ def render_action_list(
         lines.extend(_next_review_lines(decision))
         lines.extend(_review_lines(decision, compact=True))
         lines.extend(_swing_lines(decision, compact=True))
+        if renderer_revision == MEDIUM_FINANCIAL_RENDERER_REVISION:
+            lines.extend(_medium_lines(decision, compact=True))
         lines.extend(["", "### Data & detail", ""])
         lines.extend(_data_state_lines(decision))
         lines.append("")
@@ -554,6 +620,7 @@ def render_detailed_report(
     *,
     layout_version: str = "v1",
     back_link: str = "../action_list.md",
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
 ) -> str:
     """Render the evidence view for the same canonical StockDecision.
 
@@ -563,7 +630,7 @@ def render_detailed_report(
     the decision object; nothing is inferred, modelled, or invented.
     """
     if layout_version == "v2":
-        return render_detailed_report_v2(decision, back_link=back_link)
+        return render_detailed_report_v2(decision, back_link=back_link, renderer_revision=renderer_revision)
     if layout_version != "v1":
         raise ValueError(f"unsupported layout_version={layout_version!r}")
     company = f" — {decision.company_name}" if decision.company_name else ""
@@ -640,6 +707,9 @@ def render_detailed_report(
     lines.extend(["", "## Next Review Conditions", "", *_next_review_lines(decision)])
     lines.extend(_review_lines(decision, compact=False))
     lines.extend(_swing_lines(decision, compact=False))
+    if renderer_revision == MEDIUM_FINANCIAL_RENDERER_REVISION:
+        lines.extend(_medium_lines(decision, compact=False))
+        lines.extend(_financial_review_lines(decision))
     lines.extend(
         [
             "",
@@ -739,7 +809,9 @@ def _v2_counts_line(decisions: tuple[StockDecision, ...]) -> str:
     return " · ".join(parts) if parts else "no decisions"
 
 
-def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list[str]:
+def _v2_stock_card_block(
+    card: StockCardViewModel, detailed_subdir: str, renderer_revision: str | None,
+) -> list[str]:
     anchor = card.symbol.lower()
     rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
     wait_label = (
@@ -779,6 +851,8 @@ def _v2_stock_card_block(card: StockCardViewModel, detailed_subdir: str) -> list
     ]
     lines.extend(_review_lines(card.decision, compact=True))
     lines.extend(_swing_lines(card.decision, compact=True))
+    if renderer_revision == MEDIUM_FINANCIAL_RENDERER_REVISION:
+        lines.extend(_medium_lines(card.decision, compact=True))
     if card.decision.provenance.get("review_context_version"):
         previous = card.decision.previous_action_state
         if previous is not None and previous.value != card.action_state:
@@ -961,7 +1035,7 @@ def render_action_list_v2(
                 ]
             )
             for card in group_cards:
-                lines.extend(_v2_stock_card_block(card, detailed_subdir))
+                lines.extend(_v2_stock_card_block(card, detailed_subdir, renderer_revision))
 
     research_lines = [] if grouped_research else lines
     if grouped_research:
@@ -1164,6 +1238,7 @@ def render_detailed_report_v2(
     decision: StockDecision,
     *,
     back_link: str = "../action_list.md",
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
 ) -> str:
     """Clean, mobile-first Analyst Tear Sheet (v2) for one canonical decision."""
     card = build_stock_card_view_model(decision)
@@ -1224,6 +1299,10 @@ def render_detailed_report_v2(
             "",
             *_review_lines(decision, compact=False),
             *_swing_lines(decision, compact=False),
+            *(
+                _medium_lines(decision, compact=False) + _financial_review_lines(decision)
+                if renderer_revision == MEDIUM_FINANCIAL_RENDERER_REVISION else []
+            ),
             '<a id="company-quality--6-pillar-scorecard"></a>',
             "## Company Quality — 6-Pillar Scorecard",
             "",

@@ -181,6 +181,10 @@ from ai_value_scanner.decision.review import (
 )
 from ai_value_scanner.swing.events import known_events, load_calendar
 from ai_value_scanner.swing.setups import SWING_REVIEW_VERSION, evaluate_close as evaluate_swing_close
+from ai_value_scanner.decision.medium_term import (
+    MEDIUM_REVIEW_VERSION, build_medium_reviews, classifications_asof, market_profile,
+)
+from ai_value_scanner.fundamentals.coverage import FINANCIAL_COVERAGE_VERSION, audit_filing
 from ai_value_scanner.decision.universe import (
     apply_price_liquidity_prefilter,
     attach_watchlist_provenance,
@@ -3048,6 +3052,8 @@ def collect_candidates(
 
 def latest_periodic_filing(
     submissions: dict[str, Any],
+    *,
+    include_identity: bool = False,
 ) -> dict[str, str] | None:
     """Return the newest periodic filing relevant to Company Quality.
 
@@ -3060,6 +3066,7 @@ def latest_periodic_filing(
     forms = recent.get("form", []) or []
     filing_dates = recent.get("filingDate", []) or []
     accessions = recent.get("accessionNumber", []) or []
+    report_dates = recent.get("reportDate", []) or []
     best: dict[str, str] | None = None
     for index, raw_form in enumerate(forms):
         form = normalize_form(raw_form)
@@ -3082,6 +3089,13 @@ def latest_periodic_filing(
             "filed": filed,
             "accession": accession,
         }
+        if include_identity:
+            candidate["raw_form"] = str(raw_form).strip().upper()
+            if index < len(report_dates):
+                try:
+                    candidate["report_date"] = date_module.fromisoformat(report_dates[index]).isoformat()
+                except (TypeError, ValueError):
+                    pass
         if best is None or filed > best["filed"]:
             best = candidate
     return best
@@ -3556,7 +3570,7 @@ def load_one_fundamental(
 
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
-    latest_periodic = latest_periodic_filing(submissions)
+    latest_periodic = latest_periodic_filing(submissions, include_identity=True)
     latest_periodic_filing_date = (
         latest_periodic["filed"] if latest_periodic is not None else None
     )
@@ -4005,6 +4019,8 @@ def load_one_fundamental(
         "fundamental_data_asof": fundamental_data_asof,
         "fundamental_latest_periodic_filing_date": latest_periodic_filing_date,
         "fundamental_latest_periodic_form": latest_periodic_form,
+        "fundamental_latest_periodic_raw_form": (latest_periodic or {}).get("raw_form"),
+        "fundamental_latest_periodic_report_date": (latest_periodic or {}).get("report_date"),
         "fundamental_latest_periodic_accession": latest_periodic_accession,
         "fundamental_facts_cover_latest_periodic": fundamental_facts_cover_latest_periodic,
         "fundamental_reporting_currency": fundamental_reporting_currency,
@@ -4338,6 +4354,8 @@ def _evaluate_existing_snapshot_reuse(
     short_research_enabled: bool = False,
     short_rule_version: str = SHORT_RESEARCH_RULE_VERSION,
     swing_review_enabled: bool = False,
+    medium_review_enabled: bool = False,
+    financial_review_enabled: bool = False,
 ) -> tuple[str, str | None]:
     """Validate a same-session existing snapshot before reusing it (R04/R08).
 
@@ -4416,6 +4434,22 @@ def _evaluate_existing_snapshot_reuse(
         return (
             "reused_version_mismatch",
             f"existing snapshot Swing Review version {archived_swing!r} != configured {expected_swing!r}; "
+            "use a new --decision-output-root or the next session",
+        )
+    archived_medium = inputs.get("medium_review_version")
+    expected_medium = MEDIUM_REVIEW_VERSION if medium_review_enabled else None
+    if archived_medium != expected_medium:
+        return (
+            "reused_version_mismatch",
+            f"existing snapshot Medium Review version {archived_medium!r} != configured {expected_medium!r}; "
+            "use a new --decision-output-root or the next session",
+        )
+    archived_financial = inputs.get("financial_coverage_version")
+    expected_financial = FINANCIAL_COVERAGE_VERSION if financial_review_enabled else None
+    if archived_financial != expected_financial:
+        return (
+            "reused_version_mismatch",
+            f"existing snapshot Financial Coverage version {archived_financial!r} != configured {expected_financial!r}; "
             "use a new --decision-output-root or the next session",
         )
     archived_enabled = archived_short.enabled
@@ -5381,6 +5415,8 @@ def run_scan_with_status(
         "fundamental_data_asof",
         "fundamental_latest_periodic_filing_date",
         "fundamental_latest_periodic_form",
+        "fundamental_latest_periodic_raw_form",
+        "fundamental_latest_periodic_report_date",
         "fundamental_latest_periodic_accession",
         "fundamental_facts_cover_latest_periodic",
         "fundamental_reporting_currency",
@@ -5844,13 +5880,15 @@ def run_scan_with_status(
         )
         config_identity = vars(config).copy()
         # Preserve existing fingerprints when the optional inputs are absent.
-        for field in ("discovery_source_files", "review_watchlist_csv", "swing_event_calendar_csv"):
+        for field in ("discovery_source_files", "review_watchlist_csv", "swing_event_calendar_csv", "financial_coverage_json"):
             if config_identity.get(field) is None:
                 config_identity.pop(field, None)
         if not config.enable_short_research:
             config_identity.pop("enable_short_research", None)
         if not config.enable_swing_review:
             config_identity.pop("enable_swing_review", None)
+        if not config.enable_medium_review:
+            config_identity.pop("enable_medium_review", None)
         config_payload = json.dumps(
             config_identity,
             ensure_ascii=False,
@@ -5917,6 +5955,7 @@ def run_scan_with_status(
             cap=decision_attention_cap,
         )
         input_prov_payload = {
+            "scan_elapsed_seconds": (finished_at - started_at).total_seconds(),
             "watchlist_csv_path": config.watchlist_csv_path,
             "market_data_feed": alpaca.feed,
             "market_data_mode": config.official_market_mode,
@@ -5976,6 +6015,8 @@ def run_scan_with_status(
                 short_research_enabled=short_research_result.enabled,
                 short_rule_version=short_research_result.rule_version,
                 swing_review_enabled=config.enable_swing_review,
+                medium_review_enabled=config.enable_medium_review,
+                financial_review_enabled=config.financial_coverage_json is not None,
             )
             decision_output_status = reuse_status
             if reuse_error is not None:
@@ -6027,6 +6068,21 @@ def run_scan_with_status(
                     daily_attention = [reviewed[item.symbol] for item in daily_attention]
                     weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
                     input_prov_payload["review_evidence_version"] = REVIEW_EVIDENCE_VERSION
+                if eod_session and (config.enable_swing_review or config.enable_medium_review):
+                    swing_splits = {}
+                    bad_splits = {}
+                    split_issue = None
+                    reviewed_symbols = {item.symbol for item in decisions}
+                    if config.enable_medium_review:
+                        reviewed_symbols.add(entry_benchmark_symbol)
+                    try:
+                        swing_splits = alpaca.get_corporate_action_splits(
+                            sorted(reviewed_symbols), bars_start_iso,
+                            (eod_session + timedelta(days=30)).isoformat(), invalid_events=bad_splits,
+                        )
+                    except Exception as exc:
+                        split_issue = "split_evidence_unavailable"
+                        log_status(started_at, "WARN", "Review split evidence unavailable: " + type(exc).__name__)
                 if config.enable_swing_review and eod_session:
                     calendar = {}
                     calendar_issue = "event_calendar_not_configured"
@@ -6038,17 +6094,6 @@ def run_scan_with_status(
                         else:
                             input_prov_payload["swing_event_calendar_sha256"] = calendar_hash
                             calendar_issue = None
-                    swing_splits = {}
-                    bad_splits = {}
-                    split_issue = None
-                    try:
-                        swing_splits = alpaca.get_corporate_action_splits(
-                            [item.symbol for item in decisions], bars_start_iso,
-                            (eod_session + timedelta(days=30)).isoformat(), invalid_events=bad_splits,
-                        )
-                    except Exception as exc:
-                        split_issue = "split_evidence_unavailable"
-                        log_status(started_at, "WARN", "Swing split evidence unavailable: " + type(exc).__name__)
                     prior_by_symbol = first_prior[1] or {}
                     reviewed = {}
                     for decision in decisions:
@@ -6074,6 +6119,87 @@ def run_scan_with_status(
                     daily_attention = [reviewed[item.symbol] for item in daily_attention]
                     weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
                     input_prov_payload["swing_review_version"] = SWING_REVIEW_VERSION
+                if config.enable_medium_review and eod_session:
+                    profiles = {}
+                    if not split_issue:
+                        for symbol in reviewed_symbols:
+                            if any(not day or day <= decision_date for day in bad_splits.get(symbol, ())):
+                                continue
+                            try:
+                                profiles[symbol] = market_profile(
+                                    bars_map.get(symbol, ()), eod_session, splits=swing_splits.get(symbol, ()),
+                                )
+                            except (TypeError, ValueError, OverflowError):
+                                continue
+                    classifications = classifications_asof((
+                        {"cik": item.provenance.get("cik"), "sic": item.provenance.get("sic"),
+                         "known_at_utc": finished_at.isoformat()} for item in decisions
+                    ), finished_at)
+                    reviews = build_medium_reviews(
+                        decisions, profiles, profiles.get(entry_benchmark_symbol, {}), classifications,
+                        session=decision_date, classification_asof=finished_at.isoformat(),
+                        classification_source="sec_sic_as_observed_in_scan",
+                    )
+                    reviewed = {item.symbol: replace(item, medium_review=reviews[item.symbol]) for item in decisions}
+                    decisions = list(reviewed.values())
+                    daily_attention = [reviewed[item.symbol] for item in daily_attention]
+                    weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
+                    input_prov_payload["medium_review_version"] = MEDIUM_REVIEW_VERSION
+                if config.financial_coverage_json is not None:
+                    input_prov_payload["financial_coverage_version"] = FINANCIAL_COVERAGE_VERSION
+                    try:
+                        data = Path(config.financial_coverage_json).read_bytes()
+                        payload = json.loads(data)
+                        if not isinstance(payload, list):
+                            raise ValueError("financial evidence must be an array of filing extracts")
+                        cutoff = date_module.fromisoformat(decision_date)
+                        references = {}
+                        for decision in decisions:
+                            provenance = decision.provenance
+                            filing_key = (issuer_cik(provenance.get("cik")),
+                                          provenance.get("fundamental_latest_periodic_accession"))
+                            references.setdefault(filing_key, []).append(provenance)
+                        audits = {}
+                        rejected = 0
+                        for item in payload:
+                            # A prior month's shadow does not assume an as-of
+                            # result from a filing that had not been submitted.
+                            if date_module.fromisoformat(item["filed"]) > cutoff:
+                                continue
+                            key = (issuer_cik(item.get("cik")), item.get("accession"))
+                            if key not in references:
+                                continue
+                            try:
+                                results = [
+                                    audit_filing(item, asof=cutoff, provenance=provenance)
+                                    for provenance in references[key]
+                                ]
+                                result = results[0]
+                                if any(other != result for other in results[1:]):
+                                    raise ValueError("inconsistent canonical issuer context")
+                            except ValueError:
+                                rejected += 1
+                                continue
+                            if key in audits:
+                                raise ValueError("duplicate financial filing evidence")
+                            audits[key] = result
+                    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                        input_prov_payload["financial_coverage_error"] = "financial_evidence_unavailable"
+                    else:
+                        input_prov_payload["financial_coverage_source_sha256"] = hashlib.sha256(data).hexdigest()
+                        if rejected:
+                            input_prov_payload["financial_coverage_rejected_count"] = rejected
+                        reviewed = {}
+                        for item in decisions:
+                            filing = (
+                                issuer_cik(item.provenance.get("cik")),
+                                item.provenance.get("fundamental_latest_periodic_accession"),
+                            )
+                            result = audits.get(filing)
+                            reviewed[item.symbol] = replace(item, financial_review=result) if result else item
+                        decisions = list(reviewed.values())
+                        daily_attention = [reviewed[item.symbol] for item in daily_attention]
+                        weekly_attention = [reviewed[item.symbol] for item in weekly_attention]
                 if config.review_watchlist_csv is not None:
                     try:
                         entries, watchlist_digest = load_followed_securities(

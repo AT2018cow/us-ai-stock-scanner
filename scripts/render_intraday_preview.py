@@ -160,7 +160,7 @@ def build_provisional_decisions(
         # The provisional observation starts no official Ready spell.
         provisional[decision.symbol] = replace(
             decision, entry=entry, action_state=action,
-            review_conditions=(), ready_age=None, swing_review=None,
+            review_conditions=(), ready_age=None, swing_review=None, medium_review=None,
             review_trigger=None,
             provenance={**decision.provenance, "market_data_feed": "iex", "market_data_mode": "intraday_preview"},
         )
@@ -184,7 +184,7 @@ def with_provisional_context(
     for decision in decisions:
         current = provisional.get(decision.symbol)
         if current is None:
-            overlayed.append(replace(decision, decision_date=decision_date))
+            overlayed.append(replace(decision, decision_date=decision_date, swing_review=None, medium_review=None))
             continue
         overlayed.append(
             replace(

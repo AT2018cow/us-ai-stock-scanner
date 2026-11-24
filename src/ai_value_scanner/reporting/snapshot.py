@@ -39,6 +39,7 @@ from ai_value_scanner.reporting.decision import (
 from ai_value_scanner.reporting.revisions import (
     COMPATIBLE_RENDERER_REVISIONS,
     LIST_CONTEXT_RENDERER_REVISIONS,
+    MEDIUM_FINANCIAL_RENDERER_REVISION,
     REPORT_RENDERER_REVISION,
 )
 from ai_value_scanner.reporting.short_research import (
@@ -293,6 +294,7 @@ def build_run_manifest(
     short_research_summary: Mapping[str, Any] | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
+    renderer_revision: str | None = None,
 ) -> dict[str, Any]:
     materialized = tuple(decisions)
     daily = tuple(daily_attention)
@@ -314,7 +316,7 @@ def build_run_manifest(
         "strategy_style": strategy_style,
         "code_sha": code_sha,
         "config_fingerprint": str(config_fingerprint),
-        "report_renderer_revision": REPORT_RENDERER_REVISION,
+        "report_renderer_revision": renderer_revision or REPORT_RENDERER_REVISION,
         "stability_policy_version": DAILY_ATTENTION_STABILITY_POLICY_VERSION,
         **(
             {
@@ -407,6 +409,12 @@ def write_decision_snapshot(
     decisions_tuple = tuple(decisions)
     daily_tuple = tuple(daily_attention)
     weekly_tuple = tuple(weekly_attention)
+    inputs = input_provenance or {}
+    renderer_revision = (
+        MEDIUM_FINANCIAL_RENDERER_REVISION
+        if inputs.get("medium_review_version") or inputs.get("financial_coverage_version")
+        else REPORT_RENDERER_REVISION
+    )
     followed_rows = None if followed_stocks is None else tuple(dict(row) for row in followed_stocks)
     universe_exclusions_tuple = tuple(dict(row) for row in universe_exclusions)
     discovery_memberships_tuple = tuple(dict(row) for row in discovery_memberships)
@@ -445,12 +453,12 @@ def write_decision_snapshot(
                 short_csv_text = short_candidates_csv(short_result)
                 if short_result.status == STATUS_UNAVAILABLE:
                     short_section = render_unavailable_short_snapshot_section(
-                        short_result, renderer_revision=REPORT_RENDERER_REVISION,
+                        short_result, renderer_revision=renderer_revision,
                     )
                 else:
                     short_section = render_short_snapshot_section(
                         short_result,
-                        renderer_revision=REPORT_RENDERER_REVISION,
+                        renderer_revision=renderer_revision,
                         body=render_short_research_section(short_result),
                     )
             except Exception:
@@ -469,7 +477,7 @@ def write_decision_snapshot(
                 short_csv_text = ",".join(SHORT_CSV_COLUMNS) + "\n"
                 short_section = render_unavailable_short_snapshot_section(
                     short_result,
-                    renderer_revision=REPORT_RENDERER_REVISION,
+                    renderer_revision=renderer_revision,
                 )
             # Filesystem errors remain core snapshot failures.
             (tmp_root / SHORT_JSON).write_text(short_json_text, encoding="utf-8")
@@ -496,7 +504,7 @@ def write_decision_snapshot(
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
-                renderer_revision=REPORT_RENDERER_REVISION,
+                renderer_revision=renderer_revision,
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,
@@ -514,7 +522,7 @@ def write_decision_snapshot(
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
-                renderer_revision=REPORT_RENDERER_REVISION,
+                renderer_revision=renderer_revision,
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,
@@ -566,6 +574,7 @@ def write_decision_snapshot(
                 render_detailed_report(
                     by_symbol_all[symbol],
                     layout_version=layout_version,
+                    renderer_revision=renderer_revision,
                 ),
                 encoding="utf-8",
             )
@@ -606,6 +615,7 @@ def write_decision_snapshot(
             short_research_summary=short_snapshot_summary(short_result, short_files_manifest),
             policy_version=policy_version,
             layout_version=layout_version,
+            renderer_revision=renderer_revision,
         )
         manifest["in_list_streaks"] = streaks_by_symbol
         manifest["decisions_sha256"] = sha256_hex((tmp_root / "decisions.jsonl").read_bytes())

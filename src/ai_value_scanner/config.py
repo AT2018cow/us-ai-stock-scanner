@@ -296,6 +296,8 @@ class ScanConfig:
     review_watchlist_csv: str | None = None
     enable_swing_review: bool = False
     swing_event_calendar_csv: str | None = None
+    enable_medium_review: bool = False
+    financial_coverage_json: str | None = None
     # Opt-in, frozen multi-source discovery CSVs. None preserves exact legacy mode.
     # Example: {"us_core": "path.csv", "thematic": "path.csv", "manual": "path.csv"}
     discovery_source_files: dict[str, str] | None = None
@@ -781,6 +783,14 @@ class ScanConfig:
             err("enable_swing_review", "must be a boolean")
         if self.enable_swing_review and self.official_market_mode != "sip_eod":
             err("enable_swing_review", "requires completed-session SIP bars")
+        if type(self.enable_medium_review) is not bool:
+            err("enable_medium_review", "must be a boolean")
+        if self.enable_medium_review and self.official_market_mode != "sip_eod":
+            err("enable_medium_review", "requires completed-session SIP bars")
+        if self.financial_coverage_json is not None and (
+            not isinstance(self.financial_coverage_json, str) or not self.financial_coverage_json.strip()
+        ):
+            err("financial_coverage_json", "must be null or a non-empty string")
         if self.swing_event_calendar_csv is not None and (
             not isinstance(self.swing_event_calendar_csv, str) or not self.swing_event_calendar_csv.strip()
         ):

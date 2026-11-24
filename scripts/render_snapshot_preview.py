@@ -712,7 +712,7 @@ def recompute_v2_decisions(
         remapped.append(
             replace(
                 adjusted, action_state=action, rationale=rationale,
-                review_conditions=(), ready_age=None, swing_review=None,
+                review_conditions=(), ready_age=None, swing_review=None, medium_review=None,
             )
         )
     return assign_action_priorities_v2(remapped)

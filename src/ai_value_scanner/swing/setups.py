@@ -133,6 +133,11 @@ def _complete_bars(rows: Iterable[Mapping], through: date, splits: Mapping[date,
     return list(reversed(tail))
 
 
+def completed_sip_bars(rows: Iterable[Mapping], through: date, *, splits=()) -> list[Bar]:
+    """Return the continuous raw SIP tail normalized to one share basis."""
+    return _complete_bars(rows, through, split_factors(splits, through=through))
+
+
 def _resistance(bars: list[Bar], boundary: int, signal: int, reference: float) -> Resistance | None:
     """Use pre-setup highs with two right-hand bars available by the signal."""
     best = None

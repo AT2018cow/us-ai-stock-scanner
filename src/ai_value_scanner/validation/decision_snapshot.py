@@ -270,6 +270,32 @@ def validate_snapshot(
 
     run_inputs = manifest.get("input_provenance")
     run_inputs = run_inputs if isinstance(run_inputs, dict) else {}
+    from ai_value_scanner.decision.medium_term import MEDIUM_REVIEW_VERSION
+
+    medium_version = run_inputs.get("medium_review_version")
+    if medium_version not in (None, MEDIUM_REVIEW_VERSION):
+        errors.append(f"unsupported medium_review_version {medium_version!r}")
+    if any((decision.medium_review is not None) != (medium_version == MEDIUM_REVIEW_VERSION) for decision in decisions):
+        errors.append("medium review evidence does not match the manifest feature version")
+    from ai_value_scanner.fundamentals.coverage import FINANCIAL_COVERAGE_VERSION, business_context, filing_identity_error
+    from ai_value_scanner.reporting.revisions import MEDIUM_FINANCIAL_RENDERER_REVISION
+
+    coverage_version = run_inputs.get("financial_coverage_version")
+    if coverage_version not in (None, FINANCIAL_COVERAGE_VERSION):
+        errors.append(f"unsupported financial_coverage_version {coverage_version!r}")
+    if (medium_version or coverage_version) and manifest.get("report_renderer_revision") != MEDIUM_FINANCIAL_RENDERER_REVISION:
+        errors.append("medium or financial review requires its versioned renderer")
+    for decision in decisions:
+        coverage = decision.financial_review
+        if coverage is None:
+            continue
+        if not isinstance(coverage, dict) or (
+            coverage.get("version") != coverage_version or coverage_version != FINANCIAL_COVERAGE_VERSION
+            or filing_identity_error(coverage, decision.provenance) is not None
+            or coverage.get("business_context") != business_context(decision.provenance.get("sic"))
+            or coverage.get("asof") != decision.decision_date
+        ):
+            errors.append(f"{decision.symbol}: financial coverage evidence does not match the archived filing")
     review_version = run_inputs.get("review_evidence_version")
     if review_version not in (None, REVIEW_EVIDENCE_VERSION):
         errors.append(f"unsupported review_evidence_version {review_version!r}")
@@ -841,7 +867,7 @@ def validate_snapshot(
             if decision is None:
                 errors.append(f"detailed report for unknown symbol: {symbol}")
                 continue
-            expected = render_detailed_report(decision, layout_version=layout_version)
+            expected = render_detailed_report(decision, layout_version=layout_version, renderer_revision=renderer_revision)
             actual = path.read_text(encoding="utf-8")
             if actual != expected:
                 errors.append(

@@ -371,6 +371,8 @@ def build_stock_decisions(
             "fundamental_operating_entity_detail",
             "fundamental_latest_periodic_filing_date",
             "fundamental_latest_periodic_form",
+            "fundamental_latest_periodic_raw_form",
+            "fundamental_latest_periodic_report_date",
             "fundamental_latest_periodic_accession",
             "fundamental_reporting_currency",
             "fundamental_source",
