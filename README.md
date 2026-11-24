@@ -226,6 +226,9 @@ AAPL,0000320193,2026-11-23T15:00:00Z,跟踪自由现金流和入场结构
 同行强弱、完整周线与 60 日相对 QQQ。财务影子支持定期申报和同期同单位复核，并提供三源发现池审计。
 配置和手算样本见 [财务覆盖、发现池与中线视图](docs/medium_term_coverage_review.md)。
 
+等待确认、延迟入场、结构退出和排序增量由独立的 [阶段 7 纸面实验](docs/swing_experiment.md)
+登记与评估。先冻结信号、对照和发布回执，再接入价格标签。历史诊断不修改正式名单或阈值。
+
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
 启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard

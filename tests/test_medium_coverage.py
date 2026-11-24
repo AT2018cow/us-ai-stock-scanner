@@ -101,6 +101,22 @@ class FilingCoverageTests(TestCase):
         self.assertAlmostEqual(result["metrics"]["dilution_yoy"], 780/778-1)
         self.assertIsNone(result["metrics"]["enterprise_value_to_normalized_ebitda"])
 
+    def test_archives_only_explicit_reconciliations_for_the_selected_share_basis(self):
+        audited = audit_filing(self.case, asof=self.asof)
+        shares = audited["derived_operands"]["current_shares"]
+        self.assertNotIn("market_share_bases", audited)
+        proof = {"security_id": "DUK:" + audited["cik"], "share_basis_id": shares["basis_ids"][0],
+                 "share_period_end": shares["end"], "price_session": DAY,
+                 "known_at_utc": DAY + "T21:20:00Z", "source": "fixture action inventory", "splits": []}
+        self.case["market_share_bases"] = [
+            proof, {**proof, "share_basis_id": "other"},
+            {**proof, "splits": [[DAY, .5], [DAY, .5]]},
+            {key: value for key, value in proof.items() if key != "splits"},
+        ]
+        result = audit_filing(self.case, asof=self.asof)
+        self.assertEqual(result["market_share_bases"], [{**proof, "known_at_utc": DAY + "T21:20:00+00:00"}])
+        self.assertEqual(result["metrics"], audited["metrics"])
+
     def test_currency_units_and_amendments_fail_closed(self):
         target = self.case["accession"]
         for row in self.case["facts"]:

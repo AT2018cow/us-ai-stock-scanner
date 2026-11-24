@@ -7,7 +7,7 @@ year is available.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import math
 import re
@@ -178,6 +178,43 @@ def filing_identity_error(evidence: Mapping, provenance: Mapping) -> str | None:
     return None
 
 
+def _market_share_bases(evidence, cik, asof, shares):
+    """Retain explicit PIT split reconciliations without inferring an empty list."""
+    proofs = evidence.get("market_share_bases")
+    if not isinstance(proofs, list) or shares is None or len(shares["basis_ids"]) != 1:
+        return []
+    archived = []
+    for proof in proofs:
+        try:
+            security = proof["security_id"]
+            if not isinstance(security, str) or not re.fullmatch(r"[A-Z0-9.\-]+:" + cik, security):
+                continue
+            basis, source = proof["share_basis_id"], proof["source"]
+            if basis != shares["basis_ids"][0] or not isinstance(source, str) or not source.strip():
+                continue
+            start, end = (date.fromisoformat(proof[k]) for k in ("share_period_end", "price_session"))
+            stamp = proof["known_at_utc"]
+            observed = datetime.fromisoformat(stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp)
+            if (end != asof or start.isoformat() != shares["end"] or start > end
+                or observed.utcoffset() is None or not isinstance(proof["splits"], list)):
+                continue
+            observed = observed.astimezone(timezone.utc)
+            splits = {}
+            for token, multiple in proof["splits"]:
+                day = date.fromisoformat(token)
+                ratio = positive(multiple) if type(multiple) in (float, int) else None
+                if ratio is None or not start < day <= end or day in splits:
+                    raise ValueError("invalid or duplicate split")
+                splits[day] = ratio
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+            continue
+        archived.append({"security_id": security, "share_basis_id": basis, "source": source,
+                         "share_period_end": start.isoformat(), "price_session": end.isoformat(),
+                         "known_at_utc": observed.isoformat(),
+                         "splits": [[day.isoformat(), splits[day]] for day in sorted(splits)]})
+    return archived
+
+
 def audit_filing(evidence: Mapping, *, asof: date, provenance: Mapping | None = None) -> dict:
     """Run the exact-period recovery on frozen, issuer-scoped source extracts."""
     cik = _cik(evidence.get("cik"))
@@ -309,6 +346,8 @@ def audit_filing(evidence: Mapping, *, asof: date, provenance: Mapping | None = 
     if fcf is not None:
         fx_fcf, fcf_fx = _translate_usd(fcf, currency, start=start_dates["capex"], end=report_end,
                                         asof=asof, rates=evidence.get("fx_rates", ()))
+    current_share_operand = share_operand(current_shares)
+    market_share_bases = _market_share_bases(evidence, cik, asof, current_share_operand)
     return {
         "version": FINANCIAL_COVERAGE_VERSION, "evidence_class": "exact_filing_shadow",
         "cik": cik, "accession": accession, "form": form,
@@ -325,8 +364,9 @@ def audit_filing(evidence: Mapping, *, asof: date, provenance: Mapping | None = 
         "share_accessions": [fact.accession for fact in (current_shares, prior_shares) if fact],
         "comparative_period_end": comparison_end.isoformat() if comparison_end else None,
         "derived_operands": {
-            "current_shares": share_operand(current_shares), "comparative_shares": share_operand(prior_shares),
+            "current_shares": current_share_operand, "comparative_shares": share_operand(prior_shares),
             "enterprise_value": ev_operand, "valuation_fx": valuation_fx, "fcf_fx": fcf_fx,
         },
+        **({"market_share_bases": market_share_bases} if market_share_bases else {}),
         "metrics": {**metrics, "translated_fcf_usd": fx_fcf},
     }
