@@ -4516,6 +4516,11 @@ def write_latest_decision_pointer(
         pointer["entry_policy_version"] = identity["entry_policy_version"]
     pointer_path = root / f"latest_{strategy_style or 'default'}.json"
     pointer["manifest_sha256"] = hashlib.sha256(snap_paths.run_manifest_json.read_bytes()).hexdigest()
+    if "decisions_sha256" in manifest:
+        decisions_hash = hashlib.sha256(snap_paths.decisions_jsonl.read_bytes()).hexdigest()
+        if decisions_hash != manifest["decisions_sha256"]:
+            raise ValueError("decision bytes differ from the snapshot manifest")
+        pointer["decisions_sha256"] = decisions_hash
     # Serialize the monotonic-date check and publication across threads/processes.
     with (root / f".latest_{strategy_style or 'default'}.lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -4841,12 +4846,16 @@ def run_scan_with_status(
                 f"trend_ok={benchmark_trend_ok}",
             )
     price_feature_rows: list[dict[str, Any]] = []
+    official_closes: dict[str, float] = {}
     for row in df.itertuples(index=False):
+        raw_bars = bars_map.get(row.symbol, [])
         symbol_bars = apply_split_adjustment(
-            bars_map.get(row.symbol, []),
+            raw_bars,
             split_events.get(row.symbol),
         )
         features = price_dimension_from_bars(row.price, symbol_bars)
+        if eod_session and (official_bar := completed_bar(raw_bars, eod_session)) is not None:
+            official_closes[row.symbol] = float(official_bar["c"])
         market_asof = bars_market_asof(symbol_bars)
         stock_return_60d = features.get("return_60d")
         relative_strength_60d_qqq = None
@@ -5861,6 +5870,7 @@ def run_scan_with_status(
             df,
             decision_date=decision_date,
             generated_at_utc=finished_at.isoformat(),
+            official_closes=official_closes,
             previous_by_symbol=previous_by_symbol,
             source_lists_by_symbol=source_lists,
             run_provenance=run_prov_payload,

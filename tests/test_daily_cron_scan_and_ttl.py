@@ -459,6 +459,18 @@ class DailyCronMainTests(unittest.TestCase):
             "decision_output_status": "written", "latest_pointer_status": "written",
         }
 
+    def test_forward_ledger_failure_leaves_publication_receipt_successful(self):
+        path = self.output / "forward.db"
+        with patch("ai_value_scanner.forward.ledger.Ledger") as ledger:
+            def capture(receipt):
+                self.assertEqual(self._receipt(), receipt)
+                raise OSError("simulated ledger outage")
+            ledger.return_value.import_attempt.side_effect = capture
+            self._run_main(["--forward-ledger", str(path)], {"ALPACA_API_KEY": "test-key"},
+                           _clean_summary(), self._successful_scan())
+            ledger.return_value.import_attempt.assert_called_once()
+        self.assertEqual(self._receipt()["status"], "published")
+
     def test_defaults_wire_stage1_4h_and_stage2_3600(self) -> None:
         prewarm, stage2 = self._run_main(
             [],

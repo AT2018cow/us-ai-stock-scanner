@@ -229,6 +229,7 @@ def main() -> None:
         help="Stage 2 Alpaca freshness window in seconds.",
     )
     parser.add_argument("--limit", type=int, default=0, help="Optional smoke-test cap")
+    parser.add_argument("--forward-ledger", type=Path, help="Append completed formal SIP receipts to this local SQLite ledger.")
     parser.add_argument(
         "--skip-scan",
         action="store_true",
@@ -307,6 +308,13 @@ def main() -> None:
     receipt.update(finished_at_utc=datetime.now(timezone.utc).isoformat(), exit_code=exit_code)
     write_publication_attempt(receipt_path, receipt)
     log(f"daily cron {receipt['status']} (exit={exit_code}) receipt={receipt_path}")
+    if args.forward_ledger is not None and mode == "formal" and cfg.official_market_mode == "sip_eod":
+        from ai_value_scanner.forward.ledger import Ledger
+
+        try:
+            Ledger(args.forward_ledger, snapshot_root=root).import_attempt(receipt)
+        except Exception as exc:
+            log(f"WARN: forward ledger import failed ({type(exc).__name__}); completed receipt is available for recovery")
     if exit_code:
         sys.exit(exit_code)
 

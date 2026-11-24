@@ -653,6 +653,8 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 )
             )
             self.assertNotEqual(off_pointer.pop("manifest_sha256"), on_pointer.pop("manifest_sha256"))
+            self.assertEqual(off_pointer.pop("decisions_sha256"), _sha256(off_root / "decisions.jsonl"))
+            self.assertEqual(on_pointer.pop("decisions_sha256"), _sha256(on_root / "decisions.jsonl"))
             self.assertIsNotNone(off_pointer.pop("first_readable_at_utc"))
             self.assertIsNotNone(on_pointer.pop("first_readable_at_utc"))
             self.assertEqual(off_pointer, on_pointer)

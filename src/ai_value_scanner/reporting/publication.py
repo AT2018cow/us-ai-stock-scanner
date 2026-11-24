@@ -44,6 +44,8 @@ def read_latest_publication(root: Path, style: str, *, require_sip: bool = True)
     manifest = json.loads(manifest_bytes)
     if not isinstance(manifest, dict):
         raise ValueError("latest snapshot manifest must be a JSON object")
+    if "decisions_sha256" in pointer and pointer["decisions_sha256"] != manifest.get("decisions_sha256"):
+        raise ValueError("decision digest differs from the publication pointer")
     identity = snapshot_identity(manifest)
     if (identity["decision_date"], identity["strategy_style"] or "default") != (day.isoformat(), style):
         raise ValueError("latest pointer and manifest identity differ")

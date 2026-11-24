@@ -266,6 +266,7 @@ def build_stock_decisions(
     previous_by_symbol: Mapping[str, StockDecision] | None = None,
     source_lists_by_symbol: Mapping[str, tuple[str, ...]] | None = None,
     run_provenance: Mapping[str, str | int | float | bool | None] | None = None,
+    official_closes: Mapping[str, float] | None = None,
     policy_version: str = "v1",
     quality_version: str | None = None,
     entry_version: str | None = None,
@@ -392,6 +393,14 @@ def build_stock_decisions(
             if isinstance(value, bool):
                 provenance[key] = value
         etf_count = _number(row.get("watchlist_etf_count"))
+        official_close = _number((official_closes or {}).get(symbol))
+        if (
+            official_close is not None and official_close > 0
+            and provenance.get("market_data_feed") == "sip"
+            and provenance.get("market_data_mode") == "sip_eod"
+            and entry.market_asof == decision_day
+        ):
+            provenance["official_sip_close"] = official_close
         if etf_count is not None:
             provenance["watchlist_etf_count"] = int(etf_count)
         # L2 scoring-inputs fingerprint: the full evidence row exactly as

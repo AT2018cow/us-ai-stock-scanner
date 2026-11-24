@@ -608,6 +608,7 @@ def write_decision_snapshot(
             layout_version=layout_version,
         )
         manifest["in_list_streaks"] = streaks_by_symbol
+        manifest["decisions_sha256"] = sha256_hex((tmp_root / "decisions.jsonl").read_bytes())
         if followed_rows is not None:
             manifest["followed_stocks"] = followed_rows
             manifest["followed_prior"] = {symbol: asdict(prior) for symbol, prior in (followed_prior or {}).items()}

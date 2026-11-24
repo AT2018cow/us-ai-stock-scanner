@@ -243,6 +243,10 @@ def validate_snapshot(
         }
 
     try:
+        if "decisions_sha256" in manifest and (
+            hashlib.sha256(required["decisions"].read_bytes()).hexdigest() != manifest["decisions_sha256"]
+        ):
+            errors.append("decisions.jsonl SHA256 differs from run_manifest.json")
         decisions = load_snapshot_decisions(root_path)
     except Exception as exc:
         errors.append(f"invalid decisions.jsonl: {type(exc).__name__}: {exc}")

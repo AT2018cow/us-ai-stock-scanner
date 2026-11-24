@@ -212,6 +212,11 @@ AAPL,0000320193,2026-11-23T15:00:00Z,跟踪自由现金流和入场结构
 发现同 CIK 的其他 ticker 只做提示。自选股不改变候选池、原排名或 Top-15。清单计算采用生成时已加入的
 记录，输入哈希、前一有效交易日的跟踪依据和结果随快照归档。同日复用继续读已归档的结果。自选 CSV 无法读取或内容无效时，正式榜单照常发布，自选板块及 manifest 保留错误原因。填写 `reason` 时请考虑它会出现在报告里。
 
+**前向观察台账。** 使用 `scripts/forward_observations.py import-receipts` 导入正式 SIP
+回执，或在 cron 增加 `--forward-ledger outputs/forward/ledger.sqlite3` 自动采集。
+台账保存原榜单顺序、榜外机会、人工复核和纸面路径，支持重复导入和追加修订。
+命令、输入字段和结果口径见 [前向观察与纸面记录](docs/forward_observation_ledger.md)。
+
 Live Company Quality 对 SEC 数据采用保守完整性语义。Company Facts 仍是主数据源；
 当最新 periodic accession 未被当前 core facts 覆盖时，生产路径只对**普通 USD 10-Q**
 启用一个窄 EdgarTools exact-filing fallback。fallback 只接受 consolidated standard
