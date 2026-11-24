@@ -1,5 +1,5 @@
 """Explicit completed-session contract for official SIP end-of-day decisions."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import math
 
@@ -9,6 +9,21 @@ from .market_calendar import (
     session_close_utc,
     session_open_utc,
 )
+
+SIP_PUBLICATION_DELAY = timedelta(minutes=20)
+
+
+def sip_publication_window(now: datetime) -> tuple[date, str]:
+    """Expected decision session and the current publication window."""
+    session = latest_completed_session(now)
+    local_day = now.astimezone(ZoneInfo("America/New_York")).date()
+    if is_session_day(local_day) and session_open_utc(local_day) <= now:
+        close = session_close_utc(local_day)
+        if now < close:
+            return session, "market_open"
+        if now < close + SIP_PUBLICATION_DELAY:
+            return session, "awaiting_sip"
+    return session, "available"
 
 
 def official_eod_window(now: datetime):
@@ -21,16 +36,13 @@ def official_eod_window(now: datetime):
     """
     if now.tzinfo is None:
         raise ValueError('timezone-aware clock required')
-    local_day = now.astimezone(ZoneInfo('America/New_York')).date()
-    session = latest_completed_session(now)
-    # No official publication during a session or inside SIP's delayed window.
-    if is_session_day(local_day):
-        if session_open_utc(local_day) <= now < session_close_utc(local_day) + timedelta(minutes=20):
-            raise ValueError(
-                'Official SIP scan is available before the open or at least 20 '
-                'minutes after the close; use intraday_watch for monitoring'
-            )
-    return session, (now.astimezone(timezone.utc) - timedelta(minutes=20)).isoformat()
+    session, window = sip_publication_window(now)
+    if window != "available":
+        raise ValueError(
+            'Official SIP scan is available before the open or at least 20 '
+            'minutes after the close; use intraday_watch for monitoring'
+        )
+    return session, (now.astimezone(timezone.utc) - SIP_PUBLICATION_DELAY).isoformat()
 
 
 def completed_bar(rows, session):

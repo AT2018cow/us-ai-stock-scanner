@@ -298,6 +298,7 @@ class TestRenderingAndRunner(unittest.TestCase):
             rows = iw.run_once(args, client=FakeClient())
             self.assertEqual([r["symbol"] for r in rows], ["ADI", "CTAS"])
             self.assertTrue(out.is_file())
+            self.assertIn("Publication: historical snapshot", out.read_text(encoding="utf-8"))
             after = {p.name for p in snapshot.iterdir()}
             self.assertEqual(before, after)
             self.assertFalse((snapshot / "latest_production.json").exists())

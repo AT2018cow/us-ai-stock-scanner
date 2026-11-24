@@ -184,6 +184,10 @@ from ai_value_scanner.research.short_research_v1 import (
     unavailable_short_research_result,
 )
 from ai_value_scanner.reporting.short_research import SHORT_CSV, load_short_snapshot
+from ai_value_scanner.validation.decision_snapshot import (
+    SnapshotValidationError,
+    require_valid_snapshot,
+)
 from ai_value_scanner.reporting.snapshot import (
     decision_snapshot_paths,
     load_previous_daily_symbols,
@@ -4261,6 +4265,14 @@ def _coalesce_filing_cik(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=["cik_filing"])
 
 
+class OfficialPublicationError(ValueError):
+    """An official scan failure with a stable diagnostic for the cron receipt."""
+
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 @dataclass(frozen=True)
 class ScanRunStatus:
     """Structured outcome of a scan run (R04).
@@ -4479,9 +4491,11 @@ def write_latest_decision_pointer(
     if identity.get("entry_policy_version"):
         pointer["entry_policy_version"] = identity["entry_policy_version"]
     pointer_path = root / f"latest_{strategy_style or 'default'}.json"
+    pointer["manifest_sha256"] = hashlib.sha256(snap_paths.run_manifest_json.read_bytes()).hexdigest()
     # Serialize the monotonic-date check and publication across threads/processes.
     with (root / f".latest_{strategy_style or 'default'}.lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        pointer["first_readable_at_utc"] = datetime.now(timezone.utc).isoformat()
         if pointer_path.is_file():
             existing = load_latest_pointer_payload(pointer_path)
             existing_day = date_module.fromisoformat(
@@ -4492,6 +4506,14 @@ def write_latest_decision_pointer(
                     "refusing to move latest pointer backwards: "
                     f"existing {existing_day.isoformat()} > requested {date_token}"
                 )
+            if existing_day == requested_day:
+                if existing.get("snapshot_dir") != rel_dir:
+                    raise ValueError("same-session pointer identifies a different snapshot")
+                archived_hash = existing.get("manifest_sha256")
+                if archived_hash is not None and archived_hash != pointer["manifest_sha256"]:
+                    raise ValueError("same-session snapshot manifest SHA256 changed")
+                # Older pointers never recorded the first publication time.
+                pointer["first_readable_at_utc"] = existing.get("first_readable_at_utc")
 
         tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{pointer_path.name}.", suffix=".tmp", dir=root)
         os.close(tmp_fd)
@@ -4707,7 +4729,9 @@ def run_scan_with_status(
     if eod_session:
         from .market_data import completed_bar
         if completed_bar(bars_map.get('QQQ',[]),eod_session) is None:
-            raise ValueError('Official SIP benchmark is missing the expected completed session')
+            raise OfficialPublicationError(
+                "sip_benchmark_missing", "Official SIP benchmark is missing the expected completed session"
+            )
     # Raw bars are NOT split-adjusted (Alpaca adjustment=raw). Cross-day price
     # metrics below must be computed on a split-continuous series, so split
     # events are pulled from the authoritative corporate-actions feed and the
@@ -4727,7 +4751,8 @@ def run_scan_with_status(
                 f"e.g. {sorted(split_events)[:5]}",
             )
     except Exception as exc:
-        if eod_session: raise RuntimeError('Official SIP split fetch failed') from exc
+        if eod_session:
+            raise OfficialPublicationError("sip_split_fetch_failed", "Official SIP split fetch failed") from exc
         # Fail open: unadjusted bars reproduce the legacy behaviour.
         log_status(
             started_at,
@@ -5907,6 +5932,11 @@ def run_scan_with_status(
                 decision_output_error = reuse_error
             if reuse_status == "reused":
                 decision_snapshot_root = existing_paths.root
+                if eod_session and config.max_symbols is None:
+                    try:
+                        require_valid_snapshot(decision_snapshot_root, attention_cap=decision_attention_cap)
+                    except SnapshotValidationError as exc:
+                        raise OfficialPublicationError("snapshot_validation_failed", str(exc)) from exc
                 log_status(
                     started_at,
                     "INFO",
@@ -5922,6 +5952,10 @@ def run_scan_with_status(
                     "MVP decision snapshot was NOT reused: " f"{decision_output_error}",
                 )
                 if strict_decision_output:
+                    if eod_session:
+                        raise OfficialPublicationError(
+                            "snapshot_reuse_rejected", decision_output_error or "snapshot reuse rejected"
+                        )
                     raise ValueError(decision_output_error or "snapshot reuse rejected")
         else:
             try:
@@ -5945,6 +5979,9 @@ def run_scan_with_status(
                     short_research=short_research_result,
                     policy_version=policy_version,
                     layout_version=layout_version,
+                    validate_attention_cap=(
+                        decision_attention_cap if eod_session and config.max_symbols is None else None
+                    ),
                 )
                 decision_snapshot_root = decision_paths.root
                 decision_output_status = "written"
@@ -5956,6 +5993,12 @@ def run_scan_with_status(
                     f"| daily={len(daily_attention)} | weekly={len(weekly_attention)}",
                 )
             except Exception as exc:
+                if eod_session:
+                    reason = (
+                        "snapshot_validation_failed"
+                        if isinstance(exc, SnapshotValidationError) else "snapshot_write_failed"
+                    )
+                    raise OfficialPublicationError(reason, str(exc)) from exc
                 if strict_decision_output:
                     raise
                 decision_output_status = "failed"
@@ -5991,6 +6034,8 @@ def run_scan_with_status(
                     f"MVP latest snapshot pointer: {latest_pointer_path}",
                 )
             except Exception as exc:
+                if eod_session:
+                    raise OfficialPublicationError("latest_pointer_write_failed", str(exc)) from exc
                 if strict_decision_output:
                     raise
                 latest_pointer_status = "failed"

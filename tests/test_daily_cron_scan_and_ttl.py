@@ -25,6 +25,8 @@ import sys
 import tempfile
 import unittest
 from contextlib import ExitStack
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -408,9 +410,31 @@ class RefreshPurityTests(unittest.TestCase):
 class DailyCronMainTests(unittest.TestCase):
     """`run_daily_cron.py` orchestrates Stage 1 + Stage 2."""
 
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        patches = ExitStack()
+        self.addCleanup(patches.close)
+        self.output = Path(temp.name)
+        cfg = rdc.load_config("configs/config.production.json")
+        patches.enter_context(patch.object(rdc, "load_config", return_value=replace(cfg, output_dir=temp.name)))
+        self.clock = patches.enter_context(patch.object(rdc, "datetime"))
+        self.clock.now.return_value = datetime(2026, 11, 24, 3, tzinfo=timezone.utc)
+        patches.enter_context(patch.dict(
+            os.environ, {"ALPACA_API_ENDPOINT": "test-endpoint", "ALPACA_API_SECRET": "test-secret"}
+        ))
+
+    def _receipt(self, mode="formal"):
+        path, = (self.output / "decisions" / "publication_attempts" / "production" / mode).glob("*.json")
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def _run_main(self, argv, extra_env, prewarm_summary, stage2_result):
         env = {"SEC_USER_AGENT": "unittest-agent", "ALPACA_API_KEY": ""}
         env.update(extra_env)
+        stage2_stub = (
+            {"wraps": rdc.run_daily_scan_after_prewarm}
+            if stage2_result is None else {"return_value": stage2_result}
+        )
         with patch.object(sys, "argv", ["run_daily_cron.py", *argv]):
             with patch.dict(os.environ, env, clear=False):
                 with patch.object(
@@ -419,17 +443,28 @@ class DailyCronMainTests(unittest.TestCase):
                     with patch.object(
                         rdc,
                         "run_daily_scan_after_prewarm",
-                        return_value=stage2_result,
+                        **stage2_stub,
                     ) as stage2:
-                        rdc.main()
+                        with patch.object(
+                            rdc, "read_latest_publication",
+                            return_value={"decision_date": "2026-11-23"},
+                        ):
+                            rdc.main()
         return prewarm, stage2
+
+    @staticmethod
+    def _successful_scan():
+        return {
+            "scan_executed": True, "scan_failed": False, "output_path": "out.csv",
+            "decision_output_status": "written", "latest_pointer_status": "written",
+        }
 
     def test_defaults_wire_stage1_4h_and_stage2_3600(self) -> None:
         prewarm, stage2 = self._run_main(
             [],
             {"ALPACA_API_KEY": "test-key"},
             _clean_summary(),
-            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+            self._successful_scan(),
         )
         self.assertEqual(prewarm.call_count, 1)
         _, pre_kwargs = prewarm.call_args
@@ -441,28 +476,55 @@ class DailyCronMainTests(unittest.TestCase):
         self.assertEqual(scan_kwargs.get("limit"), 0)
         self.assertEqual(scan_kwargs.get("skip_scan"), False)
         self.assertEqual(scan_kwargs.get("alpaca_ttl_sec"), 3600)
+        self.assertEqual(self._receipt()["status"], "published")
 
     def test_custom_freshness_windows_pass_through(self) -> None:
         prewarm, stage2 = self._run_main(
             ["--max-age-hours", "2.0", "--alpaca-ttl-sec", "1800"],
             {"ALPACA_API_KEY": "test-key"},
             _clean_summary(),
-            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
+            self._successful_scan(),
         )
         _, pre_kwargs = prewarm.call_args
         self.assertEqual(pre_kwargs.get("max_age_hours"), 2.0)
         _, scan_kwargs = stage2.call_args
         self.assertEqual(scan_kwargs.get("alpaca_ttl_sec"), 1800)
 
-    def test_main_skips_stage2_without_credentials(self) -> None:
-        prewarm, stage2 = self._run_main(
-            [],
-            {"ALPACA_API_KEY": ""},
-            _clean_summary(),
-            {"scan_executed": True, "scan_failed": False, "output_path": "out.csv"},
-        )
-        self.assertEqual(prewarm.call_count, 1)
-        self.assertEqual(stage2.call_count, 0)
+    def test_main_fails_without_credentials_after_successful_prewarm(self) -> None:
+        with self.assertRaises(SystemExit) as result:
+            self._run_main([], {"ALPACA_API_KEY": ""}, _clean_summary(), {})
+        self.assertEqual(result.exception.code, 1)
+        receipt = self._receipt()
+        self.assertEqual(receipt["reason_code"], "missing_alpaca_credentials")
+        self.assertEqual(receipt["prewarm_status"], "succeeded")
+        self.assertEqual(receipt["status"], "failed")
+
+    def test_main_defers_during_sip_delay(self) -> None:
+        self.clock.now.return_value = datetime(2026, 11, 23, 21, 10, tzinfo=timezone.utc)
+        _, stage2 = self._run_main([], {"ALPACA_API_KEY": "test-key"}, _clean_summary(), {})
+        stage2.assert_not_called()
+        self.assertEqual(self._receipt()["status"], "deferred")
+        self.assertEqual(self._receipt()["reason_code"], "awaiting_sip")
+
+    def test_config_capped_run_still_executes_stage2(self) -> None:
+        cfg = rdc.load_config("configs/config.production.json")
+        rdc.load_config.return_value = replace(cfg, max_symbols=3)
+        result = {**self._successful_scan(), "latest_pointer_status": "not_applicable"}
+        _, stage2 = self._run_main([], {"ALPACA_API_KEY": "test-key"}, _clean_summary(), result)
+        stage2.assert_called_once()
+        self.assertEqual(stage2.call_args.args[0].max_symbols, 3)
+        self.assertEqual(self._receipt("smoke")["status"], "sampled")
+
+    def test_stage_specific_failure_is_recorded_without_raw_message(self) -> None:
+        with patch.object(rdc, "run_scan_with_status", side_effect=rdc.OfficialPublicationError(
+            "sip_benchmark_missing", "benchmark unavailable with private provider detail"
+        )):
+            with self.assertRaises(SystemExit) as result:
+                self._run_main([], {"ALPACA_API_KEY": "test-key"}, _clean_summary(), None)
+        self.assertEqual(result.exception.code, 1)
+        receipt = self._receipt()
+        self.assertEqual(receipt["reason_code"], "sip_benchmark_missing")
+        self.assertNotIn("private provider detail", json.dumps(receipt))
 
     def test_main_skips_stage2_with_skip_scan_flag(self) -> None:
         prewarm, stage2 = self._run_main(
@@ -473,6 +535,7 @@ class DailyCronMainTests(unittest.TestCase):
         )
         self.assertEqual(prewarm.call_count, 1)
         self.assertEqual(stage2.call_count, 0)
+        self.assertEqual(self._receipt("prewarm_only")["status"], "prewarm_only")
 
     def test_main_skips_stage2_with_limit(self) -> None:
         prewarm, stage2 = self._run_main(

@@ -49,6 +49,7 @@ from ai_value_scanner.market_calendar import (  # noqa: E402
 from ai_value_scanner.decision.action import map_action_state_v2  # noqa: E402
 from ai_value_scanner.decision.entry import build_entry_quality_v2  # noqa: E402
 from ai_value_scanner.decision.model import QualityDecision, QualityGrade  # noqa: E402
+from ai_value_scanner.reporting.publication import format_list_status, latest_list_status  # noqa: E402
 from ai_value_scanner.scanner import (  # noqa: E402
     AlpacaClient,
     RequestRateLimiter,
@@ -73,21 +74,26 @@ YEAR_SESSIONS = 252
 # ---------------------------------------------------------------------------
 
 
-def load_snapshot(snapshot_root: Path, snapshot_dir: Path | None = None) -> dict:
+def load_snapshot(
+    snapshot_root: Path, snapshot_dir: Path | None = None, *, now_utc: datetime | None = None
+) -> dict:
     """Load the latest production snapshot (or an explicit one)."""
     if snapshot_dir is None:
-        pointer_path = snapshot_root / "latest_production.json"
-        if not pointer_path.is_file():
-            raise FileNotFoundError(
-                f"missing production pointer: {pointer_path}; "
-                "run the daily cron first"
-            )
-        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
-        target = snapshot_root / str(pointer.get("snapshot_dir") or "")
-        decision_date = str(pointer.get("decision_date") or "")
+        publication = latest_list_status(
+            snapshot_root, "production", now_utc or datetime.now(timezone.utc)
+        )
+        pointer = publication["publication"]
+        if pointer is None:
+            message = format_list_status(publication)
+            if publication["status"] == "invalid":
+                raise ValueError(f"{message} · {publication['error']}")
+            raise FileNotFoundError(message)
+        target = snapshot_root / pointer["snapshot_dir"]
+        decision_date = pointer["decision_date"]
     else:
         target = snapshot_dir
         decision_date = target.name
+        publication = None
     decisions_path = target / "decisions.jsonl"
     if not decisions_path.is_file():
         raise FileNotFoundError(f"missing decisions: {decisions_path}")
@@ -115,6 +121,10 @@ def load_snapshot(snapshot_root: Path, snapshot_dir: Path | None = None) -> dict
         "decisions": decisions,
         "action_list": target / "action_list.md",
         "weekly_review": target / "weekly_review.md",
+        "publication_status": (
+            format_list_status(publication)
+            if publication is not None else f"historical snapshot · session={decision_date}"
+        ),
     }
 
 
@@ -667,12 +677,14 @@ def render_markdown(
     market_status: str,
     generated_utc: str,
     baseline_source: str = 'unspecified (legacy snapshot)',
+    publication_status: str | None = None,
 ) -> str:
     lines = [
         f"# Intraday Watch — {generated_utc}",
         "",
         f"- Decision snapshot: `{decision_date}` · Scope: `{scope}` · "
         f"Market: **{market_status}** · Names: {len(rows)}",
+        *([f"- Publication: {publication_status}"] if publication_status else []),
         "- Read-only monitor; official decisions stay daily and immutable.",
         f"- Market data: **IEX intraday**; snapshot baseline: **{baseline_source}**. Shadow estimates may differ across feeds.",
         "",
@@ -796,6 +808,7 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
         f"session={latest_session.isoformat()} generated={generated}",
         flush=True,
     )
+    print(f"[publication] {bundle['publication_status']}", flush=True)
     print(format_table(rows), flush=True)
     if any(row.get("shadow_state") for row in rows):
         print("")
@@ -817,6 +830,7 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
                 market_status=status,
                 generated_utc=generated,
                 baseline_source=baseline_source,
+                publication_status=bundle["publication_status"],
             ),
             encoding="utf-8",
         )

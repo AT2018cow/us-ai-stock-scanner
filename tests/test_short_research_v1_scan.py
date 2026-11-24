@@ -585,6 +585,9 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
+            self.assertNotEqual(off_pointer.pop("manifest_sha256"), on_pointer.pop("manifest_sha256"))
+            self.assertIsNotNone(off_pointer.pop("first_readable_at_utc"))
+            self.assertIsNotNone(on_pointer.pop("first_readable_at_utc"))
             self.assertEqual(off_pointer, on_pointer)
 
     def test_report_revision_preserves_frozen_decisions_and_exports(self) -> None:
@@ -711,6 +714,20 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 self.assertEqual(rerun.decision_output_status, "reused")
                 self.assertEqual(archived.read_bytes(), before)
                 self.assertIn(f"- short research status: {status}", rerun.report_path.read_text())
+
+    def test_invalid_archived_report_fails_before_advancing_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            first = _run_scan(root, enable_short=True)
+            pointer = root / "decisions" / "latest_production.json"
+            before = pointer.read_bytes()
+            archive_root = Path(first.decision_snapshot_root)
+            symbol = _manifest(archive_root)["daily_symbols"][0]
+            report = archive_root / "detailed" / f"{symbol}.md"
+            report.write_text("# Damaged report\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "official snapshot failed validation"):
+                _run_scan(root, enable_short=True, allow_existing=True)
+            self.assertEqual(pointer.read_bytes(), before)
 
     def test_short_csv_serialization_failure_preserves_formal_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as td, patch.object(

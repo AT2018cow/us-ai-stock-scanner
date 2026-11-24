@@ -387,6 +387,7 @@ def write_decision_snapshot(
     short_research: ShortResearchResult | None = None,
     policy_version: str = "v1",
     layout_version: str = "v1",
+    validate_attention_cap: int | None = None,
 ) -> DecisionSnapshotPaths:
     """Write an immutable prospective snapshot with derived Markdown views.
 
@@ -607,6 +608,7 @@ def write_decision_snapshot(
             policy_version=policy_version,
             layout_version=layout_version,
         )
+        manifest["in_list_streaks"] = streaks_by_symbol
         (tmp_root / "run_manifest.json").write_text(
             json.dumps(
                 manifest,
@@ -620,6 +622,11 @@ def write_decision_snapshot(
 
         if short_result.enabled:
             load_short_snapshot(tmp_root, manifest)
+
+        if validate_attention_cap is not None:
+            from ai_value_scanner.validation.decision_snapshot import require_valid_snapshot
+
+            require_valid_snapshot(tmp_root, attention_cap=validate_attention_cap)
 
         # mkdtemp is private while staging; published reports inherit their
         # parent directory's access policy, as the previous mkdir path did.

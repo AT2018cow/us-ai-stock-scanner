@@ -127,12 +127,24 @@ python scripts/run_daily_cron.py --config configs/config.production.json
 
 - **Stage 1（SEC 预热）**：调用 `refresh_sec_cache.run_sec_prewarm(...)`，默认
   `--max-age-hours 4.0`，保证每天抓到 EDGAR 22:00 ET 截止后的最新申报。
-- **Stage 2（全量 MVP v2 扫描）**：紧接着运行 `run_scan(...,
+- **Stage 2（全量 MVP v2 扫描）**：紧接着运行 `run_scan_with_status(...,
   allow_existing_decision_snapshot=True)`，Alpaca 行情强制 1 小时新鲜度
   （`--alpaca-ttl-sec`，默认 `3600`，即使前一晚跑过手工扫描也会重抓盘后
   SIP完整日线），并刷新 `outputs/decisions/latest_<style>.json` 指针。
-- `--limit N` 烟雾测试与 `--skip-scan` 只跑 Stage 1；周末/非交易日重跑会
+- `--limit N` 烟雾测试与 `--skip-scan` 只跑 Stage 1。配置的 `max_symbols` 则执行 Stage 2
+  并写入 `decision_samples/`。周末/非交易日重跑会
   保留已存在的同日期不可变快照。
+
+用下面的命令查看 SIP 名单是否可用，默认为 `production`。
+
+```bash
+python scripts/decision_status.py
+python scripts/decision_status.py --json
+```
+
+状态显示期望交易日、实际发布交易日与首次指针发布时间。盘中以昨日或之前最近一个完整交易日为准。收盘后的 SIP 等待窗口显示 `awaiting_sip`。窗口开放后，如果最新名单仍缺失或落后，命令返回非零；遇到正式运行失败会附上对应原因。盘中监控也会显示相同状态，显式选择的旧快照带历史标签。
+
+定时任务在 `outputs/decisions/publication_attempts/<style>/<mode>/` 保存逐次 JSON 回执，包括预热结果、正式发布结果、开始和结束时间、策略版本、名单身份与 manifest 校验值。正式模式缺少 Alpaca 凭证时会记录失败并返回非零。新 SIP 快照在暂存目录校验通过后才取得正式路径，随后更新指针。回执分别记录 QQQ 缺少完整交易日、快照校验失败和指针写入失败。同日重跑沿用首次指针发布时间，旧指针没有记录时显示未知。读端验证报告与详情页的完整性及 SIP 来源。
 
 `scripts/refresh_sec_cache.py` 是纯 SEC 缓存预热脚本（只刷新
 `cache/` 解析缓存，从不触发扫描、不写报告），适合手工单独预热：

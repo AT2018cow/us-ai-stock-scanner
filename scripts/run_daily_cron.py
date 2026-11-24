@@ -18,8 +18,10 @@ import argparse
 import dataclasses
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
@@ -32,7 +34,13 @@ from refresh_sec_cache import (  # noqa: E402
     log,
     run_sec_prewarm,
 )
-from ai_value_scanner.scanner import run_scan_with_status  # noqa: E402
+from ai_value_scanner.scanner import OfficialPublicationError, run_scan_with_status  # noqa: E402
+from ai_value_scanner.market_data import sip_publication_window  # noqa: E402
+from ai_value_scanner.reporting.publication import (  # noqa: E402
+    read_latest_publication,
+    write_publication_attempt,
+)
+from ai_value_scanner.reporting.snapshot import resolve_git_commit_sha  # noqa: E402
 
 
 def run_daily_scan_after_prewarm(
@@ -44,6 +52,7 @@ def run_daily_scan_after_prewarm(
     skip_scan: bool = False,
     alpaca_ttl_sec: int = 3600,
     scan_fn: Callable[..., Any] | None = None,
+    scan_now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Stage 2 of the unified daily cron: full MVP scan right after prewarm.
 
@@ -77,13 +86,20 @@ def run_daily_scan_after_prewarm(
         alpaca_cache_ttl_bars_sec=min(cfg.alpaca_cache_ttl_bars_sec, alpaca_ttl_sec),
     )
     try:
+        scan_options = {} if scan_now_utc is None else {"freshness_now_utc": scan_now_utc}
         result = (scan_fn or run_scan_with_status)(
             scan_cfg,
             scan_config_path=config_path,
             allow_existing_decision_snapshot=True,
+            **scan_options,
         )
     except Exception as exc:  # noqa: BLE001 - cron must report, not crash
         log(f"ERROR: daily MVP scan failed: {type(exc).__name__}: {exc}")
+        if isinstance(exc, OfficialPublicationError):
+            return {
+                "scan_executed": False, "scan_failed": True,
+                "error": str(exc), "reason_code": exc.reason_code,
+            }
         return {"scan_executed": False, "scan_failed": True, "error": str(exc)}
 
     if hasattr(result, "core_failed"):
@@ -114,6 +130,92 @@ def run_daily_scan_after_prewarm(
     }
 
 
+def _run_attempt(
+    args: argparse.Namespace, cfg: ScanConfig, repo: Path, receipt: dict[str, Any]
+) -> int:
+    user_agent = os.getenv("SEC_USER_AGENT", "").strip()
+    if not user_agent:
+        receipt.update(status="failed", reason_code="missing_sec_user_agent")
+        log("ERROR: SEC_USER_AGENT is required")
+        return 1
+
+    receipt["prewarm_status"] = "running"
+    summary = run_sec_prewarm(
+        cfg,
+        repo=repo,
+        user_agent=user_agent,
+        max_age_hours=args.max_age_hours,
+        limit=args.limit,
+    )
+    blocked = bool(summary["aborted"] or summary["conflicted"])
+    prewarm_failed = bool(summary["failed"] or blocked)
+    receipt["prewarm_status"] = "failed" if prewarm_failed else "succeeded"
+    receipt["prewarm_counts"] = {
+        key: summary[key]
+        for key in ("total", "refreshed", "skipped_valid", "failed", "incomplete")
+        if key in summary
+    }
+    if args.skip_scan or args.limit > 0 or blocked:
+        receipt.update(
+            status="failed" if prewarm_failed else "prewarm_only",
+            reason_code="sec_prewarm_failed" if prewarm_failed else None,
+        )
+        return int(prewarm_failed)
+
+    missing_credentials = [
+        key for key in ("ALPACA_API_ENDPOINT", "ALPACA_API_KEY", "ALPACA_API_SECRET")
+        if not os.getenv(key, "").strip()
+    ]
+    if missing_credentials:
+        receipt.update(status="failed", reason_code="missing_alpaca_credentials")
+        log("ERROR: daily MVP scan requires " + ", ".join(missing_credentials))
+        return 1
+
+    scan_now = datetime.now(timezone.utc)
+    if cfg.official_market_mode == "sip_eod":
+        expected, window = sip_publication_window(scan_now)
+        receipt["expected_session"] = expected.isoformat()
+        if window != "available":
+            receipt.update(status="deferred", reason_code=window)
+            log(f"daily MVP scan deferred: {window}")
+            return int(prewarm_failed)
+
+    result = run_daily_scan_after_prewarm(
+        cfg,
+        config_path=args.config,
+        summary=summary,
+        limit=args.limit,
+        skip_scan=args.skip_scan,
+        alpaca_ttl_sec=args.alpaca_ttl_sec,
+        scan_now_utc=scan_now,
+    )
+    receipt["decision_output_status"] = result.get("decision_output_status")
+    receipt["latest_pointer_status"] = result.get("latest_pointer_status")
+    if result.get("scan_failed") or not result.get("scan_executed"):
+        receipt.update(status="failed", reason_code=result.get("reason_code", "scan_failed"))
+        log(f"ERROR: daily MVP scan failed: {result.get('error') or result.get('reason')}")
+        return 1
+    if (
+        result.get("decision_output_status") not in {"written", "reused"}
+        or result.get("latest_pointer_status") != (
+            "not_applicable" if receipt["mode"] == "smoke" else "written"
+        )
+    ):
+        receipt.update(status="failed", reason_code="missing_scan_artifacts")
+        log("ERROR: daily MVP scan produced no matching decision artifacts")
+        return 1
+
+    if receipt["mode"] == "smoke":
+        receipt["status"] = "sampled"
+        receipt["decision_snapshot_root"] = result.get("decision_snapshot_root")
+    else:
+        receipt["status"] = "reused" if result["decision_output_status"] == "reused" else "published"
+    receipt["reason_code"] = "sec_prewarm_failed" if prewarm_failed else None
+    if result.get("shadow_status") == "failed":
+        log("WARNING: v2 shadow snapshot failed while the main snapshot was published")
+    return int(prewarm_failed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Daily cron: SEC prewarm (Stage 1) + MVP scan (Stage 2)."
@@ -137,9 +239,6 @@ def main() -> None:
 
     repo = Path(__file__).resolve().parents[1]
     load_dotenv(repo / ".env")
-    user_agent = os.getenv("SEC_USER_AGENT", "").strip()
-    if not user_agent:
-        parser.error("SEC_USER_AGENT is required (set it in repo/.env or the cron environment)")
     if not 0 < args.max_age_hours <= 24:
         parser.error("--max-age-hours must be >0 and <=24")
     if not args.alpaca_ttl_sec > 0:
@@ -148,50 +247,68 @@ def main() -> None:
     if cfg.sec_cache_ttl_submissions_sec <= 0:
         parser.error("sec_cache_ttl_submissions_sec must be positive for scan-side parsed-cache reuse")
 
-    # Stage 1: pure SEC prewarm (shared implementation, never scans).
-    summary = run_sec_prewarm(
-        cfg,
-        repo=repo,
-        user_agent=user_agent,
-        max_age_hours=args.max_age_hours,
-        limit=args.limit,
-    )
-    # Stage 2: full MVP scan on the just-warmed SEC cache. Skipped for
-    # smoke-test caps, --skip-scan runs, aborted or conflicted prewarms,
-    # and environments without Alpaca credentials.
-    if not args.skip_scan and not (args.limit and args.limit > 0):
-        if os.getenv("ALPACA_API_KEY", "").strip():
-            scan_res = run_daily_scan_after_prewarm(
-                cfg,
-                config_path=args.config,
-                summary=summary,
-                limit=args.limit,
-                skip_scan=args.skip_scan,
-                alpaca_ttl_sec=args.alpaca_ttl_sec,
-            )
-            if scan_res.get("scan_failed"):
-                # R04: core-artifact failure wins even when the legacy CSV was
-                # produced (scan_executed is True for those runs).
-                log(f"ERROR: daily MVP scan failed: {scan_res.get('error')}")
-                sys.exit(1)
-            elif scan_res.get("scan_executed"):
-                log(
-                    "daily MVP scan finished: "
-                    f"{scan_res.get('output_path')} "
-                    f"(decision={scan_res.get('decision_output_status', 'legacy')} "
-                    f"pointer={scan_res.get('latest_pointer_status', 'n/a')})"
-                )
-                if scan_res.get("shadow_status") == "failed":
-                    log(
-                        "WARNING: v2 shadow snapshot failed while the main "
-                        "snapshot was published (partial outcome)"
-                    )
-            else:
-                log(f"daily MVP scan not executed: {scan_res.get('reason')}")
+    started = datetime.now(timezone.utc)
+    run_id = f"{started:%Y%m%dT%H%M%S%fZ}_{uuid4().hex}"
+    style = cfg.strategy_style or "default"
+    mode = "formal"
+    if args.skip_scan:
+        mode = "prewarm_only"
+    elif args.limit > 0 or cfg.max_symbols is not None:
+        mode = "smoke"
+    root = Path(cfg.output_dir) / "decisions"
+    receipt_path = root / "publication_attempts" / style / mode / f"{run_id}.json"
+    expected_session = None
+    if mode == "formal" and cfg.official_market_mode == "sip_eod":
+        expected_session = sip_publication_window(started)[0].isoformat()
+    receipt = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "mode": mode,
+        "strategy_style": style,
+        "run_code_sha": resolve_git_commit_sha(),
+        "started_at_utc": started.isoformat(),
+        "expected_session": expected_session,
+        "published_session": None,
+        "status": "running",
+        "prewarm_status": "not_attempted",
+    }
+    write_publication_attempt(receipt_path, receipt)
+    try:
+        exit_code = _run_attempt(args, cfg, repo, receipt)
+    except (Exception, SystemExit) as exc:
+        if receipt["prewarm_status"] == "running":
+            receipt["prewarm_status"] = "failed"
+            reason = "sec_prewarm_failed"
         else:
-            log("WARNING: ALPACA_API_KEY not set; skipping Stage 2 daily scan")
-    if summary["failed"] or summary["aborted"] or summary["conflicted"]:
-        sys.exit(1)
+            reason = "cron_exception"
+        receipt.update(status="failed", reason_code=reason, error_type=type(exc).__name__)
+        log(f"ERROR: daily cron failed: {type(exc).__name__}: {exc}")
+        exit_code = 1
+
+    if mode == "formal":
+        try:
+            publication = read_latest_publication(
+                root, style, require_sip=cfg.official_market_mode == "sip_eod"
+            )
+        except (OSError, ValueError):
+            publication = None
+        if publication is not None:
+            receipt.update(published_session=publication["decision_date"], publication=publication)
+        if receipt["status"] in {"published", "reused"} and (
+            publication is None
+            or (
+                cfg.official_market_mode == "sip_eod"
+                and receipt["published_session"] != receipt["expected_session"]
+            )
+        ):
+            receipt.update(status="failed", reason_code="latest_pointer_verification_failed")
+            exit_code = 1
+
+    receipt.update(finished_at_utc=datetime.now(timezone.utc).isoformat(), exit_code=exit_code)
+    write_publication_attempt(receipt_path, receipt)
+    log(f"daily cron {receipt['status']} (exit={exit_code}) receipt={receipt_path}")
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
