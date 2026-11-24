@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from ai_value_scanner import intraday_market
+from ai_value_scanner.market_calendar import is_session_day
 from ai_value_scanner.decision.action import ActionState
 from ai_value_scanner.decision.entry import EntryState
 from ai_value_scanner.decision.model import (
@@ -36,6 +38,7 @@ def _load_script(name: str):
 
 
 rip = _load_script("render_intraday_preview.py")
+NOW = datetime(2026, 11, 5, 15, 0, 10, tzinfo=timezone.utc)
 
 
 def _evidence(code: str, metric: str, value: float) -> dict:
@@ -103,18 +106,16 @@ def _decision(
 
 
 def _flat_bars(close: float = 100.0, sessions: int = 300) -> list[dict]:
-    base = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    return [
-        {
-            "t": (base + timedelta(days=i)).strftime("%Y-%m-%dT00:00:00Z"),
-            "o": close,
-            "h": close,
-            "l": close,
-            "c": close,
-            "v": 1000,
-        }
-        for i in range(sessions)
-    ]
+    day = NOW.date() - timedelta(days=1)
+    result = []
+    while len(result) < sessions:
+        if is_session_day(day):
+            result.append({
+                "t": f"{day.isoformat()}T05:00:00Z",
+                "o": close, "h": close, "l": close, "c": close, "v": 1000,
+            })
+        day -= timedelta(days=1)
+    return list(reversed(result))
 
 
 class FakeClient:
@@ -139,6 +140,15 @@ class FakeClient:
 
     def get_daily_bars(self, symbols, start_iso, chunk_size):
         return {symbol: _flat_bars() for symbol in symbols}
+
+    def get_corporate_action_splits(self, symbols, start_iso, end_iso, *, invalid_events=None):
+        return {}
+
+
+def _fixed_clock():
+    clock = mock.Mock(wraps=datetime)
+    clock.now.return_value = NOW
+    return mock.patch.object(intraday_market, "datetime", clock)
 
 
 class TestDisplayPath(unittest.TestCase):
@@ -212,12 +222,14 @@ class TestStabilitySelection(unittest.TestCase):
 class TestProvisionalBuild(unittest.TestCase):
     def test_uses_current_price_and_stamps_session(self) -> None:
         decision = _decision("AAA")
+        policy = intraday_market.IntradayPolicy()
+        with _fixed_clock():
+            observations = intraday_market.fetch_observations(
+                FakeClient(), ["AAA", "QQQ"], 10, 400, policy
+            )
+        benchmark = intraday_market.build_benchmark(observations["QQQ"], 200)
         provisional, skipped = rip.build_provisional_decisions(
-            [decision],
-            ["AAA"],
-            FakeClient().get_snapshots(["AAA"], 10),
-            FakeClient().get_daily_bars(["AAA"], "2025-01-01", 10),
-            {"return_60d": 0.05, "regime": "up", "trend_ok": True},
+            [decision], ["AAA"], observations, benchmark, policy,
         )
         self.assertEqual(skipped, [])
         self.assertIn("AAA", provisional)
@@ -278,14 +290,15 @@ class TestRenderPreview(unittest.TestCase):
             )
             before = hashlib.sha256(decisions_path.read_bytes()).hexdigest()
             out = Path(tmp) / "out"
-            metadata = rip.render_preview(
-                snapshot_dir=snapshot,
-                output_dir=out,
-                snapshot_root=root,
-                client=FakeClient(),
-                cap=5,
-                top_candidates=5,
-            )
+            with _fixed_clock():
+                metadata = rip.render_preview(
+                    snapshot_dir=snapshot,
+                    output_dir=out,
+                    snapshot_root=root,
+                    client=FakeClient(),
+                    cap=5,
+                    top_candidates=5,
+                )
             after = hashlib.sha256(decisions_path.read_bytes()).hexdigest()
             self.assertEqual(before, after)
             self.assertFalse(metadata["is_official"])
@@ -298,6 +311,8 @@ class TestRenderPreview(unittest.TestCase):
             self.assertIn("IEX intraday", text)
             self.assertIn("baseline:", text)
             self.assertEqual(metadata["provisional_market_data_feed"], "iex")
+            self.assertEqual(metadata["quotes"]["QQQ"]["timestamp"], "2026-11-05T15:00:00+00:00")
+            self.assertEqual(metadata["updated_count"], 3)
             self.assertIn("confirm_1_2_safe_v1", json.dumps(metadata))
 
     def test_streaks_are_computed_only_for_the_daily_list(self) -> None:
@@ -317,7 +332,7 @@ class TestRenderPreview(unittest.TestCase):
                 encoding="utf-8",
             )
             out = Path(tmp) / "out"
-            with mock.patch.object(
+            with _fixed_clock(), mock.patch.object(
                 rip, "compute_in_list_streaks", return_value={}
             ) as streaks:
                 metadata = rip.render_preview(

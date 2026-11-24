@@ -1303,6 +1303,8 @@ python scripts/intraday_watch.py --poll 300 --save
 
 **临时 Entry 影子（默认开启，`--no-shadow` 关闭）**：把当前价当作"临时收盘价"，复用生产 Entry v2 构建器与 Action 映射，对名单重算 Entry State/Score，并列出翻转的门（如 `overextension:PASS→BLOCK`）。Quality 沿用最新快照（基本面不随盘中变化）。该影子**明确是临时/未验证结果，不是决策**，也不会写入任何快照；仅用于盘中判断"如果现在收盘，名单会怎么变"。收起该功能用 `--no-shadow`。完整能力说明与安全边界见 `docs/intraday_watch.md`。
 
+盘中表格同时显示 IEX 价格来源、时间、年龄及不可用原因。涨跌和技术指标使用同一拆股口径。默认只对同一常规交易日内、报价年龄不超过 180 秒且个股与 QQQ 时差不超过 120 秒的观测计算影子。盘中预览使用相同规则。 [盘中报价规则](docs/intraday_watch.md#3-数据与计算)
+
 ## 14. 说明与限制
 
 - 本轮修改与使用影响：[统一使用说明](docs/changes_and_usage_20261106.md)（正式SIP的时间窗口、IEX监控、缓存/旧快照、研究结果与交付范围）。

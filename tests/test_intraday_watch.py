@@ -13,6 +13,14 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
+
+import pandas as pd
+
+from ai_value_scanner import intraday_market as market
+from ai_value_scanner.decision import build_stock_decisions
+from ai_value_scanner.market_calendar import is_session_day
+from ai_value_scanner.scanner import AlpacaClient
 from pathlib import Path
 
 
@@ -30,6 +38,9 @@ def _load_script(name: str):
 
 
 iw = _load_script("intraday_watch.py")
+preview = _load_script("render_intraday_preview.py")
+NOW = datetime(2026, 11, 24, 16, 0, tzinfo=timezone.utc)
+POLICY = market.IntradayPolicy()
 
 
 def _decision(symbol, priority, action="PRIORITY_REVIEW", risks=None):
@@ -47,37 +58,44 @@ def _decision(symbol, priority, action="PRIORITY_REVIEW", risks=None):
 
 
 def _flat_bars(close=100.0, high=100.0, low=100.0, sessions=250):
-    base = datetime.now(timezone.utc) - timedelta(days=320)
-    return [
-        {
-            "t": (base + timedelta(days=i)).strftime("%Y-%m-%dT00:00:00Z"),
-            "o": close,
-            "h": high,
-            "l": low,
-            "c": close,
-            "v": 1000,
-        }
-        for i in range(sessions)
-    ]
+    before = NOW.date() - timedelta(days=1)
+    result = []
+    while len(result) < sessions:
+        if is_session_day(before):
+            result.append({
+                "t": f"{before.isoformat()}T05:00:00Z",
+                "o": close, "h": high, "l": low, "c": close, "v": 1000,
+            })
+        before -= timedelta(days=1)
+    return list(reversed(result))
+
+
+def _snapshot(price=100.0, *, age=5, session_open=100.0):
+    return {
+        "latestTrade": {"p": price, "t": (NOW - timedelta(seconds=age)).isoformat()},
+        "dailyBar": {
+            "t": "2026-11-24T05:00:00Z", "o": session_open, "h": max(price, session_open),
+            "l": min(price, session_open), "c": session_open, "v": 1000,
+        },
+    }
+
+
+def _observation(snapshot=None, bars=None, splits=(), now=NOW):
+    return market.prepare_observation(
+        snapshot if snapshot is not None else _snapshot(), bars if bars is not None else _flat_bars(),
+        splits, received_at=now, now=now, policy=POLICY,
+    )
 
 
 class FakeClient:
-    def __init__(self, price=95.0, prev_close=105.0, bars=None):
-        self.price = price
-        self.prev_close = prev_close
-        self.bars = bars if bars is not None else _flat_bars()
-
     def get_snapshots(self, symbols, chunk_size):
-        return {
-            s: {
-                "latestTrade": {"p": self.price},
-                "prevDailyBar": {"c": self.prev_close},
-            }
-            for s in symbols
-        }
+        return {symbol: _snapshot() for symbol in symbols}
 
     def get_daily_bars(self, symbols, start_iso, chunk_size):
-        return {s: list(self.bars) for s in symbols}
+        return {symbol: _flat_bars() for symbol in symbols}
+
+    def get_corporate_action_splits(self, symbols, start_iso, end_iso, *, invalid_events=None):
+        return {}
 
 
 class TestSymbolScopes(unittest.TestCase):
@@ -130,138 +148,232 @@ class TestSymbolScopes(unittest.TestCase):
         self.assertEqual(symbols, ["ADI", "CTAS", "MSFT"])
 
 
-class TestRowComputation(unittest.TestCase):
-    def test_flags_for_below_and_crossed_levels(self) -> None:
-        row = iw.compute_row(
-            "ADI",
-            _decision("ADI", 1),
-            {
-                "latestTrade": {"p": 95.0},
-                "prevDailyBar": {"c": 105.0},
-            },
-            _flat_bars(),
-            latest_session=(datetime.now(timezone.utc) - timedelta(days=1)).date(),
-        )
-        self.assertAlmostEqual(row["price"], 95.0)
-        self.assertAlmostEqual(row["pct_change"], 95.0 / 105.0 - 1.0)
-        self.assertAlmostEqual(row["vs50"], -0.05)
-        self.assertAlmostEqual(row["vs200"], -0.05)
-        self.assertIn("S50↓", row["flags"])
-        self.assertIn("S50✖", row["flags"])
-        self.assertIn("S200↓", row["flags"])
-        self.assertIn("S200✖", row["flags"])
-        self.assertIn("MOVE", row["flags"])
-        self.assertIn("LO", row["flags"])
+class TestQuoteSelection(unittest.TestCase):
+    def test_fresh_trade_beats_completed_minute_that_failed_age_gate(self):
+        now = datetime(2026, 11, 24, 16, 2, 30, tzinfo=timezone.utc)
+        snapshot = _snapshot(109, age=15)
+        snapshot["minuteBar"] = {"c": 110, "t": "2026-11-24T15:59:00Z"}
+        obs = _observation(snapshot, now=now)
+        self.assertEqual(obs.quote_status, "fresh")
+        self.assertEqual((obs.quote.source, obs.quote.price), ("latestTrade", 109))
 
-    def test_extended_and_near_high_flags(self) -> None:
-        row = iw.compute_row(
-            "ADI",
-            _decision("ADI", 1),
-            {"latestTrade": {"p": 165.0}, "prevDailyBar": {"c": 160.0}},
-            _flat_bars(close=100.0, high=100.0, low=100.0),
-            latest_session=(datetime.now(timezone.utc) - timedelta(days=1)).date(),
-        )
+    def test_new_minute_keeps_its_own_price_and_interval(self):
+        snapshot = _snapshot()
+        snapshot["latestTrade"] = {"p": 100, "t": "2026-11-23T20:59:00Z"}
+        snapshot["minuteBar"] = {"c": 110, "t": "2026-11-24T15:59:00Z"}
+        obs = _observation(snapshot)
+        self.assertEqual(obs.quote.price, 110)
+        self.assertEqual(obs.quote.source, "minuteBar")
+        self.assertEqual(obs.quote.session.isoformat(), "2026-11-24")
+        self.assertEqual(obs.quote.timestamp.isoformat(), "2026-11-24T15:59:00+00:00")
+        self.assertEqual(obs.quote.interval_end, NOW)
+        self.assertEqual(obs.provisional_bars[-1]["c"], 110)
+
+    def test_latest_valid_trade_wins_when_after_a_completed_minute(self):
+        snapshot = _snapshot(109)
+        snapshot["minuteBar"] = {"c": 110, "t": "2026-11-24T15:58:00Z"}
+        self.assertEqual(_observation(snapshot).quote.source, "latestTrade")
+
+    def test_prior_session_and_stale_quote_have_no_price_signals(self):
+        previous = _snapshot()
+        previous["latestTrade"]["t"] = "2026-11-23T20:59:00Z"
+        for snapshot, reason in ((previous, "prior_session_quote"), (_snapshot(age=300), "stale_quote")):
+            with self.subTest(reason=reason):
+                row = iw.compute_row("ADI", None, _observation(snapshot))
+                self.assertEqual(row["quote_status"], reason)
+                self.assertIsNone(row["pct_change"])
+                self.assertEqual(row["flags"], [])
+
+    def test_future_and_missing_timestamps_are_distinguished(self):
+        for trade, status in (
+            ({"p": 500, "t": "2026-11-24T16:00:01Z"}, "future_quote"),
+            ({"p": 500}, "missing_quote_timestamp"),
+            ({"p": 500, "t": "2026-11-24T15:59:55"}, "missing_quote_timestamp"),
+        ):
+            with self.subTest(status=status):
+                obs = _observation({"latestTrade": trade})
+                self.assertIsNone(obs.quote)
+                self.assertEqual(obs.quote_status, status)
+
+    def test_daily_denotes_session_and_has_no_quote_age(self):
+        obs = _observation({"dailyBar": _snapshot()["dailyBar"]})
+        row = iw.compute_row("ADI", None, obs)
+        self.assertEqual(row["price"], 100)
+        self.assertEqual(row["quote_status"], "daily_price_without_tick_time")
+        self.assertIsNone(row["quote_age_seconds"])
+
+    def test_pre_post_and_half_day_periods(self):
+        for when, status in (
+            ("2026-11-24T14:00:00+00:00", "pre_market"),
+            ("2026-11-24T21:00:00+00:00", "post_market"),
+            ("2026-11-27T18:00:00+00:00", "post_market"),
+            ("2026-11-28T16:00:00+00:00", "market_closed"),
+        ):
+            with self.subTest(when=when):
+                self.assertEqual(market.market_period(datetime.fromisoformat(when)), status)
+
+
+class TestRowComputation(unittest.TestCase):
+    def test_flags_for_below_and_crossed_levels(self):
+        bars = _flat_bars()
+        bars[-1].update(c=105.0, h=105.0)
+        row = iw.compute_row("ADI", _decision("ADI", 1), _observation(_snapshot(90.0), bars))
+        self.assertAlmostEqual(row["price"], 90)
+        self.assertAlmostEqual(row["pct_change"], 90.0 / 105.0 - 1.0)
+        self.assertAlmostEqual(row["vs50"], 90.0 / 100.1 - 1.0)
+        for flag in ("S50↓", "S50✖", "S200↓", "S200✖", "MOVE", "LO"):
+            self.assertIn(flag, row["flags"])
+
+    def test_extended_and_near_high_flags(self):
+        row = iw.compute_row("ADI", _decision("ADI", 1), _observation(_snapshot(165.0)))
         self.assertIn("EXT", row["flags"])
         self.assertIn("HI", row["flags"])
-        self.assertNotIn("S200↓", row["flags"])
 
-    def test_missing_snapshot_and_bars_are_safe(self) -> None:
-        row = iw.compute_row("ADI", None, None, None, latest_session=datetime.now(timezone.utc).date())
+    def test_missing_snapshot_and_bars_are_safe(self):
+        row = iw.compute_row("ADI", None, _observation({}, []))
         self.assertIsNone(row["price"])
         self.assertEqual(row["flags"], [])
 
-    def test_pre_earnings_carried_from_decision(self) -> None:
-        row = iw.compute_row(
-            "ADI",
-            _decision(
-                "ADI",
-                1,
-                risks=[{"code": "pre_earnings_window_risk", "message": "x"}],
-            ),
-            {"latestTrade": {"p": 100.0}, "prevDailyBar": {"c": 100.0}},
-            _flat_bars(),
-            latest_session=(datetime.now(timezone.utc) - timedelta(days=1)).date(),
-        )
-        self.assertIn("PE", row["flags"])
+    def test_pre_earnings_carried_from_decision(self):
+        decision = _decision("ADI", 1, risks=[{"code": "pre_earnings_window_risk"}])
+        self.assertIn("PE", iw.compute_row("ADI", decision, _observation())["flags"])
+
+    def test_forward_and_reverse_splits_preserve_returns_and_raw_input(self):
+        for factor in (0.5, 2):
+            with self.subTest(factor=factor):
+                bars = _flat_bars()
+                obs = _observation(_snapshot(100 * factor, session_open=100 * factor), bars, [
+                    ("2026-11-24", factor), ("2026-11-24", factor), ("2026-12-01", 0.1)
+                ])
+                row = iw.compute_row("ADI", None, obs)
+                self.assertEqual(row["pct_change"], 0)
+                self.assertEqual(row["ret60"], 0)
+                self.assertEqual(row["vs50"], 0)
+                self.assertNotIn("MOVE", row["flags"])
+                self.assertEqual(obs.completed_bars[-1]["v"], 1000 / factor)
+                self.assertEqual(bars[-1]["c"], 100)
+                self.assertEqual(bars[-1]["v"], 1000)
+
+    def test_split_fetch_failure_keeps_quote_only(self):
+        obs = _observation(_snapshot(50), splits=None)
+        row = iw.compute_row("ADI", None, obs)
+        self.assertEqual(row["price"], 50)
+        self.assertIsNone(row["pct_change"])
+        self.assertEqual(row["history_issue"], "split_data_unavailable")
+
+    def test_previous_bar_uses_exact_session_and_is_split_adjusted(self):
+        snapshot = _snapshot(50, session_open=50)
+        snapshot["prevDailyBar"] = {**_flat_bars(sessions=1)[0]}
+        obs = _observation(snapshot, [], [("2026-11-24", 0.5)])
+        self.assertEqual(iw.compute_row("ADI", None, obs)["pct_change"], 0)
+        snapshot["prevDailyBar"]["t"] = "2026-11-21T05:00:00Z"
+        obs = _observation(snapshot, [])
+        self.assertEqual(obs.history_issue, "previous_session_bar_missing")
+
+
+class TestFetchObservations(unittest.TestCase):
+    def test_split_query_uses_processing_window_and_parser_preserves_invalid_records(self):
+        class Client(FakeClient):
+            data_endpoint = "http://fixture"
+            get_corporate_action_splits = AlpacaClient.get_corporate_action_splits
+
+            def get_snapshots(self, symbols, chunk_size):
+                return {symbol: _snapshot(50, session_open=50) for symbol in symbols}
+
+            def _get(self, url, params):
+                self.params = params
+                records = [
+                    {"symbol": "GOOD", "ex_date": "2026-11-24", "old_rate": 1, "new_rate": 2},
+                    {"symbol": "GOOD", "ex_date": "2026-11-26", "old_rate": None, "new_rate": 5},
+                    {"symbol": "BAD", "ex_date": "2026-11-24", "old_rate": None, "new_rate": 2},
+                    {"symbol": "UNKNOWN", "old_rate": 1, "new_rate": 2},
+                ]
+                data = records if params["end"] >= "2026-11-25" else []
+                return Mock(json=Mock(return_value={"corporate_actions": {"forward_splits": data}}))
+
+        client = Client()
+        clock = Mock(wraps=datetime)
+        clock.now.return_value = NOW
+        with patch.object(market, "datetime", clock):
+            observations = market.fetch_observations(client, ["GOOD", "BAD", "UNKNOWN"], 10, 400, POLICY)
+        self.assertEqual(client.params["end"], "2026-12-24")
+        self.assertEqual(client.params["data_quality"], "all")
+        self.assertEqual(iw.compute_row("GOOD", None, observations["GOOD"])["pct_change"], 0)
+        for symbol in ("BAD", "UNKNOWN"):
+            row = iw.compute_row(symbol, None, observations[symbol])
+            self.assertIsNone(row["pct_change"])
+            self.assertEqual(row["history_issue"], "invalid_split_event")
+            self.assertNotIn("MOVE", row["flags"])
+
+    def test_each_batch_has_its_own_receipt_time(self):
+        class Client(FakeClient):
+            def get_snapshots(self, symbols, chunk_size):
+                return {
+                    symbol: {"latestTrade": {"p": 105, "t": "2026-11-24T16:00:05Z"}}
+                    for symbol in symbols
+                }
+
+        clock = Mock(wraps=datetime)
+        clock.now.side_effect = [NOW, NOW + timedelta(seconds=10), NOW + timedelta(seconds=15)]
+        with patch.object(market, "datetime", clock):
+            observations = market.fetch_observations(Client(), ["FIRST", "SECOND"], 1, 400, POLICY)
+        self.assertEqual(observations["FIRST"].quote_status, "future_quote")
+        self.assertEqual(observations["SECOND"].quote_status, "fresh")
+        self.assertEqual(observations["SECOND"].quote.received_at, NOW + timedelta(seconds=10))
 
 
 class TestShadowReestimation(unittest.TestCase):
-    def test_provisional_series_replaces_same_session_bar(self) -> None:
-        bars = [
-            {"t": "2026-10-18T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 100, "v": 1},
-            {"t": "2026-10-19T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 101, "v": 1},
-            {"t": "2026-10-20T20:00:00Z", "o": 1, "h": 1, "l": 1, "c": 102, "v": 1},
-        ]
-        snapshot = {
-            "latestTrade": {"p": 103, "t": "2026-10-20T20:00:00Z"},
-            "dailyBar": {
-                "o": 101, "h": 104, "l": 100, "c": 103, "v": 5,
-                "t": "2026-10-20T20:00:00Z",
-            },
-        }
-        price, series, snapshot_date = iw._provisional_series(bars, snapshot)
-        self.assertAlmostEqual(price, 103)
-        self.assertEqual(snapshot_date.isoformat(), "2026-10-20")
-        self.assertEqual(len(series), 3)  # replaced, not appended
-        self.assertTrue(series[-1].get("provisional"))
-        self.assertAlmostEqual(series[-1]["c"], 103)
+    def test_provisional_series_replaces_incomplete_daily_bar(self):
+        snapshot = _snapshot(120)
+        obs = _observation(snapshot, [*_flat_bars(), snapshot["dailyBar"]])
+        self.assertEqual(len(obs.provisional_bars), len(obs.completed_bars) + 1)
+        self.assertEqual(obs.provisional_bars[-1]["c"], 120)
+        self.assertEqual(obs.provisional_bars[-1]["t"], "2026-11-24")
 
-    def _qqq_context(self):
-        bars = _flat_bars(close=100.0, high=100.0, low=100.0)
-        snapshot = {
-            "latestTrade": {"p": 100, "t": "2026-10-20T20:00:00Z"},
-            "dailyBar": {"o": 100, "h": 100, "l": 100, "c": 100, "v": 1,
-                         "t": "2026-10-20T20:00:00Z"},
-        }
-        import types
-        config = types.SimpleNamespace(benchmark_trend_filter_sma_days=200)
-        return iw._qqq_context(snapshot, bars, config)
-
-    def test_compute_shadow_reports_state_for_healthy_and_crash(self) -> None:
+    def test_compute_shadow_reports_state_for_healthy_and_crash(self):
         decision = _decision("ADI", 1)
-        qqq = self._qqq_context()
-        self.assertIsNotNone(qqq)
-        bars = _flat_bars(close=100.0, high=100.0, low=100.0)
-        healthy = {
-            "latestTrade": {"p": 120, "t": "2026-10-20T20:00:00Z"},
-            "prevDailyBar": {"c": 118},
-            "dailyBar": {"o": 118, "h": 121, "l": 117, "c": 120, "v": 5,
-                         "t": "2026-10-20T20:00:00Z"},
-        }
-        crash = {
-            "latestTrade": {"p": 70, "t": "2026-10-20T20:00:00Z"},
-            "prevDailyBar": {"c": 118},
-            "dailyBar": {"o": 118, "h": 118, "l": 69, "c": 70, "v": 9,
-                         "t": "2026-10-20T20:00:00Z"},
-        }
-        healthy_row = iw.compute_shadow("ADI", decision, healthy, bars, qqq, None)
-        crash_row = iw.compute_shadow("ADI", decision, crash, bars, qqq, None)
-        self.assertIsNotNone(healthy_row)
-        self.assertIsNotNone(crash_row)
-        self.assertIn("shadow_state", healthy_row)
-        self.assertNotEqual(healthy_row["shadow_state"], "ENTRY_READY")
-        self.assertNotEqual(crash_row["shadow_state"], "ENTRY_READY")
-        self.assertLess(crash_row["shadow_score"], healthy_row["shadow_score"])
+        benchmark = market.build_benchmark(_observation(), 200)
+        healthy = iw.compute_shadow(decision, _observation(_snapshot(105)), benchmark, POLICY)
+        crash = iw.compute_shadow(decision, _observation(_snapshot(70)), benchmark, POLICY)
+        self.assertIn("shadow_state", healthy)
+        self.assertIn("shadow_state", crash)
+        self.assertLess(crash["shadow_score"], healthy["shadow_score"])
 
-    def test_compute_shadow_requires_decision_and_benchmark(self) -> None:
-        qqq = self._qqq_context()
+    def test_shadow_suppresses_cross_session_and_over_limit_skew(self):
+        qqq = _snapshot()
+        qqq["latestTrade"]["t"] = "2026-11-23T20:59:00Z"
+        for snap, reason in (
+            (qqq, "qqq_prior_session_quote"), (_snapshot(age=171), "benchmark_quote_skew"),
+            ({}, "qqq_no_regular_session_price"),
+        ):
+            with self.subTest(reason=reason):
+                benchmark = market.build_benchmark(_observation(snap), 200)
+                result = iw.compute_shadow(_decision("ADI", 1), _observation(), benchmark, POLICY)
+                self.assertEqual(result, {"shadow_reason": reason})
+
+    def test_qqq_history_gap_suppresses_shadow(self):
         bars = _flat_bars()
-        snapshot = {"latestTrade": {"p": 100, "t": "2026-10-20T20:00:00Z"}}
-        self.assertIsNone(iw.compute_shadow("ADI", None, snapshot, bars, qqq, None))
-        self.assertIsNone(
-            iw.compute_shadow("ADI", _decision("ADI", 1), snapshot, bars, None, None)
+        del bars[-21]
+        benchmark = market.build_benchmark(_observation(bars=bars), 200)
+        result = iw.compute_shadow(_decision("ADI", 1), _observation(), benchmark, POLICY)
+        self.assertEqual(result, {"shadow_reason": "qqq_history_incomplete"})
+
+    def test_preview_uses_same_skew_gate_as_monitor(self):
+        decisions = build_stock_decisions(
+            pd.DataFrame([{"symbol": "ADI", "market_asof": "2026-11-23"}]),
+            decision_date="2026-11-23", generated_at_utc=NOW.isoformat(), policy_version="v2",
         )
+        benchmark = market.build_benchmark(_observation(_snapshot(age=171)), 200)
+        updated, skipped = preview.build_provisional_decisions(
+            decisions, ["ADI"], {"ADI": _observation()}, benchmark, POLICY
+        )
+        self.assertFalse(updated)
+        self.assertEqual(skipped, ["ADI:benchmark_quote_skew"])
 
 
 class TestRenderingAndRunner(unittest.TestCase):
     def test_render_markdown_contains_rows(self) -> None:
-        row = iw.compute_row(
-            "ADI",
-            _decision("ADI", 1),
-            {"latestTrade": {"p": 95.0}, "prevDailyBar": {"c": 105.0}},
-            _flat_bars(),
-            latest_session=(datetime.now(timezone.utc) - timedelta(days=1)).date(),
-        )
+        row = iw.compute_row("ADI", _decision("ADI", 1), _observation(_snapshot(95)))
         text = iw.render_markdown(
             [row],
             decision_date="2026-10-19",
@@ -295,12 +407,17 @@ class TestRenderingAndRunner(unittest.TestCase):
                     "--config", "configs/config.production.json",
                 ]
             )
-            rows = iw.run_once(args, client=FakeClient())
+            test_clock = Mock(wraps=datetime)
+            test_clock.now.return_value = NOW
+            with patch.object(market, "datetime", test_clock):
+                rows = iw.run_once(args, client=FakeClient())
             self.assertEqual([r["symbol"] for r in rows], ["ADI", "CTAS"])
             self.assertTrue(out.is_file())
             self.assertIn("Publication: historical snapshot", out.read_text(encoding="utf-8"))
             after = {p.name for p in snapshot.iterdir()}
             self.assertEqual(before, after)
+            self.assertTrue(all(row["quote_status"] == "fresh" for row in rows))
+            self.assertTrue(all("shadow_state" in row for row in rows))
             self.assertFalse((snapshot / "latest_production.json").exists())
 
     def test_session_status_closed_on_weekend(self) -> None:

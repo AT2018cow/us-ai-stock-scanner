@@ -28,15 +28,16 @@
 
 ## 3. 数据与计算
 
-- 数据源：Alpaca snapshots（`latestTrade` / `minuteBar` / `dailyBar` / `prevDailyBar`）+ 日线（400 天回看）；固定IEX feed，不受.env中ALPACA_FEED覆盖；
+- 监控读取 Alpaca IEX 的逐笔成交、分钟线、日线和拆股记录，日线回看 400 天。报价始终携带自己的来源、时间和美东交易日。分钟线以区间起点标记，按完整分钟选择，并按最保守的时间边界计算年龄与个股/QQQ 时差。日线时间戳只标识交易日，只有日线价格时可展示参考价。
 - 正式生产名单来自SIP完整日线。监控终端/Markdown分别标记IEX临时行情和实际快照来源；旧快照没有来源证据时不推断为SIP。显式snapshot目录的日期从决策记录读取；
 - **缓存强制关闭**（`cache_enabled=False`）：避免生产配置 6 小时 TTL 在盘中返回旧价；
-- 价格层：现价、Δ%、vs SMA50/SMA200、52 周回撤/位置、20d/60d 收益；
+- 监控与盘中预览共用 `iex_observation_v2` 规则。每个请求批次记录自己的接收时间，先在同日且未过期的候选价格中选择。默认报价年龄上限 180 秒，个股与 QQQ 最大时差 120 秒，可用 `--max-quote-age-sec` 与 `--max-quote-skew-sec` 调整。盘前、盘后及休市时显示时段和最近有效的参考价格。报价停留在前一交易日、无成交、过期或无可信时戳时，停止价格信号。停牌期间没有新成交时采用同样的过期判断，具体停牌原因需由行情源另行确认。
+- 涨跌、均线、回撤和历史成交量统一换算为当前报价交易日的股数口径。一拆二后，昨收 100 与今日 50 对应 0% 涨跌。公司行动无法取回时，保留原始报价并标明拆股资料不可用。缺少上一完整交易日时，涨跌显示不可用。
+- 拆股请求的处理日期上限延至当日后 30 个日历日，随后按报价交易日截断实际生效日期。已生效的拆股记录若缺少有效比例，或记录缺少可信生效日期，该股票的历史比较和影子暂停。 [Alpaca 公司行动接口](https://docs.alpaca.markets/us/reference/corporateactions-1)
 - 告警标记：`S50↓`（跌破 SMA50）、`S50✖`（当日下穿）、`S200↓`/`S200✖`、`EXT`（偏离 SMA200 >60%）、`HI`（距 52 周高 ≤3%）、`LO`（52 周低位）、`MOVE`（单日 |涨跌| ≥3%）、`PE`（财报窗口）；
-- 影子层（Phase 2）：把当前价当作临时收盘价，替换当日未完成日线；复用生产
-  `build_entry_quality_v2` 与 `map_action_state_v2`；Quality 沿用最新快照；QQQ 提供
-  regime / trend filter / RS60；输出 `E official → E shadow`、Δscore、Action 变化与翻转的门
-  （如 `overextension:PASS→BLOCK`）。
+- 影子层把当前价作为临时收盘价，替换当日未完成日线，复用生产 Entry 和 Action 规则。个股与 QQQ 的观测须同日、未过期、时差合格，且有足够的拆股一致历史。条件通过时才展示 Entry、Action 和门槛变化。其他情况展示对应原因。
+
+2026-11-24 16:12 UTC 使用 AAPL、MSFT 与 QQQ 做真实 IEX 只读验证。两只个股使用逐笔成交，报价年龄约 1 和 4 秒。QQQ 使用分钟线，按区间起点计算约 71 秒。两只个股均生成影子结果，报告写入临时目录。运行前后的正式指针和 39 个归档文件通过 SHA256 比对。拆股与停牌无成交的边界由离线样例覆盖。 [Alpaca 行情时间戳说明](https://docs.alpaca.markets/us/docs/market-data-faq)
 
 ## 4. 安全边界（硬约束）
 
@@ -111,6 +112,7 @@ python scripts/render_intraday_preview.py
 
 - 默认读取 `outputs/decisions/latest_production.json` 指向的官方快照；
 - 用当前盘中价重算 Entry，再映射 Action、重排 Priority；
+- 盘中预览沿用监控的报价时效和拆股规则。报告列出已重估和沿用冻结值的数量，manifest 记录报价和跳过原因。
 - 套用 `S2_confirm_1_2_safe`（`confirm_1_2_safe_v1`），输出 `[NEW]` / `[LIST Nd]` / `[LIST Nd · GRACE 1/2]`；
 - 写入 `outputs/preview_intraday_<YYYY-MM-DD>/`，包含 `action_list_v2.md`、`weekly_review_v2.md`、`detailed_v2/`、`preview_manifest.json`；
 - 报告首行明确标注 `PROVISIONAL INTRADAY PREVIEW`，不更新 `latest_production.json`，不写 `outputs/decisions/`。

@@ -1069,28 +1069,33 @@ class AlpacaClient:
         return data.get("news", data if isinstance(data, list) else [])
 
     def get_corporate_action_splits(
-        self, symbols: list[str], start_iso: str, end_iso: str | None = None
+        self, symbols: list[str], start_iso: str, end_iso: str | None = None,
+        *, invalid_events: dict[str, list[str]] | None = None,
     ) -> dict[str, list[tuple[str, float]]]:
         """Authoritative forward/reverse split events: {symbol: [(ex_date, price_mult)]}.
 
         price_mult = old_rate / new_rate (a 10:1 forward split -> 0.1): raw
         pre-split prices are multiplied by this factor to land in adjusted
-        price space. Raises on network errors; callers fail open to raw bars.
+        price space. When supplied, invalid_events receives each affected
+        symbol and the invalid record's ex-date, or an empty string if unknown.
         """
         if not symbols:
             return {}
         url = f"{self.data_endpoint}/v1/corporate-actions"
+        requested = {str(symbol).upper() for symbol in symbols}
         events: dict[str, list[tuple[str, float]]] = {}
         page_token: str | None = None
         while True:
             params: dict[str, Any] = {
-                "symbols": ",".join(sorted({str(s).upper() for s in symbols})),
+                "symbols": ",".join(sorted(requested)),
                 "types": "forward_split,reverse_split",
                 "start": str(start_iso)[:10],
                 "limit": 500,
             }
             if end_iso:
                 params["end"] = str(end_iso)[:10]
+            if invalid_events is not None:
+                params["data_quality"] = "all"
             if page_token:
                 params["page_token"] = page_token
             resp = self._get(url, params=params)
@@ -1099,12 +1104,20 @@ class AlpacaClient:
             for item in list(actions.get("forward_splits") or []) + list(actions.get("reverse_splits") or []):
                 sym = str(item.get("symbol") or "").upper()
                 ex_date = str(item.get("ex_date") or "")
-                try:
-                    mult = float(item.get("old_rate")) / float(item.get("new_rate"))
-                except (TypeError, ValueError, ZeroDivisionError):
+                if sym not in requested:
                     continue
-                if sym and ex_date and np.isfinite(mult) and mult > 0:
-                    events.setdefault(sym, []).append((ex_date, mult))
+                known_date = ""
+                try:
+                    known_date = date_module.fromisoformat(ex_date).isoformat()
+                    old_rate, new_rate = float(item.get("old_rate")), float(item.get("new_rate"))
+                    mult = old_rate / new_rate
+                    if old_rate <= 0 or new_rate <= 0 or not np.isfinite(mult) or mult <= 0:
+                        raise ValueError("invalid split ratio")
+                except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+                    if invalid_events is not None:
+                        invalid_events.setdefault(sym, []).append(known_date)
+                else:
+                    events.setdefault(sym, []).append((known_date, mult))
             page_token = payload.get("next_page_token")
             if not page_token:
                 break

@@ -30,9 +30,8 @@ import json
 import re
 import sys
 import time
-from datetime import date, datetime, time as dtime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -41,13 +40,19 @@ if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from ai_value_scanner.config import load_config  # noqa: E402
-from ai_value_scanner.market_calendar import (  # noqa: E402
-    is_session_day,
-    latest_completed_session,
-    session_close_utc,
+from ai_value_scanner.market_calendar import latest_completed_session  # noqa: E402
+from ai_value_scanner.intraday_market import (  # noqa: E402
+    INTRADAY_DATA_VERSION,
+    IntradayBenchmark,
+    IntradayObservation,
+    IntradayPolicy,
+    build_benchmark,
+    build_provisional_entry,
+    fetch_observations,
+    market_period,
+    positive,
 )
 from ai_value_scanner.decision.action import map_action_state_v2  # noqa: E402
-from ai_value_scanner.decision.entry import build_entry_quality_v2  # noqa: E402
 from ai_value_scanner.decision.model import QualityDecision, QualityGrade  # noqa: E402
 from ai_value_scanner.reporting.publication import format_list_status, latest_list_status  # noqa: E402
 from ai_value_scanner.scanner import (  # noqa: E402
@@ -57,7 +62,6 @@ from ai_value_scanner.scanner import (  # noqa: E402
     price_dimension_from_bars,
 )
 
-ET = ZoneInfo("America/New_York")
 DEFAULT_CONFIG = "configs/config.production.json"
 DEFAULT_SNAPSHOT_ROOT = REPO_ROOT / "outputs" / "decisions"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "outputs" / "intraday"
@@ -231,144 +235,19 @@ def build_alpaca_client(config) -> AlpacaClient:
     )
 
 
-def _parse_ts(value: str) -> datetime | None:
-    if not value:
-        return None
-    text = str(value).replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-def _bar_et_date(row: dict) -> date | None:
-    parsed = _parse_ts(str(row.get("t") or ""))
-    return parsed.astimezone(ET).date() if parsed else None
-
-
 def _finite(value) -> float | None:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return number if number == number and abs(number) != float("inf") else None
 
 
-def _mean(values: list[float]) -> float | None:
-    return sum(values) / len(values) if values else None
-
-
 def _session_status(now_utc: datetime) -> str:
-    now_et = now_utc.astimezone(ET)
-    today = now_et.date()
-    if not is_session_day(today):
-        return "closed (weekend/holiday)"
-    open_dt = datetime.combine(today, dtime(9, 30), tzinfo=ET)
-    close_dt = session_close_utc(today).astimezone(ET)
-    if open_dt <= now_et < close_dt:
-        return "open"
-    if now_et < open_dt:
-        return "pre-market"
-    return "closed"
-
-
-def _snapshot_price(snapshot: dict | None) -> float | None:
-    snapshot = snapshot or {}
-    trade = snapshot.get("latestTrade") or {}
-    minute = snapshot.get("minuteBar") or {}
-    daily = snapshot.get("dailyBar") or {}
-    return (
-        _finite(trade.get("p"))
-        or _finite(minute.get("c"))
-        or _finite(daily.get("c"))
-    )
-
-
-def _snapshot_et_date(snapshot: dict | None) -> date | None:
-    """Latest ET date present in a snapshot (daily bar / trade / minute bar)."""
-    if not snapshot:
-        return None
-    dates: list[date] = []
-    for key in ("dailyBar", "latestTrade", "minuteBar"):
-        item = snapshot.get(key) or {}
-        parsed = _parse_ts(str(item.get("t") or ""))
-        if parsed is not None:
-            dates.append(parsed.astimezone(ET).date())
-    return max(dates) if dates else None
-
-
-def _provisional_series(
-    bars: list[dict] | None, snapshot: dict | None
-) -> tuple[float | None, list[dict], date | None]:
-    """Completed bars plus a snapshot-derived provisional bar for its session.
-
-    Any existing bar for the snapshot's session is replaced, so a partially
-    updating daily bar cannot be double-counted.
-    """
-    price = _snapshot_price(snapshot)
-    snapshot_date = _snapshot_et_date(snapshot)
-    ordered = [
-        b for b in sorted(bars or [], key=lambda b: str(b.get("t") or ""))
-        if isinstance(b, dict)
-    ]
-    if snapshot_date is None:
-        return price, ordered, None
-    series = [b for b in ordered if _bar_et_date(b) != snapshot_date]
-    last_date = _bar_et_date(series[-1]) if series else None
-    if last_date is not None and snapshot_date < last_date:
-        return price, ordered, snapshot_date
-    if price is None:
-        return price, series, snapshot_date
-    daily = snapshot.get("dailyBar") or {}
-    open_ = _finite(daily.get("o")) or price
-    high = _finite(daily.get("h")) or price
-    low = _finite(daily.get("l")) or price
-    close = _finite(daily.get("c")) or price
-    stamp = daily.get("t") or (snapshot.get("latestTrade") or {}).get("t")
-    if not stamp:
-        stamp = f"{snapshot_date.isoformat()}T20:00:00+00:00"
-    series.append(
-        {
-            "t": stamp,
-            "o": open_,
-            "h": max(high, open_, close),
-            "l": min(low, open_, close),
-            "c": close,
-            "v": daily.get("v"),
-            "provisional": True,
-        }
-    )
-    return price, series, snapshot_date
-
-
-def _qqq_context(
-    qqq_snapshot: dict | None, qqq_bars: list[dict] | None, config
-) -> dict | None:
-    """Benchmark context (regime / trend filter / 60d return) for the shadow."""
-    price, series, snapshot_date = _provisional_series(qqq_bars, qqq_snapshot)
-    if price is None or not series:
-        return None
-    features = price_dimension_from_bars(price, series)
-    return_60d = features.get("return_60d")
-    closes = [c for c in (_finite(b.get("c")) for b in series) if c is not None]
-    sma_days = int(getattr(config, "benchmark_trend_filter_sma_days", 200) or 200)
-    sma = _mean(closes[-sma_days:]) if len(closes) >= sma_days else None
-    trend_ok = True if sma is None else price >= sma
-    regime = (
-        "up" if return_60d is not None and return_60d >= 0.0
-        else "down" if return_60d is not None
-        else "unknown"
-    )
     return {
-        "price": price,
-        "snapshot_date": snapshot_date,
-        "return_60d": return_60d,
-        "trend_ok": trend_ok,
-        "regime": regime,
-    }
+        "regular": "open", "pre_market": "pre-market", "post_market": "post-market",
+        "market_closed": "closed (weekend/holiday)",
+    }[market_period(now_utc)]
 
 
 def _quality_from_snapshot(decision: dict | None) -> QualityDecision | None:
@@ -390,49 +269,20 @@ def _quality_from_snapshot(decision: dict | None) -> QualityDecision | None:
 
 
 def compute_shadow(
-    symbol: str,
     decision: dict | None,
-    snapshot: dict | None,
-    bars: list[dict] | None,
-    qqq_context: dict | None,
-    config,
-) -> dict | None:
-    """Provisional Entry re-estimation using the current price as a close.
-
-    Reuses the production Entry v2 builder and action mapping. The result is
-    explicitly provisional: quality is carried over from the snapshot, and the
-    current session is treated as if it had closed now.
-    """
-    if decision is None or qqq_context is None:
-        return None
-    price, series, snapshot_date = _provisional_series(bars, snapshot)
-    if price is None or not series or snapshot_date is None:
-        return None
-    features = price_dimension_from_bars(price, series)
-    stock_ret60 = features.get("return_60d")
-    qqq_ret60 = qqq_context.get("return_60d")
-    rs60 = (
-        stock_ret60 - qqq_ret60
-        if stock_ret60 is not None and qqq_ret60 is not None
-        else None
-    )
-    metrics = {
-        **features,
-        "market_asof": snapshot_date.isoformat(),
-        "qqq_trailing_return_60d": qqq_ret60,
-        "relative_strength_60d_qqq": rs60,
-        "regime": qqq_context.get("regime"),
-        "benchmark_trend_ok": qqq_context.get("trend_ok"),
-    }
+    observation: IntradayObservation,
+    benchmark: IntradayBenchmark,
+    policy: IntradayPolicy,
+) -> dict:
+    """Re-estimate Entry only with a fresh, split-consistent benchmark pair."""
+    if decision is None:
+        return {"shadow_reason": "no_frozen_decision"}
     try:
-        entry = build_entry_quality_v2(
-            metrics,
-            decision_date=snapshot_date,
-            market_asof=snapshot_date,
-            runtime_reference_date=snapshot_date,
-        )
-    except Exception:  # noqa: BLE001 - a shadow must never break the monitor
-        return None
+        entry, reason = build_provisional_entry(observation, benchmark, policy)
+    except (ValueError, TypeError, OverflowError):
+        return {"shadow_reason": "entry_calculation_failed"}
+    if entry is None:
+        return {"shadow_reason": reason}
     action = None
     quality = _quality_from_snapshot(decision)
     if quality is not None:
@@ -462,7 +312,7 @@ def compute_shadow(
             else None
         ),
         "shadow_action": action.value if action is not None else None,
-        "shadow_date": snapshot_date.isoformat(),
+        "shadow_date": entry.market_asof,
         "gate_flips": flips,
     }
 
@@ -500,61 +350,29 @@ def _decision_context(decision: dict | None) -> dict:
     }
 
 
-def compute_row(
-    symbol: str,
-    decision: dict | None,
-    snapshot: dict | None,
-    bars: list[dict] | None,
-    *,
-    latest_session: date,
-) -> dict:
-    """Compute one monitor row from a snapshot and completed daily bars."""
-    snapshot = snapshot or {}
-    bars = [b for b in (bars or []) if isinstance(b, dict)]
-    completed = [
-        b for b in sorted(bars, key=lambda b: str(b.get("t") or ""))
-        if (_bar_et_date(b) is not None and _bar_et_date(b) <= latest_session)
-    ]
-    closes = [c for c in (_finite(b.get("c")) for b in completed) if c is not None]
-    highs = [h for h in (_finite(b.get("h")) for b in completed) if h is not None]
-    lows = [lo for lo in (_finite(b.get("l")) for b in completed) if lo is not None]
+def compute_row(symbol: str, decision: dict | None, observation: IntradayObservation) -> dict:
+    """Display the observed price and signals on the same share basis."""
+    quote = observation.quote
+    display_price = quote.price if quote is not None else None
+    price = display_price if observation.quote_status == "fresh" else None
+    completed = observation.completed_bars[-YEAR_SESSIONS:]
+    prev_close = positive(completed[-1].get("c")) if completed else None
+    reference = price_dimension_from_bars(price, completed)
+    provisional = price_dimension_from_bars(
+        price, observation.provisional_bars[-YEAR_SESSIONS:],
+    )
 
-    trade = snapshot.get("latestTrade") or {}
-    minute = snapshot.get("minuteBar") or {}
-    daily = snapshot.get("dailyBar") or {}
-    prev_daily = snapshot.get("prevDailyBar") or {}
-    price = _snapshot_price(snapshot)
-    prev_close = _finite(prev_daily.get("c")) or (closes[-1] if closes else None)
-
-    sma50 = _mean(closes[-SMA_SHORT:]) if len(closes) >= SMA_SHORT else None
-    sma200 = _mean(closes[-SMA_LONG:]) if len(closes) >= SMA_LONG else None
-    high_52w = max(highs[-YEAR_SESSIONS:], default=None)
-    low_52w = min(lows[-YEAR_SESSIONS:], default=None)
-    if price is not None:
-        high_52w = max([v for v in (high_52w, price) if v is not None], default=None)
-        low_52w = min([v for v in (low_52w, price) if v is not None], default=None)
-
-    pct_change = (
-        price / prev_close - 1.0
-        if price is not None and prev_close not in (None, 0)
-        else None
-    )
-    vs50 = price / sma50 - 1.0 if price is not None and sma50 else None
-    vs200 = price / sma200 - 1.0 if price is not None and sma200 else None
-    drawdown = (
-        1.0 - price / high_52w if price is not None and high_52w else None
-    )
-    range_pos = (
-        (price - low_52w) / (high_52w - low_52w)
-        if None not in (price, low_52w, high_52w) and high_52w > low_52w
-        else None
-    )
-    ret20 = (
-        price / closes[-20] - 1.0 if price is not None and len(closes) >= 20 else None
-    )
-    ret60 = (
-        price / closes[-60] - 1.0 if price is not None and len(closes) >= 60 else None
-    )
+    sma50 = sma200 = None
+    if reference["price_to_sma50"] is not None:
+        sma50 = sum(float(bar["c"]) for bar in completed[-SMA_SHORT:]) / SMA_SHORT
+    if reference["price_to_sma200"] is not None:
+        sma200 = sum(float(bar["c"]) for bar in completed[-SMA_LONG:]) / SMA_LONG
+    pct_change = price / prev_close - 1.0 if price is not None and prev_close is not None else None
+    vs50 = price / sma50 - 1.0 if sma50 else None
+    vs200 = price / sma200 - 1.0 if sma200 else None
+    drawdown = provisional["drawdown_from_52w_high"]
+    range_pos = provisional["range_position_52w"]
+    ret20, ret60 = provisional["return_20d"], provisional["return_60d"]
 
     flags: list[str] = []
     if price is not None and sma50:
@@ -581,7 +399,19 @@ def compute_row(
 
     return {
         "symbol": symbol,
-        "price": price,
+        "price": display_price,
+        "quote_source": quote.source if quote else None,
+        "quote_timestamp": quote.timestamp.isoformat() if quote and quote.timestamp else None,
+        "quote_session": quote.session.isoformat() if quote else None,
+        "quote_received_at": quote.received_at.isoformat() if quote else None,
+        "quote_age_seconds": (
+            (observation.asof - quote.timestamp).total_seconds()
+            if quote and quote.timestamp else None
+        ),
+        "quote_status": observation.quote_status,
+        "history_issue": observation.history_issue,
+        "quote_feed": quote.feed if quote else None,
+        "quote_price_basis": quote.price_basis if quote else None,
         "pct_change": pct_change,
         "sma50": sma50,
         "sma200": sma200,
@@ -608,11 +438,32 @@ def _pct(value: float | None, width: int = 7) -> str:
     return f"{value * 100:+.{1}f}%" if value is not None else "n/a"
 
 
+def format_policy(policy: IntradayPolicy) -> str:
+    return (
+        f"{INTRADAY_DATA_VERSION} · max age {policy.max_age_seconds}s · "
+        f"max stock–QQQ skew {policy.max_skew_seconds}s · raw quote session share basis"
+    )
+
+
+def _quote_label(row: dict) -> str:
+    parts = [row["quote_status"]]
+    if row["quote_source"]:
+        parts.append(f"{row['quote_feed']}:{row['quote_source']}")
+        parts.append(row["quote_timestamp"] or f"session {row['quote_session']}")
+    if row["quote_age_seconds"] is not None:
+        parts.append(f"{row['quote_age_seconds']:.0f}s old")
+    if row.get("history_issue"):
+        parts.append(row["history_issue"])
+    if row.get("shadow_reason"):
+        parts.append(f"shadow {row['shadow_reason']}")
+    return " · ".join(parts)
+
+
 def format_table(rows: list[dict]) -> str:
     header = (
         f"{'SYM':7s} {'ACT':15s} {'Q':9s} {'E':20s} "
         f"{'PRICE':>9s} {'Δ%':>7s} {'vs50':>7s} {'vs200':>7s} "
-        f"{'DD52w':>7s} {'20d':>7s} {'60d':>7s}  FLAGS"
+        f"{'DD52w':>7s} {'20d':>7s} {'60d':>7s}  FLAGS  QUOTE"
     )
     lines = [header, "-" * len(header)]
     for row in rows:
@@ -622,7 +473,7 @@ def format_table(rows: list[dict]) -> str:
             f"{row['entry'][:20]:20s} {price:>9s} {_pct(row['pct_change']):>7s} "
             f"{_pct(row['vs50']):>7s} {_pct(row['vs200']):>7s} "
             f"{_pct(row['drawdown_52w']):>7s} {_pct(row['ret20']):>7s} "
-            f"{_pct(row['ret60']):>7s}  {','.join(row['flags']) or '-'}"
+            f"{_pct(row['ret60']):>7s}  {','.join(row['flags']) or '-'}  {_quote_label(row)}"
         )
     return "\n".join(lines)
 
@@ -678,6 +529,8 @@ def render_markdown(
     generated_utc: str,
     baseline_source: str = 'unspecified (legacy snapshot)',
     publication_status: str | None = None,
+    policy_label: str | None = None,
+    benchmark_label: str | None = None,
 ) -> str:
     lines = [
         f"# Intraday Watch — {generated_utc}",
@@ -687,9 +540,11 @@ def render_markdown(
         *([f"- Publication: {publication_status}"] if publication_status else []),
         "- Read-only monitor; official decisions stay daily and immutable.",
         f"- Market data: **IEX intraday**; snapshot baseline: **{baseline_source}**. Shadow estimates may differ across feeds.",
+        *([f"- Quote checks · {policy_label}"] if policy_label else []),
+        *([f"- QQQ · {benchmark_label}"] if benchmark_label else []),
         "",
-        "| SYM | Action | Quality | Entry | Price | Δ% | vs50 | vs200 | DD52w | 20d | 60d | Flags |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| SYM | Action | Quality | Entry | Price | Δ% | vs50 | vs200 | DD52w | 20d | 60d | Flags | Quote |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in rows:
         price = f"{row['price']:.2f}" if row["price"] is not None else "n/a"
@@ -698,7 +553,7 @@ def render_markdown(
             f"| {price} | {_pct(row['pct_change'])} | {_pct(row['vs50'])} "
             f"| {_pct(row['vs200'])} | {_pct(row['drawdown_52w'])} "
             f"| {_pct(row['ret20'])} | {_pct(row['ret60'])} "
-            f"| {','.join(row['flags']) or '-'} |"
+            f"| {','.join(row['flags']) or '-'} | {_quote_label(row)} |"
         )
     shadow_rows = [row for row in rows if row.get("shadow_state")]
     if shadow_rows:
@@ -737,6 +592,11 @@ def render_markdown(
 def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
     snapshot_root = Path(args.snapshot_root)
     snapshot_dir = Path(args.snapshot_dir) if args.snapshot_dir else None
+    if args.out and any(
+        Path(args.out).resolve().is_relative_to(path.resolve())
+        for path in (snapshot_root, snapshot_dir) if path is not None
+    ):
+        raise ValueError("monitor output must be outside official snapshot directories")
     bundle = load_snapshot(snapshot_root, snapshot_dir)
     decisions = bundle["decisions"]
     baseline_source = snapshot_market_source(decisions)
@@ -768,36 +628,21 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
     fetch_symbols = list(symbols)
     if shadow and "QQQ" not in fetch_symbols:
         fetch_symbols.append("QQQ")
-    snapshots = client.get_snapshots(fetch_symbols, chunk)
-    start_iso = (datetime.now(timezone.utc).date() - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    bars = client.get_daily_bars(fetch_symbols, start_iso, chunk)
-
-    now_utc = datetime.now(timezone.utc)
+    policy = IntradayPolicy(args.max_quote_age_sec, args.max_quote_skew_sec)
+    observations = fetch_observations(client, fetch_symbols, chunk, LOOKBACK_DAYS, policy)
+    now_utc = next(iter(observations.values())).asof
     latest_session = latest_completed_session(now_utc)
-    qqq_context = (
-        _qqq_context(snapshots.get("QQQ"), bars.get("QQQ"), config)
+    benchmark = (
+        build_benchmark(observations["QQQ"], config.benchmark_trend_filter_sma_days)
         if shadow else None
     )
     rows: list[dict] = []
     for symbol in symbols:
-        row = compute_row(
-            symbol,
-            by_symbol.get(symbol),
-            snapshots.get(symbol),
-            bars.get(symbol),
-            latest_session=latest_session,
-        )
-        if shadow:
-            shadow_info = compute_shadow(
-                symbol,
-                by_symbol.get(symbol),
-                snapshots.get(symbol),
-                bars.get(symbol),
-                qqq_context,
-                config,
-            )
-            if shadow_info:
-                row.update(shadow_info)
+        observation = observations[symbol]
+        decision = by_symbol.get(symbol)
+        row = compute_row(symbol, decision, observation)
+        if benchmark is not None:
+            row.update(compute_shadow(decision, observation, benchmark, policy))
         rows.append(row)
     status = _session_status(now_utc)
     generated = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -809,6 +654,13 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
         flush=True,
     )
     print(f"[publication] {bundle['publication_status']}", flush=True)
+    policy_label = format_policy(policy)
+    benchmark_label = (
+        _quote_label(compute_row("QQQ", None, benchmark.observation)) if benchmark is not None else None
+    )
+    print(f"[market-data] {policy_label}", flush=True)
+    if benchmark_label is not None:
+        print(f"[QQQ] {benchmark_label}", flush=True)
     print(format_table(rows), flush=True)
     if any(row.get("shadow_state") for row in rows):
         print("")
@@ -831,6 +683,8 @@ def run_once(args: argparse.Namespace, *, client=None) -> list[dict]:
                 generated_utc=generated,
                 baseline_source=baseline_source,
                 publication_status=bundle["publication_status"],
+                policy_label=policy_label,
+                benchmark_label=benchmark_label,
             ),
             encoding="utf-8",
         )
@@ -859,9 +713,15 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--no-shadow", action="store_true",
         help="Skip the provisional Entry re-estimation (shadow) section.",
     )
+    defaults = IntradayPolicy()
+    parser.add_argument("--max-quote-age-sec", type=int, default=defaults.max_age_seconds)
+    parser.add_argument("--max-quote-skew-sec", type=int, default=defaults.max_skew_seconds)
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--out", default=None)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.max_quote_age_sec <= 0 or args.max_quote_skew_sec <= 0 or args.chunk_size < 0:
+        parser.error("quote limits must be positive and chunk size cannot be negative")
+    return args
 
 
 def main(argv=None) -> int:

@@ -24,7 +24,7 @@ import re
 import shutil
 import sys
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -44,7 +44,15 @@ from ai_value_scanner.decision.action import (  # noqa: E402
 from ai_value_scanner.decision.attention import (  # noqa: E402
     DAILY_ATTENTION_STABILITY_POLICY_VERSION,
 )
-from ai_value_scanner.decision.entry import build_entry_quality_v2  # noqa: E402
+from ai_value_scanner.intraday_market import (  # noqa: E402
+    INTRADAY_DATA_VERSION,
+    IntradayBenchmark,
+    IntradayObservation,
+    IntradayPolicy,
+    build_benchmark,
+    build_provisional_entry,
+    fetch_observations,
+)
 from ai_value_scanner.decision.integrated import (  # noqa: E402
     select_daily_attention,
     select_weekly_attention,
@@ -64,11 +72,9 @@ from ai_value_scanner.reporting.snapshot import (  # noqa: E402
     compute_in_list_streaks,
     load_previous_daily_symbols,
 )
-from ai_value_scanner.scanner import price_dimension_from_bars  # noqa: E402
+from ai_value_scanner.reporting.publication import read_latest_publication  # noqa: E402
 from intraday_watch import (  # noqa: E402
     LOOKBACK_DAYS,
-    _provisional_series,
-    _qqq_context,
     build_alpaca_client,
     snapshot_market_source,
 )
@@ -95,17 +101,8 @@ PROVISIONAL_NOTE = (
 
 def resolve_latest_snapshot(snapshot_root: Path) -> Path:
     """Resolve the production snapshot referenced by the latest pointer."""
-    pointer = snapshot_root / "latest_production.json"
-    if not pointer.is_file():
-        raise FileNotFoundError(f"missing latest production pointer: {pointer}")
-    payload = json.loads(pointer.read_text(encoding="utf-8"))
-    snapshot_dir = payload.get("snapshot_dir")
-    if not snapshot_dir:
-        raise ValueError(f"latest production pointer has no snapshot_dir: {pointer}")
-    resolved = snapshot_root / str(snapshot_dir)
-    if not resolved.is_dir():
-        raise FileNotFoundError(f"latest production snapshot is missing: {resolved}")
-    return resolved
+    publication = read_latest_publication(snapshot_root, "production")
+    return snapshot_root / publication["snapshot_dir"]
 
 
 def candidate_symbols(
@@ -140,61 +137,27 @@ def candidate_symbols(
 def build_provisional_decisions(
     decisions: Sequence[StockDecision],
     symbols: Iterable[str],
-    snapshots: Mapping[str, Mapping[str, Any] | None],
-    bars: Mapping[str, Sequence[dict] | None],
-    qqq_context: Mapping[str, Any] | None,
+    observations: Mapping[str, IntradayObservation],
+    benchmark: IntradayBenchmark,
+    policy: IntradayPolicy,
 ) -> tuple[dict[str, StockDecision], list[str]]:
-    """Replace Entry with a current-price provisional estimate.
-
-    Quality is carried over from the frozen snapshot. Failures are reported in
-    ``skipped`` and the original decision is kept, so a single bad symbol never
-    breaks the preview.
-    """
-    wanted = {str(symbol).strip().upper() for symbol in symbols}
+    """Overlay Entry for symbols whose IEX observations pass the shared gates."""
+    wanted = set(symbols)
     provisional: dict[str, StockDecision] = {}
     skipped: list[str] = []
-    if qqq_context is None:
-        return provisional, ["missing_qqq_context"]
-
     for decision in decisions:
         if decision.symbol not in wanted:
             continue
-        price, series, snapshot_date = _provisional_series(
-            bars.get(decision.symbol), snapshots.get(decision.symbol)
-        )
-        if price is None or not series or snapshot_date is None:
-            skipped.append(decision.symbol)
-            continue
-        features = price_dimension_from_bars(price, series)
-        stock_ret60 = features.get("return_60d")
-        qqq_ret60 = qqq_context.get("return_60d")
-        rs60 = (
-            stock_ret60 - qqq_ret60
-            if stock_ret60 is not None and qqq_ret60 is not None
-            else None
-        )
-        metrics = {
-            **features,
-            "market_asof": snapshot_date.isoformat(),
-            "qqq_trailing_return_60d": qqq_ret60,
-            "relative_strength_60d_qqq": rs60,
-            "regime": qqq_context.get("regime"),
-            "benchmark_trend_ok": qqq_context.get("trend_ok"),
-        }
         try:
-            entry = build_entry_quality_v2(
-                metrics,
-                decision_date=snapshot_date,
-                market_asof=snapshot_date,
-                runtime_reference_date=snapshot_date,
-            )
+            entry, reason = build_provisional_entry(observations[decision.symbol], benchmark, policy)
+            if entry is None:
+                skipped.append(f"{decision.symbol}:{reason}")
+                continue
             action, _ = map_action_state_v2(decision.quality, entry)
-        except Exception as exc:  # noqa: BLE001 - preview must never crash
+        except (TypeError, ValueError, OverflowError) as exc:
             skipped.append(f"{decision.symbol}:{type(exc).__name__}")
             continue
-        provisional[decision.symbol] = replace(
-            decision, entry=entry, action_state=action
-        )
+        provisional[decision.symbol] = replace(decision, entry=entry, action_state=action)
     return provisional, skipped
 
 
@@ -252,8 +215,11 @@ def render_preview(
     client: Any | None = None,
     cap: int = 15,
     top_candidates: int = 40,
+    policy: IntradayPolicy = IntradayPolicy(),
 ) -> dict[str, Any]:
     """Build and write the provisional intraday report; return its metadata."""
+    if any(output_dir.resolve().is_relative_to(path.resolve()) for path in (snapshot_root, snapshot_dir)):
+        raise ValueError("preview output must be outside official snapshot directories")
     manifest = json.loads((snapshot_dir / "run_manifest.json").read_text(encoding="utf-8"))
     decisions = stock_decisions_from_jsonl(
         (snapshot_dir / "decisions.jsonl").read_text(encoding="utf-8")
@@ -267,30 +233,18 @@ def render_preview(
     config = load_config(config_path)
     if client is None:
         client = build_alpaca_client(config)
-    fetch_symbols = symbols + ["QQQ"]
-    snapshots = client.get_snapshots(fetch_symbols, config.chunk_size)
-    start = (
-        datetime.now(timezone.utc).date() - timedelta(days=LOOKBACK_DAYS)
-    ).isoformat()
-    bars = client.get_daily_bars(fetch_symbols, start, config.chunk_size)
-
-    qqq_context = _qqq_context(snapshots.get("QQQ"), bars.get("QQQ"), config)
-    if qqq_context is None:
-        raise RuntimeError("missing QQQ context; cannot build provisional entries")
-    _, _, session_date = _provisional_series(bars.get("QQQ"), snapshots.get("QQQ"))
-    decision_date = (
-        session_date.isoformat()
-        if session_date is not None
-        else datetime.now(timezone.utc).date().isoformat()
+    observations = fetch_observations(
+        client, [*symbols, "QQQ"], config.chunk_size, LOOKBACK_DAYS, policy
     )
+    benchmark = build_benchmark(observations["QQQ"], config.benchmark_trend_filter_sma_days)
+    qqq = benchmark.observation.quote
+    if benchmark.observation.issue or qqq is None:
+        raise RuntimeError(f"QQQ unavailable for preview: {benchmark.observation.issue}")
+    decision_date = qqq.session.isoformat()
 
-    provisional, skipped = build_provisional_decisions(
-        decisions, symbols, snapshots, bars, qqq_context
-    )
+    provisional, skipped = build_provisional_decisions(decisions, symbols, observations, benchmark, policy)
     if not provisional:
-        raise RuntimeError(
-            "no provisional entries were built; refusing to render a stale report"
-        )
+        raise RuntimeError(f"no provisional entries were built: {', '.join(skipped[:10])}")
     ranked = assign_action_priorities_v2(
         with_provisional_context(decisions, provisional, decision_date)
     )
@@ -313,6 +267,11 @@ def render_preview(
     output_dir.mkdir(parents=True, exist_ok=True)
     note = PROVISIONAL_NOTE.format(
         generated=generated, source=source, baseline=baseline_source
+    )
+    note += (
+        f"> {len(provisional)} candidates updated from IEX. "
+        f"{len(skipped)} unavailable candidates retain their frozen values. "
+        "See the preview manifest for quote evidence and reasons.\n\n"
     )
 
     action_body = render_action_list(
@@ -368,6 +327,23 @@ def render_preview(
         "generated_at_utc": generated,
         "provisional_market_data_feed": "iex",
         "baseline_market_data_source": baseline_source,
+        "intraday_data_version": INTRADAY_DATA_VERSION,
+        "max_quote_age_sec": policy.max_age_seconds,
+        "max_quote_skew_sec": policy.max_skew_seconds,
+        "updated_count": len(provisional),
+        "quotes": {
+            symbol: {
+                "price": obs.quote.price if obs.quote else None,
+                "session": obs.quote.session.isoformat() if obs.quote else None,
+                "source": obs.quote.source if obs.quote else None,
+                "timestamp": obs.quote.timestamp.isoformat() if obs.quote and obs.quote.timestamp else None,
+                "received_at": obs.quote.received_at.isoformat() if obs.quote else None,
+                "asof": obs.asof.isoformat(),
+                "price_basis": obs.quote.price_basis if obs.quote else None,
+                "status": obs.issue or "fresh",
+            }
+            for symbol, obs in observations.items()
+        },
         "stability_policy_version": DAILY_ATTENTION_STABILITY_POLICY_VERSION,
         "report_renderer_revision": REPORT_RENDERER_REVISION,
         "candidate_count": len(symbols),
@@ -415,7 +391,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=40,
         help="Also fetch the top N canonical priorities as possible entrants.",
     )
-    return parser.parse_args(argv)
+    defaults = IntradayPolicy()
+    parser.add_argument("--max-quote-age-sec", type=int, default=defaults.max_age_seconds)
+    parser.add_argument("--max-quote-skew-sec", type=int, default=defaults.max_skew_seconds)
+    args = parser.parse_args(argv)
+    if args.max_quote_age_sec <= 0 or args.max_quote_skew_sec <= 0:
+        parser.error("quote limits must be positive")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -438,6 +420,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         snapshot_root=snapshot_root,
         cap=args.cap,
         top_candidates=args.top_candidates,
+        policy=IntradayPolicy(args.max_quote_age_sec, args.max_quote_skew_sec),
     )
     # Rename the default pending directory once the session date is known.
     if default_output:
