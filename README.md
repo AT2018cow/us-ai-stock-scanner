@@ -288,7 +288,7 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 - **池归属显示**：`- **Company**: ...` 行在有来源元数据时追加 `· **Pool**: \`ai_core\` (XLK, IGV)`。
 - **`ENTRY_READY` 的过热备注**：买点门检查全部通过但存在中期过热时，`Entry Gate Check` 行显示为 `All 7 readiness gates passed (Warning: Extended SMA200 1.47x · 60d Ret +51.4%)`，各门限本身保持 `PASS` 不翻转。
 - **Growth Compounder Leaders — Bull Offense Track（牛市进攻龙头栏）**：`action_list_v2.md` / `weekly_review_v2.md` 在 `Secondary Radar` 之前新增专区，列出 Top-15 防守短名单之外的真成长现金牛（Quality A/B 且 score ≥ 0.68、无 `nonoperating_gain_inflation`、`revenue_yoy ≥ 15%`、`ocf_to_net_income ≥ 0.80`、`entry.state ∈ {ENTRY_READY, WATCH_PULLBACK}` 且 `1.00 ≤ price_to_sma200 ≤ 1.60`、`relative_strength_60d_qqq ≥ 0`），至多 10 只，按 `quality.score + 0.5·clip(rev_yoy,0,1) + 0.5·clip(rs60,0,1) − 0.06·财报窗口` 排序；每行附 `[Full Report →]` 链接（详报文件随栏位自动生成），无合格标的时打印占位说明。该栏为纯呈现层增量，不改变任何生产排序与 Action State。
-- 以上均为 v2 呈现层增量；v1 渲染器（`render_action_list` / `render_detailed_report`）与所有合成测试夹具的输出保持 100% 不变。
+- **阅读顺序**：新版日报和周报先显示主名单及状态变化。进攻龙头、Secondary Radar、专题筛选和下行研究在 `Additional Research` 下按需展开。已有快照按生成时的渲染版本读取。
 
 #### （6）Short Research v1（生产做空研究）
 
@@ -296,9 +296,9 @@ MVP v2 围绕 **“Company Quality v2 × Entry Quality v2 → Action & Priority 
 - **兼容条件**：显式启用时必须同时满足 `official_market_mode="sip_eod"`、`report_layout_version="v2"`、`use_adjusted_quality_metrics=true`，且不得使用 `--max-symbols` 截断同行池；行情预筛门槛不得严于 §3.1 的 `price>=5` / `dollar_volume>=2M`。不匹配时短名单记为 `unavailable` 并记录理由码。
 - **入口**：沿用现有 `python run_scan.py --config ...` 与 cron，不新增扫描命令或参数。短名单在旧三张清单和 Research Pool 分流之前，从同一次收盘 SIP 扫描的完整预筛截面独立计算；多头 Top-15、Action 状态、旧三张清单和 Research Pool 的成员与排序不受影响。
 - **规则**：SIC 同行相对强弱（至少 4 家其他公司）→ 同行 P/E 分位/溢价（至少 5 家含目标）→ S0（弱于同行且低于 SMA50、20 日跌幅未超过 20%）→ S1（营收不增且 OCF 同比 <= -10%）→ S2（P/E 分位 >= 0.80 且溢价 >= 25%）。最多展示 5 只 `CONFIRMED`；`WATCH`、`NO_SIGNAL`、`INSUFFICIENT_DATA` 给计数和理由。金融/保险/多数 REIT（SIC 6000–6999）排除。
-- **输出**：同一快照原子发布 `short_research.json`（权威记录）和 `short_candidates.csv`；`run_manifest.json` 记录开关、合同/规则版本、状态、漏斗、理由计数与文件校验值。日报和周报在多头名单之外单列 **Short Research** 区块与相对 CSV 链接。
+- **输出**：同一快照原子发布 `short_research.json`（权威记录）和 `short_candidates.csv`。日报和周报在 **Downside Research（下行研究）** 折叠标题上显示候选数、`No candidates` 或 `Data unavailable`。展开后会说明下行研究独立于专题筛选，多头 Action List 单独选股和排序，并提供信号、借券证据和 CSV 入口。
 - **生效会话**：已有的同日快照固定了生成时的开关。正式目录从下一次新会话生成短名单。同日试跑可使用独立的 `--decision-output-root`。
-- **状态**：`disabled`（开关关闭，无短名单文件）、`ready`（1–5 只）、`no_candidates`（筛选完成但无 S2）、`unavailable`（输入契约/范围/计算失败，CSV 仅表头并记录稳定理由码）。
+- **状态**：`disabled`（开关关闭，无短名单文件）、`ready`（1–5 只）、`no_candidates`（筛选完成但无 S2）、`unavailable`（输入、范围、计算或短名单报告生成失败）。`unavailable` 保留原因码和仅含表头的 CSV，多头报告继续发布。
 - **借券**：默认 `UNKNOWN`；仅当来源、环境和观察时间可核对，且观察发生在信号日纽约收盘后、报告生成前、距生成不超过 24 小时时展示券商借券状态。历史回放全部 `UNKNOWN`；不新增券商请求，数量与费率留空。
 - **历史评估**：内部可导入入口 `ai_value_scanner.research.short_research_v1.evaluate_frozen_short_research(dataset_root, output_root, scope="smoke"|"full")`，复用 `outputs/review_followup_20261106/datasets` 四套冻结 SIP 截面；证据与限制见 `docs/short_research_v1/evidence/`。
 
@@ -429,7 +429,7 @@ python scripts/build_smallcap_universe.py --config configs/config.production.jso
 
 生产配置下，QQQ 收盘跌破200日均线时，Low-Value、Industry-Trend 和 Momentum 共用的门槛会让三张清单同时为空。Action List 此时按防御条件继续逐股评估。个股除通过常规入场检查外，还需满足过去60个交易日至少跑赢 QQQ 5个百分点、过去20个交易日收益非负，才可能标为 `ENTRY_READY`。启用后的做空研究按自己的入选条件独立评估。使用同日归档快照时，扫描报告也以其中的短名单状态和成员为准。
 
-`Research Pool` 另作宽口径发现池，保留 `theme_only` 等候选。日常先看 Action List，按需要查看并行清单和 Research Pool。
+`Topic Screens（专题筛选）` 汇总旧三张清单的去重名单和数量，QQQ 门槛触发时标明 `Paused`。原有排序 CSV 路径可在扫描报告的 `Artifacts` 中查看，个股详报保留来源标签。`Research Pool` 另作宽口径发现池，保留 `theme_only` 等候选。日常先看 Action List，按需要展开辅助研究。
 
 ### 5.3 AI 关联度评分
 

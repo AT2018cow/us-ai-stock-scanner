@@ -9,8 +9,19 @@ from ai_value_scanner.decision.view_model import (
     build_stock_card_view_model,
     sanitize_relative_display,
 )
-from ai_value_scanner.reporting.short_research import render_short_snapshot_section
-from ai_value_scanner.research.short_research_v1 import ShortResearchResult
+from ai_value_scanner.reporting.revisions import (
+    GROUPED_RESEARCH_RENDERER_REVISIONS,
+    REPORT_RENDERER_REVISION,
+)
+from ai_value_scanner.reporting.short_research import (
+    SHORT_CSV_LINK,
+    render_short_snapshot_section,
+    render_unavailable_short_snapshot_section,
+)
+from ai_value_scanner.research.short_research_v1 import (
+    STATUS_UNAVAILABLE,
+    ShortResearchResult,
+)
 
 
 def render_scan_list_context(*, legacy_lists_paused: bool = False) -> list[str]:
@@ -261,6 +272,7 @@ def render_action_list(
     detailed_subdir: str = "detailed",
     streaks_by_symbol: Mapping[str, int] | None = None,
     legacy_lists_paused: bool | None = None,
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
     short_section: list[str] | None = None,
@@ -275,6 +287,7 @@ def render_action_list(
             detailed_subdir=detailed_subdir,
             streaks_by_symbol=streaks_by_symbol,
             legacy_lists_paused=legacy_lists_paused,
+            renderer_revision=renderer_revision,
             short_research=short_research,
             short_csv_rel=short_csv_rel,
             short_section=short_section,
@@ -594,6 +607,47 @@ _ACTION_GROUP_ANCHORS = {
 }
 
 
+def _render_topic_screens(
+    decisions: Iterable[StockDecision], *, paused: bool
+) -> list[str]:
+    screens = {
+        "low_value": "Low-Value",
+        "industry_trend": "Industry-Trend",
+        "momentum": "Momentum",
+    }
+    symbols_by_screen: dict[str, set[str]] = {key: set() for key in screens}
+    for decision in decisions:
+        for key in decision.source_lists:
+            if key in symbols_by_screen:
+                symbols_by_screen[key].add(decision.symbol)
+
+    label = "Paused" if paused else "Completed"
+    lines = [
+        "<details>",
+        f"<summary><strong>Topic Screens</strong> · {label}</summary>",
+        "",
+    ]
+    if paused:
+        lines.extend([
+            "The market benchmark closed below its configured moving average. "
+            "The three screens share this gate. The Action List applies its "
+            "defensive entry rules to individual stocks.",
+            "",
+        ])
+    for key, name in screens.items():
+        symbols = sorted(symbols_by_screen[key])
+        tickers = ", ".join(_plain(symbol) for symbol in symbols) or "No matches"
+        lines.append(f"- **{name}** ({len(symbols)}) · {tickers}")
+    lines.extend([
+        "",
+        "Counts are unique symbols. The scan report lists the full ranked CSV exports.",
+        "",
+        "</details>",
+        "",
+    ])
+    return lines
+
+
 def render_action_list_v2(
     decisions: Iterable[StockDecision],
     *,
@@ -603,6 +657,7 @@ def render_action_list_v2(
     detailed_subdir: str = "detailed",
     streaks_by_symbol: Mapping[str, int] | None = None,
     legacy_lists_paused: bool | None = None,
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
     short_research: ShortResearchResult | None = None,
     short_csv_rel: str | None = None,
     short_section: list[str] | None = None,
@@ -614,9 +669,11 @@ def render_action_list_v2(
     cards so the entire 15-stock shortlist fits on a single mobile screen.
     """
     primary = tuple(decisions)
+    universe = tuple(all_decisions) if all_decisions is not None else None
+    grouped_research = renderer_revision in GROUPED_RESEARCH_RENDERER_REVISIONS
     snapshot = build_snapshot_view_model(
         primary,
-        all_decisions,
+        universe,
         title=title,
         cadence=cadence,
         streaks_by_symbol=streaks_by_symbol,
@@ -626,31 +683,40 @@ def render_action_list_v2(
         f"[{card.rank}.{card.symbol}](#card-{card.symbol.lower()})"
         for card in snapshot.primary_cards
     )
-    sections_line = (
-        "- **Sections**: [Priority Review](#priority-review) "
-        "· [Watch Pullback](#watch-pullback) "
-        "· [Watch Breakout](#watch-breakout) "
-        "· [Growth Leaders (Offense)](#growth-leaders-offense) "
-        "· [Secondary Radar](#secondary-radar) "
-        "· [Attention Changes](#attention-changes)"
-    )
-    if short_research is not None:
-        sections_line += " · [Short Research](#short-research)"
     lines = [
         '<a id="top"></a>',
         f"# {snapshot.title} (v2)",
         "",
         f"- **Date**: {snapshot.decision_date} (`{cadence_display}`) "
         f"· **Shortlist**: {len(primary)} ({_v2_counts_line(primary)})",
-        sections_line,
     ]
+    if grouped_research:
+        groups = {card.action_state for card in snapshot.primary_cards}
+        links = [
+            f"[{_ACTION_GROUP_TITLES[key]}](#{_ACTION_GROUP_ANCHORS[key]})"
+            for key in _ACTION_CANONICAL_ORDER if key in groups
+        ]
+        if links:
+            lines.append("- **Action List sections** · " + " · ".join(links))
+    else:
+        sections_line = (
+            "- **Sections**: [Priority Review](#priority-review) "
+            "· [Watch Pullback](#watch-pullback) "
+            "· [Watch Breakout](#watch-breakout) "
+            "· [Growth Leaders (Offense)](#growth-leaders-offense) "
+            "· [Secondary Radar](#secondary-radar) "
+            "· [Attention Changes](#attention-changes)"
+        )
+        if short_research is not None:
+            sections_line += " · [Short Research](#short-research)"
+        lines.append(sections_line)
     if snapshot.concentration_summary_line:
         lines.insert(
             4, f"- **Pool & Concentration**: {snapshot.concentration_summary_line}"
         )
     if any(card.decision.provenance.get('market_data_mode')=='sip_eod' for card in snapshot.primary_cards):
         lines.append('- **Market data**: SIP completed-session daily bars; full-market dollar volume. Intraday IEX monitoring is provisional.')
-    if legacy_lists_paused is not None:
+    if not grouped_research and legacy_lists_paused is not None:
         lines.extend(render_scan_list_context(legacy_lists_paused=legacy_lists_paused))
     if cadence == "weekly" and any(
         card.decision.provenance.get("review_context_version") for card in snapshot.primary_cards
@@ -692,7 +758,15 @@ def render_action_list_v2(
             for card in group_cards:
                 lines.extend(_v2_stock_card_block(card, detailed_subdir))
 
-    lines.extend(
+    research_lines = [] if grouped_research else lines
+    if grouped_research:
+        research_lines.extend([
+            "<details>",
+            "<summary><strong>Growth Leaders (Offense)</strong> "
+            f"({len(snapshot.growth_compounder_offense_cards)})</summary>",
+            "",
+        ])
+    research_lines.extend(
         [
             '<a id="growth-leaders-offense"></a>',
             f"## Growth Compounder Leaders — Bull Offense Track "
@@ -701,7 +775,7 @@ def render_action_list_v2(
         ]
     )
     if not snapshot.growth_compounder_offense_cards:
-        lines.extend(
+        research_lines.extend(
             [
                 "- No additional off-list growth compounder leaders "
                 "(Quality A/B, Rev YoY >= 15%, OCF/NI >= 0.80x, "
@@ -710,7 +784,7 @@ def render_action_list_v2(
             ]
         )
     else:
-        lines.extend(
+        research_lines.extend(
             [
                 "- *High-growth cash-flow compounders (Quality A/B, "
                 "Rev YoY >= 15%, OCF/NI >= 0.80x, SMA200 1.00–1.60x, "
@@ -728,7 +802,7 @@ def render_action_list_v2(
             snapshot.growth_compounder_offense_cards, start=1
         ):
             rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
-            lines.extend(
+            research_lines.extend(
                 [
                     f"- **Offense #{idx} {card.symbol}** "
                     f"({_plain(card.company_name)}, Rank #{card.rank}) — "
@@ -742,17 +816,26 @@ def render_action_list_v2(
                     f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                 ]
             )
-        lines.extend(["", "[↑ Top](#top)", ""])
+        research_lines.extend(["", "[↑ Top](#top)", ""])
 
-    lines.extend(['<a id="secondary-radar"></a>', "## Secondary Radar (Off-List Watch)", ""])
+    if grouped_research:
+        radar_count = len(snapshot.cap_omitted_priority_cards) + len(snapshot.secondary_b_ready_cards)
+        research_lines.extend([
+            "</details>",
+            "",
+            "<details>",
+            f"<summary><strong>Secondary Radar</strong> ({radar_count})</summary>",
+            "",
+        ])
+    research_lines.extend(['<a id="secondary-radar"></a>', "## Secondary Radar (Off-List Watch)", ""])
     if (
         not snapshot.cap_omitted_priority_cards
         and not snapshot.secondary_b_ready_cards
     ):
-        lines.extend(["- No off-list radar names for this snapshot.", ""])
+        research_lines.extend(["- No off-list radar names for this snapshot.", ""])
     else:
         if snapshot.cap_omitted_priority_cards:
-            lines.extend(
+            research_lines.extend(
                 [
                     "<details>",
                     "<summary><b>Cap-Omitted Priority Review</b> "
@@ -762,7 +845,7 @@ def render_action_list_v2(
             )
             for card in snapshot.cap_omitted_priority_cards:
                 rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
-                lines.extend(
+                research_lines.extend(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
@@ -774,9 +857,9 @@ def render_action_list_v2(
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
                 )
-            lines.extend(["", "[↑ Top](#top)", "</details>", ""])
+            research_lines.extend(["", "[↑ Top](#top)", "</details>", ""])
         if snapshot.secondary_b_ready_cards:
-            lines.extend(
+            research_lines.extend(
                 [
                     "<details>",
                     "<summary><b>Secondary Watch: Top Quality B + Entry Ready</b> "
@@ -786,7 +869,7 @@ def render_action_list_v2(
             )
             for card in snapshot.secondary_b_ready_cards:
                 rel_report = f"./{detailed_subdir.strip('/')}/{card.symbol}.md"
-                lines.extend(
+                research_lines.extend(
                     [
                         f"- **#{card.rank} {card.symbol}** ({_plain(card.company_name)}) — "
                         f"Q:**{card.quality_grade}** ({card.quality_score_display}) · "
@@ -798,7 +881,10 @@ def render_action_list_v2(
                         f"  - **Watchouts**: {_plain(card.fundamental_watchouts_inline)}",
                     ]
                 )
-            lines.extend(["", "[↑ Top](#top)", "</details>", ""])
+            research_lines.extend(["", "[↑ Top](#top)", "</details>", ""])
+
+    if grouped_research:
+        research_lines.extend(["</details>", ""])
 
     alert_cards = snapshot.state_change_alert_cards
     lines.extend(
@@ -848,13 +934,23 @@ def render_action_list_v2(
                 "recorded in `state_change_alerts.jsonl` in this snapshot.*"
             )
         lines.extend(["", "[↑ Top](#top)", ""])
+    if grouped_research:
+        lines.extend(["## Additional Research", "", *research_lines])
+        if legacy_lists_paused is not None and universe is not None:
+            lines.extend(_render_topic_screens(universe, paused=legacy_lists_paused))
     if short_research is not None:
-        lines.extend(
-            short_section if short_section is not None else render_short_snapshot_section(
-                short_research,
-                csv_rel_path=short_csv_rel or "./short_candidates.csv",
+        if short_section is None:
+            renderer = (
+                render_unavailable_short_snapshot_section
+                if short_research.status == STATUS_UNAVAILABLE
+                else render_short_snapshot_section
             )
-        )
+            short_section = renderer(
+                short_research,
+                csv_rel_path=short_csv_rel or SHORT_CSV_LINK,
+                renderer_revision=renderer_revision,
+            )
+        lines.extend(short_section)
     return "\n".join(lines)
 
 

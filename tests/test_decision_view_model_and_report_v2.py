@@ -730,7 +730,8 @@ class TestGrowthCompounderOffenseTrack(unittest.TestCase):
         md = render_action_list_v2(
             primaries, title="T", cadence="daily", all_decisions=pool)
         self.assertIn(
-            "[Growth Leaders (Offense)](#growth-leaders-offense)", md)
+            "<details>\n<summary><strong>Growth Leaders (Offense)</strong> (10)</summary>", md)
+        self.assertNotIn("#growth-leaders-offense", md.split("## Additional Research", 1)[0])
         self.assertIn(
             "## Growth Compounder Leaders — Bull Offense Track (10)", md)
         self.assertIn("**Offense #1 P01**", md)

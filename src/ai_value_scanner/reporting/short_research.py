@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ai_value_scanner.fundamentals.provenance import sha256_hex
+from ai_value_scanner.reporting.revisions import (
+    DOWNSIDE_SCOPE_RENDERER_REVISION,
+    GROUPED_RESEARCH_RENDERER_REVISIONS,
+    REPORT_RENDERER_REVISION,
+)
 from ai_value_scanner.research.short_research_v1 import (
     MAX_SHORT_CANDIDATES,
     MAX_FUNDAMENTAL_ASOF_DAYS,
@@ -14,6 +19,7 @@ from ai_value_scanner.research.short_research_v1 import (
     SHORT_RESEARCH_RULE_VERSION,
     SHORT_RESEARCH_SCHEMA_VERSION,
     STATUS_CONFIRMED,
+    STATUS_DISABLED,
     STATUS_NO_CANDIDATES,
     STATUS_READY,
     STATUS_UNAVAILABLE,
@@ -30,11 +36,55 @@ SHORT_CSV_LINK = f"./{SHORT_CSV}"
 
 
 def render_short_snapshot_section(
-    result: ShortResearchResult, *, csv_rel_path: str = SHORT_CSV_LINK
+    result: ShortResearchResult,
+    *,
+    csv_rel_path: str = SHORT_CSV_LINK,
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
+    body: list[str] | None = None,
 ) -> list[str]:
-    if result.status == STATUS_UNAVAILABLE:
-        return render_unavailable_short_research_section(result, csv_rel_path=csv_rel_path)
-    return render_short_research_section(result, csv_rel_path=csv_rel_path)
+    if body is None:
+        body = render_short_research_section(result, csv_rel_path=csv_rel_path)
+    status = {
+        STATUS_READY: f"{result.selected_count} " + ("candidate" if result.selected_count == 1 else "candidates"),
+        STATUS_NO_CANDIDATES: "No candidates",
+        STATUS_UNAVAILABLE: "Data unavailable",
+        STATUS_DISABLED: "Not enabled",
+    }[result.status]
+    return _fold_short_section(body, status, renderer_revision)
+
+
+def render_unavailable_short_snapshot_section(
+    result: ShortResearchResult,
+    *,
+    csv_rel_path: str = SHORT_CSV_LINK,
+    renderer_revision: str | None = REPORT_RENDERER_REVISION,
+) -> list[str]:
+    """Render an unavailable result without the candidate report formatter."""
+    body = render_unavailable_short_research_section(result, csv_rel_path=csv_rel_path)
+    return _fold_short_section(body, "Data unavailable", renderer_revision)
+
+
+def _fold_short_section(
+    body: list[str], status: str, renderer_revision: str | None,
+) -> list[str]:
+    if renderer_revision not in GROUPED_RESEARCH_RENDERER_REVISIONS:
+        return body
+    scope = []
+    if renderer_revision == DOWNSIDE_SCOPE_RENDERER_REVISION:
+        scope.append(
+            "- **Scope** · For research only. This screen runs independently of Topic Screens. "
+            "The long Action List selects and ranks its own candidates."
+        )
+    return [
+        body[0],
+        "<details>",
+        f"<summary><strong>Downside Research</strong> · {status}</summary>",
+        "",
+        *scope,
+        *(line for line in body[3:] if not line.startswith("- **Independence**:")),
+        "</details>",
+        "",
+    ]
 
 
 def short_snapshot_summary(
@@ -171,7 +221,14 @@ def load_short_snapshot(
     expected_csv = short_candidates_csv(result) if result.selected else ",".join(SHORT_CSV_COLUMNS) + "\n"
     if raw_csv != expected_csv.encode("utf-8"):
         raise ValueError("Short Research CSV does not match its JSON")
-    suffix = "\n".join(render_short_snapshot_section(result))
+    renderer = (
+        render_unavailable_short_snapshot_section
+        if result.status == STATUS_UNAVAILABLE
+        else render_short_snapshot_section
+    )
+    suffix = "\n".join(renderer(
+        result, renderer_revision=manifest.get("report_renderer_revision")
+    ))
     for name in ("action_list.md", "weekly_review.md"):
         if not (root / name).read_text(encoding="utf-8").endswith(suffix):
             raise ValueError(f"Short Research section in {name} does not match its JSON")

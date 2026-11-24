@@ -27,6 +27,10 @@ from ai_value_scanner.decision.model import (
     StockDecision,
 )
 from ai_value_scanner.decision.quality import QUALITY_V2_POLICY_VERSION
+from ai_value_scanner.reporting import decision as decision_reports
+from ai_value_scanner.reporting import short_research as short_reports
+from ai_value_scanner.reporting import snapshot as snapshot_module
+from ai_value_scanner.reporting.decision import render_action_list
 from ai_value_scanner.reporting.snapshot import (
     REPORT_RENDERER_REVISION,
     write_decision_snapshot,
@@ -715,6 +719,42 @@ class TestBorrowEvidence(unittest.TestCase):
 
 
 class TestSnapshotIntegration(unittest.TestCase):
+    def test_pool_size_requires_full_universe_in_current_and_previous_layouts(self) -> None:
+        primary = _decision()
+        primary = replace(primary, provenance={**primary.provenance, "watchlist_etfs": "AIQ"})
+        for revision in (REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-22b"):
+            with self.subTest(revision=revision):
+                args = dict(
+                    layout_version="v2", renderer_revision=revision, legacy_lists_paused=False,
+                )
+                report = render_action_list((primary,), **args)
+                self.assertIn("Top ETFs: AIQ (1)", report)
+                self.assertNotIn("Pool (", report)
+                self.assertNotIn("<strong>Topic Screens</strong>", report)
+                universe = iter((primary, _decision("BBB")))
+                report = render_action_list((primary,), all_decisions=universe, **args)
+                self.assertIn("Pool (2 names)", report)
+
+    def test_topics_and_optional_research_follow_the_primary_cards(self) -> None:
+        primary = replace(_decision("AAA"), source_lists=("low_value", "momentum"))
+        off_list = replace(
+            _decision("BBB"), source_lists=("industry_trend", "momentum", "momentum", "research_pool")
+        )
+        report = render_action_list(
+            (primary,), layout_version="v2", all_decisions=(primary, off_list),
+            legacy_lists_paused=False, short_research=build_short_cross_section(_base_frame()),
+        )
+        header = report.split('<a id="priority-review"></a>', 1)[0]
+        self.assertIn("[Priority Review — Ready for Evaluation](#priority-review)", header)
+        for label in ("Growth Leaders", "Secondary Radar", "Topic Screens", "Downside Research"):
+            self.assertNotIn(label, header)
+            self.assertIn(f"<details>\n<summary><strong>{label}", report)
+        self.assertLess(report.index("#1 AAA"), report.index("## Additional Research"))
+        self.assertEqual(report.count("<strong>Topic Screens</strong>"), 1)
+        self.assertIn("**Low-Value** (1) · AAA", report)
+        self.assertIn("**Industry-Trend** (1) · BBB", report)
+        self.assertIn("**Momentum** (2) · AAA, BBB", report)
+
     def test_ready_snapshot_files_report_and_validator(self) -> None:
         short = build_short_cross_section(_base_frame())
         with tempfile.TemporaryDirectory() as td:
@@ -722,7 +762,7 @@ class TestSnapshotIntegration(unittest.TestCase):
             self.assertTrue((paths.root / "short_research.json").is_file())
             self.assertTrue((paths.root / "short_candidates.csv").is_file())
             report = paths.action_list_md.read_text(encoding="utf-8")
-            self.assertIn("## Short Research", report)
+            self.assertIn("<strong>Downside Research</strong> · 1 candidate", report)
             self.assertIn("[short_candidates.csv](./short_candidates.csv)", report)
             manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
             self.assertTrue(manifest["short_research"]["enabled"])
@@ -737,10 +777,10 @@ class TestSnapshotIntegration(unittest.TestCase):
         unavailable = unavailable_short_research_result(
             ("TEST_UNAVAILABLE",), signal_date=DATE, market_data_feed="sip"
         )
-        for result, status, has_file in (
-            (no_candidates, "no_candidates", True),
-            (unavailable, "unavailable", True),
-            (None, "disabled", False),
+        for result, status, summary in (
+            (no_candidates, "no_candidates", "No candidates"),
+            (unavailable, "unavailable", "Data unavailable"),
+            (None, "disabled", None),
         ):
             with self.subTest(status=status):
                 with tempfile.TemporaryDirectory() as td:
@@ -751,13 +791,17 @@ class TestSnapshotIntegration(unittest.TestCase):
                     self.assertEqual(manifest["short_research"]["status"], status)
                     self.assertEqual(
                         (paths.root / "short_candidates.csv").is_file(),
-                        has_file,
+                        summary is not None,
                     )
-                    report = paths.action_list_md.read_text(encoding="utf-8")
-                    if status == "disabled":
-                        self.assertNotIn("## Short Research", report)
-                    else:
-                        self.assertIn("## Short Research", report)
+                    for report_path in (paths.action_list_md, paths.weekly_review_md):
+                        report = report_path.read_text(encoding="utf-8")
+                        if summary is None:
+                            self.assertNotIn("Downside Research", report)
+                        else:
+                            self.assertIn(
+                                f"<details>\n<summary><strong>Downside Research</strong> · {summary}</summary>",
+                                report,
+                            )
                     validation = validator.validate_snapshot(paths.root)
                     self.assertTrue(validation["ok"], validation["errors"])
 
@@ -772,7 +816,7 @@ class TestSnapshotIntegration(unittest.TestCase):
             self.assertEqual(len(csv_lines), 6)  # header + 5
             self.assertIn("peer_median_return_60d", csv_lines[0])
             report = paths.action_list_md.read_text(encoding="utf-8")
-            self.assertIn("## Short Research (5)", report)
+            self.assertIn("<strong>Downside Research</strong> · 5 candidates", report)
 
     def test_report_shows_reason_counts_when_rows_are_excluded(self) -> None:
         frame = _base_frame()
@@ -802,10 +846,47 @@ class TestSnapshotIntegration(unittest.TestCase):
         short = build_short_cross_section(_base_frame())
         with tempfile.TemporaryDirectory() as td:
             paths = _write_snapshot(td, short, legacy_lists_paused=True)
-            report = paths.action_list_md.read_text(encoding="utf-8")
-            self.assertIn("Legacy lists paused", report)
-            self.assertIn("## Short Research (1)", report)
-            self.assertIn("| 1 | E |", report)
+            for report_path in (paths.action_list_md, paths.weekly_review_md):
+                report = report_path.read_text(encoding="utf-8")
+                self.assertIn("<strong>Topic Screens</strong> · Paused", report)
+                heading = "<strong>Downside Research</strong> · 1 candidate</summary>"
+                self.assertIn(heading, report)
+                downside = report.split(heading, 1)[1]
+                folded = downside.split("</details>", 1)[0]
+                self.assertIn("For research only. This screen runs independently of Topic Screens.", folded)
+                self.assertIn("The long Action List selects and ranks its own candidates.", folded)
+                self.assertIn("| 1 | E |", folded)
+
+    def test_snapshot_formatter_failure_allows_long_publication_and_validation(self) -> None:
+        from ai_value_scanner.scanner import write_latest_decision_pointer
+
+        short = build_short_cross_section(_base_frame())
+        failure = ValueError("persistent Short Research formatter failure")
+        with (
+            tempfile.TemporaryDirectory() as td,
+            patch.object(snapshot_module, "render_short_snapshot_section", side_effect=failure) as writer,
+            patch.object(short_reports, "render_short_snapshot_section", side_effect=failure) as loader,
+            patch.object(decision_reports, "render_short_snapshot_section", side_effect=failure) as report,
+        ):
+            paths = _write_snapshot(td, short)
+            latest = write_latest_decision_pointer(
+                td, decision_date=DATE, strategy_style="production", policy_version="v2", layout_version="v2",
+            )
+            self.assertTrue(latest.is_file())
+            self.assertTrue(paths.decisions_jsonl.is_file())
+            manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["short_research"]["status"], "unavailable")
+            self.assertEqual(len((paths.root / "short_candidates.csv").read_text().splitlines()), 1)
+            for report_path in (paths.action_list_md, paths.weekly_review_md):
+                rendered = report_path.read_text(encoding="utf-8")
+                self.assertIn("#1 AAA", rendered)
+                self.assertIn("<strong>Downside Research</strong> · Data unavailable", rendered)
+                self.assertIn("SHORT_RESEARCH_PRESENTATION_FAILED", rendered)
+            validation = validator.validate_snapshot(paths.root)
+            self.assertTrue(validation["ok"], validation["errors"])
+            writer.assert_called_once()
+            loader.assert_not_called()
+            report.assert_not_called()
 
     def test_long_decisions_unchanged_by_short_enable(self) -> None:
         short = build_short_cross_section(_base_frame())
@@ -828,15 +909,9 @@ class TestSnapshotIntegration(unittest.TestCase):
             self.assertEqual(
                 off_manifest["weekly_symbols"], on_manifest["weekly_symbols"]
             )
-            off_prefix = off.action_list_md.read_text().split(
-                "## Short Research", 1
-            )[0]
-            on_prefix = on.action_list_md.read_text().split(
-                "## Short Research", 1
-            )[0]
-            # The enabled report adds the Short Research jump link, but the
-            # long card body and order before the section are unchanged.
-            self.assertIn("#1 AAA", off_prefix)
+            off_text = off.action_list_md.read_text()
+            on_prefix = on.action_list_md.read_text().split('<a id="short-research"></a>', 1)[0]
+            self.assertEqual(off_text.rstrip(), on_prefix.rstrip())
             self.assertIn("#1 AAA", on_prefix)
 
     def test_adapter_is_read_only_and_whitelisted(self) -> None:
@@ -910,10 +985,10 @@ class TestReuseAndValidation(unittest.TestCase):
 
     def test_historical_snapshot_without_short_field_validates(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            paths = _write_snapshot(td, None, legacy_lists_paused=True)
+            with patch.object(snapshot_module, "REPORT_RENDERER_REVISION", "mvp_report_renderer_2026-11-22a"):
+                paths = _write_snapshot(td, None, legacy_lists_paused=True)
             manifest = json.loads(paths.run_manifest_json.read_text(encoding="utf-8"))
             manifest.pop("short_research", None)
-            manifest["report_renderer_revision"] = "mvp_report_renderer_2026-11-22a"
             paths.run_manifest_json.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
                 + "\n",
@@ -982,9 +1057,29 @@ class TestReuseAndValidation(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "conflicts with S2 count"):
                     _write_snapshot(td, contradictory)
 
+    def test_previous_snapshot_with_short_still_validates_exactly(self) -> None:
+        short = build_short_cross_section(_base_frame())
+        for revision, short_heading, paused_label in (
+            ("mvp_report_renderer_2026-11-22b", "## Short Research (1)", "Legacy lists paused"),
+            (
+                "mvp_report_renderer_2026-11-24a",
+                "Downside Research</strong> · 1 candidate",
+                "Topic Screens</strong> · Paused",
+            ),
+        ):
+            with self.subTest(revision=revision), tempfile.TemporaryDirectory() as td:
+                with patch.object(snapshot_module, "REPORT_RENDERER_REVISION", revision):
+                    paths = _write_snapshot(td, short, legacy_lists_paused=True)
+                old_report = paths.action_list_md.read_text(encoding="utf-8")
+                self.assertIn(short_heading, old_report)
+                self.assertIn(paused_label, old_report)
+                self.assertNotIn("This screen runs independently of Topic Screens", old_report)
+                validation = validator.validate_snapshot(paths.root)
+                self.assertTrue(validation["ok"], validation["errors"])
+
     def test_renderer_revision_bumped(self) -> None:
         self.assertEqual(
-            REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-22b"
+            REPORT_RENDERER_REVISION, "mvp_report_renderer_2026-11-24b"
         )
 
 

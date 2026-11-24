@@ -1,0 +1,17 @@
+"""Report rendering contracts for immutable decision snapshots."""
+
+DOWNSIDE_SCOPE_RENDERER_REVISION = "mvp_report_renderer_2026-11-24b"
+REPORT_RENDERER_REVISION = DOWNSIDE_SCOPE_RENDERER_REVISION
+GROUPED_RESEARCH_RENDERER_REVISIONS = frozenset({
+    "mvp_report_renderer_2026-11-24a",
+    DOWNSIDE_SCOPE_RENDERER_REVISION,
+})
+LIST_CONTEXT_RENDERER_REVISIONS = frozenset({
+    "mvp_report_renderer_2026-11-22a",
+    "mvp_report_renderer_2026-11-22b",
+}) | GROUPED_RESEARCH_RENDERER_REVISIONS
+COMPATIBLE_RENDERER_REVISIONS = LIST_CONTEXT_RENDERER_REVISIONS | {
+    "mvp_report_renderer_2026-11-06a",
+    "mvp_report_renderer_2026-11-06b",
+    "mvp_report_renderer_2026-11-06c",
+}

@@ -429,7 +429,7 @@ def build_scan_entry_evidence() -> dict:
             "dataset": "sip_2021_2026_v1",
             "signal_date": DATE,
             "market_data_feed": "sip",
-            "qqq_below_sma200": "Legacy lists paused" in on_report,
+            "qqq_below_sma200": "<strong>Topic Screens</strong> · Paused" in on_report,
             "legacy_csv_rows": legacy_rows,
             "off": {
                 "decision_output_status": off.decision_output_status,
@@ -456,7 +456,7 @@ def build_scan_entry_evidence() -> dict:
                     (on_root / "short_research.json").is_file()
                     and (on_root / "short_candidates.csv").is_file()
                 ),
-                "short_report_section": "## Short Research" in on_report,
+                "short_report_section": "<strong>Downside Research</strong>" in on_report,
                 "daily_symbols": on_manifest["daily_symbols"],
                 "weekly_symbols": on_manifest["weekly_symbols"],
                 "legacy_csv_sha256": {
@@ -571,8 +571,8 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             self.assertEqual(on_manifest["short_research"]["status"], "ready")
             self.assertGreater(on_manifest["short_research"]["selected_count"], 0)
             on_report = (on_root / "action_list.md").read_text(encoding="utf-8")
-            self.assertIn("## Short Research", on_report)
-            self.assertIn("Legacy lists paused", on_report)
+            self.assertIn("<strong>Downside Research</strong> · 1 candidate", on_report)
+            self.assertIn("<strong>Topic Screens</strong> · Paused", on_report)
             self.assertIn("short_candidates.csv", on_report)
 
             off_pointer = json.loads(
@@ -586,6 +586,24 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 )
             )
             self.assertEqual(off_pointer, on_pointer)
+
+    def test_report_revision_preserves_frozen_decisions_and_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(snapshot, "REPORT_RENDERER_REVISION", "mvp_report_renderer_2026-11-22b"):
+                old = _run_scan(root / "old", enable_short=True, real_legacy_filters=True)
+            new = _run_scan(root / "new", enable_short=True, real_legacy_filters=True)
+            old_root = Path(old.decision_snapshot_root)
+            new_root = Path(new.decision_snapshot_root)
+            self.assertEqual(
+                _decision_core(old_root / "decisions.jsonl"), _decision_core(new_root / "decisions.jsonl")
+            )
+            for key in ("daily_symbols", "weekly_symbols", "counts"):
+                self.assertEqual(_manifest(old_root)[key], _manifest(new_root)[key])
+            for name in ("short_research.json", "short_candidates.csv"):
+                self.assertEqual((old_root / name).read_bytes(), (new_root / name).read_bytes())
+            for name, path in _legacy_files(root / "old").items():
+                self.assertEqual(path.read_bytes(), _legacy_files(root / "new")[name].read_bytes())
 
     def test_sample_truncation_marks_short_unavailable_but_publishes_long(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -708,20 +726,24 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             self.assertIn("- short research status: unavailable", status.report_path.read_text())
 
     def test_persistent_short_renderer_failure_preserves_formal_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as td, patch.object(
-            snapshot, "render_short_research_section", side_effect=ValueError("short renderer failure")
-        ), patch.object(
-            archive, "render_short_research_section", side_effect=ValueError("still broken on reload")
-        ):
-            status = _run_scan(Path(td), enable_short=True)
-            self.assertEqual(status.decision_output_status, "written")
-            self.assertEqual(status.latest_pointer_status, "written")
-            root = Path(status.decision_snapshot_root)
-            result = archive.load_short_snapshot(root, _manifest(root))
-            self.assertEqual(result.status, "unavailable")
-            self.assertEqual(result.selected_count, 0)
-            self.assertIn("SHORT_RESEARCH_PRESENTATION_FAILED", result.reason_codes)
-            self.assertIn("- short research status: unavailable", status.report_path.read_text())
+        for formatter in ("render_short_research_section", "render_short_snapshot_section"):
+            with (
+                self.subTest(formatter=formatter),
+                tempfile.TemporaryDirectory() as td,
+                patch.object(snapshot, formatter, side_effect=ValueError("short renderer failure")) as writer,
+                patch.object(archive, formatter, side_effect=ValueError("still broken on reload")) as loader,
+            ):
+                status = _run_scan(Path(td), enable_short=True)
+                self.assertEqual(status.decision_output_status, "written")
+                self.assertEqual(status.latest_pointer_status, "written")
+                root = Path(status.decision_snapshot_root)
+                result = archive.load_short_snapshot(root, _manifest(root))
+                self.assertEqual(result.status, "unavailable")
+                self.assertEqual(result.selected_count, 0)
+                self.assertIn("SHORT_RESEARCH_PRESENTATION_FAILED", result.reason_codes)
+                self.assertIn("- short research status: unavailable", status.report_path.read_text())
+                writer.assert_called_once()
+                loader.assert_not_called()
 
     def test_scan_entry_evidence_mapping(self) -> None:
         evidence = build_scan_entry_evidence()

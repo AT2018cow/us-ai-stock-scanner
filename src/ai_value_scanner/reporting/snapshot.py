@@ -34,19 +34,26 @@ from ai_value_scanner.reporting.decision import (
     render_action_list,
     render_detailed_report,
 )
+from ai_value_scanner.reporting.revisions import (
+    COMPATIBLE_RENDERER_REVISIONS,
+    LIST_CONTEXT_RENDERER_REVISIONS,
+    REPORT_RENDERER_REVISION,
+)
 from ai_value_scanner.reporting.short_research import (
     SHORT_CSV,
     SHORT_CSV_LINK,
     SHORT_JSON,
     load_short_snapshot,
+    render_short_snapshot_section,
+    render_unavailable_short_snapshot_section,
     short_snapshot_summary,
 )
 from ai_value_scanner.research.short_research_v1 import (
     SHORT_CSV_COLUMNS,
+    STATUS_UNAVAILABLE,
     ShortResearchResult,
     disabled_short_research_result,
     render_short_research_section,
-    render_unavailable_short_research_section,
     short_candidates_csv,
     short_research_json,
     unavailable_short_research_result,
@@ -65,24 +72,6 @@ class DecisionSnapshotPaths:
     discovery_source_rejections_jsonl: Path
     discovery_source_inputs_dir: Path
     run_manifest_json: Path
-
-
-# Writer revision marker (R05): snapshots written from this revision onward can
-# be byte-verified by the validator; older snapshots are validated structurally
-# with an explicit warning instead of pretending their stored files match the
-# current renderer.
-REPORT_RENDERER_REVISION = "mvp_report_renderer_2026-11-22b"
-LIST_CONTEXT_RENDERER_REVISIONS = frozenset({
-    "mvp_report_renderer_2026-11-22a",
-    REPORT_RENDERER_REVISION,
-})
-COMPATIBLE_RENDERER_REVISIONS = frozenset({
-    REPORT_RENDERER_REVISION,
-    "mvp_report_renderer_2026-11-06a",
-    "mvp_report_renderer_2026-11-06b",
-    "mvp_report_renderer_2026-11-06c",
-    "mvp_report_renderer_2026-11-22a",
-})
 
 
 def _safe_style(style: str | None) -> str:
@@ -448,7 +437,16 @@ def write_decision_snapshot(
             try:
                 short_json_text = short_research_json(short_result)
                 short_csv_text = short_candidates_csv(short_result)
-                short_section = render_short_research_section(short_result)
+                if short_result.status == STATUS_UNAVAILABLE:
+                    short_section = render_unavailable_short_snapshot_section(
+                        short_result, renderer_revision=REPORT_RENDERER_REVISION,
+                    )
+                else:
+                    short_section = render_short_snapshot_section(
+                        short_result,
+                        renderer_revision=REPORT_RENDERER_REVISION,
+                        body=render_short_research_section(short_result),
+                    )
             except Exception:
                 short_result = unavailable_short_research_result(
                     ("SHORT_RESEARCH_PRESENTATION_FAILED",),
@@ -463,7 +461,10 @@ def write_decision_snapshot(
                     short_result.to_payload(), ensure_ascii=False, sort_keys=True, indent=2,
                 ) + "\n"
                 short_csv_text = ",".join(SHORT_CSV_COLUMNS) + "\n"
-                short_section = render_unavailable_short_research_section(short_result)
+                short_section = render_unavailable_short_snapshot_section(
+                    short_result,
+                    renderer_revision=REPORT_RENDERER_REVISION,
+                )
             # Filesystem errors remain core snapshot failures.
             (tmp_root / SHORT_JSON).write_text(short_json_text, encoding="utf-8")
             (tmp_root / SHORT_CSV).write_text(short_csv_text, encoding="utf-8")
@@ -489,6 +490,7 @@ def write_decision_snapshot(
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
+                renderer_revision=REPORT_RENDERER_REVISION,
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,
@@ -504,6 +506,7 @@ def write_decision_snapshot(
                 all_decisions=decisions_tuple,
                 streaks_by_symbol=streaks_by_symbol,
                 legacy_lists_paused=legacy_lists_paused,
+                renderer_revision=REPORT_RENDERER_REVISION,
                 short_research=short_result if short_result.enabled else None,
                 short_csv_rel=SHORT_CSV_LINK,
                 short_section=short_section,

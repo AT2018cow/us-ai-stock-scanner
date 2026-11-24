@@ -663,6 +663,7 @@ def validate_snapshot(
             all_decisions=decisions,
             streaks_by_symbol=streaks_by_symbol,
             legacy_lists_paused=legacy_lists_paused,
+            renderer_revision=renderer_revision,
             short_research=short_result,
             short_csv_rel=(
                 "./short_candidates.csv" if short_result is not None else None
@@ -680,6 +681,7 @@ def validate_snapshot(
             all_decisions=decisions,
             streaks_by_symbol=streaks_by_symbol,
             legacy_lists_paused=legacy_lists_paused,
+            renderer_revision=renderer_revision,
             short_research=short_result,
             short_csv_rel=(
                 "./short_candidates.csv" if short_result is not None else None

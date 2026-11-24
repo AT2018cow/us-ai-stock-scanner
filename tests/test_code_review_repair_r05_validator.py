@@ -95,8 +95,8 @@ class VersionAwareValidatorTests(unittest.TestCase):
             )
             for report in (paths.action_list_md, paths.weekly_review_md):
                 text = report.read_text(encoding="utf-8")
-                self.assertIn("Low-Value, Industry-Trend and Momentum", text)
-                self.assertIn("Legacy lists paused", text)
+                self.assertIn("The three screens share this gate", text)
+                self.assertIn("<strong>Topic Screens</strong> · Paused", text)
                 self.assertIn("PRIORITY_REVIEW", text)
             result = validate_snapshot(paths.root)
             self.assertTrue(result["ok"], result["errors"])
@@ -114,8 +114,8 @@ class VersionAwareValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = _write(tmp, decisions, policy="v2", layout="v2")
             text = paths.action_list_md.read_text(encoding="utf-8")
-            self.assertIn("How to read the lists", text)
-            self.assertNotIn("Legacy lists paused", text)
+            self.assertIn("<strong>Topic Screens</strong> · Completed", text)
+            self.assertNotIn("<strong>Topic Screens</strong> · Paused", text)
             result = validate_snapshot(paths.root)
             self.assertTrue(result["ok"], result["errors"])
 
