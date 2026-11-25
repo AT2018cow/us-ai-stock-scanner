@@ -1,0 +1,215 @@
+{
+  "breakout_20d_v1": {
+    "confirmation_only_exit": {
+      "date_values_net_15_and_net_30_delta": {
+        "2026-11-06": [
+          -0.1016664591116645,
+          -0.11902324616023241,
+          0.017356787048567912
+        ]
+      },
+      "different_issuers": 1,
+      "mature_statuses": {
+        "settled|settled": 1
+      },
+      "net_delta_15": 0.017356787048567912,
+      "net_delta_30": 0.017356787048567912,
+      "paired_statuses": {
+        "settled|settled": 1
+      }
+    },
+    "confirmed_episodes": 0,
+    "episodes": {
+      "expired": 40,
+      "failed": 57,
+      "unknown_continuity": 45
+    },
+    "excluded": {
+      "left_censored": 112
+    },
+    "false_breakout_5d": {
+      "early_breaches": 0,
+      "mature_windows": 0,
+      "rate": null,
+      "scorable_mature_windows": 0,
+      "statuses": {}
+    },
+    "first_hand_confirmations": 1,
+    "structure_exit_vs_fixed": {
+      "date_values_net_15_and_net_30_delta": {},
+      "different_issuers": 0,
+      "mature_statuses": {},
+      "net_delta_15": null,
+      "net_delta_30": null,
+      "paired_statuses": {}
+    },
+    "wait_vs_immediate": {
+      "date_values_net_15_and_net_30_delta": {
+        "2026-11-09": [
+          0.0,
+          -0.028926087897056297,
+          0.031926087897056296
+        ],
+        "2026-11-10": [
+          0.0,
+          -0.07648996685889801,
+          0.07948996685889802
+        ]
+      },
+      "different_issuers": 32,
+      "mature_statuses": {
+        "cash|settled": 32
+      },
+      "net_delta_15": 0.052708027377977154,
+      "net_delta_30": 0.05570802737797716,
+      "paired_statuses": {
+        "cash|settled": 32
+      }
+    }
+  },
+  "code_sha": "94c29fb0bf1a835ae556e248ba2e3a661c95d60b",
+  "data_hashes": {
+    "actions.json": "3f750211f2852b67f15feeb8cbf1f67c80744d64eb022b587ec527fbec2c5772",
+    "outcome_actions_extra.json": "835c75472c947247903868066f89241fdc353393a92c94f85499755f4c68f5bf",
+    "prices.json": "3c918ec4d9b19ce45b208e4d587d7c72734814f7b03da7282c58668c5abe441b",
+    "run.py": "58b7821964e7983a2a3d63a648acf44e926a344a632e297506d83b9a972b117d",
+    "signal_cache_hashes.json": "be3022430b72b45e6be8f330bebb9dab58ee1bd856846bea250625c115b8caaf",
+    "verify.py": "ec6858f034cb12d76b521016ee2fd435561572821f4fc8231cc1605777589b70"
+  },
+  "implementation_sha256": "6576004cbdba5f1b5f6d8a39c0f9d611c48a117a7db59ea75b8dfc8084fa37b3",
+  "independent_verification": {
+    "legs_recomputed": 170
+  },
+  "inputs": {
+    "corporate_actions": "Alpaca data_quality=all, with future-effective actions excluded from signals",
+    "identity": "CIK/ticker verified with each archived mapping and content hash",
+    "outcome_price_source": "independently fetched Alpaca raw SIP day bars",
+    "price_cutoff": "2026-11-24T21:20:00+00:00",
+    "protocols": {
+      "breakout_20d_v1": "swing_protocol:50ebfdcd63a422be6145bb8a3b4a469f5c5eb135976ecda8f50904fcc2f67758",
+      "pullback_reclaim_v1": "swing_protocol:1e444a240674bda0c6c27959abbf3a87ea1ddc5f375e918cc4a23e42b915be33"
+    },
+    "score_through": "2026-11-24",
+    "securities_in_reconstruction_scope": 282,
+    "signal_end": "2026-11-20",
+    "signal_price_source": "session-matched local Alpaca raw SIP cache",
+    "signal_start": "2026-11-06"
+  },
+  "price_coverage": {
+    "excluded": {
+      "cash_dividends": [
+        "AMRZ"
+      ],
+      "due_bill_dividend": [
+        "VISN"
+      ],
+      "stock_mergers": [
+        "NWE"
+      ],
+      "unknown_effective_date": [
+        "BKH",
+        "CCC",
+        "IA",
+        "OKE",
+        "P",
+        "PPLI",
+        "VMRK",
+        "XOM"
+      ]
+    },
+    "included": 459,
+    "requested": 470
+  },
+  "pullback_reclaim_v1": {
+    "confirmation_only_exit": {
+      "date_values_net_15_and_net_30_delta": {},
+      "different_issuers": 0,
+      "mature_statuses": {},
+      "net_delta_15": null,
+      "net_delta_30": null,
+      "paired_statuses": {}
+    },
+    "confirmed_episodes": 0,
+    "episodes": {},
+    "excluded": {
+      "left_censored": 86
+    },
+    "false_breakout_5d": null,
+    "first_hand_confirmations": 4,
+    "structure_exit_vs_fixed": {
+      "date_values_net_15_and_net_30_delta": {},
+      "different_issuers": 0,
+      "mature_statuses": {},
+      "net_delta_15": null,
+      "net_delta_30": null,
+      "paired_statuses": {}
+    },
+    "wait_vs_immediate": {
+      "date_values_net_15_and_net_30_delta": {},
+      "different_issuers": 0,
+      "mature_statuses": {},
+      "net_delta_15": null,
+      "net_delta_30": null,
+      "paired_statuses": {}
+    }
+  },
+  "ranking": {
+    "archive_evidence": {
+      "2026-11-06": "232471d1b80c1c9d1669e853b323c94cd3d19eba42086052e87d884596c1b9f9",
+      "2026-11-09": "02f3875690de394ace32d5604fb4ad40cb68bc5ea3834ec3cb8e6ea053638cab",
+      "2026-11-10": "8a298e1892aaf23025fdce5d1368f6053ecfa4e869880bafff223d2b549f057a",
+      "2026-11-11": "d5de9a17a2031eeef84662b7a5fb95f784f778087bcfa365403e3c71918bc6e4",
+      "2026-11-12": "a576c9aaf8fe88d6bcadd98d34661bfafabbd34127ca1db7e76ba5f719cf701d",
+      "2026-11-13": "798ae81a5868afe2727c2e4e576eaa21dd03382109fdc25866398d8bd37d5119",
+      "2026-11-16": "6720c55afd311835069f3a679500ea19bf82c8cc71044501fe63f57c79c14294",
+      "2026-11-17": "8f633bff07d2e785c143349a3be3059ea43530f6a08af6aef53648869675a850",
+      "2026-11-18": "1b38c11f9ce5df606c1d49068d86220bc6182c55ee813c358221a6c6aa56bc89",
+      "2026-11-19": "b61c03258f2540afdb5978b41b82bcb0894204bafb776a616a780308a89054b9",
+      "2026-11-20": "bf777599569f66327298f98631a8844dcea8cc171562ffef9e67a25c165b2fbf"
+    },
+    "baseline_10d_by_day": {
+      "2026-11-06": {
+        "daily_s2": -0.05347320961789074,
+        "financial_candidate": -0.045594257358995145,
+        "qqq_equal_deployed": -0.08477894482675352,
+        "qqq_full": -0.08477894482675352,
+        "top15": -0.045594257358995145
+      },
+      "2026-11-09": {
+        "daily_s2": -0.03067359630876618,
+        "financial_candidate": null,
+        "qqq_equal_deployed": null,
+        "qqq_full": -0.034983227763404345,
+        "top15": null
+      },
+      "2026-11-10": {
+        "daily_s2": -0.04938934318445785,
+        "financial_candidate": -0.033552026548603855,
+        "qqq_equal_deployed": -0.07455744383657315,
+        "qqq_full": -0.07455744383657315,
+        "top15": -0.033552026548603855
+      }
+    },
+    "fcf_verified_scores": 0,
+    "potential_fcf_scores": 214,
+    "real_changes": 0,
+    "regimes": {
+      "defensive": 11
+    },
+    "sessions": 11
+  },
+  "reconstruction": {
+    "breakout_confirmed": 390,
+    "breakout_invalidated": 518,
+    "breakout_watching": 2025,
+    "non_split_signal_action": 55,
+    "pullback_confirmed": 263,
+    "pullback_insufficient": 2505,
+    "pullback_invalidated": 33,
+    "pullback_watching": 132,
+    "reconstructed": 2933,
+    "scoped_rows": 3072,
+    "split_adjusted": 55,
+    "unverified_signal_action": 84
+  }
+}

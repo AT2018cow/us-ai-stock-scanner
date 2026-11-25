@@ -4,6 +4,8 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 1. Active Product & Architecture Contracts
 
+- [中短线人工交易辅助实施与验收方案](agent_specs/swing_trading_implementation_and_validation_20261124.md) — 六个改进与五项能力的交付映射、代码入口、测试、冻结回放及前瞻验收。
+
 - `product_direction_low_frequency_manual_selection.md` — Product north star: low-frequency, human-decision-support stock selection (`Company Quality × Entry Quality → Action List → Detailed Report`).
 - `mvp_design_low_frequency_manual_selection.md` — Canonical MVP v1 architecture, `StockDecision` contract, and validation invariants.
 - `general_purpose_discovery_and_quality_v2_design.md` — Market-agnostic three-source discovery (`us_core`, `thematic`, `manual`) and business-model-aware Quality v2 design contract.
@@ -34,6 +36,8 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 2. Active Policy & Operational Specs
 
+- [v1.3.0 中短线选股与复核手册](swing_trading_user_guide.md) — 日常运行、可选配置、报告字段、次日开盘复核与前向台账。
+
 - [2026-11-06 本轮修改与使用影响](changes_and_usage_20261106.md) — 统一说明日常命令、收盘门禁、SIP/IEX、旧快照/缓存、报告变化及研究工具兼容性。
 - `company_quality_v1_policy.md` — Pre-registered Company Quality v1 components, thresholds, and coverage rules.
 - `entry_quality_v1_policy.md` — Pre-registered Entry Quality v1 states and readiness rules.
@@ -48,6 +52,9 @@ This directory separates **active product/architecture contracts and current pha
 
 ## 3. Current Baseline Reviews & Decisions
 
+- [2026-11-25 中短线有界历史比较](swing_historical_bounded_20261125/README.md) — 11 个正式 SIP 日档的等待、结构退出和排序增量实验，含结算覆盖与独立复算。
+- [2026-11-25 中短线七阶段整体验收](swing_acceptance_20261125/README.md) — 阶段签收、全量回归、旧归档复算、独立反例及前向验收条件。
+- [2026-11-24 人工交易辅助审查](trading_decision_support_review_20261124.md) — 当前代码、生产快照和历史证据复核，以及发布时效、盘中数据、人工复核条件和前瞻验证的改进顺序。
 - [2026-11-06 价值与回踩有界实验](value_pullback_optimization_20261106/README.md) — v4三个单因素的基线复现、长期/压力期比较、归因与快照对照；[已批准方案](agent_specs/value_and_pullback_optimization_spec.md)。
 - [2026-11-06 五项审查问题修复](review_followup_20261106/report.md) — 修复120日合法标签误拒绝、提前收盘门禁、SIP缓存、配置续跑身份与外部CSV CLI；恢复受影响样本并重算验证。
 - [2026-11-06 SIP收盘名单、IEX盘中来源与日期对齐](sip_eod_migration_20261106/report.md) — 正式生产切换、长期/压力期标签与全部受影响评估重算、全池726份决策及Top-15验收、断点恢复与哈希证据；迁移前冻结报告保留。

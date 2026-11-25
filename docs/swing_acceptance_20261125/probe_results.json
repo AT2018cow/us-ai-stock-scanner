@@ -1,0 +1,90 @@
+{
+  "archive": {
+    "DIS_s2_reason": "soft_exit_grace",
+    "daily_ranked": 15,
+    "days_latest_first": [
+      "2026-11-23",
+      "2026-11-20",
+      "2026-11-19",
+      "2026-11-18",
+      "2026-11-17",
+      "2026-11-16"
+    ],
+    "decisions_sha256": [
+      "8cbd931f0fefb35dd2f7c2f6a636bc064b50a8092092ae84016faba2bb3add35",
+      "5e250c9a8fc608a3d032006595aec49a3706039953f010a062b9c5cd3ead7b6c",
+      "ebefd08f8f7c6bd0bafa007e2935d01d953725c6320957a7d88acaf5b27fbe6d",
+      "3fea611b739d3b52e2be60d6d76d14c271fdb53fdb58962dbc9cf4c3d7b8a53f",
+      "676e883895b1191c47de8b60a82d8aaa692252f84e42309edd19ed6ae5d11b1f",
+      "5830e0b0af3c0f3633af7e1e57c86e3a35ff894a9c5fed00b97be7e8e5ae5790"
+    ],
+    "formal_receipts_imported": 0,
+    "ledger_retry_same_id": true,
+    "manifest_sha256": [
+      "5b6155c9daad0c2c0f39e8647238338ee0ed2e4db72823bc6f7736be2334a927",
+      "bf777599569f66327298f98631a8844dcea8cc171562ffef9e67a25c165b2fbf",
+      "b61c03258f2540afdb5978b41b82bcb0894204bafb776a616a780308a89054b9",
+      "1b38c11f9ce5df606c1d49068d86220bc6182c55ee813c358221a6c6aa56bc89",
+      "8f633bff07d2e785c143349a3be3059ea43530f6a08af6aef53648869675a850",
+      "6720c55afd311835069f3a679500ea19bf82c8cc71044501fe63f57c79c14294"
+    ],
+    "observations": 721,
+    "ready_duration_capped_at_3_implementation": {
+      "1": 19,
+      "2": 1,
+      "3": 20
+    },
+    "ready_duration_capped_at_3_reference": {
+      "1": 19,
+      "2": 1,
+      "3": 20
+    },
+    "ready_start_evidence_in_six_sessions": {
+      "archive_boundary": 8,
+      "observed_transition": 32
+    },
+    "weekly_ranked": 15
+  },
+  "publication_and_exit": {
+    "accepted_exit_at": "2025-11-05T21:00:00+00:00",
+    "accepted_net": 0.097,
+    "committed_execution": "2025-11-05T14:30:00+00:00",
+    "committed_open_price_in_scenario": 92,
+    "expected_net_if_honored": -0.083,
+    "maturity_before_correction": [
+      {
+        "count": 1,
+        "evidence_class": "forward",
+        "horizon": 2,
+        "path": "manual",
+        "status": "mature"
+      }
+    ],
+    "net_on_committed_exit_revision": -0.083,
+    "publication_status_by_first_readable_utc": {
+      "22:01": "current",
+      "23:00": "current"
+    },
+    "read_at": "2025-11-03T22:20:00+00:00"
+  },
+  "qqq": {
+    "all_stock_entries": [
+      "2025-11-05"
+    ],
+    "expected_equal_deployment_net": -0.003,
+    "filled_seats": 15,
+    "full_qqq_net": 0.097,
+    "planned": "2025-11-04",
+    "reported_equal_deployment_net": 0.097,
+    "top15_net": -0.003
+  },
+  "weekly_continuity": {
+    "completed_weeks_from_signal": 13,
+    "expected_held": true,
+    "observed_short_break": "2025-11-10",
+    "reported_held": false,
+    "signal": "2025-11-07",
+    "smallest_close_minus_sma10": 0.0,
+    "terminal": "2026-02-05"
+  }
+}

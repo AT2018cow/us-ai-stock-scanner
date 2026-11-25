@@ -2,6 +2,8 @@
 
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
 
+**v1.3.0 增加中短线复核工具。** 正式名单可以检查时效和完整性，日报、周报和详报补充 `Ready` 年龄及复核条件。可按需开启自选股跟踪、收盘形态、开盘卡和中线视图，并记录人工复核及纸面路径。[使用手册与报告字段](docs/swing_trading_user_guide.md)
+
 > **当前运行状态（2026-10-15 MVP v2 已默认启用）：**
 > - **生产配置默认输出 MVP v2**：生产入口为 `configs/config.production.json`（有效参数等同防守档 `config.risk_off.json`，档案身份为 `production`）；它与 `configs/config.risk_on.json`、`configs/config.strict_candidate.json` 均已默认设置 `"decision_policy_version": "v2", "report_layout_version": "v2"`。直接运行 `python run_scan.py --config configs/config.production.json` 即可产出完整的 MVP v2 选股结果与 v2 折叠卡片式报告（如需回退旧版可传 `--decision-policy-version v1 --report-layout-version v1`）。详见下文 **「3.4.2 MVP v2 选股策略详解与使用方式」** 及内部交接台账 [docs/mvp_v2_completion_and_handoff_20261015.md](docs/mvp_v2_completion_and_handoff_20261015.md)。
 > - **通用三源候选池发现（Opt-In）**：扫描器支持通过 `discovery_source_files` 接入独立的 **US Core Universe / Thematic Universe / Manual Research Universe** CSV（见 [docs/general_purpose_discovery_and_quality_v2_design.md](docs/general_purpose_discovery_and_quality_v2_design.md) 与 [docs/general_discovery_implementation.md](docs/general_discovery_implementation.md)）。
@@ -183,7 +185,7 @@ outputs/decisions/
 - `detailed/*.md` 只解释同一个 `StockDecision`，不重新计算状态；
 - 默认 attention cap 为 15，可用 `--decision-attention-cap` 调整；
 - `--max-symbols` 的试运行会写到 `outputs/decision_samples/`，避免污染正式 prospective archive；
-- 每次全量扫描（`max_symbols=null`）会自动刷新 `outputs/decisions/latest_<strategy_style>.json` 快捷指针（仅保存相对路径，指向最新一期 `action_list.md`、`weekly_review.md` 与 `run_manifest.json`）；
+- 全量扫描通过快照校验后才更新 `outputs/decisions/latest_<strategy_style>.json`，其中保存最新一期日报、周报和 manifest 的相对路径；
 - 同一日期、同一 style 的正式 snapshot 不会被覆盖（在 `scripts/run_daily_cron.py` 中启用 `allow_existing_decision_snapshot=True`，周末或同日重跑会自动保留既有不可变快照并跳过覆盖）；如需保留第二次独立运行，可显式指定新的
   `--decision-output-root`。
 
@@ -240,7 +242,7 @@ cache 不会被修改，Quality / Entry / Action 逻辑也不由 EdgarTools 重�
 fail closed。币种判断绑定到 latest periodic accession，不再因为历史或附带 USD fact
 而把 foreign issuer 误判成 USD-supported。实现边界、provenance 和真实数据验收要求见
 [docs/sec_edgartools_live_fallback.md](docs/sec_edgartools_live_fallback.md)；此前的
-[EdgarTools parity spike](docs/sec_edgartools_parity_spike.md) 保留为历史诊断证据。
+[EdgarTools parity spike](docs/archive/experiments/sec_edgartools_parity_spike.md) 保留为历史诊断证据。
 
 历史 integrated Action-state 诊断可基于 PR3 的 pre-strategy Entry dataset 运行：
 
@@ -980,7 +982,7 @@ python run_backtest.py --mode historical_replay --scan-config configs/config.ris
 ### 11.1 E01 模块化重构基线
 
 正式拆分 `scanner.py/backtest.py` 前，先按固定输入冻结 post-correctness 行为基线。完整协议见
-[`docs/refactor_baseline_protocol.md`](docs/refactor_baseline_protocol.md)。
+[`docs/refactor_baseline_protocol.md`](docs/archive/experiments/refactor_baseline_protocol.md)。
 
 基线不是重新调参，不允许 promote。核心做法：
 
@@ -1343,6 +1345,19 @@ python scripts/intraday_watch.py --poll 300 --save
 
 盘中表格同时显示 IEX 价格来源、时间、年龄及不可用原因。涨跌和技术指标使用同一拆股口径。默认只对同一常规交易日内、报价年龄不超过 180 秒且个股与 QQQ 时差不超过 120 秒的观测计算影子。盘中预览使用相同规则。 [盘中报价规则](docs/intraday_watch.md#3-数据与计算)
 
+### 13.24 v1.3.0 名单状态与中短线复核
+
+| 工具 | 用途 |
+|---|---|
+| `scripts/decision_status.py` | 查看正式 SIP 名单的期望交易日、实际交易日、首次可读时间和失败原因。 |
+| `scripts/render_intraday_preview.py` | 生成带 IEX 标记的临时日报、周报和详报。 |
+| `scripts/swing_review.py` | 复算收盘形态，或用下一交易日的报价观测生成开盘复核卡。 |
+| `scripts/review_swing_coverage.py` | 核对归档的财务与三源发现池覆盖，或从冻结输入重放中线视图。 |
+| `scripts/forward_observations.py` | 导入正式回执、登记人工选择和纸面路径、汇总到期结果。 |
+| `scripts/evaluate_swing_experiment.py` | 事先冻结等待、退出和排序协议，接入独立价格标签结算。 |
+
+运行命令、配置和字段解释见 [中短线选股与复核手册](docs/swing_trading_user_guide.md)。
+
 ## 14. 说明与限制
 
 - 本轮修改与使用影响：[统一使用说明](docs/changes_and_usage_20261106.md)（正式SIP的时间窗口、IEX监控、缓存/旧快照、研究结果与交付范围）。
@@ -1366,8 +1381,8 @@ python scripts/intraday_watch.py --poll 300 --save
 - 最新专项审查：[2026-11-06 计算、逻辑与优化建议](docs/review_20261106/README.md)；[修复、四项优化与四项专项验收](docs/review_20261106/implementation_and_validation.md)（含离线工具、冻结研究证据和缓存/版本迁移说明）。
 
 - 当前代码审查与修复记录：[问题、修复建议与验收条件](docs/code_review_and_repair_handoff_20261018.md)（交接基线）及 [修复结果与复验记录](docs/code_review_repair_results_20261018.md)（R03–R05 已复验通过；完整测试 1188 项通过）。
-- 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。
-- 模块重构方案：[2026-10-03 拆分边界与渐进迁移计划](docs/modular_refactoring_plan_20261003.md)（含公共计算契约、依赖方向、兼容迁移和验收标准；方案尚未实施）。
+- 设计、逻辑与计算审查记录：[2026-10-03 问题清单与优化建议](docs/archive/experiments/design_and_calculation_review_20261003.md)（含复现证据、优先级和修复验收条件；记录不代表问题已修复）。
+- 模块重构方案：[2026-10-03 拆分边界与渐进迁移计划](docs/archive/experiments/modular_refactoring_plan_20261003.md)（含公共计算契约、依赖方向、兼容迁移和验收标准；方案尚未实施）。
 - 本项目用于研究与筛选，不构成投资建议。
 - 历史回测为工程近似，不等价于完整 PIT 学术数据库回测。
 - ETF 持仓抓取依赖第三方页面结构，建议定期抽检 watchlist 刷新结果。

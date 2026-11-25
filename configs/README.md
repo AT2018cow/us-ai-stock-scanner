@@ -53,3 +53,18 @@ provisional source labels. Legacy configs without this field retain snapshot mod
 See [migration evidence](../docs/sip_eod_migration_20261106/README.md).
 
 完整日常使用影响及同日独立运行方法见[统一说明](../docs/changes_and_usage_20261106.md)。
+
+## 5. v1.3.0 复核配置
+
+正式 SIP 报告默认附带复核条件及 Ready 年龄。下列选项可按需加到生产配置副本中：
+
+| 配置 | 默认值 | 用途 |
+|---|---|---|
+| `review_watchlist_csv` | `null` | 跟踪自选证券的榜内、榜外和排除状态。 |
+| `enable_swing_review` | `false` | 保存 SIP 收盘突破、回踩与价位证据，供开盘卡引用。 |
+| `swing_event_calendar_csv` | `null` | 给已启用的收盘形态提供有时点和来源的事件日程。 |
+| `enable_medium_review` | `false` | 展示同行覆盖、完整周线趋势及相对 QQQ 表现。 |
+| `financial_coverage_json` | `null` | 展示与归档申报匹配的独立财务覆盖证据。 |
+
+形态和中线需要 `official_market_mode=sip_eod`。试用修改后的配置时指定新的
+`--decision-output-root`。字段格式和报告示例见 [v1.3.0 使用手册](../docs/swing_trading_user_guide.md)。
