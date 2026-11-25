@@ -1,14 +1,27 @@
-# v1.3.0 中短线选股与复核手册
+# 中短线选股与复核手册
 
 v1.3.0 在原有 Company Quality × Entry Quality 和日报 Top-15 的基础上，增加正式名单状态检查、信号年龄与复核条件、可选的开盘和中线证据，以及可追溯的人工复核和纸面比较。用日报决定先研究谁，用详报核对证据，用盘中价格判断收盘后形成的计划是否仍有空间。
 
-## 收盘后确认正式名单
+## 每天从同一个首页看报告
 
-在仓库根目录使用现有生产配置。升级后可重新执行一次 `.venv/bin/python -m pip install -e .`，使本地安装元数据与版本一致。已有 cron 时，日常先运行只读状态命令。需要手动正式发布或重试时，再用 cron 入口执行。
+从 v1.4.0 起，可用浏览器打开并收藏 `outputs/reports/index.html`。首页标明最近发布的美股交易日，选 **阅读日报** 看当日名单，选 **阅读周报** 看更广的复核名单。卡片里的 **Full Report →** 通往个股详报。首页下方可按日期查看旧报告。复制整个 `reports/` 文件夹即可离线阅读，内部链接仍然可用。
+
+报告文件布局见[阅读目录说明](../outputs/reports/README.md)，快照、缓存和研究数据的用途见[输出目录说明](../outputs/README.md)。
+
+首次部署或升级时在仓库根目录执行 `.venv/bin/python -m pip install -e .`。将以下生产命令交给现有定时任务，在美股收盘至少 20 分钟后运行。之后读者只需打开首页。
+
+```bash
+.venv/bin/python scripts/run_daily_cron.py --config configs/config.production.json
+```
+
+首次升级若希望把已有生产 SIP 归档也放上首页，可一次执行 `.venv/bin/python scripts/export_reading_reports.py --include-history`。使用独立 `--decision-output-root` 时，对导出命令传入相同路径的 `--snapshot-root`。根目录名为 `decisions` 时，阅读目录位于同级的 `reports/`，其他名称则位于该根目录内的 `reports/`。
+
+## 首页日期落后时排查发布状态
+
+首页显示最近成功导出的日期。若应有的新一期尚未出现，可查看正式名单状态和运行回执。若回执为 `reading_report_export_failed`，修复输出目录或归档中报错的原因后，单独执行 `.venv/bin/python scripts/export_reading_reports.py` 即可重建最新一期，无需重新扫描。
 
 ```bash
 .venv/bin/python scripts/decision_status.py --style production
-.venv/bin/python scripts/run_daily_cron.py --config configs/config.production.json
 .venv/bin/python scripts/decision_status.py --style production --json
 ```
 

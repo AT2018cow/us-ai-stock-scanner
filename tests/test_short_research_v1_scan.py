@@ -551,6 +551,21 @@ _run_swing_scan = partial(_run_scan, enable_short=False, frame_loader=_swing_int
 
 
 class ScanEntrySwingIntegrationTests(unittest.TestCase):
+    def test_reader_failure_can_retry_with_the_same_published_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("ai_value_scanner.reporting.reader._body", side_effect=OSError("disk full")):
+                with self.assertRaises(sc.OfficialPublicationError) as failed:
+                    _run_swing_scan(root)
+            self.assertEqual(failed.exception.reason_code, "reading_report_export_failed")
+            pointer = root / "decisions" / "latest_production.json"
+            before = pointer.read_bytes()
+            self.assertFalse((root / "reports" / "index.html").exists())
+            result = _run_swing_scan(root, allow_existing=True)
+            self.assertEqual(result.decision_output_status, "reused")
+            self.assertEqual(pointer.read_bytes(), before)
+            self.assertTrue((root / "reports" / "index.html").is_file())
+
     def test_sip_scan_freezes_same_shape_as_offline_replay(self):
         from ai_value_scanner.decision.medium_term import build_medium_reviews, classifications_asof, market_profile
         from ai_value_scanner.reporting.publication import latest_list_status
@@ -575,6 +590,11 @@ class ScanEntrySwingIntegrationTests(unittest.TestCase):
             result = _run_swing_scan(Path(tmp) / "swing", enable_swing=True, enable_medium=True)
             root = Path(result.decision_snapshot_root)
             self.assertEqual(result.decision_output_status, "written")
+            reader = Path(tmp) / "swing" / "reports"
+            self.assertIn(DATE, (reader / "index.html").read_text())
+            html = (reader / "history" / DATE / "daily.html").read_text()
+            self.assertIn("20–60 session context", html)
+            self.assertIn('href="detailed/TESTA.html"', html)
             report = (root / "action_list.md").read_text(encoding="utf-8")
             self.assertIn("Breakout** · Confirmed", report)
             self.assertIn("20–60 session context", report)
@@ -747,6 +767,10 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             self.assertIn("<strong>Downside Research</strong> · 1 candidate", on_report)
             self.assertIn("<strong>Topic Screens</strong> · Paused", on_report)
             self.assertIn("short_candidates.csv", on_report)
+            reading_day = root / "on" / "reports" / "history" / DATE
+            self.assertIn('href="short_candidates.csv"', (reading_day / "daily.html").read_text())
+            self.assertEqual((reading_day / "short_candidates.csv").read_bytes(),
+                             (on_root / "short_candidates.csv").read_bytes())
 
             off_pointer = json.loads(
                 (root / "off" / "decisions" / "latest_production.json").read_text(
@@ -791,6 +815,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 max_symbols=100,
             )
             self.assertEqual(status.decision_output_status, "written")
+            self.assertFalse((Path(td) / "reports").exists())
             root = Path(status.decision_snapshot_root)
             manifest = json.loads(
                 (root / "run_manifest.json").read_text(encoding="utf-8")

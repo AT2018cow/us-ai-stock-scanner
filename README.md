@@ -2,6 +2,8 @@
 
 基于 Alpaca 行情/交易元数据与 SEC EDGAR 基本面数据，构建低频、可解释的美国上市公司人工选股研究工具。
 
+**v1.4.0 新增离线报告首页。** 正式生产批处理会在本地生成 `outputs/reports/index.html`。收藏后可直接阅读最近发布的日报、周报，从名单进入个股详报，也可以按交易日回看历史。整份 `reports/` 可复制到另一台电脑离线阅读。升级后先执行一次 `python -m pip install -e .` 安装导出依赖。[阅读目录说明](outputs/reports/README.md)
+
 **v1.3.0 增加中短线复核工具。** 正式名单可以检查时效和完整性，日报、周报和详报补充 `Ready` 年龄及复核条件。可按需开启自选股跟踪、收盘形态、开盘卡和中线视图，并记录人工复核及纸面路径。[使用手册与报告字段](docs/swing_trading_user_guide.md)
 
 > **当前运行状态（2026-10-15 MVP v2 已默认启用）：**
@@ -59,6 +61,8 @@ Entry Quality → Action List + Detailed Report → prospective observation。
 扫描主流程不依赖新闻打分。
 
 ## 3. 快速开始
+
+若已有定时任务和报告文件，直接用浏览器打开 `outputs/reports/index.html`。首次部署按 §3.1–3.2 安装和配置，把 §3.4.0 的命令放入已有调度器，在美股收盘至少 20 分钟后运行。每期报告随正式全量扫描自动生成，全程无需输入。
 
 ### 3.1 初始化环境
 
@@ -137,7 +141,7 @@ python scripts/run_daily_cron.py --config configs/config.production.json
   并写入 `decision_samples/`。周末/非交易日重跑会
   保留已存在的同日期不可变快照。
 
-用下面的命令查看 SIP 名单是否可用，默认为 `production`。
+运行成功后打开 `outputs/reports/index.html`，首页标明最近导出的正式收盘交易日。个股详报可从日报和周报的 **Full Report →** 进入。若首页日期落后于预期，维护者可用下面的命令检查正式 SIP 名单及回执，默认为 `production`。
 
 ```bash
 python scripts/decision_status.py
@@ -860,10 +864,21 @@ python run_scan.py --help
 
 ### 8.1 目录约定与每月整理
 
+就地目录说明分别位于[输出目录](outputs/README.md)、[扫描归档](outputs/scans/README.md)、[决策快照](outputs/decisions/README.md)、[阅读报告](outputs/reports/README.md)、[数据缓存](cache/README.md)和[输入数据](data/README.md)。这些说明由 Git 跟踪，目录中的生成数据和报告继续保存在本地。
+
+阅读入口固定在 `outputs/reports/index.html`。新交易日发布后自动加入首页，旧版升级时可从本机已有的正式生产 SIP 归档一次性补齐历史阅读页：
+
+```bash
+python scripts/export_reading_reports.py --include-history
+```
+
+导出只读取本地快照，无需行情或 SEC 凭证。省略 `--include-history` 仅重新导出最新一期。若阅读页生成失败，批处理以 `reading_report_export_failed` 报错，首页保留上次成功发布的日期。可用该导出命令修复阅读页。
+
 报告类产物按"是否入 Git + 是否被冻结文档引用"分层，整理时对号入座：
 
 | 位置 | 内容 | 入 Git | 规则 |
 |---|---|---|---|
+| `outputs/reports/index.html`、`outputs/reports/history/` | **日常阅读目录**（首页、各期日报、周报及详报） | 否 | 打开首页即可浏览；复制时保留整个目录 |
 | `outputs/decisions/<日期>/<风格>/` | **官方决策快照**（Action List / `detailed/` / `weekly_review.md` / `decisions.jsonl`） | 否 | 产品主输出；`latest_*.json` 指向当前快照；不要随意清理 |
 | `outputs/scans/<YYYY-MM>/` | 日常扫描原始产物（`ai_value_scan_*`） | 否 | 每次 cron/扫描产生；**每月归档一次**（见下方命令） |
 | `outputs/intraday/<日期>/` | 盘中监控留痕（`monitor_*.md`，由 `scripts/intraday_watch.py --save` 生成） | 否 | 只读监控输出；可整体清理 |
@@ -873,13 +888,17 @@ python run_scan.py --help
 | `docs/agent_specs/` | 工程工单与执行契约 | 是 | 被取代的移交至 `docs/archive/` |
 | `.debug_logs/` | 本地调试日志 | 否 | 按月把旧文件移入 `_archive_<YYYYMM>/`；可整体清空 |
 
-**每月整理（约 10 秒，把根目录扫描产物按文件名月份归档；无匹配时天然无操作）**：
+每月可把上一月的原始扫描产物按文件名归档。将示例中的月份设为要整理的 UTC 月份，保留正在使用的近期文件。已有同名归档时保留原文件。
 
 ```bash
-for f in outputs/ai_value_scan_*; do [ -f "$f" ] || continue; b=${f##*/}; m=${b:14:4}-${b:18:2}; mkdir -p "outputs/scans/$m" && mv "$f" "outputs/scans/$m/"; done
+scan_month=2026-10
+for f in outputs/ai_value_scan_"${scan_month/-/}"*; do
+  [ -f "$f" ] || continue
+  mkdir -p "outputs/scans/$scan_month" && mv -n "$f" "outputs/scans/$scan_month/"
+done
 ```
 
-> 注：cron 目前仍把扫描产物写到 `outputs/` 根目录，上面命令即按月归档；如希望直接写入月份子目录可作为后续独立小改动。
+批处理继续把原始扫描产物写到 `outputs/` 根目录。历史回测如需读取已归档的扫描，可用 `--outputs-dir outputs/scans/<YYYY-MM>` 指定月份。
 
 ## 9. 运行日志与诊断
 

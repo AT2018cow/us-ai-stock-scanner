@@ -2,6 +2,8 @@
 
 This directory separates **active product/architecture contracts and current phase plans** from **completed historical handoffs and experiment protocols**.
 
+For the local data and report layout, see the directory guides for [outputs](../outputs/README.md), [decision snapshots](../outputs/decisions/README.md), [reading reports](../outputs/reports/README.md), [archived scans](../outputs/scans/README.md), [cache](../cache/README.md), [input data](../data/README.md), and [tracked evidence](../evidence/README.md).
+
 ## 1. Active Product & Architecture Contracts
 
 - [中短线人工交易辅助实施与验收方案](agent_specs/swing_trading_implementation_and_validation_20261124.md) — 六个改进与五项能力的交付映射、代码入口、测试、冻结回放及前瞻验收。

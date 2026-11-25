@@ -70,6 +70,17 @@ def read_latest_publication(
             raise ValueError("first publication precedes snapshot generation")
         if published_at > (now_utc or datetime.now(timezone.utc)):
             raise ValueError("first publication is in the future")
+    validate_publication_reports(paths.root, manifest, require_sip=require_sip)
+    return {
+        **pointer,
+        "manifest_sha256": manifest_hash,
+        "code_sha": manifest.get("code_sha"),
+        "config_fingerprint": manifest.get("config_fingerprint"),
+        "report_renderer_revision": manifest.get("report_renderer_revision"),
+    }
+
+
+def validate_publication_reports(archive: Path, manifest: dict, *, require_sip: bool) -> None:
     if require_sip:
         provenance = manifest.get("input_provenance")
         if (
@@ -87,20 +98,13 @@ def read_latest_publication(
         if not isinstance(selected, list) or any(not isinstance(symbol, str) for symbol in selected):
             raise ValueError(f"invalid latest manifest {key}")
         selected_counts.append(len(selected))
-    require_valid_snapshot(paths.root, attention_cap=max(1, *selected_counts))
+    require_valid_snapshot(archive, attention_cap=max(1, *selected_counts))
     if require_sip and any(
         decision.provenance.get("market_data_mode") != "sip_eod"
         or decision.provenance.get("market_data_feed") != "sip"
-        for decision in load_snapshot_decisions(paths.root)
+        for decision in load_snapshot_decisions(archive)
     ):
         raise ValueError("latest decisions lack consistent SIP end-of-day provenance")
-    return {
-        **pointer,
-        "manifest_sha256": manifest_hash,
-        "code_sha": manifest.get("code_sha"),
-        "config_fingerprint": manifest.get("config_fingerprint"),
-        "report_renderer_revision": manifest.get("report_renderer_revision"),
-    }
 
 
 def _publication_time(value: Any) -> datetime:

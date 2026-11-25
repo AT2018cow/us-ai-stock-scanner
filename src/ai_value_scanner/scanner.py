@@ -6320,6 +6320,14 @@ def run_scan_with_status(
                     "MVP latest pointer failed without affecting legacy outputs: "
                     f"{latest_pointer_error}",
                 )
+        if eod_session and config.strategy_style == "production" and latest_pointer_status == "written":
+            from .reporting.reader import export_reading_reports
+
+            try:
+                reading_index = export_reading_reports(snapshot_root)
+            except Exception as exc:
+                raise OfficialPublicationError("reading_report_export_failed", str(exc)) from exc
+            log_status(started_at, "INFO", f"Reading reports: {reading_index}")
         if getattr(config, "enable_v2_shadow", False) and policy_version == "v1":
             shadow_status = "failed"
             try:

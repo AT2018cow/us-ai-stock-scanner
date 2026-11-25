@@ -8,12 +8,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import pandas as pd
+from bs4 import BeautifulSoup
 
 from ai_value_scanner.decision import build_stock_decisions
 from ai_value_scanner.market_data import official_eod_window, sip_publication_window
 from ai_value_scanner.reporting.publication import latest_list_status, write_publication_attempt
+from ai_value_scanner.reporting.reader import export_reading_reports
 from ai_value_scanner.reporting.snapshot import write_decision_snapshot
 from ai_value_scanner.scanner import write_latest_decision_pointer
 from ai_value_scanner.validation.decision_snapshot import validate_snapshot
@@ -179,12 +182,68 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(result["status"], "invalid")
         self.assertIn("missing detailed report", result["error"])
 
+    def test_portable_reading_reports_follow_latest_and_valid_history_only(self):
+        self._snapshot("2026-11-17", mode="snapshot", feed="iex")
+        self._snapshot("2026-11-18")
+        self._publish("2026-11-18")
+        index = export_reading_reports(self.root)
+        self.assertIn("最近发布 · 2026-11-18", index.read_text())
+        self._snapshot("2026-11-19")
+        current = self._snapshot("2026-11-20")
+        digest = current.decisions_jsonl.read_bytes()
+        self._publish("2026-11-20")
+        export_reading_reports(self.root)
+        self.assertNotIn("2026-11-19", index.read_text())
+        export_reading_reports(self.root, include_history=True)
+        home = index.read_text()
+        self.assertIn("最近发布 · 2026-11-20", home)
+        self.assertIn("history/2026-11-19/daily.html", home)
+        self.assertNotIn("2026-11-17", home)
+        self.assertEqual(current.decisions_jsonl.read_bytes(), digest)
+        folder = index.parent / "history" / "2026-11-20"
+        for page in ("daily.html", "weekly.html"):
+            report = BeautifulSoup((folder / page).read_text(), "html.parser")
+            self.assertTrue(report.find("a", href="detailed/AAA.html"))
+        for path in index.parent.rglob("*.html"):
+            doc = BeautifulSoup(path.read_text(), "html.parser")
+            for a in doc.select("a[href]"):
+                ref = urlsplit(a["href"])
+                if ref.scheme:
+                    continue
+                with self.subTest(path=path, href=a["href"]):
+                    self.assertTrue((path.parent / ref.path).is_file() if ref.path else ref.fragment)
+                    if ref.fragment:
+                        self.assertIsNotNone(doc.find(id=ref.fragment))
+        export_reading_reports(self.root)
+        self.assertEqual(index.read_text(), home)
+
+    def test_failed_reading_export_keeps_last_complete_homepage(self):
+        self._snapshot("2026-11-19")
+        self._publish("2026-11-19")
+        index = export_reading_reports(self.root)
+        old_home = index.read_bytes()
+        snapshot = self._snapshot("2026-11-20")
+        self._publish("2026-11-20")
+        source = snapshot.detailed_dir / "AAA.md"
+        original = source.read_bytes()
+        source.unlink()
+        with self.assertRaisesRegex(ValueError, "missing detailed report"):
+            export_reading_reports(self.root)
+        self.assertEqual(index.read_bytes(), old_home)
+        self.assertFalse((index.parent / "history" / "2026-11-20").exists())
+        source.write_bytes(original)
+        export_reading_reports(self.root)
+        self.assertIn("最近发布 · 2026-11-20", index.read_text())
+
     def test_same_date_non_sip_snapshot_is_not_current(self):
         self._snapshot("2026-11-23", mode="snapshot", feed="iex")
         self._publish("2026-11-23")
         result = self._status("2026-11-24T03:00:00")
         self.assertEqual(result["status"], "invalid")
         self.assertIn("SIP end-of-day provenance", result["error"])
+        with self.assertRaisesRegex(ValueError, "SIP end-of-day provenance"):
+            export_reading_reports(self.root)
+        self.assertFalse((self.root / "reports" / "index.html").exists())
 
 
 if __name__ == "__main__":
