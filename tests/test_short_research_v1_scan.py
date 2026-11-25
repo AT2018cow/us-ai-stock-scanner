@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timezone
-from functools import lru_cache
+from functools import lru_cache, partial
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -219,8 +219,9 @@ def _run_scan(
     review_watchlist: Path | None = None,
     enable_swing: bool = False,
     enable_medium: bool = False,
+    frame_loader=_load_frame,
 ):
-    frame, features = _load_frame()
+    frame, features = frame_loader()
     config = ScanConfig(
         output_dir=str(root / "outputs"),
         strategy_style="production",
@@ -516,9 +517,43 @@ def build_scan_entry_evidence() -> dict:
         }
 
 
-class ScanEntryShortResearchTests(unittest.TestCase):
+def _swing_integration_frame():
+    features = dict(return_20d=.04, return_60d=.15, price_to_sma50=1.02, price_to_sma200=1.1,
+                    days_below_sma200=0, drawdown_from_52w_high=.08, range_position_52w=.8,
+                    volatility_60d=.23, avg_dollar_volume_20d=20_000_000)
+    companies = [
+        dict(symbol="TESTA", cik="101", sic="3571", name="Synthetic Research Candidate",
+             price=106., dollar_volume=20_000_000., revenue=5e8, net_income=1e8, adjusted_net_income=1e8,
+             free_cash_flow=8e7, operating_cash_flow=1.2e8, ebit=1.1e8, adjusted_ebit=1.1e8,
+             adjusted_ebitda=1.3e8, cash_and_equivalents=1e8, total_debt=1e8, net_debt=0.,
+             interest_expense=5e6, depreciation_and_amortization=2e7, current_assets=2e8,
+             current_liabilities=1e8, receivables_current=4e7, inventory_current=1e7,
+             revenue_yoy=.15, net_income_yoy=.15, adjusted_net_income_yoy=.15,
+             ebit_yoy=.15, adjusted_ebit_yoy=.15, da_yoy=.1, operating_cash_flow_yoy=.15,
+             shares_yoy=0., receivables_yoy=.1, inventory_yoy=.1, receivables_growth_gap=-.05,
+             inventory_growth_gap=-.05, inventory_growth_gap_reported=-.05, inventory_growth_gap_inferred=None,
+             nonrecurring_expense_addback=0., nonrecurring_gain_subtraction=0.,
+             current_debt_ratio=.2, current_debt_ratio_reported=.2, current_debt_ratio_inferred=None,
+             ai_disclosure_score=0., ai_disclosure_group_hits=0, ai_disclosure_keyword_hits=0,
+             ai_backlog_signal=0.,
+             interest_coverage=20., net_debt_to_ebitda=0.,
+             current_ratio=2., ocf_to_net_income=1.2, accrual_ratio=-.04,
+             fundamental_quality_score=.9, fundamental_data_asof="2025-01-15",
+             fundamental_operating_entity_verified=True, shares_outstanding=10_000_000.,
+             shares_asof_end="2024-12-31", shares_stale=False),
+        dict(symbol="TESTB", cik="102", sic="3571", name="Synthetic Off-List Candidate",
+             price=106., dollar_volume=20_000_000.),
+    ]
+    return pd.DataFrame(companies), {item["symbol"]: features for item in companies}
+
+
+_run_swing_scan = partial(_run_scan, enable_short=False, frame_loader=_swing_integration_frame)
+
+
+class ScanEntrySwingIntegrationTests(unittest.TestCase):
     def test_sip_scan_freezes_same_shape_as_offline_replay(self):
         from ai_value_scanner.decision.medium_term import build_medium_reviews, classifications_asof, market_profile
+        from ai_value_scanner.reporting.publication import latest_list_status
         from ai_value_scanner.swing.events import timestamp
         from ai_value_scanner.swing.setups import evaluate_close, previous_session
         from ai_value_scanner.validation.decision_snapshot import validate_snapshot
@@ -536,19 +571,24 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             _FakeAlpaca, "get_daily_bars",
             lambda self, symbols, start, chunk: {symbol: [{**bar, "symbol": symbol} for bar in bars] for symbol in symbols},
         ):
-            baseline = _run_scan(Path(tmp) / "baseline", enable_short=False)
-            result = _run_scan(Path(tmp) / "swing", enable_short=False, enable_swing=True, enable_medium=True)
+            baseline = _run_swing_scan(Path(tmp) / "baseline")
+            result = _run_swing_scan(Path(tmp) / "swing", enable_swing=True, enable_medium=True)
             root = Path(result.decision_snapshot_root)
             self.assertEqual(result.decision_output_status, "written")
             report = (root / "action_list.md").read_text(encoding="utf-8")
             self.assertIn("Breakout** · Confirmed", report)
             self.assertIn("20–60 session context", report)
+            publication = latest_list_status(root.parents[1], "production", FIXED_NOW)
+            self.assertEqual(publication["status"], "current", publication)
+            self.assertEqual(publication["published_session"], DATE)
+            self.assertEqual(publication["publication"]["decisions_sha256"], _sha256(root / "decisions.jsonl"))
             from ai_value_scanner.reporting.revisions import MEDIUM_FINANCIAL_RENDERER_REVISION, REPORT_RENDERER_REVISION
             from ai_value_scanner.reporting.decision import render_detailed_report
             self.assertEqual(_manifest(root)["report_renderer_revision"], MEDIUM_FINANCIAL_RENDERER_REVISION)
             self.assertEqual(_manifest(Path(baseline.decision_snapshot_root))["report_renderer_revision"], REPORT_RENDERER_REVISION)
             for key in ("daily_symbols", "weekly_symbols", "counts"):
                 self.assertEqual(_manifest(root)[key], _manifest(Path(baseline.decision_snapshot_root))[key])
+            self.assertEqual(_manifest(root)["daily_symbols"], ["TESTA"])
             for archive, enabled in ((root, False), (Path(baseline.decision_snapshot_root), True)):
                 self.assertEqual(sc._evaluate_existing_snapshot_reuse(
                     archive, decision_date=DATE, strategy_style="production", policy_version="v2",
@@ -586,7 +626,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             invalid.write_text("symbol,cik,added_at_utc,reason\nAAPL,320193,2025-01-01T20:00:00,review\n")
             for path, reason in ((missing, "watchlist_unreadable"), (invalid, "watchlist_invalid")):
                 with self.subTest(reason=reason):
-                    result = _run_scan(root / reason, enable_short=False, review_watchlist=path)
+                    result = _run_swing_scan(root / reason, review_watchlist=path)
                     self.assertEqual(result.decision_output_status, "written")
                     archive_root = Path(result.decision_snapshot_root)
                     self.assertEqual(_manifest(archive_root)["input_provenance"]["review_watchlist_error"], reason)
@@ -597,7 +637,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            baseline = _run_scan(root / "baseline", enable_short=False)
+            baseline = _run_swing_scan(root / "baseline")
             baseline_root = Path(baseline.decision_snapshot_root)
             off_list = next(
                 decision for decision in snapshot.load_snapshot_decisions(baseline_root)
@@ -610,7 +650,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
                 "ZZZNOASSET,123,2025-01-01T20:00:00Z,Keep an eye on listing\n",
                 encoding="utf-8",
             )
-            status = _run_scan(root / "followed", enable_short=False, review_watchlist=csv_path)
+            status = _run_swing_scan(root / "followed", review_watchlist=csv_path)
             archive_root = Path(status.decision_snapshot_root)
             frozen = _manifest(archive_root)
             for key in ("daily_symbols", "weekly_symbols", "counts"):
@@ -628,7 +668,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             self.assertIn("Ready age", detail.read_text(encoding="utf-8"))
             initial = {path: _sha256(path) for path in archive_root.rglob("*") if path.is_file()}
             csv_path.unlink()
-            retry = _run_scan(root / "followed", enable_short=False, review_watchlist=csv_path, allow_existing=True)
+            retry = _run_swing_scan(root / "followed", review_watchlist=csv_path, allow_existing=True)
             self.assertEqual(retry.decision_output_status, "reused")
             self.assertEqual({path: _sha256(path) for path in initial}, initial)
             manifest_path = archive_root / "run_manifest.json"
@@ -643,6 +683,7 @@ class ScanEntryShortResearchTests(unittest.TestCase):
             self.assertFalse(validation["ok"])
             self.assertTrue(any(f"missing detailed report for {off_list.symbol}" in error for error in validation["errors"]))
 
+class ScanEntryShortResearchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not DATASET.is_file():

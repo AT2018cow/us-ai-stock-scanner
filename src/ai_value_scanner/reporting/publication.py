@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,9 @@ from .snapshot import (
 )
 
 
-def read_latest_publication(root: Path, style: str, *, require_sip: bool = True) -> dict[str, Any]:
+def read_latest_publication(
+    root: Path, style: str, *, require_sip: bool = True, now_utc: datetime | None = None,
+) -> dict[str, Any]:
     pointer = json.loads((root / f"latest_{style}.json").read_text(encoding="utf-8"))
     if not isinstance(pointer, dict):
         raise ValueError("latest pointer must be a JSON object")
@@ -61,8 +63,13 @@ def read_latest_publication(root: Path, style: str, *, require_sip: bool = True)
     ):
         raise ValueError("latest pointer and manifest policy or style differ")
     first_readable = pointer.get("first_readable_at_utc")
-    if first_readable is not None and datetime.fromisoformat(str(first_readable)).utcoffset() is None:
-        raise ValueError("first publication time must include its timezone")
+    if first_readable is not None:
+        published_at = _publication_time(first_readable)
+        generated_at = _publication_time(manifest.get("generated_at_utc"))
+        if published_at < generated_at:
+            raise ValueError("first publication precedes snapshot generation")
+        if published_at > (now_utc or datetime.now(timezone.utc)):
+            raise ValueError("first publication is in the future")
     if require_sip:
         provenance = manifest.get("input_provenance")
         if (
@@ -96,6 +103,15 @@ def read_latest_publication(root: Path, style: str, *, require_sip: bool = True)
     }
 
 
+def _publication_time(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("publication timestamps must be ISO 8601 strings")
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.utcoffset() is None:
+        raise ValueError("publication timestamps must include their timezone")
+    return instant
+
+
 def write_publication_attempt(path: Path, receipt: dict[str, Any]) -> None:
     """Atomically keep the running or completed receipt for one attempt."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,7 +142,7 @@ def latest_list_status(root: Path, style: str, now_utc: datetime) -> dict[str, A
     }
     if (root / f"latest_{style}.json").exists():
         try:
-            publication = read_latest_publication(root, style)
+            publication = read_latest_publication(root, style, now_utc=now_utc)
             published = publication["decision_date"]
             if published > expected_session:
                 raise ValueError("latest session is in the future")

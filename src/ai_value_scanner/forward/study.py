@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 import re
+from statistics import mean
 from typing import Any
 
 from ai_value_scanner.market_calendar import is_session_day, session_close_utc, session_open_utc
@@ -345,6 +346,14 @@ def record_fill(ledger: Ledger, data: dict, *, now: datetime | None = None) -> s
     return key
 
 
+def _committed_exit_at(commitment: dict | None, terminal: datetime, cutoff: datetime) -> datetime | None:
+    if commitment is not None and utc(commitment["recorded_at"]) <= cutoff:
+        execute_at = utc(commitment["payload"]["execute_at"])
+        if execute_at <= terminal:
+            return execute_at
+    return None
+
+
 def record_outcome(ledger: Ledger, data: dict, *, now: datetime | None = None) -> str:
     recorded = utc(now or datetime.now(timezone.utc))
     pid, horizon = data["paper_id"], data["horizon"]
@@ -374,6 +383,7 @@ def record_outcome(ledger: Ledger, data: dict, *, now: datetime | None = None) -
         if existing is None and supersedes != (previous[-1]["id"] if previous else None):
             raise ValueError("a correction must supersede the latest outcome for this horizon")
         gross = net = exit_at = exit_price = source = reason = None
+        exit_id = None
         continuity = "not_applicable"
         evidence_class = path["evidence_class"]
         if path["status"] == "cash":
@@ -394,14 +404,17 @@ def record_outcome(ledger: Ledger, data: dict, *, now: datetime | None = None) -
                 if not utc(path["entry_at"]) <= exit_at <= terminal:
                     raise ValueError("exit falls outside the observed holding path")
                 source = text(data["exit_source"], "exit price source")
+                commitment = lookup(db, evidence_id("paper_exit", pid))
+                required_at = _committed_exit_at(commitment, terminal, evidence_at)
+                if required_at is not None:
+                    if required_at != exit_at or data.get("exit_id") != commitment["id"]:
+                        raise ValueError("settlement must honor the committed exit time and ID")
+                    exit_id = commitment["id"]
+                elif data.get("exit_id") is not None:
+                    raise ValueError("settlement references an exit outside this horizon")
                 if exit_at < terminal:
                     reason = text(data["exit_reason"], "early exit reason")
-                    commitment = lookup(db, evidence_id("paper_exit", pid))
-                    if (
-                        commitment is None or utc(commitment["recorded_at"]) > evidence_at
-                        or commitment["payload"]["execute_at"] != exit_at.isoformat()
-                        or data.get("exit_id") != commitment["id"]
-                    ):
+                    if required_at is None:
                         evidence_class = "backfill"
                 if continuity == "verified" and data.get("price_basis") == path["price_basis"]:
                     status = "mature"
@@ -420,6 +433,8 @@ def record_outcome(ledger: Ledger, data: dict, *, now: datetime | None = None) -
         }
         if not existing:
             payload.update(request_id=request, evidence_class=evidence_class)
+            if exit_id is not None:
+                payload["exit_id"] = exit_id
         append(db, key, "outcome", pid, payload, recorded)
     return key
 
@@ -444,6 +459,43 @@ def record_exit(ledger: Ledger, data: dict, *, now: datetime | None = None) -> s
                 raise ValueError("exit must be recorded after entry and before the predetermined next open")
         append(db, key, "paper_exit", pid, payload, recorded)
     return key
+
+
+def _ready_age_group(observation: dict) -> tuple[str, int, str]:
+    age = observation.get("ready_age")
+    if age is None:
+        return "unavailable", 0, "not_recorded"
+    sessions, reason = age["sessions"], age["reason"]
+    if age["first_ready_session"] is not None:
+        return "exact", sessions, "observed_transition"
+    if sessions > 0:
+        return "lower_bound", sessions, reason
+    if reason == "current_entry_data_unavailable":
+        return "unavailable", 0, reason
+    return "not_ready", 0, reason
+
+
+def _ready_age_results(groups: dict) -> list[dict]:
+    results = []
+    for (evidence, path, rule, execution, horizon, age_kind, age, reason), samples in sorted(groups.items()):
+        by_date = defaultdict(list)
+        mature_issuers = set()
+        for session, issuer, status, net in samples:
+            if status == "mature" and net is not None:
+                by_date[session].append(net)
+                if issuer:
+                    mature_issuers.add(issuer)
+        results.append({
+            "evidence_class": evidence, "path": path, "rule_version": rule, "execution_basis": execution,
+            "horizon": horizon, "age_kind": age_kind,
+            "ready_sessions": age, "reason": reason, "paths": len(samples),
+            "dates": len({session for session, _, _, _ in samples}),
+            "issuers": len({issuer for _, issuer, _, _ in samples if issuer}),
+            "maturity": dict(Counter(status for _, _, status, _ in samples)),
+            "mature_dates_with_return": len(by_date), "mature_issuers_with_return": len(mature_issuers),
+            "mean_net_return_date_equal": mean(mean(nets) for nets in by_date.values()) if by_date else None,
+        })
+    return results
 
 
 def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = None) -> dict[str, Any]:
@@ -473,6 +525,7 @@ def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = No
         setups = [row for row in known("setup") if row["payload"]["protocol_id"] == protocol_id]
         paper = [row for row in known("paper") if row["payload"]["protocol_id"] == protocol_id]
         fills = {row["parent"]: row["payload"] for row in known("paper_fill")}
+        commitments = {row["parent"]: row for row in known("paper_exit")}
         outcomes = {(row["parent"], row["payload"]["horizon"]): row["payload"] for row in known("outcome")}
         by_snapshot = defaultdict(dict)
         for row in observations.values():
@@ -524,8 +577,13 @@ def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = No
                 "risk_identification_delta": len(new["risk_codes"]) - len(old["risk_codes"]),
             })
     maturity = Counter()
+    age_samples = defaultdict(list)
     for row in paper:
         path = {**row["payload"], **fills.get(row["id"], {})}
+        observation = observations[row["parent"]]["payload"]
+        age_group = _ready_age_group(observation)
+        security = observation.get("security_id")
+        issuer = security.rsplit(":", 1)[-1] if security else None
         for horizon in spec["horizons"]:
             outcome = outcomes.get((row["id"], horizon))
             terminal = _maturity(date.fromisoformat(path["start_session"]), horizon)
@@ -533,6 +591,12 @@ def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = No
                 status = "unmatured"
             else:
                 status = outcome["status"] if outcome and utc(outcome["asof"]) <= now else "mature_missing"
+            committed_at = _committed_exit_at(commitments.get(row["id"]), terminal, now)
+            if status == "mature" and committed_at is not None and (
+                not outcome["exit_at"] or utc(outcome["exit_at"]) != committed_at
+            ):
+                # Older ledger revisions could settle at the close despite a binding exit.
+                status = "mature_missing"
             evidence = path["evidence_class"]
             if evidence == "forward" and (path["snapshot_id"] not in forward or path["execution_basis"] == "time_stamped" and path["status"] == "entered"):
                 evidence = "backfill"
@@ -543,6 +607,9 @@ def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = No
             ):
                 evidence = "backfill"
             maturity[(evidence, path["path"], horizon, status)] += 1
+            net = outcome["net_return"] if status == "mature" else None
+            group = (evidence, path["path"], path["rule_version"], path["execution_basis"], horizon, *age_group)
+            age_samples[group].append((observation["session"], issuer, status, net))
     by_session = defaultdict(list)
     for row in receipts:
         by_session[row["payload"]["session"]].append(row)
@@ -594,4 +661,5 @@ def study_summary(ledger: Ledger, protocol_id: str, *, now: datetime | None = No
             {"evidence_class": evidence, "path": path, "horizon": horizon, "status": status, "count": count}
             for (evidence, path, horizon, status), count in sorted(maturity.items())
         ],
+        "paper_by_ready_age": _ready_age_results(age_samples),
     }

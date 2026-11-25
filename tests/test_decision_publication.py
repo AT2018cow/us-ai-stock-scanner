@@ -28,6 +28,10 @@ class PublicationTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
+        scanner_clock = patch("ai_value_scanner.scanner.datetime")
+        self.scanner_clock = scanner_clock.start()
+        self.addCleanup(scanner_clock.stop)
+        self.scanner_clock.now.return_value = clock("2026-11-23T23:05:00")
 
     def _snapshot(self, day, *, mode="sip_eod", feed="sip", validate=False):
         provenance = {"market_data_mode": mode, "market_data_feed": feed}
@@ -52,6 +56,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_calendar_window_uses_previous_session_during_market_and_holiday(self):
         self._snapshot("2026-11-25")
+        self.scanner_clock.now.return_value = clock("2026-11-25T23:05:00")
         self._publish("2026-11-25")
         for when in ("2026-11-26T21:30:00", "2026-11-27T17:00:00"):
             with self.subTest(when=when):
@@ -99,6 +104,24 @@ class PublicationTests(unittest.TestCase):
         result = self._status("2026-11-24T03:00:00")
         self.assertEqual(result["status"], "current")
         self.assertIsNone(result["first_readable_at_utc"])
+
+    def test_pointer_time_must_follow_generation_and_be_visible_at_readback(self):
+        self._snapshot("2026-11-23")
+        path = self._publish("2026-11-23")
+        read_at = "2026-11-24T00:00:00"
+        pointer = json.loads(path.read_bytes())
+        for first, status, detail in (
+            ("2026-11-23T23:00:00Z", "current", None),
+            ("2026-11-23T17:59:59-05:00", "invalid", "precedes snapshot generation"),
+            ("2026-11-24T00:00:01Z", "invalid", "is in the future"),
+            ("2026-11-23T23:05:00", "invalid", "include their timezone"),
+        ):
+            with self.subTest(first=first):
+                path.write_text(json.dumps({**pointer, "first_readable_at_utc": first}))
+                result = self._status(read_at)
+                self.assertEqual(result["status"], status)
+                if detail is not None:
+                    self.assertIn(detail, result["error"])
 
     def test_bad_manifest_cannot_be_treated_as_current_or_republished(self):
         snapshot = self._snapshot("2026-11-23")

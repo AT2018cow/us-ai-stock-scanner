@@ -11,7 +11,7 @@
 
 ```json
 {
-  "name": "breakout-2027q1-freeze-v2",
+  "name": "breakout-2027q1-freeze-v3",
   "mode": "forward",
   "pattern": "breakout_20d_v1",
   "start": "2027-01-04",
@@ -105,6 +105,10 @@ python scripts/evaluate_swing_experiment.py --ledger research/evidence.db \
 | `ranking_paths` | Quality → Entry → Priority → Top 15 → 归档实际日报含 S2，另列边界第 16–30 名、随机 K、全额与等部署 QQQ、现金权重与行业贡献 |
 | `medium_summary` | 短线确认 × 十周均线状态的四种组合，20/60 日收益、下尾、MAE 和行业；60 日均线仍维持且短线失效的记录单列 |
 | `comparisons` | 日期等权净差、交易日历块 95% 区间、非重叠切片、行业/年份/市场阶段、成本压力、最大贡献公司剔除和缺失样本敏感性 |
+
+等部署 QQQ 按 Top-15 实际成交日拆分等权席位，从对应开盘到共同终点计算每批净收益。
+未成交席位留现金。某个入场批次缺少同期 QQQ 开盘或后续价格证据时，等部署结果保留缺失。
+中线持续性从信号当日已完成的最近一周起算。周末前最后一个交易日收盘发出的信号计入当周。
 
 从入场日计第 1 日。主比较用 10 日，成本为每边 15bp，30bp 为压力。每边费用按
 共同的入场价分母扣除。退出后至共同终点持现金，同一日线双障碍触发时给两端结果，

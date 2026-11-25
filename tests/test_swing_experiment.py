@@ -11,9 +11,9 @@ from ai_value_scanner.fundamentals.coverage import SHARES_BASIS
 from ai_value_scanner.market_calendar import session_close_utc
 from ai_value_scanner.research.swing_cohorts import (
     INTEGRITY, ENTRY_GATES, PROTOCOL, day_shift, execution_day, freeze, freeze_cohorts,
-    implementation_sha256, register, sha, _peers,
+    implementation_sha256, register, sessions, sha, _peers,
 )
-from ai_value_scanner.research.swing_experiment import _episode_paths, _pair, evaluate
+from ai_value_scanner.research.swing_experiment import QQQ, _episode_paths, _holds_medium, _pair, evaluate
 from ai_value_scanner.research.swing_paths import PriceBook, barrier_order, cash, settle
 from ai_value_scanner.research.swing_statistics import summarize
 from ai_value_scanner.swing.setups import BREAKOUT_VERSION, PULLBACK_VERSION, previous_session
@@ -291,6 +291,39 @@ class FreezeAndEvaluateTest(TestCase):
             cik for cik, amount in comparison["issuer_attribution_date_weighted_net_15"].items() if amount == 0.
         }, {"0000000001", "0000000016"})
 
+    def test_equal_deployed_qqq_uses_each_filled_seats_actual_entry_day(self):
+        members = [row(ORIGIN, "AAA", 1), row(ORIGIN, "BBB", 2, priority=2)]
+        cohort = _cohort({str(ORIGIN): frame(ORIGIN, members)})
+        days = [day_shift(ORIGIN, n) for n in range(1, 11)]
+        prices = evidence([bar(day, c=100) for day in days])
+        template = prices["securities"][SEC]
+        delayed = members[1]["security_id"]
+        prices["securities"][delayed] = {
+            **template, "security_id": delayed, "events": {str(days[0]): "suspended"},
+            "bars": [bar(day, c=100) for day in days[1:]],
+        }
+        market = [bar(day, o=100 if i == 0 else 110, h=111, c=110) for i, day in enumerate(days)]
+        prices["securities"][QQQ] = {**template, "security_id": QQQ, "bars": market}
+
+        def ranking():
+            report = evaluate(cohort, prices, cohort_sha256=sha(cohort))
+            return next(item["portfolios"] for item in report["ranking_paths"] if item["horizon"] == 10)
+
+        paths = ranking()
+        weighted = paths["qqq_equal_deployed"]
+        self.assertAlmostEqual(paths["qqq_full"]["net_15"], .097)
+        self.assertAlmostEqual(weighted["net_15"], (.097 - .003) / 15)
+        self.assertAlmostEqual(weighted["net_30"], (.094 - .006) / 15)
+        self.assertAlmostEqual(weighted["cash_weight"], 13 / 15)
+        self.assertEqual([part["session"] for part in weighted["entry_tranches"]], list(map(str, days[:2])))
+        self.assertEqual(weighted["exposure_window"], list(map(str, (days[0], days[-1]))))
+        prices["securities"][QQQ].update(bars=market[:1] + market[2:], events={str(days[1]): "suspended"})
+        self.assertEqual(ranking()["qqq_equal_deployed"]["status"], "benchmark_evidence_unavailable")
+        for key in (SEC, delayed):
+            prices["securities"][key].update(bars=[], events={str(day): "suspended" for day in days})
+        idle = ranking()["qqq_equal_deployed"]
+        self.assertEqual((idle["status"], idle["net_15"], idle["cash_weight"]), ("cash", 0., 1.))
+
     def test_delay_equal_hold_slices_use_joint_actual_exposure(self):
         confirmations = [day_shift(CONFIRM, n) for n in (0, 10, 15)]
         prices = [bar(day_shift(CONFIRM, n)) for n in range(1, 45)]
@@ -346,6 +379,20 @@ class FreezeAndEvaluateTest(TestCase):
         self.assertEqual(len(report["medium_summary"]), 8)
         self.assertTrue(all(item["rows"] == 1 for item in report["medium_summary"].values()))
         self.assertFalse(report["medium_held_despite_short_break_60d"])
+
+    def test_medium_continuity_starts_at_latest_completed_week(self):
+        weak = date(2025, 11, 21)
+        wednesday = date(2025, 11, 26)
+        friday = date(2025, 11, 28)  # Early close still completes the holiday week.
+        end = day_shift(friday, 60)
+        days = sessions(date(2025, 8, 25), end)
+        rows = [bar(day, o=80 if day == weak else 100, l=78, c=80 if day == weak else 100) for day in days]
+        book = PriceBook(evidence(rows, verified_from=str(days[0])))
+        self.assertFalse(_holds_medium(book, SEC, wednesday, end))
+        self.assertTrue(_holds_medium(book, SEC, friday, end))
+        incomplete = PriceBook(evidence([item for item in rows if item["session"] != str(weak)],
+                                        verified_from=str(days[0])))
+        self.assertIsNone(_holds_medium(incomplete, SEC, friday, end))
 
     def test_freeze_both_protocols_and_choose_independent_same_day_controls(self):
         for variant in (BREAKOUT_VERSION, PULLBACK_VERSION):

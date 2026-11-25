@@ -10,8 +10,9 @@ import sqlite3
 
 from ai_value_scanner.decision.model import (
     DECISION_SCHEMA_VERSION, ActionState, EntryDecision, EntryState, QualityDecision,
-    QualityGrade, StockDecision,
+    QualityGrade, ReadyAge, StockDecision,
 )
+from ai_value_scanner.decision.review import REVIEW_EVIDENCE_VERSION, with_review_evidence
 from ai_value_scanner.forward import ledger as ledger_module
 from ai_value_scanner.forward.ledger import Ledger, evidence_id, file_sha, utc
 from ai_value_scanner.forward.study import (
@@ -28,7 +29,7 @@ def at(day, hour):
     return stamp(day + "T" + hour + ":00+00:00")
 
 
-def build_archive(root, session, *, config="config-fixture"):
+def build_archive(root, session, *, config="config-fixture", ready_ages=None):
     generated = at(session, "22:00")
     decisions = []
     for rank, symbol in enumerate(("AAA", "BBB", "CCC"), start=1):
@@ -40,11 +41,15 @@ def build_archive(root, session, *, config="config-fixture"):
             {"cik": str(rank), "sic": "1234", "market_data_mode": "sip_eod",
              "market_data_feed": "sip", "official_sip_close": 100.0},
         ))
+    provenance = {"market_data_feed": "sip", "market_data_mode": "sip_eod"}
+    if ready_ages is not None:
+        decisions = [with_review_evidence(decision, ready_ages[decision.symbol]) for decision in decisions]
+        provenance["review_evidence_version"] = REVIEW_EVIDENCE_VERSION
     paths = write_decision_snapshot(
         output_root=root, strategy_style="production", decisions=decisions,
         daily_attention=decisions[:2], weekly_attention=decisions[:2], decision_date=session,
         generated_at_utc=generated.isoformat(), config_fingerprint=config, code_sha="source-fixture",
-        input_provenance={"market_data_feed": "sip", "market_data_mode": "sip_eod"},
+        input_provenance=provenance,
         validate_attention_cap=15,
     )
     receipt = dict(
@@ -308,6 +313,75 @@ class TestForwardObservations(TestCase):
                        exit_at=at("2026-11-25", "14:30").isoformat(), exit_price=95, exit_source="SIP opening bar",
                        exit_reason="test", price_basis="entry units", equity_continuity="verified"), now=next_day)
         self.assertEqual(self.ledger.records("outcome")[-1]["payload"]["evidence_class"], "forward")
+
+    def test_committed_open_overrides_later_close_and_filters_legacy_result(self):
+        paper = record_paper(self.ledger, dict(
+            protocol_id=self.protocol, observation_id=self.observe(), path="fixed",
+            rule_version="fixed-open-v1", status="planned", decision_at=self.now.isoformat(),
+        ), now=self.now)
+        entry_at = at("2026-11-24", "14:30")
+        record_fill(self.ledger, dict(paper_id=paper, status="entered", entry_at=entry_at.isoformat(),
+                    entry_price=100, entry_source="SIP open", price_basis="entry units"), now=entry_at)
+        decision = at("2026-11-24", "21:10")
+        exit_id = record_exit(self.ledger, dict(paper_id=paper, decided_at=decision.isoformat(),
+                              reason="structure failed"), now=decision)
+        first_close = at("2026-11-24", "21:00").isoformat()
+        last_close = at("2026-11-25", "21:00").isoformat()
+        settle_at = at("2026-11-25", "21:05")
+        terminal = dict(paper_id=paper, horizon=2, asof=last_close, exit_at=last_close, exit_price=110,
+                        exit_source="SIP close", price_basis="entry units", equity_continuity="verified")
+        # A shorter horizon that ended before the commitment's execution can still use its close.
+        record_outcome(self.ledger, {**terminal, "horizon": 1, "exit_at": first_close}, now=settle_at)
+        for candidate in (terminal, {**terminal, "exit_id": exit_id}):
+            with self.assertRaisesRegex(ValueError, "honor the committed exit"):
+                record_outcome(self.ledger, candidate, now=settle_at)
+        correct = dict(terminal, exit_at=at("2026-11-25", "14:30").isoformat(), exit_price=92,
+                       exit_source="SIP open", exit_reason="structure failed")
+        with self.assertRaisesRegex(ValueError, "honor the committed exit"):
+            record_outcome(self.ledger, correct, now=settle_at)
+        # Reproduce a pre-fix record and keep it immutable while excluding it from returns.
+        with patch("ai_value_scanner.forward.study._committed_exit_at", return_value=None):
+            wrong = record_outcome(self.ledger, terminal, now=settle_at)
+        summary = study_summary(self.ledger, self.protocol, now=settle_at)
+        self.assertEqual(summary["paper_maturity"][-1]["status"], "mature_missing")
+        self.assertIsNone(summary["paper_by_ready_age"][-1]["mean_net_return_date_equal"])
+        self.assertEqual(record_outcome(self.ledger, terminal, now=settle_at), wrong)
+        correction = dict(correct, supersedes=wrong, revision="fixed-open", revision_reason="honor commitment",
+                          exit_id=exit_id)
+        outcome = record_outcome(self.ledger, correction, now=settle_at)
+        self.assertEqual(record_outcome(self.ledger, correction, now=settle_at), outcome)
+        summary = study_summary(self.ledger, self.protocol, now=settle_at)
+        self.assertEqual(summary["paper_maturity"][-1]["status"], "mature")
+        self.assertAlmostEqual(summary["paper_by_ready_age"][-1]["mean_net_return_date_equal"], -.083)
+
+    def test_ready_age_summary_separates_exact_bounds_and_observation_gaps(self):
+        day = "2026-11-24"
+        _, receipt = build_archive(self.root, day, ready_ages={
+            "AAA": ReadyAge(1, day, day, "observed_transition"),
+            "BBB": ReadyAge(1, day, None, "archive_boundary"),
+            "CCC": ReadyAge(1, day, None, "missing_prior_session"),
+        })
+        recorded = at(day, "22:10")
+        snapshot_id = self.capture(receipt, recorded)
+        for symbol in ("AAA", "BBB", "CCC"):
+            paper = record_paper(self.ledger, dict(
+                protocol_id=self.protocol, observation_id=evidence_id("observation", snapshot_id, symbol),
+                path="fixed", rule_version="fixed-open-v1", status="cash", decision_at=recorded.isoformat(),
+                reason="wait for confirmation",
+            ), now=recorded)
+            if symbol != "CCC":
+                end = at("2026-11-25", "21:00")
+                record_outcome(self.ledger, dict(paper_id=paper, horizon=1, asof=end.isoformat()), now=end)
+        summary = study_summary(self.ledger, self.protocol, now=at("2026-11-25", "21:05"))
+        rows = {item["reason"]: item for item in summary["paper_by_ready_age"] if item["horizon"] == 1}
+        self.assertEqual(rows["observed_transition"]["age_kind"], "exact")
+        self.assertEqual(rows["observed_transition"]["rule_version"], "fixed-open-v1")
+        self.assertEqual(rows["observed_transition"]["execution_basis"], "next_open")
+        self.assertEqual(rows["observed_transition"]["mean_net_return_date_equal"], 0.)
+        self.assertEqual(rows["observed_transition"]["mature_issuers_with_return"], 1)
+        self.assertEqual(rows["archive_boundary"]["age_kind"], "lower_bound")
+        self.assertEqual(rows["missing_prior_session"]["maturity"], {"mature_missing": 1})
+        self.assertIsNone(rows["missing_prior_session"]["mean_net_return_date_equal"])
 
     def test_discretionary_time_stamped_fill_is_backfill(self):
         path = record_paper(self.ledger, dict(protocol_id=self.protocol, observation_id=self.observe(),

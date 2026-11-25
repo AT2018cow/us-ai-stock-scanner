@@ -1,6 +1,7 @@
 """Join frozen cohorts to labels and report waiting, exits and selection as paper evidence."""
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
@@ -165,6 +166,38 @@ def _portfolio(members, legs, denom, *, mature):
     return {"status": "settled" if deployed else "cash", **shared, **ret}
 
 
+def _equal_deployed_qqq(book, top15, members, legs, terminal):
+    share = top15["deployment_weight"]
+    if share is None:
+        status = "future_unmatured" if top15["status"] == "future_unmatured" else "unknown_deployment"
+        return _miss(status)
+    if share == 0:
+        return {**cash(book, terminal, "no_stock_deployment"), "deployment_weight": 0., "cash_weight": 1.}
+
+    entries = Counter(
+        legs[member["security_id"]]["entry_session"] for member in members
+        if legs[member["security_id"]]["status"] == "settled"
+    )
+    trades = []
+    for session, count in sorted(entries.items()):
+        day = date.fromisoformat(session)
+        path = settle(book, QQQ, day, terminal, open_deadline=day)
+        trades.append({"session": session, "seats": count, "weight": count / CAP, "path": path})
+    shared = {"deployment_weight": share, "cash_weight": 1 - share, "terminal_session": terminal.isoformat(),
+              "entry_tranches": trades}
+    if any(trade["path"]["status"] != "settled" for trade in trades):
+        return {**_miss("benchmark_evidence_unavailable"), **shared}
+    returns = {
+        key: sum(trade["path"][key] * trade["weight"] for trade in trades)
+        for key in ("net_15", "net_30")
+    }
+    return {
+        "status": "settled", **shared, **returns,
+        "exposure_window": _joint_exposure(trade["path"] for trade in trades),
+        "issuer_contributions_net_15": {QQQ.split(":")[1]: returns["net_15"]},
+    }
+
+
 def _ranking_paths(book, rows, out):
     raw = []
     compare = {"entry": "quality", "priority": "entry", "top15": "priority", "daily_s2": "top15",
@@ -183,20 +216,9 @@ def _ranking_paths(book, rows, out):
                           for name, pool in group.items()}
             market = settle(book, QQQ, planned, terminal)
             portfolios["qqq_full"] = {**market, "issuer_contributions_net_15": _single_contribution(QQQ.split(":")[1], market)}
-            share = portfolios["top15"]["deployment_weight"]
-            if share is None:
-                portfolios["qqq_equal_deployed"] = _miss("future_unmatured" if portfolios["top15"]["status"] ==
-                                                         "future_unmatured" else "unknown_deployment")
-            elif share == 0:
-                portfolios["qqq_equal_deployed"] = cash(book, terminal, "no_stock_deployment")
-            elif market["net_15"] is None:
-                portfolios["qqq_equal_deployed"] = market
-            else:
-                portfolios["qqq_equal_deployed"] = {
-                    **market, "deployment_weight": share, "cash_weight": 1 - share,
-                    "net_15": market["net_15"] * share, "net_30": market["net_30"] * share,
-                    "issuer_contributions_net_15": {QQQ.split(":")[1]: market["net_15"] * share},
-                }
+            portfolios["qqq_equal_deployed"] = _equal_deployed_qqq(
+                book, portfolios["top15"], group["top15"], legs, terminal
+            )
             raw.append({"session": day, "horizon": horizon, "available": frame["available"], "stock_paths": [
                 {"member": members[key], "path": result} for key, result in legs.items()],
                 "portfolios": portfolios, "financial_additions": frame["financial_additions"],
@@ -232,26 +254,17 @@ def _holds_medium(book, security, signal, terminal):
     starting = signal - timedelta(days=84)
     # Start on a known NYSE session, even across holidays.
     days = sessions(next_session(starting), terminal)
-    week_ends = []
-    for i, day in enumerate(days):
-        if next_session(day).isocalendar()[:2] != day.isocalendar()[:2]:
-            week_ends.append((i, day))
-    valid = [(i, day) for i, day in week_ends if day >= signal and i > 0]
-    prior = [(i, day) for i, day in week_ends if day < signal]
-    if prior:
-        valid.insert(0, prior[-1])
-    if not valid:
+    week_ends = [day for day in days if next_session(day).isocalendar()[:2] != day.isocalendar()[:2]]
+    first = bisect_right(week_ends, signal) - 1
+    if first < 9:
         return None
-    lookup = [day for _, day in week_ends]
-    for index, day in valid:
-        n = lookup.index(day)
-        if n < 9:
-            return None
-        start = lookup[n - 9]
+    for n in range(first, len(week_ends)):
+        day = week_ends[n]
+        start = week_ends[n - 9]
         factor = book.factor(security, start, day)
         if factor is None or any(book.observation(security, k)[0] != "observed" for k in sessions(start, day)):
             return None
-        closes = [book.observation(security, k)[1][3] * book.factor(security, k, day) for k in lookup[n-9:n+1]]
+        closes = [book.observation(security, k)[1][3] * book.factor(security, k, day) for k in week_ends[n-9:n+1]]
         if closes[-1] < mean(closes):
             return False
     return True

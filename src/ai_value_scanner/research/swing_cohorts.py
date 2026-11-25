@@ -18,7 +18,7 @@ from ai_value_scanner.swing.setups import (
     BREAKOUT_VERSION, PULLBACK_VERSION, factor_between, next_session, previous_session, split_factors,
 )
 
-VERSION = "swing_experiment_v2"
+VERSION = "swing_experiment_v3"
 KINDS = {BREAKOUT_VERSION: ("breakout", "WATCH_BREAKOUT"), PULLBACK_VERSION: ("pullback", "WATCH_PULLBACK")}
 IDENTITY = ("style", "config_fingerprint", "decision_policy", "report_renderer")
 PRIMARY = 10
